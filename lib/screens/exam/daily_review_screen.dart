@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Daily test answer review — mirrors app/daily-test/[modelId]/review.tsx.
 class DailyReviewScreen extends StatefulWidget {
@@ -55,14 +55,11 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Review Answers'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Review Answers'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -140,6 +137,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                     );
                   },
                 ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class ReportHistoryScreen extends StatefulWidget {
   const ReportHistoryScreen({super.key});
@@ -42,12 +43,11 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Report History'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Report History'),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -137,6 +137,9 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

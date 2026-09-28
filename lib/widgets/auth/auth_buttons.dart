@@ -1,20 +1,16 @@
 import 'package:flutter/material.dart';
+import '../app_toast.dart';
 import 'google_icon.dart';
 
 /// Shared auth buttons + divider + toast helper — mirrors the styles in
 /// login.tsx / signup.tsx / forgot-password.tsx.
 
+/// Backwards-compatible auth toast: delegates to the global [showToast]
+/// (Expo ToastHost design). Same signature, so all call sites keep working.
 void showAuthToast(BuildContext context, String message,
     {bool isError = false}) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(message),
-      backgroundColor:
-          isError ? const Color(0xFFDC2626) : const Color(0xFF1F2937),
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 3),
-    ),
-  );
+  showToast(
+      context, message, isError ? ToastVariant.error : ToastVariant.info);
 }
 
 /// White "Continue with Google" button with the multi-color G.

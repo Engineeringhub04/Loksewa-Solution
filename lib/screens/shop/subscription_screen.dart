@@ -9,6 +9,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Client-side feature catalogue (mirrors PLAN_FEATURE_GROUPS in the Expo app).
 const List<Map<String, dynamic>> _featureGroups = [
@@ -107,12 +108,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Subscription'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_ScreenData>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Subscription'),
+          Expanded(
+            child: FutureBuilder<_ScreenData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -174,6 +174,9 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

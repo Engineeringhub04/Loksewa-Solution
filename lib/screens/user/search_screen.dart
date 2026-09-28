@@ -6,6 +6,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Global search — mirrors app/search.tsx.
 ///
@@ -114,12 +115,11 @@ class _SearchScreenState extends State<SearchScreen> {
     final total =
         _subjects.length + _discussions.length + _questions.length;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Search'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
       body: Column(
+        children: [
+          const SubpageHeader(title: 'Search'),
+          Expanded(
+            child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -205,6 +205,9 @@ class _SearchScreenState extends State<SearchScreen> {
                               ],
                             ],
                           ),
+          ),
+        ],
+      ),
           ),
         ],
       ),

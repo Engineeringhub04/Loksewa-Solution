@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class _Badge {
   final String id;
@@ -115,12 +116,11 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Achievements'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<List<_Badge>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Achievements'),
+          Expanded(
+            child: FutureBuilder<List<_Badge>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -211,6 +211,9 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

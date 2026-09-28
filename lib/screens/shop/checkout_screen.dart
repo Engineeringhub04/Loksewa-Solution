@@ -16,6 +16,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class CheckoutScreen extends StatefulWidget {
   const CheckoutScreen({super.key});
@@ -213,12 +214,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Checkout'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_CheckoutData>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Checkout'),
+          Expanded(
+            child: FutureBuilder<_CheckoutData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -266,6 +266,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

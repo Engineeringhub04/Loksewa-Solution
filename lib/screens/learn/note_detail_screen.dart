@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Note editor — mirrors app/notes/[id].tsx.
 /// Title, body, color picker, save/delete. Local-first via SharedPreferences.
@@ -138,19 +139,17 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _parseColor(_color),
-      appBar: AppBar(
-        title: Text(_isNew ? 'New Note' : 'Edit Note'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: _isNew ? 'New Note' : 'Edit Note', actions: [
           if (!_isNew)
             IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: _delete,
             ),
-        ],
-      ),
-      body: !_loaded
+        ]),
+          Expanded(
+            child: !_loaded
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
@@ -237,6 +236,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
     );
   }
 }

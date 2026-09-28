@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Course details — mirrors app/course-details.tsx.
 /// Reads the user's enrolled course/subcourse from users/{uid} and
@@ -64,12 +65,11 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Course Details'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_CourseInfo>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Course Details'),
+          Expanded(
+            child: FutureBuilder<_CourseInfo>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -196,6 +196,9 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

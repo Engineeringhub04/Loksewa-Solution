@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Downloads — mirrors app/downloads.tsx.
 ///
@@ -114,20 +115,18 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Downloads'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Downloads', actions: [
           if (_items.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep),
               tooltip: 'Clear all',
               onPressed: _clearAll,
             ),
-        ],
-      ),
-      body: _loading
+        ]),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
@@ -202,6 +201,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Report a Problem — mirrors app/settings/report-problem.tsx.
 /// Category list, custom "other" text, description, optional screenshot.
@@ -71,8 +72,11 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Report a Problem')),
-      body: ListView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Report a Problem'),
+          Expanded(
+            child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
@@ -156,6 +160,9 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                         strokeWidth: 2, color: Colors.white),
                   )
                 : const Text('Submit'),
+          ),
+        ],
+      ),
           ),
         ],
       ),

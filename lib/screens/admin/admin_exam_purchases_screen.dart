@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → exam purchase review queue. Mirrors app/admin/exam-purchases/index.tsx.
 /// Collection: app_exam_purchases. Statuses: pending (New), active (Approved), rejected.
@@ -50,8 +51,11 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Exam Purchase Review')),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Exam Purchase Review'),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -104,6 +108,9 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

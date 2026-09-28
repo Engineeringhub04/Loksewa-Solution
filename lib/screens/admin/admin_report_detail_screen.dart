@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → review one report and answer the reporter. Mirrors
 /// app/admin/report-history/[id].tsx. Collection: app_report_history.
@@ -133,8 +134,11 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Report Details')),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Report Details'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -155,6 +159,9 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
           }
           return _body(record);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

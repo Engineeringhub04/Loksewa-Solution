@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → review one content purchase request. Mirrors
 /// app/admin/content-purchases/[id].tsx. Collection: app_content_purchases.
@@ -176,8 +177,11 @@ class _AdminContentPurchaseDetailScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Content Purchase Details')),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Content Purchase Details'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -199,6 +203,9 @@ class _AdminContentPurchaseDetailScreenState
           }
           return _body(record);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

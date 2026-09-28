@@ -10,6 +10,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class AdditionalPmScreen extends StatelessWidget {
   const AdditionalPmScreen({super.key});
@@ -105,12 +106,11 @@ class _FeatureHomeState extends State<_FeatureHome> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_PageData>(
+      body: Column(
+        children: [
+          SubpageHeader(title: widget.title),
+          Expanded(
+            child: FutureBuilder<_PageData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -224,6 +224,9 @@ class _FeatureHomeState extends State<_FeatureHome> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

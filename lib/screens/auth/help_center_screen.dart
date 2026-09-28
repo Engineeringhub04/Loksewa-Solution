@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Help Center — mirrors app/settings/help-center.tsx.
 /// Search across all FAQs, topic chips, one-open-at-a-time accordion,
@@ -122,8 +123,11 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
   Widget build(BuildContext context) {
     final items = _items;
     return Scaffold(
-      appBar: AppBar(title: const Text('Help Center')),
-      body: ListView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Help Center'),
+          Expanded(
+            child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
@@ -289,6 +293,9 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
             'Most reports get a response within 1-2 working days.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
             textAlign: TextAlign.center,
+          ),
+        ],
+      ),
           ),
         ],
       ),

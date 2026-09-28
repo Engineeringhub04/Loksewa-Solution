@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Constitution section reader — mirrors app/constitution/[sectionId].tsx.
 ///
@@ -41,11 +41,9 @@ class _ConstitutionSectionScreenState extends State<ConstitutionSectionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Constitution'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Constitution', actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: SegmentedButton<String>(
@@ -60,9 +58,9 @@ class _ConstitutionSectionScreenState extends State<ConstitutionSectionScreen> {
               ),
             ),
           ),
-        ],
-      ),
-      body: FutureBuilder<Map<String, dynamic>>(
+        ]),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -115,6 +113,9 @@ class _ConstitutionSectionScreenState extends State<ConstitutionSectionScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

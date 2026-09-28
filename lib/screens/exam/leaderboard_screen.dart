@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Main leaderboard — mirrors app/leaderboard.tsx.
 /// Podium top 3 (pinned), "your standing" card, then the scrolling ranks.
@@ -76,17 +76,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         : null;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Leaderboard'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Leaderboard', actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
-        ],
-      ),
-      body: _loading
+        ]),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -152,6 +148,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     ],
                   ),
                 ),
+          ),
+        ],
+      ),
     );
   }
 

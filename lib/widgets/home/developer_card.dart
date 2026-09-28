@@ -80,6 +80,22 @@ class DeveloperCard extends StatelessWidget {
                             ? Image.network(
                                 photoUrl!,
                                 fit: BoxFit.cover,
+                                loadingBuilder: (context, child, progress) =>
+                                    progress == null
+                                        ? child
+                                        : Container(
+                                            color: const Color(0xFF38BDF8)
+                                                .withValues(alpha: 0.2),
+                                            alignment: Alignment.center,
+                                            child: const SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.5,
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          ),
                                 errorBuilder: (_, __, ___) =>
                                     _fallbackAvatar(),
                               )

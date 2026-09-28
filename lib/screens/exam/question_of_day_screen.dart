@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Question of the day — mirrors app/question-of-the-day.tsx.
 /// Daily stats strip, today's question, one answer, explanation + result.
@@ -131,8 +132,11 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Question of the Day')),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Question of the Day'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -150,6 +154,9 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen> {
                   ),
                 )
               : _content(),
+          ),
+        ],
+      ),
     );
   }
 

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → Purchase Request Control: every exam + content purchase request in
 /// one list. Mirrors app/admin/purchase-details/index.tsx.
@@ -78,8 +79,11 @@ class _AdminPurchaseDetailsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Purchase Request Control')),
-      body: FutureBuilder<List<_Item>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Purchase Request Control'),
+          Expanded(
+            child: FutureBuilder<List<_Item>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -146,6 +150,9 @@ class _AdminPurchaseDetailsScreenState
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Mock test attempt — mirrors app/mock-test/[id]/attempt.tsx.
 /// Timed MCQ with next/previous, per-question palette, flags, submit →
@@ -152,10 +153,9 @@ class _MockAttemptScreenState extends State<MockAttemptScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_exam?.title ?? 'Mock Test'),
-        automaticallyImplyLeading: false,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: _exam?.title ?? 'Mock Test', actions: [
           if (!_loading && _error == null)
             Padding(
               padding: const EdgeInsets.only(right: 4),
@@ -173,9 +173,9 @@ class _MockAttemptScreenState extends State<MockAttemptScreen> {
               onPressed: () =>
                   setState(() => _showPalette = !_showPalette),
             ),
-        ],
-      ),
-      body: _loading
+        ]),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -192,6 +192,9 @@ class _MockAttemptScreenState extends State<MockAttemptScreen> {
               : _showPalette
                   ? _palette()
                   : _questionView(),
+          ),
+        ],
+      ),
       bottomNavigationBar:
           (_loading || _error != null) ? null : _navBar(),
     );

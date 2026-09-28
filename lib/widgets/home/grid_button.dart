@@ -19,10 +19,17 @@ class GridButton extends StatelessWidget {
     required this.onPress,
   });
 
+  /// Fixed tile height so every tile in the 3x3 grid is exactly equal —
+  /// mirrors the Expo side, where flexbox stretches same-row tiles to one
+  /// height. (Flutter's Wrap keeps each child's own height, so 1-line and
+  /// 2-line labels used to render uneven tiles.)
+  static const double tileHeight = 110;
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: width,
+      height: tileHeight,
       child: Material(
         color: accentColor.withValues(alpha: 0x17 / 0xFF),
         borderRadius: BorderRadius.circular(ExpoRadius.md),
@@ -33,7 +40,8 @@ class GridButton extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              mainAxisSize: MainAxisSize.max,
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
                   width: 38,

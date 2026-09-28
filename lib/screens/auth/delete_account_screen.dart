@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Delete Account — mirrors app/delete-account.tsx.
 /// Type DELETE to confirm, confirm dialog, then the profile document is
@@ -96,8 +97,11 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     return Scaffold(
-      appBar: AppBar(title: const Text('Delete Account')),
-      body: Stack(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Delete Account'),
+          Expanded(
+            child: Stack(
         children: [
           ListView(
             padding: const EdgeInsets.all(16),
@@ -258,6 +262,9 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                 ),
               ),
             ),
+        ],
+      ),
+          ),
         ],
       ),
     );

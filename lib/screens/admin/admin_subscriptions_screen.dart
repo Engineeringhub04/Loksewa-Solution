@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin desk — every subscription request, newest first. A request is NEVER
 /// removed after review; it just changes tag. Mirrors
@@ -63,8 +64,11 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Subscription Review')),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Subscription Review'),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -124,6 +128,9 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

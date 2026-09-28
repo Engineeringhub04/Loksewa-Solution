@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Create / edit discussion — mirrors app/discussion/create.tsx.
 ///
@@ -184,17 +185,9 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
         if (await _confirmDiscard() && context.mounted) context.pop();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(_editing ? 'Edit discussion' : 'New discussion'),
-          backgroundColor: AppColors.navy,
-          foregroundColor: Colors.white,
-          leading: IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () async {
-              if (await _confirmDiscard() && context.mounted) context.pop();
-            },
-          ),
-          actions: [
+        body: Column(
+          children: [
+            SubpageHeader(title: _editing ? 'Edit discussion' : 'New discussion', actions: [
             TextButton(
               onPressed: (_dirty && !_saving && !_loading) ? _submit : null,
               child: _saving
@@ -206,9 +199,9 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
                   : const Text('Post',
                       style: TextStyle(color: Colors.white)),
             ),
-          ],
-        ),
-        body: _loading
+          ]),
+            Expanded(
+              child: _loading
             ? const Center(child: CircularProgressIndicator())
             : ListView(
                 padding: const EdgeInsets.all(16),
@@ -286,6 +279,9 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
       ),
     );
   }

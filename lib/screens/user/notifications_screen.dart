@@ -5,6 +5,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Notifications inbox — mirrors app/notifications.tsx.
 ///
@@ -99,11 +100,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notifications'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Notifications', actions: [
           FutureBuilder<List<Map<String, dynamic>>>(
             future: _future,
             builder: (context, snap) => TextButton(
@@ -114,9 +113,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   style: TextStyle(color: Colors.white)),
             ),
           ),
-        ],
-      ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+        ]),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -236,6 +235,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

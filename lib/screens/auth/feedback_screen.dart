@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Feedback — mirrors app/feedback.tsx.
 /// 1–5 star rating (gated) + optional message. Submission posts to the team's
@@ -56,8 +57,11 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Feedback')),
-      body: ListView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Feedback'),
+          Expanded(
+            child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
@@ -188,6 +192,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
           ),
         ],
       ),

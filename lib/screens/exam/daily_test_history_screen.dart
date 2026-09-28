@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Daily test attempt history — mirrors app/daily-test/history.tsx.
 class DailyTestHistoryScreen extends StatefulWidget {
@@ -48,14 +49,11 @@ class _DailyTestHistoryScreenState extends State<DailyTestHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Daily Test History'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Daily Test History'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -92,6 +90,9 @@ class _DailyTestHistoryScreenState extends State<DailyTestHistoryScreen> {
                         );
                       },
                     ),
+          ),
+        ],
+      ),
     );
   }
 }

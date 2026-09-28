@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Subject theory — mirrors app/subjects/theory.tsx.
 /// Shows the theory note; if a PDF is attached, an "Open PDF" button
@@ -65,12 +66,11 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.chapterName ?? 'Theory'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          SubpageHeader(title: widget.chapterName ?? 'Theory'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -146,6 +146,9 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

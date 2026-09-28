@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin grading screen for one theory answer submission. Mirrors
 /// app/admin/exam-answer/[id].tsx. Collection: app_exam_answers.
@@ -154,8 +155,11 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Answer Update')),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Answer Update'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -175,6 +179,9 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
           _prefill(a);
           return _body(a);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

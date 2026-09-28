@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Privacy Policy — mirrors app/privacy-policy.tsx.
 /// Readable in-app summary in five sections + the full hosted policy URL.
@@ -38,8 +39,11 @@ class PrivacyPolicyScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Privacy Policy')),
-      body: ListView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Privacy Policy'),
+          Expanded(
+            child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
           Card(
@@ -137,6 +141,9 @@ class PrivacyPolicyScreen extends StatelessWidget {
                 ],
               ),
             ),
+          ),
+        ],
+      ),
           ),
         ],
       ),

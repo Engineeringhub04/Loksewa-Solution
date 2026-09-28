@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam summary — mirrors app/exam/[setId]/summary.tsx.
 /// Score breakdown of the latest attempt + retake/review/ranking actions.
@@ -56,11 +57,11 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Result'),
-        automaticallyImplyLeading: false,
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Result'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -76,6 +77,9 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
               : _attempt == null
                   ? const Center(child: Text('No attempt found.'))
                   : _summary(),
+          ),
+        ],
+      ),
     );
   }
 

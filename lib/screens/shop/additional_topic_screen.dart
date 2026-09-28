@@ -12,6 +12,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 const int _dailyLimit = 50;
 
@@ -191,12 +192,11 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
         }
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Topic'),
-          backgroundColor: AppColors.navy,
-          foregroundColor: Colors.white,
-        ),
-        body: FutureBuilder<List<_Question>>(
+        body: Column(
+          children: [
+            const SubpageHeader(title: 'Topic'),
+            Expanded(
+              child: FutureBuilder<List<_Question>>(
           future: _future,
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting) {
@@ -269,6 +269,9 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               ],
             );
           },
+        ),
+            ),
+          ],
         ),
       ),
     );

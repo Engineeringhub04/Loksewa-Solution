@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → review one subscription request. Approve activates the subscription
 /// immediately (writes isPremium + premiumPlanName + premiumExpiryDate onto the
@@ -221,8 +222,11 @@ class _AdminSubscriptionDetailScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Subscription Details')),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Subscription Details'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -244,6 +248,9 @@ class _AdminSubscriptionDetailScreenState
           }
           return _body(record);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

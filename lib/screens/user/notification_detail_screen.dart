@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Notification detail — mirrors app/notification/[id].tsx.
 ///
@@ -27,12 +28,11 @@ class NotificationDetailScreen extends StatelessWidget {
     final created = n['createdAt'];
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Notification'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: n.isEmpty
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Notification'),
+          Expanded(
+            child: n.isEmpty
           ? const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
@@ -124,6 +124,9 @@ class NotificationDetailScreen extends StatelessWidget {
                 ],
               ],
             ),
+          ),
+        ],
+      ),
     );
   }
 }

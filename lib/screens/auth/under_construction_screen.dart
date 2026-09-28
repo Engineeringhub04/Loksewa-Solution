@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Fallback destination for feature buttons that don't have a real page yet —
 /// mirrors app/under-construction.tsx. Pass ?page=Feature Name to customize
@@ -26,8 +27,11 @@ class UnderConstructionScreen extends StatelessWidget {
     final percent = progressForPage(pageName);
 
     return Scaffold(
-      appBar: AppBar(title: Text(pageName)),
-      body: Center(
+      body: Column(
+        children: [
+          SubpageHeader(title: pageName),
+          Expanded(
+            child: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
           child: Card(
@@ -154,6 +158,9 @@ class UnderConstructionScreen extends StatelessWidget {
             ),
           ),
         ),
+      ),
+          ),
+        ],
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Bookmark detail — mirrors app/bookmarks/[id].tsx.
 ///
@@ -74,11 +75,9 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bookmark'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Bookmark', actions: [
           _removing
               ? const Padding(
                   padding: EdgeInsets.all(16),
@@ -92,9 +91,9 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
                   icon: const Icon(Icons.delete_outline),
                   onPressed: _remove,
                 ),
-        ],
-      ),
-      body: FutureBuilder<Map<String, dynamic>?>(
+        ]),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -222,6 +221,9 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

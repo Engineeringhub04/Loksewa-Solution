@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Result — mirrors app/result/[attemptId].tsx.
 /// Score ring, correct/incorrect/unattempted stats, per-question review,
@@ -58,8 +59,11 @@ class _ResultScreenState extends State<ResultScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Result')),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Result'),
+          Expanded(
+            child: _loading
           ? const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -83,6 +87,9 @@ class _ResultScreenState extends State<ResultScreen> {
                   ),
                 )
               : _resultView(),
+          ),
+        ],
+      ),
     );
   }
 

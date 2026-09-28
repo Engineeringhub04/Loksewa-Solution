@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Daily test landing — mirrors app/daily-test/index.tsx.
 /// Today + missed + upcoming strip, then the released models list.
@@ -99,8 +100,11 @@ class _DailyTestScreenState extends State<DailyTestScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Daily Test')),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Daily Test'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -117,6 +121,9 @@ class _DailyTestScreenState extends State<DailyTestScreen> {
               : _models.isEmpty
                   ? const Center(child: Text('No daily tests available yet.'))
                   : _list(),
+          ),
+        ],
+      ),
     );
   }
 

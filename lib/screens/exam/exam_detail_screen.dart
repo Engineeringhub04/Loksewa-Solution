@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam set detail — mirrors app/exam/[setId]/index.tsx.
 /// Shows meta info, rules and start/ranking/review entry points.
@@ -70,8 +71,11 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Exam Details')),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Exam Details'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -85,6 +89,9 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
                   ),
                 )
               : _body(),
+          ),
+        ],
+      ),
     );
   }
 

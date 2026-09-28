@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// About — mirrors app/about.tsx.
 /// Logo, app name, version, description, social links and legal entries.
@@ -18,8 +19,11 @@ class AboutScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('About')),
-      body: ListView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'About'),
+          Expanded(
+            child: ListView(
         padding: const EdgeInsets.all(24),
         children: [
           Center(
@@ -88,6 +92,9 @@ class AboutScreen extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+        ],
+      ),
           ),
         ],
       ),

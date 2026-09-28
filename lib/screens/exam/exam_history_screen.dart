@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam history — mirrors app/exam-history.tsx.
 /// All mock-test attempts for the user, newest first.
@@ -54,8 +55,11 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Exam History')),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Exam History'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -108,6 +112,9 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
                         },
                       ),
                     ),
+          ),
+        ],
+      ),
     );
   }
 }

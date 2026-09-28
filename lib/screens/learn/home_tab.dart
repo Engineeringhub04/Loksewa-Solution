@@ -65,9 +65,10 @@ class _HomeTabState extends State<HomeTab> {
         isPremium = _isPremiumActive(userDoc);
       } catch (_) {}
       // Resolve human-readable course names for the header.
+      // Collection is `app_courses` (mirrors courses.ts COURSES_COLLECTION).
       if (courseId != null) {
         try {
-          final c = await FirestoreRest.getDocument('courses/$courseId',
+          final c = await FirestoreRest.getDocument('app_courses/$courseId',
               idToken: token);
           courseName =
               ((c?['name'] ?? c?['nameNe']) as String?)?.trim();
@@ -75,13 +76,12 @@ class _HomeTabState extends State<HomeTab> {
         if (subcourseId != null) {
           try {
             final sc = await FirestoreRest.getDocument(
-                'courses/$courseId/subcourses/$subcourseId',
+                'app_courses/$courseId/subcourses/$subcourseId',
                 idToken: token);
             subcourseName =
                 ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim();
           } catch (_) {}
-          subcourseName ??= await _legacySubcourseName(
-              token, courseId, subcourseId);
+          subcourseName ??= await _legacySubcourseName(token, subcourseId);
         }
       }
     }
@@ -115,20 +115,28 @@ class _HomeTabState extends State<HomeTab> {
       notificationCount = await _unreadNotificationCount(token, user?.uid);
     } catch (_) {}
 
+    // Subjects — mirrors loadSubjectDetails() in subjectDetails.ts: deterministic
+    // document reads (`app_subjects_details/{course}__{subcourse}__{slug}`),
+    // no collection scan. Falls back to the default learning scope exactly
+    // like the Expo side (DEFAULT_LEARNING_COURSE_ID/SUBCOURSE_ID).
     List<Map<String, dynamic>> subjects = [];
     try {
-      final all = await FirestoreRest.listDocuments('app_subjects_details',
-          idToken: token, pageSize: 100);
-      subjects = all.where((s) {
-        final c = s['courseId'] as String?;
-        final sc = s['subcourseId'] as String?;
-        if (s['isPublished'] == false) return false;
-        if (courseId != null && c != null && c != courseId) return false;
-        if (subcourseId != null && sc != null && sc != subcourseId) {
-          return false;
+      const subjectSlugs = [
+        'general-awareness',
+        'public-management',
+        'technical-subject',
+      ];
+      final scopeCourse = courseId ?? 'civil-engineering';
+      final scopeSubcourse = subcourseId ?? 'civil-assistant-sub-engineer';
+      for (final slug in subjectSlugs) {
+        final doc = await FirestoreRest.getDocument(
+            'app_subjects_details/${scopeCourse}__${scopeSubcourse}__$slug',
+            idToken: token);
+        if (doc != null) {
+          doc['id'] = '${scopeCourse}__${scopeSubcourse}__$slug';
+          subjects.add(doc);
         }
-        return true;
-      }).toList();
+      }
       subjects.sort((a, b) => _num(a['order']).compareTo(_num(b['order'])));
     } catch (_) {}
 
@@ -160,16 +168,16 @@ class _HomeTabState extends State<HomeTab> {
     return dt == null || dt.isAfter(DateTime.now());
   }
 
-  Future<String?> _legacySubcourseName(
-      String token, String courseId, String subcourseId) async {
+  /// Legacy fallback: subcourses seeded BEFORE the sub-collection restructure
+  /// live as direct documents in the flat `app_subcourses` collection —
+  /// mirrors fetchUserCourseInfo() in courses.ts (direct document read,
+  /// not a collection scan).
+  Future<String?> _legacySubcourseName(String token, String subcourseId) async {
     try {
-      final legacy = await FirestoreRest.listDocuments('app_subcourses',
-          idToken: token, pageSize: 100);
-      for (final d in legacy) {
-        if (d['id'] == subcourseId && d['courseId'] == courseId) {
-          return ((d['name'] ?? d['nameNe']) as String?)?.trim();
-        }
-      }
+      final legacy = await FirestoreRest.getDocument(
+          'app_subcourses/$subcourseId',
+          idToken: token);
+      return ((legacy?['name'] ?? legacy?['nameNe']) as String?)?.trim();
     } catch (_) {}
     return null;
   }

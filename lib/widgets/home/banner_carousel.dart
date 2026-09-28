@@ -129,6 +129,23 @@ class _BannerCarouselState extends State<BannerCarousel> {
                           ? Image.network(
                               b.imageLink!,
                               fit: BoxFit.cover,
+                              loadingBuilder: (context, child, progress) =>
+                                  progress == null
+                                      ? child
+                                      : Container(
+                                          color: Colors.white.withValues(
+                                              alpha: 0.12),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              width: 28,
+                                              height: 28,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2.5,
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
                               errorBuilder: (_, __, ___) =>
                                   _textContent(b),
                             )

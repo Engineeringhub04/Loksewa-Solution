@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Subject units — mirrors app/subjects/units/[subjectId].tsx.
 /// Track chips + expandable unit cards; each unit chapter opens the
@@ -197,12 +198,11 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Units'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_UnitData>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Units'),
+          Expanded(
+            child: FutureBuilder<_UnitData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -303,6 +303,9 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

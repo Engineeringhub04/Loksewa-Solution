@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// All daily test models grouped by date — mirrors app/daily-test/models.tsx.
 class DailyTestModelsScreen extends StatefulWidget {
@@ -50,14 +51,11 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Daily Test Models'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Daily Test Models'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -74,6 +72,9 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen> {
               : _models.isEmpty
                   ? const Center(child: Text('No models yet.'))
                   : _grouped(),
+          ),
+        ],
+      ),
     );
   }
 

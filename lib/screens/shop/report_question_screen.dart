@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 const List<Map<String, String>> _reasons = [
   {'id': 'wrong-answer', 'label': 'Wrong answer'},
@@ -97,12 +98,11 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Report a Question'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: SingleChildScrollView(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Report a Question'),
+          Expanded(
+            child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -161,6 +161,9 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
             ),
           ],
         ),
+      ),
+          ),
+        ],
       ),
     );
   }

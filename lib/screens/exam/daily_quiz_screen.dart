@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Daily test quiz — mirrors app/daily-test/[modelId]/quiz.tsx.
 /// Forward-only (no Previous), per-question countdown with auto-advance,
@@ -146,10 +147,9 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_model?.displayName ?? 'Daily Test'),
-        automaticallyImplyLeading: false,
-        actions: [
+      body: Column(
+        children: [
+          SubpageHeader(title: _model?.displayName ?? 'Daily Test', actions: [
           if (!_loading && _error == null)
             Padding(
               padding: const EdgeInsets.only(right: 12),
@@ -161,9 +161,9 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
                 ),
               ),
             ),
-        ],
-      ),
-      body: _loading
+        ]),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -178,6 +178,9 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
                   ),
                 )
               : _questionView(),
+          ),
+        ],
+      ),
       bottomNavigationBar:
           (_loading || _error != null) ? null : _navBar(),
     );

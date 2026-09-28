@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam quiz — mirrors app/exam/[setId]/quiz.tsx.
 /// Full-screen timed MCQ: option select, next/previous, question palette,
@@ -187,9 +188,9 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
         return ok == true;
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(_set?.title ?? 'Test'),
-          actions: [
+        body: Column(
+          children: [
+            SubpageHeader(title: _set?.title ?? 'Test', actions: [
             if (_set != null && !_locked)
               Padding(
                 padding: const EdgeInsets.only(right: 8),
@@ -207,9 +208,9 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                 onPressed: () =>
                     setState(() => _showPalette = !_showPalette),
               ),
-          ],
-        ),
-        body: _loading
+          ]),
+            Expanded(
+              child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? Center(
@@ -236,6 +237,9 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                     : _showPalette
                         ? _palette()
                         : _questionView(),
+            ),
+          ],
+        ),
         bottomNavigationBar:
             (_set != null && !_locked && !_loading && _error == null)
                 ? _navBar()

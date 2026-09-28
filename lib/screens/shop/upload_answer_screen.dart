@@ -12,6 +12,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class UploadAnswerScreen extends StatefulWidget {
   const UploadAnswerScreen({super.key});
@@ -173,12 +174,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   Widget build(BuildContext context) {
     final isEdit = _editId != null && _editId!.isNotEmpty;
     return Scaffold(
-      appBar: AppBar(
-        title: Text(isEdit ? 'Edit Answer Sheet' : 'Upload Answer Sheet'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          SubpageHeader(title: isEdit ? 'Edit Answer Sheet' : 'Upload Answer Sheet'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _done
               ? _success()
@@ -245,6 +245,9 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                     ],
                   ),
                 ),
+          ),
+        ],
+      ),
     );
   }
 

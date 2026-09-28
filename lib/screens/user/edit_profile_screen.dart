@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Edit profile — mirrors app/edit-profile.tsx.
 ///
@@ -168,18 +169,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         if (await _confirmDiscard() && context.mounted) context.pop();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Edit Profile'),
-          backgroundColor: AppColors.navy,
-          foregroundColor: Colors.white,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () async {
-              if (await _confirmDiscard() && context.mounted) context.pop();
-            },
-          ),
-        ),
-        body: _loading
+        body: Column(
+          children: [
+            const SubpageHeader(title: 'Edit Profile'),
+            Expanded(
+              child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? Center(
@@ -283,6 +277,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                     ],
                   ),
+            ),
+          ],
+        ),
       ),
     );
   }

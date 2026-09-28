@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → review one exam purchase request. Mirrors
 /// app/admin/exam-purchases/[id].tsx. Approve tags it active; reject tags it
@@ -178,8 +178,11 @@ class _AdminExamPurchaseDetailScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Exam Purchase Details')),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Exam Purchase Details'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -201,6 +204,9 @@ class _AdminExamPurchaseDetailScreenState
           }
           return _body(record);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

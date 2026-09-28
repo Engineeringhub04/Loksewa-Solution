@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Live exam waiting room — mirrors app/live-exam/[id]/waiting.tsx.
 /// Confirm join → countdown → auto-start; late join is blocked.
@@ -121,14 +122,11 @@ class _LiveExamWaitingScreenState extends State<LiveExamWaitingScreen> {
     final hasStarted = _exam?.scheduledStart != null &&
         _exam!.scheduledStart!.isBefore(DateTime.now());
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Waiting Room'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Waiting Room'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -175,6 +173,9 @@ class _LiveExamWaitingScreenState extends State<LiveExamWaitingScreen> {
                         ),
                       ),
                     ),
+          ),
+        ],
+      ),
     );
   }
 }

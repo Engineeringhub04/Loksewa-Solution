@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Subject chapters — mirrors app/subjects/chapters/[subjectId].tsx.
 /// Summary card + progress ring + chapter cards with P/R/T mode tags;
@@ -180,12 +181,11 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Chapters'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_ChapterData>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Chapters'),
+          Expanded(
+            child: FutureBuilder<_ChapterData>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -299,6 +299,9 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

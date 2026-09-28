@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam answer review — mirrors app/exam/[setId]/review.tsx.
 /// Rebuilds the latest attempt exactly as answered; locked until the exam
@@ -66,14 +66,11 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Review Answers'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Review Answers'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _lockedMessage != null
               ? Center(
@@ -99,6 +96,9 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
                       ? const Center(
                           child: Text('No attempt found for this exam.'))
                       : _reviewList(),
+          ),
+        ],
+      ),
     );
   }
 

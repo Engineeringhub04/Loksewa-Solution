@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 const int _answerEditWindowMs = 60 * 60 * 1000;
 
@@ -56,12 +57,11 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Answer Sheet'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<Map<String, dynamic>?>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'My Answer Sheet'),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -210,6 +210,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

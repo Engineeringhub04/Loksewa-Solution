@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → Report Details Control: every report from every user, newest first.
 /// Mirrors app/admin/report-history/index.tsx. Collection: app_report_history.
@@ -59,8 +59,11 @@ class _AdminReportHistoryScreenState extends State<AdminReportHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Report Details Control')),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Report Details Control'),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -125,6 +128,9 @@ class _AdminReportHistoryScreenState extends State<AdminReportHistoryScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

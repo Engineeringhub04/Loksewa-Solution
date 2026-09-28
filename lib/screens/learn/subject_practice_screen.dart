@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Subject practice — mirrors app/subjects/practice.tsx.
 /// MCQ quiz: one question at a time, explanations, prev/next, score at end.
@@ -133,12 +134,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.chapterName ?? 'Practice'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<List<_Question>>(
+      body: Column(
+        children: [
+          SubpageHeader(title: widget.chapterName ?? 'Practice'),
+          Expanded(
+            child: FutureBuilder<List<_Question>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -168,6 +168,9 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           if (_finished) return _results(qs);
           return _quiz(qs);
         },
+      ),
+          ),
+        ],
       ),
     );
   }

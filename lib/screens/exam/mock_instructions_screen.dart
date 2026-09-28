@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Mock test instructions — mirrors app/mock-test/[id]/instructions.tsx.
 class MockInstructionsScreen extends StatefulWidget {
@@ -47,14 +48,11 @@ class _MockInstructionsScreenState extends State<MockInstructionsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Instructions'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.pop(),
-        ),
-      ),
-      body: _loading
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Instructions'),
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -116,6 +114,9 @@ class _MockInstructionsScreenState extends State<MockInstructionsScreen> {
                     ),
                   ],
                 ),
+          ),
+        ],
+      ),
     );
   }
 

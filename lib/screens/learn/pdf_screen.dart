@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../widgets/subpage_header.dart';
+
 /// PDF viewer placeholder — mirrors app/pdf/[id].tsx.
 /// The route id is the URL-encoded PDF URL (or ?uri=... / ?title=...).
 /// Real pdf.js-style rendering lands in a later batch; this keeps the
@@ -34,34 +36,41 @@ class _PdfScreenState extends State<PdfScreen> {
 
     if (!isValid) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Question Paper')),
-        body: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('No paper attached',
-                  style: TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              const Text('This set does not have a question paper uploaded yet.',
-                  style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => context.pop(),
-                child: const Text('Go Back'),
+        body: Column(
+          children: [
+            const SubpageHeader(title: 'Question Paper'),
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('No paper attached',
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    const Text('This set does not have a question paper uploaded yet.',
+                        style: TextStyle(color: Colors.grey)),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () => context.pop(),
+                      child: const Text('Go Back'),
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: _fullscreen
-          ? null
-          : AppBar(
-              title: Text(widget.title ?? 'Question Paper'),
+      body: Column(
+        children: [
+          if (!_fullscreen)
+            SubpageHeader(
+              title: widget.title ?? 'Question Paper',
               actions: [
                 IconButton(
                   icon: const Icon(Icons.fullscreen),
@@ -69,8 +78,9 @@ class _PdfScreenState extends State<PdfScreen> {
                 ),
               ],
             ),
-      body: Stack(
-        children: [
+          Expanded(
+            child: Stack(
+              children: [
           // Placeholder body — replaced by the real PDF renderer later.
           Center(
             child: Padding(
@@ -147,6 +157,9 @@ class _PdfScreenState extends State<PdfScreen> {
                 ),
               ),
             ),
+              ],
+            ),
+          ),
         ],
       ),
     );

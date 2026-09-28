@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Quiz practice — mirrors app/quiz/[subjectId].tsx.
 /// Untimed MCQ practice per subject with immediate inline feedback.
@@ -98,18 +99,15 @@ class _SubjectQuizScreenState extends State<SubjectQuizScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_loading
+      body: Column(
+        children: [
+          SubpageHeader(title: _loading
             ? 'Practice'
             : _finished
                 ? 'Summary'
                 : 'Q ${_index + 1}/${_questions.length}'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _confirmExit,
-        ),
-      ),
-      body: _loading
+          Expanded(
+            child: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -126,6 +124,9 @@ class _SubjectQuizScreenState extends State<SubjectQuizScreen> {
               : _finished
                   ? _summary()
                   : _questionView(),
+          ),
+        ],
+      ),
       bottomNavigationBar: (_loading || _error != null || _finished)
           ? null
           : Padding(

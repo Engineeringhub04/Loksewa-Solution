@@ -4,6 +4,8 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
+import '../../widgets/subpage_header.dart';
+
 /// Course setup — mirrors app/course-setup.tsx.
 /// Shown after login/signup when the user has no course yet, and from
 /// Profile → My Course in update mode (?mode=update).
@@ -162,45 +164,9 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          SliverAppBar(
-            expandedHeight: 150,
-            pinned: true,
-            automaticallyImplyLeading: _isUpdate,
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.navy, AppColors.deepNavy],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Text(
-                            _isUpdate
-                                ? 'Update Your Course'
-                                : 'Setup Your Course',
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 22,
-                                fontWeight: FontWeight.bold)),
-                        Text(
-                            _isUpdate
-                                ? 'Change your course or subcourse anytime'
-                                : 'Choose a course to start learning',
-                            style: const TextStyle(
-                                color: Colors.white70, fontSize: 13)),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+          SliverToBoxAdapter(
+            child: SubpageHeader(
+              title: _isUpdate ? 'Update Your Course' : 'Setup Your Course',
             ),
           ),
           SliverToBoxAdapter(

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Constitution index — mirrors app/constitution/index.tsx.
 ///
@@ -70,13 +71,11 @@ class _ConstitutionScreenState extends State<ConstitutionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_docTitleNp.isNotEmpty && _lang == 'np'
+      body: Column(
+        children: [
+          SubpageHeader(title: _docTitleNp.isNotEmpty && _lang == 'np'
             ? _docTitleNp
-            : (_docTitleEn.isNotEmpty ? _docTitleEn : 'Constitution')),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-        actions: [
+            : (_docTitleEn.isNotEmpty ? _docTitleEn : 'Constitution'), actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: SegmentedButton<String>(
@@ -92,9 +91,9 @@ class _ConstitutionScreenState extends State<ConstitutionScreen> {
               ),
             ),
           ),
-        ],
-      ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+        ]),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -193,6 +192,9 @@ class _ConstitutionScreenState extends State<ConstitutionScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

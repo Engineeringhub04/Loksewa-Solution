@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 class _Purchases {
   final List<Map<String, dynamic>> exam;
@@ -63,12 +64,11 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Purchases'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<_Purchases>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'My Purchases'),
+          Expanded(
+            child: FutureBuilder<_Purchases>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -158,6 +158,9 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

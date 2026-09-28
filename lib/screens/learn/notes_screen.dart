@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Keep Notes list — mirrors app/notes/index.tsx.
 /// Personal notes, local-first (SharedPreferences under 'loksewa:notes'),
@@ -65,12 +66,11 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('My Notes'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<List<Map<String, dynamic>>>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'My Notes'),
+          Expanded(
+            child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -159,6 +159,9 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
           );
         },
+      ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.navy,

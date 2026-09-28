@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Subject read — mirrors app/subjects/read.tsx.
 /// Expandable Q&A list; the correct option is highlighted with the
@@ -113,12 +113,11 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.chapterName ?? 'Read'),
-        backgroundColor: AppColors.navy,
-        foregroundColor: Colors.white,
-      ),
-      body: FutureBuilder<List<_ReadQuestion>>(
+      body: Column(
+        children: [
+          SubpageHeader(title: widget.chapterName ?? 'Read'),
+          Expanded(
+            child: FutureBuilder<List<_ReadQuestion>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -226,6 +225,9 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
             },
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

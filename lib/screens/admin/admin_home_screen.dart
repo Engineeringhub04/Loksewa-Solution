@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin home — dashboard menu linking to every admin tool. Admin-only
 /// (users/{uid}.isAdmin == true), mirroring the Admin section of the Expo
@@ -38,8 +39,11 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Admin')),
-      body: FutureBuilder<bool>(
+      body: Column(
+        children: [
+          const SubpageHeader(title: 'Admin'),
+          Expanded(
+            child: FutureBuilder<bool>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
@@ -103,6 +107,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
             ],
           );
         },
+      ),
+          ),
+        ],
       ),
     );
   }

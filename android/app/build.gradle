@@ -1,0 +1,30 @@
+plugins {
+    id "com.android.application"
+    id "kotlin-android"
+    id "dev.flutter.flutter-gradle-plugin"
+    id "com.google.gms.google-services"
+}
+
+android {
+    namespace = "com.loksewasolutionnp.hub"
+    compileSdk = 34
+
+    defaultConfig {
+        // Same package as the Expo app — same Firebase project, no backend changes.
+        applicationId = "com.loksewasolutionnp.hub"
+        minSdk = 23
+        targetSdk = 34
+        versionCode = 1
+        versionName = "1.0.0"
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.debug
+        }
+    }
+}
+
+flutter {
+    source = "../.."
+}

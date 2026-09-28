@@ -1,0 +1,40 @@
+{
+  "_comment": "PLACEHOLDER FILE — replace with the real google-services.json downloaded from Firebase Console (Project Settings → Your apps → Android app) before running `npx expo prebuild` or an EAS native build. This file is only used for native Android builds (needed for FCM push notifications); it is NOT read by the Firebase JS SDK used at runtime in this Expo Go / dev-client setup. See README.md 'Firebase Setup'.",
+  "project_info": {
+    "project_number": "289131368873",
+    "project_id": "loksewa-solution-app",
+    "storage_bucket": "loksewa-solution-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:289131368873:android:0546c58f49f8083e59f4b8",
+        "android_client_info": {
+          "package_name": "com.loksewasolutionnp.hub"
+        }
+      },
+         "oauth_client": [
+        {
+          "client_id": "289131368873-kqt9sn4bqcdnq640gt46hmfh8469plie.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAYkxf0PNed_OdPOieYV86fZcHZ7uNtEGc"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "289131368873-kqt9sn4bqcdnq640gt46hmfh8469plie.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

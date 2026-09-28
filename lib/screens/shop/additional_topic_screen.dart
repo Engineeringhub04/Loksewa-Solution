@@ -29,6 +29,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 const int _dailyLimitCap = 50;
@@ -326,8 +327,12 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               _trackBar(),
             Expanded(
               child: _loading
-                  ? const Center(
-                      child: Text('Loading questions...'))
+                  // Mirrors the React Preloading state on the topic screen.
+                  ? const PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading questions...',
+                      hint: 'Preparing your questions',
+                    )
                   : _error != null
                       ? Center(
                           child: Padding(

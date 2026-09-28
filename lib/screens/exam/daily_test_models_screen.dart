@@ -74,13 +74,22 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen> {
         _models = models;
         _resultsById = byId;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Please check your connection and try again.';
+        _error = 'Couldn\'t load the daily tests. ${_cleanErr('$e')}';
       });
     }
+  }
+
+  /// Strips raw JSON/API dumps from an error so the UI never shows them.
+  String _cleanErr(String raw) {
+    var msg = raw.replaceFirst('Exception: ', '');
+    final jsonStart = msg.indexOf('{');
+    if (jsonStart >= 0) msg = msg.substring(0, jsonStart).trim();
+    if (msg.length > 160) msg = '${msg.substring(0, 160).trim()}…';
+    return msg.isEmpty ? 'Please try again.' : msg;
   }
 
   DailyTestSlot _slotFor(DailyTestModel m) {

@@ -147,6 +147,16 @@ class _DailyTestScreenState extends State<DailyTestScreen> {
   }
 
   // -- data ---------------------------------------------------------------
+
+  /// Strips raw JSON/API dumps from an error so the UI never shows them.
+  String _sanitizeError(String raw) {
+    var msg = raw.replaceFirst('Exception: ', '');
+    final jsonStart = msg.indexOf('{');
+    if (jsonStart >= 0) msg = msg.substring(0, jsonStart).trim();
+    if (msg.length > 160) msg = '${msg.substring(0, 160).trim()}…';
+    return msg.isEmpty ? 'Please try again.' : msg;
+  }
+
   Future<void> _load({bool refreshing = false}) async {
     final uid = AuthService.currentUser?.uid ?? '';
     if (uid.isEmpty) {
@@ -208,11 +218,14 @@ class _DailyTestScreenState extends State<DailyTestScreen> {
         _activities = activities;
       });
       _buildSlides();
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
+      // Never blame the connection for a query failure: the phone is online
+      // (home loads fine). Show what actually failed, sanitized — never a raw
+      // JSON/API dump.
       setState(() {
         _loading = false;
-        _error = 'Please check your connection and try again.';
+        _error = 'Couldn\'t load the daily tests. ${_sanitizeError('$e')}';
       });
     }
   }

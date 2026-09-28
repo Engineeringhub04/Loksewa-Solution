@@ -6,14 +6,17 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Bookmarks list — mirrors app/bookmarks/index.tsx.
+/// Bookmarks list — mirrors `app/bookmarks/index.tsx` exactly.
 ///
-/// - Bookmarks live at `users/{uid}/bookmarks`, orderBy createdAt desc.
+/// - Bookmarks live at `users/{uid}/bookmarks`, orderBy `createdAt` desc.
 /// - Slot meter: 15 slots per sub-course (premium = unlimited).
-/// - Search covers title + preview + sourceLabel; chips sorted by count desc.
-/// - Remove behind a confirm dialog; 'Removed from bookmarks' toast.
+/// - Search covers title + preview + sourceLabel; chips only for contexts the
+///   user has, sorted by count desc.
+/// - Tapping a card opens `/bookmarks/[id]` (the saved snapshot, never the
+///   source flow). Remove sits behind a confirm dialog.
 ///
-/// Doc id is `{context}__{safeSegment(refId)}` (see bookmarks.ts).
+/// Design tokens (radius / type / spacing) mirror
+/// `src/core/theme/tokens.ts` via [ExpoPalette]/[ExpoRadius]/[ExpoType].
 class BookmarksScreen extends StatefulWidget {
   const BookmarksScreen({super.key});
 
@@ -38,6 +41,7 @@ class _ContextStyle {
   const _ContextStyle(this.icon, this.color);
 }
 
+/// Per-context identity — mirrors `CONTEXT_STYLE` in bookmarks/index.tsx.
 const _contextStyles = <String, _ContextStyle>{
   'exam': _ContextStyle(Icons.school_outlined, Color(0xFF2563EB)),
   'read': _ContextStyle(Icons.menu_book_outlined, Color(0xFF0D9488)),
@@ -55,6 +59,9 @@ const _contextStyles = <String, _ContextStyle>{
 _ContextStyle _styleFor(String context) =>
     _contextStyles[context] ?? _contextStyles['other']!;
 
+/// Human label per context. (The Expo app resolves `bookmarks.ctx.<key>` from
+/// i18n, which only defines quiz/exam — anything else falls back to the raw
+/// key; the prettified label below is what the design intends.)
 String _ctxLabel(String context) {
   if (context == 'quiz') return 'Quiz';
   if (context == 'exam') return 'Exam';
@@ -74,11 +81,18 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   String? _subcourseId;
   String _query = '';
   String _filter = 'all';
+  final _searchCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   bool _isPremiumActive(Map<String, dynamic>? userDoc) {
@@ -109,10 +123,8 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
       final rows = await FirestoreRest.listDocuments('users/$uid/bookmarks',
           idToken: idToken);
       rows.sort((a, b) {
-        final da = a['createdAt'];
-        final db = b['createdAt'];
-        final ta = da is DateTime ? da.millisecondsSinceEpoch : 0;
-        final tb = db is DateTime ? db.millisecondsSinceEpoch : 0;
+        final ta = _millis(a['createdAt']);
+        final tb = _millis(b['createdAt']);
         return tb.compareTo(ta);
       });
       if (!mounted) return;
@@ -129,6 +141,15 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
         _loading = false;
       });
     }
+  }
+
+  int _millis(dynamic raw) {
+    if (raw is DateTime) return raw.millisecondsSinceEpoch;
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      return DateTime.tryParse(raw)?.millisecondsSinceEpoch ?? 0;
+    }
+    return 0;
   }
 
   int get _used {
@@ -169,29 +190,7 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   Future<void> _confirmRemove(Map<String, dynamic> b) async {
     final ok = await showDialog<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        icon: const Icon(Icons.bookmark_outline),
-        title: const Text('Remove this bookmark?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text((b['title'] ?? '').toString(),
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            const Text('You can save it again any time.'),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Remove',
-                  style: TextStyle(color: Colors.red))),
-        ],
-      ),
+      builder: (c) => _RemoveDialog(item: b),
     );
     if (ok != true) return;
     final uid = AuthService.currentUser?.uid;
@@ -218,110 +217,40 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   ];
 
   String _savedDate(dynamic raw) {
-    DateTime? dt;
-    if (raw is DateTime) {
-      dt = raw;
-    } else if (raw is num) {
-      dt = DateTime.fromMillisecondsSinceEpoch(raw.toInt());
-    } else if (raw is String) {
-      dt = DateTime.tryParse(raw);
-    }
-    if (dt == null) return '';
+    final ms = _millis(raw);
+    if (ms == 0) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
     return '${dt.day} ${_months[dt.month - 1]} ${dt.year}';
   }
 
   @override
   Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: pal.background,
       body: Column(
         children: [
           const SubpageHeader(title: 'Bookmarks'),
           Expanded(
             child: _loading
-                ? const Center(
+                ? Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 12),
-                        Text('Loading...'),
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 12),
+                        Text('Loading...',
+                            style: TextStyle(
+                                fontSize: 14, color: pal.textSecondary)),
                       ],
                     ),
                   )
                 : _error && _items.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Could not load bookmarks.'),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                                onPressed: _load,
-                                child: const Text('Retry')),
-                          ],
-                        ),
-                      )
+                    ? _errorBody(pal)
                     : RefreshIndicator(
                         onRefresh: _load,
-                        child: ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: [
-                            _slotMeter(),
-                            if (_items.isNotEmpty) ...[
-                              const SizedBox(height: 14),
-                              _searchBar(),
-                              const SizedBox(height: 10),
-                              _chipRow(),
-                            ],
-                            const SizedBox(height: 10),
-                            if (_visible.isEmpty)
-                              Padding(
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 40),
-                                child: Column(
-                                  children: [
-                                    Icon(
-                                      _items.isEmpty
-                                          ? Icons.bookmark_outline
-                                          : Icons.search_off,
-                                      size: 40,
-                                      color: Colors.grey,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      _items.isEmpty
-                                          ? 'No bookmarks yet'
-                                          : 'Nothing matches your search',
-                                      style: const TextStyle(
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.w600),
-                                    ),
-                                    if (_items.isEmpty) ...[
-                                      const SizedBox(height: 6),
-                                      const Text(
-                                        'Save questions and chapters while studying and they appear here',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                            color: Colors.grey,
-                                            fontSize: 13),
-                                      ),
-                                      const SizedBox(height: 14),
-                                      ElevatedButton.icon(
-                                        onPressed: () =>
-                                            context.push('/subjects'),
-                                        icon: const Icon(Icons.search,
-                                            size: 18),
-                                        label:
-                                            const Text('Browse Subjects'),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              )
-                            else
-                              for (final b in _visible) _bookmarkCard(b),
-                          ],
-                        ),
+                        color: pal.primary,
+                        child: _listBody(pal),
                       ),
           ),
         ],
@@ -329,12 +258,70 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
     );
   }
 
-  Widget _slotMeter() {
+  Widget _errorBody(ExpoPalette pal) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.cloud_off_outlined,
+              size: 44, color: pal.textDisabled),
+          const SizedBox(height: 12),
+          Text('Could not load bookmarks.',
+              style:
+                  TextStyle(fontSize: 14, color: pal.textPrimary)),
+          const SizedBox(height: 12),
+          OutlinedButton(onPressed: _load, child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+
+  Widget _listBody(ExpoPalette pal) {
+    final visible = _visible;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+      children: [
+        // List header: slot meter + (search + chips when there are items).
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _slotMeter(pal),
+            if (_items.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              _searchBar(pal),
+              const SizedBox(height: 10),
+              _chipRow(pal),
+            ],
+          ],
+        ),
+        const SizedBox(height: 14),
+        if (visible.isEmpty)
+          _emptyBody(pal)
+        else
+          for (var i = 0; i < visible.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            _Entrance(
+              delayMs: (i < 8 ? i : 8) * 45,
+              child: _BookmarkCard(
+                item: visible[i],
+                pal: pal,
+                date: _savedDate(visible[i]['createdAt']),
+                onTap: () =>
+                    context.push('/bookmarks/${_bookmarkDocId(visible[i])}'),
+                onRemove: () => _confirmRemove(visible[i]),
+              ),
+            ),
+          ],
+      ],
+    );
+  }
+
+  /// Slot meter — the 15-per-sub-course cap made visible before it bites.
+  Widget _slotMeter(ExpoPalette pal) {
     final used = _used;
     final left = (_limit - used).clamp(0, _limit);
     final ratio = _premium ? 1.0 : (used / _limit).clamp(0.0, 1.0);
-    final fillColor =
-        !_premium && left == 0 ? const Color(0xFFFCA5A5) : const Color(0xFF93C5FD);
+    final full = !_premium && left == 0;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -346,25 +333,42 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
               ? const [Color(0xFF0F3D2E), Color(0xFF166534), Color(0xFF15803D)]
               : const [Color(0xFF0B1F51), Color(0xFF153E90), Color(0xFF2257C7)],
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(0x1A),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
+                    const Text(
                       'BOOKMARK SLOTS',
                       style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 1.1,
-                          color: Color(0xFF93C5FD)),
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.1,
+                        color: Color(0xFF93C5FD),
+                      ),
                     ),
-                    SizedBox(height: 3),
+                    const SizedBox(height: 3),
+                    Text(
+                      _premium
+                          ? 'Unlimited with Premium'
+                          : '$used of $_limit used',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Color(0xD2EFF6FF),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -372,16 +376,18 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(999),
+                  color: Colors.white.withAlpha(0x29),
+                  border: Border.all(
+                    color: Colors.white.withAlpha(0x38),
+                    width: 1,
+                  ),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      _premium
-                          ? Icons.diamond_outlined
-                          : Icons.bookmark,
+                      _premium ? Icons.diamond_outlined : Icons.bookmark,
                       size: 13,
                       color: Colors.white,
                     ),
@@ -391,30 +397,34 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                           ? 'Premium members can save more'
                           : '$used/$_limit',
                       style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          Text(
-            _premium
-                ? 'Unlimited with Premium'
-                : '$used of $_limit used',
-            style: const TextStyle(
-                color: Color(0xD8EFF6FF), fontSize: 12),
-          ),
           const SizedBox(height: 11),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: ratio,
-              minHeight: 6,
-              backgroundColor: Colors.white.withValues(alpha: 0.18),
-              valueColor: AlwaysStoppedAnimation<Color>(fillColor),
+            child: Container(
+              height: 7,
+              color: Colors.white.withAlpha(0x2E),
+              child: FractionallySizedBox(
+                alignment: Alignment.centerLeft,
+                widthFactor: ratio,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    color: full
+                        ? const Color(0xFFFCA5A5)
+                        : const Color(0xFF93C5FD),
+                  ),
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 11),
@@ -424,19 +434,21 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                 child: Text(
                   _premium
                       ? '${_items.length} item(s)'
-                      : left == 0
+                      : full
                           ? 'Bookmark slots are full'
                           : '$left left this sub-course',
                   style: const TextStyle(
-                      fontSize: 11, color: Color(0xD8EFF6FF)),
+                    fontSize: 11,
+                    color: Color(0xC2FFFFFF),
+                  ),
                 ),
               ),
-              if (!_premium && left == 0)
+              if (full)
                 GestureDetector(
                   onTap: () => context.push('/subscription'),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 7),
+                        horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(999),
@@ -444,9 +456,10 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                     child: const Text(
                       'Upgrade',
                       style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0B1F51)),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF0B1F51),
+                      ),
                     ),
                   ),
                 ),
@@ -457,198 +470,452 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
     );
   }
 
-  Widget _searchBar() {
-    return TextField(
-      decoration: InputDecoration(
-        hintText: 'Search bookmarks...',
-        prefixIcon: const Icon(Icons.search, size: 17),
-        suffixIcon: _query.isNotEmpty
-            ? IconButton(
-                icon: const Icon(Icons.cancel, size: 17),
-                onPressed: () => setState(() => _query = ''),
-              )
-            : null,
-        border: const OutlineInputBorder(),
-        isDense: true,
+  Widget _searchBar(ExpoPalette pal) {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        border: Border.all(color: pal.border, width: 1),
+        borderRadius: BorderRadius.circular(12),
       ),
-      onChanged: (v) => setState(() => _query = v),
-    );
-  }
-
-  Widget _chipRow() {
-    final chips = _chips;
-    return SizedBox(
-      height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
+      child: Row(
         children: [
-          _filterChip('all', 'All', _items.length, null),
-          for (final e in chips)
-            _filterChip(e.key, _ctxLabel(e.key), e.value, _styleFor(e.key)),
+          Icon(Icons.search_outlined, size: 17, color: pal.textSecondary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: (v) => setState(() => _query = v),
+              style: TextStyle(fontSize: 14, color: pal.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Search bookmarks...',
+                hintStyle:
+                    TextStyle(fontSize: 14, color: pal.textDisabled),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
+              ),
+            ),
+          ),
+          if (_query.isNotEmpty)
+            GestureDetector(
+              onTap: () => setState(() {
+                _query = '';
+                _searchCtrl.clear();
+              }),
+              child: Icon(Icons.cancel,
+                  size: 17, color: pal.textDisabled),
+            ),
         ],
       ),
     );
   }
 
-  Widget _filterChip(
-      String value, String label, int count, _ContextStyle? style) {
+  Widget _chipRow(ExpoPalette pal) {
+    final dark =
+        Theme.of(context).brightness == Brightness.dark;
+    final chips = _chips;
+    return SizedBox(
+      height: 34,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          _filterChip(pal, dark, 'all', 'All', _items.length, null),
+          for (final e in chips) ...[
+            const SizedBox(width: 7),
+            _filterChip(
+                pal, dark, e.key, _ctxLabel(e.key), e.value, _styleFor(e.key)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChip(ExpoPalette pal, bool dark, String value, String label,
+      int count, _ContextStyle? style) {
     final active = _filter == value;
-    final accent = style?.color ?? AppColors.navy;
-    return Padding(
-      padding: const EdgeInsets.only(right: 7),
-      child: GestureDetector(
-        onTap: () => setState(() => _filter = value),
-        child: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
+    final accent = style?.color ?? pal.primary;
+    return GestureDetector(
+      onTap: () => setState(() => _filter = value),
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: active
+              ? accent.withAlpha(dark ? 0x2E : 0x18)
+              : pal.surface,
+          border: Border.all(
             color: active
-                ? accent.withValues(alpha: 0.12)
-                : Theme.of(context).cardColor,
-            border: Border.all(
-                color: active
-                    ? accent.withValues(alpha: 0.4)
-                    : Colors.grey.withValues(alpha: 0.3)),
+                ? accent.withAlpha(dark ? 0x88 : 0x55)
+                : pal.border,
+            width: 1,
           ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (style != null) ...[
-                Icon(style.icon,
-                    size: 13,
-                    color: active ? accent : Colors.grey),
-                const SizedBox(width: 5),
-              ],
-              Text(
-                label,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight:
-                        active ? FontWeight.bold : FontWeight.w500,
-                    color: active ? accent : Colors.grey.shade700),
-              ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (style != null) ...[
+              Icon(style.icon,
+                  size: 13,
+                  color: active ? accent : pal.textSecondary),
               const SizedBox(width: 5),
-              Text(
-                '$count',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: active ? accent : Colors.grey),
-              ),
             ],
-          ),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: active ? FontWeight.bold : FontWeight.w500,
+                color: active ? accent : pal.textSecondary,
+              ),
+            ),
+            const SizedBox(width: 5),
+            Text(
+              '$count',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: active ? accent : pal.textDisabled,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _bookmarkCard(Map<String, dynamic> b) {
+  Widget _emptyBody(ExpoPalette pal) {
+    final searching = _items.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      child: Column(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: pal.primary.withAlpha(0x14),
+            ),
+            child: Icon(
+              searching ? Icons.search_outlined : Icons.bookmark_outline,
+              size: 32,
+              color: pal.primary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            searching ? 'Nothing matches your search' : 'No bookmarks yet',
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: pal.textPrimary),
+          ),
+          if (!searching) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Save questions and chapters while studying and they appear here',
+              textAlign: TextAlign.center,
+              style:
+                  TextStyle(fontSize: 13, color: pal.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: () => context.push('/subjects'),
+                icon: const Icon(Icons.search, size: 18),
+                label: const Text('Browse Subjects',
+                    style: TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: pal.primary,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// One saved item. The left rail is tinted per context so the list reads as
+/// grouped even when the filter is "All".
+class _BookmarkCard extends StatefulWidget {
+  final Map<String, dynamic> item;
+  final ExpoPalette pal;
+  final String date;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+  const _BookmarkCard({
+    required this.item,
+    required this.pal,
+    required this.date,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  State<_BookmarkCard> createState() => _BookmarkCardState();
+}
+
+class _BookmarkCardState extends State<_BookmarkCard> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = widget.pal;
+    final b = widget.item;
     final contextKey = (b['context'] ?? 'other').toString();
     final style = _styleFor(contextKey);
-    final date = _savedDate(b['createdAt']);
+    final dark =
+        Theme.of(context).brightness == Brightness.dark;
     final badge = (b['sourceLabel'] ?? '').toString().isNotEmpty
         ? (b['sourceLabel'] ?? '').toString()
         : _ctxLabel(contextKey);
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () =>
-            context.push('/bookmarks/${_bookmarkDocId(b)}'),
-        child: IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: style.color,
-                  borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(12)),
-                ),
-              ),
-              Container(
-                margin: const EdgeInsets.all(12),
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: style.color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(style.icon, size: 19, color: style.color),
-              ),
-              Expanded(
-                child: Padding(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        (b['title'] ?? '').toString(),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w600, fontSize: 14),
-                      ),
-                      if ((b['preview'] ?? '').toString().isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: Container(
+        decoration: BoxDecoration(
+          color: pal.surface,
+          border: Border.all(
+            color: _pressed
+                ? style.color.withAlpha(0x66)
+                : pal.border,
+            width: 1,
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(0x0F),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(width: 4, color: style.color),
+            ),
+            Padding(
+              padding:
+                  const EdgeInsets.fromLTRB(17, 13, 13, 13),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(13),
+                      color: style.color
+                          .withAlpha(dark ? 0x26 : 0x14),
+                    ),
+                    child: Icon(style.icon,
+                        size: 19, color: style.color),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (b['title'] ?? '').toString(),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: pal.textPrimary,
+                            height: 20 / 14,
+                          ),
+                        ),
+                        if ((b['preview'] ?? '')
+                            .toString()
+                            .isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
                             (b['preview'] ?? '').toString(),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                                fontSize: 12,
-                                color:
-                                    onSurface.withValues(alpha: 0.6)),
-                          ),
-                        ),
-                      const SizedBox(height: 6),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: style.color
-                                  .withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              badge,
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: style.color),
+                              fontSize: 12,
+                              color: pal.textSecondary,
+                              height: 16 / 12,
                             ),
                           ),
-                          if (date.isNotEmpty) ...[
-                            const SizedBox(width: 8),
-                            Text(
-                              'Saved on $date',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  color: onSurface.withValues(
-                                      alpha: 0.45)),
-                            ),
-                          ],
                         ],
-                      ),
-                    ],
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Container(
+                                constraints: const BoxConstraints(
+                                    maxWidth: double.infinity),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  borderRadius:
+                                      BorderRadius.circular(999),
+                                  color: style.color.withAlpha(
+                                      dark ? 0x22 : 0x12),
+                                ),
+                                child: Text(
+                                  badge,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: style.color,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (widget.date.isNotEmpty) ...[
+                              const SizedBox(width: 8),
+                              Flexible(
+                                child: Text(
+                                  'Saved on ${widget.date}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: pal.textDisabled),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 4),
+                  GestureDetector(
+                    onTap: widget.onRemove,
+                    child: Container(
+                      width: 32,
+                      height: 32,
+                      alignment: Alignment.center,
+                      child: Icon(Icons.delete_outline,
+                          size: 17, color: pal.textDisabled),
+                    ),
+                  ),
+                ],
               ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline,
-                    size: 17, color: Colors.grey),
-                onPressed: () => _confirmRemove(b),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
+      ),
+    );
+  }
+}
+
+/// Confirm dialog — mirrors the Expo `ConfirmDialog` used on this screen.
+class _RemoveDialog extends StatelessWidget {
+  final Map<String, dynamic> item;
+  const _RemoveDialog({required this.item});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return AlertDialog(
+      backgroundColor: pal.surface,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20)),
+      icon: Container(
+        width: 52,
+        height: 52,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: pal.danger.withAlpha(0x14),
+        ),
+        child:
+            Icon(Icons.bookmark_outline, size: 24, color: pal.danger),
+      ),
+      title: Text('Remove this bookmark?',
+          style: TextStyle(fontSize: 17, color: pal.textPrimary)),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text((item['title'] ?? '').toString(),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 14,
+                  color: pal.textPrimary)),
+          const SizedBox(height: 8),
+          Text('You can save it again any time.',
+              style:
+                  TextStyle(fontSize: 13, color: pal.textSecondary)),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: Text('Cancel',
+              style: TextStyle(color: pal.textSecondary)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: Text('Remove',
+              style: TextStyle(
+                  color: pal.danger, fontWeight: FontWeight.w600)),
+        ),
+      ],
+    );
+  }
+}
+
+/// Staggered entrance: fade + slide down (mirrors `FadeInDown`).
+class _Entrance extends StatefulWidget {
+  final int delayMs;
+  final Widget child;
+  const _Entrance({required this.delayMs, required this.child});
+
+  @override
+  State<_Entrance> createState() => _EntranceState();
+}
+
+class _EntranceState extends State<_Entrance> {
+  bool _go = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) setState(() => _go = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _go ? 1 : 0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _go ? Offset.zero : const Offset(0, -0.1),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        child: widget.child,
       ),
     );
   }

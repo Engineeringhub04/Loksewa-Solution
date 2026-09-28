@@ -123,13 +123,22 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
         _answers = answers;
         _timeTaken = timeTaken;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Please check your connection and try again.';
+        _error = 'Couldn\'t load the result. ${_cleanErr('$e')}';
       });
     }
+  }
+
+  /// Strips raw JSON/API dumps from an error so the UI never shows them.
+  String _cleanErr(String raw) {
+    var msg = raw.replaceFirst('Exception: ', '');
+    final jsonStart = msg.indexOf('{');
+    if (jsonStart >= 0) msg = msg.substring(0, jsonStart).trim();
+    if (msg.length > 160) msg = '${msg.substring(0, 160).trim()}…';
+    return msg.isEmpty ? 'Please try again.' : msg;
   }
 
   void _goReview() {

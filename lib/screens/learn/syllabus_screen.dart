@@ -3,12 +3,15 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Syllabus — mirrors app/syllabus/index.tsx.
 ///
+/// Premium blue-gradient "Active Course" banner, then one card per syllabus
+/// level with a staggered fade/slide entrance (FadeInDown.delay(index*60)).
 /// Reads `app_syllabusdata` where courseId == the user's enrolled course,
-/// filters client-side `active !== false`, sorts by `order`.
+/// client filter `active !== false`, sorted by `order`.
 ///
 /// Tap ALWAYS opens the PDF — no paywall gate.
 class SyllabusScreen extends StatefulWidget {
@@ -21,6 +24,7 @@ class SyllabusScreen extends StatefulWidget {
 class _SyllabusScreenState extends State<SyllabusScreen> {
   bool _loading = true;
   String? _error;
+  String _courseId = '';
   String _courseName = '';
   String _subcourseName = '';
   List<Map<String, dynamic>> _items = const [];
@@ -34,7 +38,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
   Future<void> _load() async {
     final user = AuthService.currentUser;
     if (user == null) {
-      context.go('/login');
+      if (mounted) context.go('/login');
       return;
     }
     setState(() {
@@ -49,8 +53,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       String subcourseName = '';
       if (courseId.isNotEmpty) {
         try {
-          final doc =
-              await ExamRest.getDoc('app_courses/$courseId');
+          final doc = await ExamRest.getDoc('app_courses/$courseId');
           courseName = '${doc?['name'] ?? doc?['title'] ?? ''}';
         } catch (_) {}
       }
@@ -63,8 +66,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
           try {
             final doc =
                 await ExamRest.getDoc('app_subcourses/$subcourseId');
-            subcourseName =
-                '${doc?['name'] ?? doc?['title'] ?? ''}';
+            subcourseName = '${doc?['name'] ?? doc?['title'] ?? ''}';
           } catch (_) {}
         }
       }
@@ -82,6 +84,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
+        _courseId = courseId;
         _courseName = courseName;
         _subcourseName = subcourseName;
         _items = items;
@@ -90,7 +93,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = 'Failed to load syllabus.';
+        _error = 'error';
       });
     }
   }
@@ -102,6 +105,8 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
     final uri = '${s['pdfLink'] ?? ''}';
     if (uri.isEmpty) return;
     final id = '${s['id'] ?? ''}';
+    // React: language === 'ne' ? nameNe || name : name || nameNe
+    // (Flutter app is English-only → name first).
     final title = '${s['name'] ?? s['nameNe'] ?? 'Syllabus'}';
     context.push(Uri(
       path: '/pdf/${Uri.encodeComponent(id)}',
@@ -128,236 +133,426 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        tinted: false,
+        label: 'Loading Syllabus...',
+        hint: 'Fetching your syllabus',
+      );
     }
     if (_error != null) {
+      final secondary =
+          isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
       return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(_error!,
-                style: const TextStyle(
-                    fontSize: 14, color: Color(0xFF6B7280))),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _load,
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB)),
-              child: const Text('Retry',
-                  style: TextStyle(color: Colors.white)),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off_outlined,
+                  size: 46, color: secondary),
+              const SizedBox(height: 14),
+              const Text("Couldn't load syllabus",
+                  style:
+                      TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Please check your connection and try again.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: secondary)),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _load,
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB)),
+                child: const Text('Retry',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
         ),
       );
     }
+
     final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
-    final border =
-        isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
+    final divider =
+        isDark ? const Color(0xFF263349) : const Color(0xFFE5EAF4);
     final secondary =
-        isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final textPrimary =
+        isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final primary =
+        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+
+    // No course enrolled — steer to Course Setup (React EmptyState).
+    if (_courseId.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.school_outlined, size: 46, color: secondary),
+              const SizedBox(height: 14),
+              const Text('No course selected',
+                  style:
+                      TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text('Choose a course to see its syllabus.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: secondary)),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => context.push('/course-setup'),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB)),
+                icon: const Icon(Icons.arrow_forward,
+                    color: Colors.white, size: 18),
+                label: const Text('Select a course',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: () async => _load(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
         children: [
-          // Active-course banner.
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+          // Active Course banner — premium blue gradient.
+          _activeCourseBanner(),
+          const SizedBox(height: 20),
+          // Section row: title + count pill.
+          Row(
+            children: [
+              Text('Available Syllabus',
+                  style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.bold,
+                      color: textPrimary)),
+              const SizedBox(width: 8),
+              Container(
+                constraints:
+                    const BoxConstraints(minWidth: 24, minHeight: 22),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Text('${_items.length}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: primary)),
               ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('ACTIVE COURSE',
-                          style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              letterSpacing: 0.6)),
-                      const SizedBox(height: 4),
-                      Text(
-                        _courseName.isNotEmpty
-                            ? _courseName
-                            : 'No course selected',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 17,
-                            fontWeight: FontWeight.w800),
-                      ),
-                      if (_subcourseName.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(_subcourseName,
-                              style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 13)),
-                        ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 7),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text('${_items.length} PDF${_items.length == 1 ? '' : 's'}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700)),
-                ),
-              ],
-            ),
+            ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           if (_items.isEmpty)
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(28),
-                child: Text(
-                  'No syllabus PDFs have been added for your course yet. Please check back soon.',
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(fontSize: 14, color: secondary),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.description_outlined,
+                        size: 46, color: secondary),
+                    const SizedBox(height: 12),
+                    const Text('No syllabus available yet',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Syllabus papers for your course will appear here soon.',
+                      textAlign: TextAlign.center,
+                      style:
+                          TextStyle(fontSize: 13, color: secondary),
+                    ),
+                  ],
                 ),
               ),
             )
           else
-            ..._items.map((s) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _card(s, surface, border, secondary, isDark),
-                )),
+            for (var i = 0; i < _items.length; i++)
+              Padding(
+                padding: EdgeInsets.only(
+                    bottom: i == _items.length - 1 ? 0 : 12),
+                child: _Entrance(
+                  delayMs: i * 60,
+                  child: _card(_items[i], surface, divider,
+                      secondary, textPrimary, primary),
+                ),
+              ),
         ],
       ),
     );
   }
 
-  Widget _card(Map<String, dynamic> s, Color surface, Color border,
-      Color secondary, bool isDark) {
+  /// Premium blue-gradient "Active Course" banner (React activeCard).
+  Widget _activeCourseBanner() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF2563EB),
+            Color(0xFF1D4ED8),
+            Color(0xFF0B1F5B)
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            // Glow circle.
+            Positioned(
+              top: -30,
+              right: -20,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.12),
+                ),
+              ),
+            ),
+            Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Icon(Icons.school,
+                      size: 26, color: Colors.white),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    children: [
+                      const Text('Active Course',
+                          style: TextStyle(
+                              color: Color(0xC6FFFFFF),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 0.3)),
+                      const SizedBox(height: 3),
+                      Text(
+                        _courseName.isNotEmpty
+                            ? _courseName
+                            : '—',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      if (_subcourseName.isNotEmpty)
+                        Padding(
+                          padding:
+                              const EdgeInsets.only(top: 2),
+                          child: Text(_subcourseName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  color: Color(0xB8FFFFFF),
+                                  fontSize: 13)),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.trending_up,
+                      size: 22, color: Colors.white),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _card(
+      Map<String, dynamic> s,
+      Color surface,
+      Color divider,
+      Color secondary,
+      Color textPrimary,
+      Color primary) {
     final isPro = s['isPro'] == true;
     final name = '${s['name'] ?? s['nameNe'] ?? 'Syllabus'}';
-    final nameNe = '${s['nameNe'] ?? ''}';
     final hasPdf = '${s['pdfLink'] ?? ''}'.isNotEmpty;
+    final badgeBg =
+        isPro ? const Color(0x22F59E0B) : const Color(0x2222C55E);
+    final badgeFg =
+        isPro ? const Color(0xFFD97706) : const Color(0xFF16A34A);
     return Material(
       color: surface,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(18),
+      elevation: 2,
+      shadowColor: Colors.black.withValues(alpha: 0.05),
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(18),
         onTap: hasPdf ? () => _openPdf(s) : null,
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            border: Border.all(color: border),
-            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: divider, width: 0.5),
+            borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFDC2626)
-                      .withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  color: primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: const Icon(Icons.picture_as_pdf,
-                    size: 26, color: Color(0xFFDC2626)),
+                child: Icon(Icons.description,
+                    size: 24, color: primary),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
               Expanded(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
                   children: [
                     Text(name,
-                        style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700)),
-                    if (nameNe.isNotEmpty && nameNe != name)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(nameNe,
-                            style: TextStyle(
-                                fontSize: 12, color: secondary)),
-                      ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: textPrimary)),
                     const SizedBox(height: 6),
-                    isPro
-                        ? Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0x22F59E0B),
-                              borderRadius:
-                                  BorderRadius.circular(999),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.star,
-                                    size: 11,
-                                    color: Color(0xFFD97706)),
-                                SizedBox(width: 3),
-                                Text('Pro',
-                                    style: TextStyle(
-                                        color:
-                                            Color(0xFFD97706),
-                                        fontSize: 11,
-                                        fontWeight:
-                                            FontWeight.w700)),
-                              ],
-                            ),
-                          )
-                        : Container(
-                            padding:
-                                const EdgeInsets.symmetric(
-                                    horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: const Color(0x2222C55E),
-                              borderRadius:
-                                  BorderRadius.circular(999),
-                            ),
-                            child: const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.check_circle,
-                                    size: 11,
-                                    color: Color(0xFF16A34A)),
-                                SizedBox(width: 3),
-                                Text('Free',
-                                    style: TextStyle(
-                                        color:
-                                            Color(0xFF16A34A),
-                                        fontSize: 11,
-                                        fontWeight:
-                                            FontWeight.w700)),
-                              ],
-                            ),
+                    Row(
+                      children: [
+                        Container(
+                          padding:
+                              const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: badgeBg,
+                            borderRadius:
+                                BorderRadius.circular(999),
                           ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                  isPro
+                                      ? Icons.star
+                                      : Icons.check_circle,
+                                  size: 11,
+                                  color: badgeFg),
+                              const SizedBox(width: 4),
+                              Text(isPro ? 'PRO' : 'FREE',
+                                  style: TextStyle(
+                                      color: badgeFg,
+                                      fontSize: 11,
+                                      fontWeight:
+                                          FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text('Tap to open PDF',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: secondary)),
+                      ],
+                    ),
                   ],
                 ),
               ),
+              const SizedBox(width: 6),
               Icon(Icons.chevron_right,
-                  size: 20,
-                  color:
-                      isDark ? const Color(0xFF475569) : secondary),
+                  size: 20, color: secondary),
             ],
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Staggered entrance — mirrors `FadeInDown.delay(i * 60).springify()`.
+class _Entrance extends StatefulWidget {
+  final int delayMs;
+  final Widget child;
+
+  const _Entrance({required this.delayMs, required this.child});
+
+  @override
+  State<_Entrance> createState() => _EntranceState();
+}
+
+class _EntranceState extends State<_Entrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final Animation<double> _opacity;
+  late final Animation<double> _dy;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 380));
+    _opacity = CurvedAnimation(parent: _c, curve: Curves.easeOut);
+    _dy = Tween<double>(begin: 24, end: 0).animate(
+        CurvedAnimation(parent: _c, curve: Curves.easeOut));
+    Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) _c.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, child) => Opacity(
+        opacity: _opacity.value,
+        child: Transform.translate(
+            offset: Offset(0, _dy.value), child: child),
+      ),
+      child: widget.child,
     );
   }
 }

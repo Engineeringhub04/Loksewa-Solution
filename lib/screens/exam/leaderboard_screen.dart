@@ -43,8 +43,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      // Never leak raw Firestore/API errors to the user. The only expected
+      // throw here is the missing-course setup message; anything else gets a
+      // generic friendly message.
+      final msg = '$e'.replaceFirst('Exception: ', '');
       setState(() {
-        _error = '$e'.replaceFirst('Exception: ', '');
+        _error = msg == 'Set up your course to see the leaderboard.'
+            ? msg
+            : 'Couldn\'t load the leaderboard right now. Please try again.';
         _loading = false;
       });
     }
@@ -159,7 +165,17 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     final order = [_rows.length > 1 ? _rows[1] : null,
         _rows.isNotEmpty ? _rows[0] : null,
         _rows.length > 2 ? _rows[2] : null];
-    final medals = ['🥈', '🥇', '🥉'];
+    // Medal colors (no emojis in UI): gold / silver / bronze.
+    const medalColors = [
+      Color(0xFF9AA5B1), // silver — 2nd
+      Color(0xFFF5B301), // gold — 1st
+      Color(0xFFCD7F32), // bronze — 3rd
+    ];
+    const medalInk = [
+      Color(0xFF3A4552),
+      Color(0xFF5C4300),
+      Color(0xFF5A3410),
+    ];
     final heights = [110.0, 150.0, 90.0];
     return SizedBox(
       height: 200,
@@ -204,8 +220,23 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ),
                   alignment: Alignment.topCenter,
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(medals[i],
-                      style: const TextStyle(fontSize: 22)),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: medalColors[i],
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.7),
+                          width: 2),
+                    ),
+                    alignment: Alignment.center,
+                    child: Text('${i == 0 ? 2 : i == 1 ? 1 : 3}',
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: medalInk[i])),
+                  ),
                 ),
               ],
             ),

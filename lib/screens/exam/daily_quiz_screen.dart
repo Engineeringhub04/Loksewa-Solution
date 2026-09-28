@@ -144,11 +144,19 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
         _startedAt = DateTime.now();
       });
       _startQuestionTimer(0);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      _block('Not available',
-          'Please check your connection and try again.');
+      _block('Not available', 'Couldn\'t load the test. ${_cleanErr('$e')}');
     }
+  }
+
+  /// Strips raw JSON/API dumps from an error so the UI never shows them.
+  String _cleanErr(String raw) {
+    var msg = raw.replaceFirst('Exception: ', '');
+    final jsonStart = msg.indexOf('{');
+    if (jsonStart >= 0) msg = msg.substring(0, jsonStart).trim();
+    if (msg.length > 160) msg = '${msg.substring(0, 160).trim()}…';
+    return msg.isEmpty ? 'Please try again.' : msg;
   }
 
   void _block(String title, String message) {

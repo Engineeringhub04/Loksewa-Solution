@@ -121,12 +121,15 @@ class ExamRest {
       'collectionId': collectionId,
     };
     final structured = <String, dynamic>{'from': [from]};
-    if (parent != null) structured['parent'] = parent;
+    // NOTE: `parent` is NOT a valid StructuredQuery field (Firestore returns
+    // 400 "Unknown name parent"). Like React's runQuery, the parent document
+    // path goes in the URL: .../documents/{parent}:runQuery.
     if (where != null) structured['where'] = where;
     if (orderBy != null) structured['orderBy'] = orderBy;
     structured['limit'] = limit;
+    final url = parent != null ? '$_base/$parent:runQuery' : '$_base:runQuery';
     final res = await http.post(
-      Uri.parse('$_base:runQuery'),
+      Uri.parse(url),
       headers: _headers(token),
       body: json.encode({'structuredQuery': structured}),
     );
@@ -141,13 +144,28 @@ class ExamRest {
         .toList();
   }
 
-  static Map<String, dynamic> fieldFilter(String field, String op, dynamic value) => {
-        'fieldFilter': {
-          'field': {'fieldPath': field},
-          'op': op,
-          'value': encode(value),
-        }
-      };
+  /// Operator aliases are normalized: '==' → 'EQUAL', '!=' → 'NOT_EQUAL',
+  /// '<' → 'LESS_THAN', '<=' → 'LESS_THAN_OR_EQUAL', '>' → 'GREATER_THAN',
+  /// '>=' → 'GREATER_THAN_OR_EQUAL'. Raw Firestore REST enum values pass
+  /// through unchanged.
+  static Map<String, dynamic> fieldFilter(String field, String op, dynamic value) {
+    const aliases = {
+      '==': 'EQUAL',
+      '!=': 'NOT_EQUAL',
+      '<': 'LESS_THAN',
+      '<=': 'LESS_THAN_OR_EQUAL',
+      '>': 'GREATER_THAN',
+      '>=': 'GREATER_THAN_OR_EQUAL',
+    };
+    final norm = aliases[op] ?? op;
+    return {
+      'fieldFilter': {
+        'field': {'fieldPath': field},
+        'op': norm,
+        'value': encode(value),
+      }
+    };
+  }
 
   static Map<String, dynamic> orderField(String field, String direction) => {
         'field': {'fieldPath': field},
@@ -560,16 +578,18 @@ Future<List<ExamRule>> fetchExamRules({
   }).toList();
 }
 
+/// Mirrors fetchAttemptsForSet in services/examHub.ts: list the whole
+/// subcollection (no query — avoids composite-index requirements), filter by
+/// examSetId client-side, sort by attemptNumber like React.
 Future<List<ExamAttempt>> fetchAttemptsForSet(
     String uid, String examSetId) async {
-  final docs = await ExamRest.runQuery(
-    'exam_attempts',
-    parent: 'users/$uid',
-    where: ExamRest.fieldFilter('examSetId', 'EQUAL', examSetId),
-    orderBy: [ExamRest.orderField('createdAt', 'DESCENDING')],
-    limit: 50,
-  );
-  return docs.map(ExamAttempt.fromMap).toList();
+  final docs = await ExamRest.listDocs('users/$uid/exam_attempts');
+  final attempts = docs
+      .map(ExamAttempt.fromMap)
+      .where((a) => a.examSetId == examSetId)
+      .toList()
+    ..sort((a, b) => a.attemptNumber.compareTo(b.attemptNumber));
+  return attempts;
 }
 
 /// Saves an attempt twice: private doc + public ranking row (best-effort).
@@ -617,24 +637,34 @@ Future<void> saveExamAttempt({
   } catch (_) {}
 }
 
-/// Best score per uid for a set, sorted score desc / time asc.
+/// Best score per uid for a set — mirrors fetchExamRankings in
+/// services/examHub.ts: filter on examSetId ONLY (a server-side orderBy on a
+/// different field would require a composite index), keep each uid's best row
+/// (higher score wins; ties broken by lower time), sort client-side.
 Future<List<RankingRow>> fetchExamRanking(String examSetId) async {
   final docs = await ExamRest.runQuery(
     'app_exam_rankings',
     where: ExamRest.fieldFilter('examSetId', 'EQUAL', examSetId),
-    orderBy: [
-      ExamRest.orderField('score', 'DESCENDING'),
-      ExamRest.orderField('timeTakenSeconds', 'ASCENDING'),
-    ],
-    limit: 100,
+    limit: 300,
   );
-  final rows = docs.map(RankingRow.fromMap).toList();
-  final seen = <String>{};
-  final best = <RankingRow>[];
-  for (final r in rows) {
-    if (seen.add(r.uid)) best.add(r);
+  final bestByUid = <String, RankingRow>{};
+  for (final d in docs) {
+    final row = RankingRow.fromMap(d);
+    if (row.uid.isEmpty) continue;
+    final existing = bestByUid[row.uid];
+    final better = existing == null ||
+        row.score > existing.score ||
+        (row.score == existing.score &&
+            row.timeTakenSeconds < existing.timeTakenSeconds);
+    if (better) bestByUid[row.uid] = row;
   }
-  return best;
+  final rows = bestByUid.values.toList()
+    ..sort((a, b) {
+      final s = b.score.compareTo(a.score);
+      if (s != 0) return s;
+      return a.timeTakenSeconds.compareTo(b.timeTakenSeconds);
+    });
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -955,8 +985,9 @@ class DailyTestModel {
         // creation day — mirrors dateKeyFromRaw() in services/dailyTest.ts.
         testDate: _dailyTestDateKey(m),
         questions: ((m['questions'] as List?) ?? [])
-            .map((q) =>
-                DailyTestQuestion.fromMap((q as Map).cast<String, dynamic>()))
+            .whereType<Map>()
+            .map((q) => DailyTestQuestion.fromMap(
+                q.map((k, v) => MapEntry('$k', v))))
             .toList(),
         category: _str(m['category'], 'medium'),
         perQuestionTimeSeconds: _num(m['perQuestionTimeSeconds'], 30),
@@ -1327,7 +1358,7 @@ Future<List<Map<String, dynamic>>> fetchSubjectChapters(
   final logical = canonicalCatalogSlug(subjectId);
   final docs = await ExamRest.runQuery(
     'app_subjects_chapter_details',
-    where: ExamRest.fieldFilter('course', '==', course),
+    where: ExamRest.fieldFilter('course', 'EQUAL', course),
     limit: 300,
   );
   final out = docs
@@ -1382,7 +1413,7 @@ Future<List<Map<String, dynamic>>> fetchSubjectUnits(
   final logical = canonicalCatalogSlug(subjectId);
   final docs = await ExamRest.runQuery(
     'app_subjects_units_details',
-    where: ExamRest.fieldFilter('course', '==', course),
+    where: ExamRest.fieldFilter('course', 'EQUAL', course),
     limit: 300,
   );
   final out = docs
@@ -1415,7 +1446,7 @@ Future<List<Map<String, dynamic>>> fetchUnitChapters(
   final targetUnit = canonicalCatalogSlug(unitId);
   final docs = await ExamRest.runQuery(
     'app_subjects_unit-chapters_details',
-    where: ExamRest.fieldFilter('course', '==', course),
+    where: ExamRest.fieldFilter('course', 'EQUAL', course),
     limit: 300,
   );
   final out = docs
@@ -1916,6 +1947,7 @@ class MainLeaderboardRow {
   final double percent;
   final int points;
   final int usageSeconds;
+  final int activityCount;
 
   MainLeaderboardRow({
     required this.id,
@@ -1926,6 +1958,7 @@ class MainLeaderboardRow {
     required this.percent,
     required this.points,
     required this.usageSeconds,
+    this.activityCount = 0,
   });
 
   factory MainLeaderboardRow.fromMap(Map<String, dynamic> m) =>
@@ -1938,20 +1971,54 @@ class MainLeaderboardRow {
         percent: _dbl(m['percent']),
         points: _num(m['points']),
         usageSeconds: _num(m['usageSeconds']),
+        activityCount: _num(m['activityCount']),
       );
 }
 
+/// Mirrors compareMainLeaderboardRows in services/mainLeaderboard.ts:
+/// points desc, then percent desc, then usageSeconds desc, then
+/// activityCount desc, then uid asc (stable order across refetches).
+int compareMainLeaderboardRows(MainLeaderboardRow a, MainLeaderboardRow b) {
+  if (b.points != a.points) return b.points.compareTo(a.points);
+  if (b.percent != a.percent) return b.percent.compareTo(a.percent);
+  if (b.usageSeconds != a.usageSeconds) {
+    return b.usageSeconds.compareTo(a.usageSeconds);
+  }
+  if (b.activityCount != a.activityCount) {
+    return b.activityCount.compareTo(a.activityCount);
+  }
+  return a.uid.compareTo(b.uid);
+}
+
+/// Mirrors fetchMainLeaderboard in services/mainLeaderboard.ts: filter on
+/// subcourseId ONLY and sort client-side. A server-side orderBy on a
+/// different field would require a composite index which does not exist in
+/// the project (the REST API fails the whole query instead of returning
+/// results). One row per uid: a stale duplicate from an older id scheme must
+/// not let the same person occupy two positions.
 Future<List<MainLeaderboardRow>> fetchMainLeaderboard(String subcourseId) async {
-  final docs = await ExamRest.runQuery(
-    'app_main_leaderboard',
-    where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-    orderBy: [
-      ExamRest.orderField('points', 'DESCENDING'),
-      ExamRest.orderField('percent', 'DESCENDING'),
-    ],
-    limit: 100,
-  );
-  return docs.map(MainLeaderboardRow.fromMap).toList();
+  if (subcourseId.isEmpty) return [];
+  try {
+    final docs = await ExamRest.runQuery(
+      'app_main_leaderboard',
+      where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
+      limit: 300,
+    );
+    final bestByUid = <String, MainLeaderboardRow>{};
+    for (final d in docs) {
+      final row = MainLeaderboardRow.fromMap(d);
+      if (row.uid.isEmpty) continue;
+      final existing = bestByUid[row.uid];
+      if (existing == null ||
+          compareMainLeaderboardRows(row, existing) < 0) {
+        bestByUid[row.uid] = row;
+      }
+    }
+    final rows = bestByUid.values.toList()..sort(compareMainLeaderboardRows);
+    return rows;
+  } catch (_) {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------

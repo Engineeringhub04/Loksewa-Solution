@@ -4,7 +4,6 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -234,7 +233,20 @@ class _AdditionalFeatureHomeScreenState
           SubpageHeader(title: titleEn),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(
+                            color: theme.colorScheme.primary),
+                        const SizedBox(height: 8),
+                        Text('Loading topics...',
+                            style: TextStyle(
+                                fontSize: 15,
+                                color: onCard.withValues(alpha: 0.6))),
+                      ],
+                    ),
+                  )
                 : _error != null
                     ? RefreshIndicator(
                         onRefresh: _load,
@@ -289,173 +301,265 @@ class _AdditionalFeatureHomeScreenState
     );
   }
 
+  /// Hero card — mirrors React AdditionalFeatureScreen exactly:
+  /// theme-aware surface (NOT hardcoded navy), primary icon tile,
+  /// count badge, weighted progress, and the Offline Access button.
   Widget _heroCard(String titleEn, String titleNp) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
+    final divider =
+        isDark ? const Color(0xFF263349) : const Color(0xFFE5EAF4);
+    final track =
+        isDark ? const Color(0xFF26314B) : const Color(0xFFE2E8F0);
+    final textPrimary =
+        isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final secondary =
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final primary =
+        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    final success =
+        isDark ? const Color(0xFF22C55E) : const Color(0xFF16A34A);
     final overall = _overallPercent;
-    return Card(
-      color: AppColors.navy,
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  width: 46,
-                  height: 46,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(widget.heroIcon,
-                      size: 26, color: Colors.white),
+    final disabled =
+        _downloading || _offlineComplete || _topics.isEmpty;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: surface,
+        border: Border.all(color: divider, width: 1),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        titleEn,
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold),
-                      ),
-                      if (titleNp.isNotEmpty)
-                        Text(
+                child: Icon(widget.heroIcon,
+                    size: 28, color: primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      titleEn,
+                      style: TextStyle(
+                          color: primary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 1),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      titleEn,
+                      style: TextStyle(
+                          color: textPrimary,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold),
+                    ),
+                    if (titleNp.isNotEmpty)
+                      Padding(
+                        padding:
+                            const EdgeInsets.only(top: 3),
+                        child: Text(
                           titleNp,
-                          style: const TextStyle(
-                              color: Color(0xFFD7E3FF), fontSize: 13),
+                          style: TextStyle(
+                              color: secondary, fontSize: 12),
                         ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                constraints:
+                    const BoxConstraints(minWidth: 48),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 7),
+                decoration: BoxDecoration(
+                  color: primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('$_topics.length',
+                        style: TextStyle(
+                            color: primary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold)),
+                    Text('Topics',
+                        style: TextStyle(
+                            color: secondary, fontSize: 12)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment:
+                MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Overall Practice Progress',
+                style: TextStyle(
+                    color: secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold),
+              ),
+              Text(
+                '$overall%',
+                style: TextStyle(
+                    color: success,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 7),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: overall / 100,
+              minHeight: 6,
+              backgroundColor: track,
+              valueColor:
+                  AlwaysStoppedAnimation<Color>(success),
+            ),
+          ),
+          const SizedBox(height: 17),
+          SizedBox(
+            width: double.infinity,
+            child: Material(
+              color: _offlineComplete
+                  ? success.withValues(alpha: 0.15)
+                  : primary,
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: disabled ? null : _downloadOffline,
+                child: Container(
+                  constraints:
+                      const BoxConstraints(minHeight: 47),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14),
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: _offlineComplete
+                            ? success.withValues(alpha: 0.55)
+                            : primary,
+                        width: 1),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.center,
+                    children: [
+                      if (_downloading)
+                        const SizedBox(
+                          width: 19,
+                          height: 19,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Colors.white),
+                        )
+                      else
+                        Icon(
+                            _offlineComplete
+                                ? Icons.check_circle_outline
+                                : Icons.download_outlined,
+                            size: 19,
+                            color: _offlineComplete
+                                ? success
+                                : Colors.white),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _offlineComplete
+                              ? 'Saved for offline access'
+                              : 'Offline Access',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: _offlineComplete
+                                  ? success
+                                  : Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      if (!_offlineComplete &&
+                          !_downloading) ...[
+                        const SizedBox(width: 8),
+                        const Icon(Icons.arrow_forward,
+                            size: 17, color: Colors.white),
+                      ],
                     ],
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    '${_topics.length} Topics',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 14),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  'Overall Practice Progress',
-                  style: TextStyle(
-                      color: Color(0xFFD7E3FF), fontSize: 13),
-                ),
-                Text(
-                  '$overall%',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: overall / 100,
-                minHeight: 8,
-                backgroundColor: Colors.white.withValues(alpha: 0.2),
-                valueColor: const AlwaysStoppedAnimation<Color>(
-                    Color(0xFF22C55E)),
               ),
             ),
-            const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: _offlineComplete
-                  ? Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF16A34A),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.check_circle,
-                              color: Colors.white, size: 18),
-                          SizedBox(width: 8),
-                          Text('Saved for offline access',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700)),
-                        ],
-                      ),
-                    )
-                  : ElevatedButton.icon(
-                      onPressed:
-                          _downloading ? null : _downloadOffline,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: AppColors.navy,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10)),
-                      ),
-                      icon: _downloading
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: AppColors.navy),
-                            )
-                          : const Icon(Icons.download_outlined,
-                              size: 18),
-                      label: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text('Offline Access',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w700)),
-                          Icon(Icons.chevron_right, size: 18),
-                        ],
-                      ),
-                    ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _infoCard() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(Icons.info_outline,
-                size: 20,
-                color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 10),
-            const Expanded(
-              child: Text(
-                'New questions are added over time. Tap Offline Access after 12:00 AM to refresh the downloaded copy.',
-                style: TextStyle(fontSize: 13, height: 1.45),
-              ),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary =
+        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    final textPrimary =
+        isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: primary.withValues(alpha: 0.047),
+        border: Border.all(
+            color: primary.withValues(alpha: 0.21), width: 1),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            decoration: BoxDecoration(
+              color: primary.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(10),
             ),
-          ],
-        ),
+            child: Icon(Icons.info_outline,
+                size: 22, color: primary),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'New questions are added from time to time. If new questions are available, please connect to the internet after 12:00 AM and tap \u201cOffline Access\u201d to update your offline questions.',
+              style: TextStyle(
+                  fontSize: 12,
+                  height: 19 / 12,
+                  color: textPrimary),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -463,6 +567,11 @@ class _AdditionalFeatureHomeScreenState
   Widget _topicCard(_Topic t, Color onCard) {
     final pct = _topicPercent(t);
     final icon = _topicIcon(t);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final primary =
+        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    final secondary =
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -484,11 +593,11 @@ class _AdditionalFeatureHomeScreenState
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: AppColors.navy.withValues(alpha: 0.1),
+                  color: primary.withValues(alpha: 0.16),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(icon,
-                    size: 24, color: AppColors.navy),
+                    size: 24, color: primary),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -497,11 +606,11 @@ class _AdditionalFeatureHomeScreenState
                   children: [
                     Text(
                       'TOPIC ${t.order.toString().padLeft(2, '0')}',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 0.8,
-                          color: AppColors.navy),
+                          color: primary),
                     ),
                     const SizedBox(height: 2),
                     Text(
@@ -546,7 +655,7 @@ class _AdditionalFeatureHomeScreenState
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, color: Colors.grey),
+              Icon(Icons.chevron_right, color: secondary),
             ],
           ),
         ),

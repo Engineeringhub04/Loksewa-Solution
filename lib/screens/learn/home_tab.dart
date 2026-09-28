@@ -28,10 +28,26 @@ class HomeTab extends StatefulWidget {
   State<HomeTab> createState() => _HomeTabState();
 }
 
-class _HomeTabState extends State<HomeTab> {
+class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   late Future<_HomeData> _future;
   final ScrollController _scrollController = ScrollController();
   final ValueNotifier<double> _scrollOffset = ValueNotifier(0);
+
+  // One-time splash→home entrance: header + content fade in with a gentle
+  // rise the first time home data arrives. HomeTab mounts exactly once per
+  // app launch (it stays alive in the tab IndexedStack), so this plays only
+  // for the splash→home landing — never on tab switches or refreshes.
+  late final AnimationController _entrance = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 480),
+  );
+  late final Animation<double> _entranceOpacity =
+      CurvedAnimation(parent: _entrance, curve: Curves.easeOut);
+  late final Animation<Offset> _entranceSlide =
+      Tween<Offset>(begin: const Offset(0, 0.035), end: Offset.zero).animate(
+    CurvedAnimation(parent: _entrance, curve: Curves.easeOut),
+  );
+  bool _entranceFired = false;
 
   @override
   void initState() {
@@ -44,6 +60,7 @@ class _HomeTabState extends State<HomeTab> {
 
   @override
   void dispose() {
+    _entrance.dispose();
     _scrollController.dispose();
     _scrollOffset.dispose();
     super.dispose();
@@ -61,8 +78,8 @@ class _HomeTabState extends State<HomeTab> {
     bool isPremium = false;
     if (user != null) {
       try {
-        final userDoc =
-            await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
+        final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
+            idToken: token);
         courseId = userDoc?['courseId'] as String?;
         subcourseId = userDoc?['subcourseId'] as String?;
         isPremium = _isPremiumActive(userDoc);
@@ -79,16 +96,14 @@ class _HomeTabState extends State<HomeTab> {
         try {
           final c = await FirestoreRest.getDocument('app_courses/$courseId',
               idToken: token);
-          courseName =
-              ((c?['name'] ?? c?['nameNe']) as String?)?.trim();
+          courseName = ((c?['name'] ?? c?['nameNe']) as String?)?.trim();
         } catch (_) {}
         if (subcourseId != null) {
           try {
             final sc = await FirestoreRest.getDocument(
                 'app_courses/$courseId/subcourses/$subcourseId',
                 idToken: token);
-            subcourseName =
-                ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim();
+            subcourseName = ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim();
           } catch (_) {}
           subcourseName ??= await _legacySubcourseName(token, subcourseId);
         }
@@ -234,9 +249,10 @@ class _HomeTabState extends State<HomeTab> {
         results[0].map((n) => {...n, '_source': 'personal'}).toList();
     final global = results[1]
         .where((n) => (n['segment'] ?? '').toString() != 'nonlogin')
-        .map((n) => {...n, '_source': 'global'}).toList();
-    final raw =
-        await PrefsService.getString('loksewa:notificationReadIds:${uid ?? 'guest'}');
+        .map((n) => {...n, '_source': 'global'})
+        .toList();
+    final raw = await PrefsService.getString(
+        'loksewa:notificationReadIds:${uid ?? 'guest'}');
     final Set<String> readIds = raw == null || raw.isEmpty
         ? <String>{}
         : (json.decode(raw) as List).map((e) => e.toString()).toSet();
@@ -266,7 +282,15 @@ class _HomeTabState extends State<HomeTab> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            // Brand-navy loading body, exactly like React (`ready ? … : '#03145C'`):
+            // splash → home reads as one continuous moment instead of a
+            // stark flash, and the header never renders half-faded over it.
+            return Container(
+              color: const Color(0xFF03145C),
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
+              ),
+            );
           }
           if (snap.hasError || !snap.hasData) {
             return Center(
@@ -290,148 +314,157 @@ class _HomeTabState extends State<HomeTab> {
           final bottomPad = MediaQuery.of(context).padding.bottom;
           final expandedH = topPad + HomeHeader.expandedHeightBase;
 
-          return Stack(
-            children: [
-              RefreshIndicator(
-                onRefresh: () async {
-                  setState(() => _future = _load());
-                  await _future;
-                },
-                child: ListView(
-                  controller: _scrollController,
-                  padding: EdgeInsets.only(
-                      top: expandedH, bottom: bottomPad + 96),
-                  children: [
-                    // Banner carousel.
-                    if (d.banners.isNotEmpty) ...[
-                      const SizedBox(height: ExpoSpacing.md),
-                      BannerCarousel(
-                        banners: d.banners
-                            .map(HomeBanner.fromMap)
-                            .toList(),
-                      ),
-                    ],
-                    // Question of the Day.
-                    const SizedBox(height: ExpoSpacing.sm),
-                    QuestionOfDayCard(
-                      status: d.qotdStatus,
-                      onPress: () =>
-                          context.push('/question-of-the-day'),
-                    ),
-                    // Subjects.
-                    _sectionHeaderRow(context, 'Subjects', '/subjects'),
-                    _subjectsRail(d),
-                    const SizedBox(height: ExpoSpacing.lg),
-                    // Quick Links.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: ExpoSpacing.screenPadding),
-                      child: _sectionTitle(context, 'Quick Links'),
-                    ),
-                    const SizedBox(height: ExpoSpacing.md),
-                    _quickLinksRow(),
-                    const SizedBox(height: ExpoSpacing.lg),
-                    // Additional Feature — 3x3.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: ExpoSpacing.screenPadding),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _sectionTitle(context, 'Additional Feature'),
+          // First data arrival: play the one-time splash→home entrance so
+          // header + content settle in together instead of popping.
+          if (!_entranceFired) {
+            _entranceFired = true;
+            _entrance.forward();
+          }
+
+          return FadeTransition(
+            opacity: _entranceOpacity,
+            child: SlideTransition(
+              position: _entranceSlide,
+              child: Stack(
+                children: [
+                  RefreshIndicator(
+                    onRefresh: () async {
+                      setState(() => _future = _load());
+                      await _future;
+                    },
+                    child: ListView(
+                      controller: _scrollController,
+                      padding: EdgeInsets.only(
+                          top: expandedH, bottom: bottomPad + 96),
+                      children: [
+                        // Banner carousel.
+                        if (d.banners.isNotEmpty) ...[
                           const SizedBox(height: ExpoSpacing.md),
-                          HomeGrid3<_LinkItem>(
-                            items: _additionalFeatures,
-                            keyOf: (e) => e.key,
-                            itemBuilder: (e, w) => GridButton(
-                              label: e.label,
-                              icon: e.icon,
-                              accentColor: const Color(0xFF7C3AED),
-                              width: w,
-                              onPress: () => context.push(e.route),
-                            ),
+                          BannerCarousel(
+                            banners: d.banners.map(HomeBanner.fromMap).toList(),
                           ),
                         ],
-                      ),
-                    ),
-                    const SizedBox(height: ExpoSpacing.lg),
-                    // Recent Notices.
-                    _sectionHeaderRow(
-                        context, 'Recent Notices', '/notices'),
-                    _noticesList(d),
-                    const SizedBox(height: ExpoSpacing.lg),
-                    // App Guide — 3x3.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: ExpoSpacing.screenPadding),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _sectionTitle(context, 'App Guide'),
-                          const SizedBox(height: ExpoSpacing.md),
-                          HomeGrid3<_LinkItem>(
-                            items: _appGuide,
-                            keyOf: (e) => e.key,
-                            itemBuilder: (e, w) => GridButton(
-                              label: e.label,
-                              icon: e.icon,
-                              accentColor: const Color(0xFF059669),
-                              width: w,
-                              onPress: () => context.push(e.route),
-                            ),
+                        // Question of the Day.
+                        const SizedBox(height: ExpoSpacing.sm),
+                        QuestionOfDayCard(
+                          status: d.qotdStatus,
+                          onPress: () => context.push('/question-of-the-day'),
+                        ),
+                        // Subjects.
+                        _sectionHeaderRow(context, 'Subjects', '/subjects'),
+                        _subjectsRail(d),
+                        const SizedBox(height: ExpoSpacing.lg),
+                        // Quick Links.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: ExpoSpacing.screenPadding),
+                          child: _sectionTitle(context, 'Quick Links'),
+                        ),
+                        const SizedBox(height: ExpoSpacing.md),
+                        _quickLinksRow(),
+                        const SizedBox(height: ExpoSpacing.lg),
+                        // Additional Feature — 3x3.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: ExpoSpacing.screenPadding),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _sectionTitle(context, 'Additional Feature'),
+                              const SizedBox(height: ExpoSpacing.md),
+                              HomeGrid3<_LinkItem>(
+                                items: _additionalFeatures,
+                                keyOf: (e) => e.key,
+                                itemBuilder: (e, w) => GridButton(
+                                  label: e.label,
+                                  icon: e.icon,
+                                  accentColor: const Color(0xFF7C3AED),
+                                  width: w,
+                                  onPress: () => context.push(e.route),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: ExpoSpacing.lg),
+                        // Recent Notices.
+                        _sectionHeaderRow(
+                            context, 'Recent Notices', '/notices'),
+                        _noticesList(d),
+                        const SizedBox(height: ExpoSpacing.lg),
+                        // App Guide — 3x3.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: ExpoSpacing.screenPadding),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _sectionTitle(context, 'App Guide'),
+                              const SizedBox(height: ExpoSpacing.md),
+                              HomeGrid3<_LinkItem>(
+                                items: _appGuide,
+                                keyOf: (e) => e.key,
+                                itemBuilder: (e, w) => GridButton(
+                                  label: e.label,
+                                  icon: e.icon,
+                                  accentColor: const Color(0xFF059669),
+                                  width: w,
+                                  onPress: () => context.push(e.route),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: ExpoSpacing.lg),
+                        // About Developer.
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: ExpoSpacing.screenPadding),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _sectionTitle(context, 'About Developer'),
+                              const SizedBox(height: ExpoSpacing.md),
+                              d.developer != null
+                                  ? DeveloperCard(
+                                      name:
+                                          '${d.developer!['name'] ?? 'Developer'}',
+                                      description: d.developer!['description']
+                                          as String?,
+                                      photoUrl: (d.developer!['photoUrl'] ??
+                                          d.developer!['photo']) as String?,
+                                      viewUrl:
+                                          d.developer!['viewUrl'] as String?,
+                                    )
+                                  : _emptyState(
+                                      context, 'Developer info coming soon'),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: ExpoSpacing.lg),
-                    // About Developer.
-                    Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: ExpoSpacing.screenPadding),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _sectionTitle(context, 'About Developer'),
-                          const SizedBox(height: ExpoSpacing.md),
-                          d.developer != null
-                              ? DeveloperCard(
-                                  name:
-                                      '${d.developer!['name'] ?? 'Developer'}',
-                                  description: d.developer!['description']
-                                      as String?,
-                                  photoUrl: (d.developer!['photoUrl'] ??
-                                          d.developer!['photo'])
-                                      as String?,
-                                  viewUrl: d.developer!['viewUrl']
-                                      as String?,
-                                )
-                              : _emptyState(
-                                  context, 'Developer info coming soon'),
-                        ],
-                      ),
+                  ),
+                  // Fixed collapsing header overlay.
+                  ValueListenableBuilder<double>(
+                    valueListenable: _scrollOffset,
+                    builder: (context, offset, _) => HomeHeader(
+                      scrollOffset: offset < 0 ? 0 : offset,
+                      displayName: user?.displayName ?? user?.email,
+                      photoURL: d.photoURL,
+                      pro: d.isPremium,
+                      notificationCount: d.notificationCount,
+                      courseName: d.courseName,
+                      subcourseName: d.subcourseName,
+                      onNotificationsPress: () =>
+                          context.push('/notifications'),
+                      onProfilePress: () => context.push('/profile'),
+                      onCoursePress: () =>
+                          context.push('/course-setup?mode=update'),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-              // Fixed collapsing header overlay.
-              ValueListenableBuilder<double>(
-                valueListenable: _scrollOffset,
-                builder: (context, offset, _) => HomeHeader(
-                  scrollOffset: offset < 0 ? 0 : offset,
-                  displayName: user?.displayName ?? user?.email,
-                  photoURL: d.photoURL,
-                  pro: d.isPremium,
-                  notificationCount: d.notificationCount,
-                  courseName: d.courseName,
-                  subcourseName: d.subcourseName,
-                  onNotificationsPress: () =>
-                      context.push('/notifications'),
-                  onProfilePress: () => context.push('/profile'),
-                  onCoursePress: () =>
-                      context.push('/course-setup?mode=update'),
-                ),
-              ),
-            ],
+            ),
           );
         },
       ),
@@ -509,8 +542,8 @@ class _HomeTabState extends State<HomeTab> {
   Widget _subjectsRail(_HomeData d) {
     if (d.subjects.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: ExpoSpacing.screenPadding),
+        padding:
+            const EdgeInsets.symmetric(horizontal: ExpoSpacing.screenPadding),
         child: _emptyState(context, 'No subjects yet.'),
       );
     }
@@ -530,14 +563,13 @@ class _HomeTabState extends State<HomeTab> {
       height: 130,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(
-            horizontal: ExpoSpacing.screenPadding),
+        padding:
+            const EdgeInsets.symmetric(horizontal: ExpoSpacing.screenPadding),
         itemCount: subjects.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final s = subjects[i];
-          final name =
-              '${s['nameNe'] ?? s['name'] ?? 'Subject'}';
+          final name = '${s['nameNe'] ?? s['name'] ?? 'Subject'}';
           final id = '${s['id']}';
           final isPro = s['pro'] == true;
           return SubjectCardColored(
@@ -554,9 +586,8 @@ class _HomeTabState extends State<HomeTab> {
                 context.push('/subjects');
                 return;
               }
-              context.push(hasUnits
-                  ? '/subjects/units/$id'
-                  : '/subjects/chapters/$id');
+              context.push(
+                  hasUnits ? '/subjects/units/$id' : '/subjects/chapters/$id');
             },
           );
         },
@@ -566,8 +597,8 @@ class _HomeTabState extends State<HomeTab> {
 
   Widget _quickLinksRow() {
     return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: ExpoSpacing.screenPadding),
+      padding:
+          const EdgeInsets.symmetric(horizontal: ExpoSpacing.screenPadding),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -586,14 +617,14 @@ class _HomeTabState extends State<HomeTab> {
   Widget _noticesList(_HomeData d) {
     if (d.notices.isEmpty) {
       return Padding(
-        padding: const EdgeInsets.symmetric(
-            horizontal: ExpoSpacing.screenPadding),
+        padding:
+            const EdgeInsets.symmetric(horizontal: ExpoSpacing.screenPadding),
         child: _emptyState(context, 'No notices yet.'),
       );
     }
     return Padding(
-      padding: const EdgeInsets.symmetric(
-          horizontal: ExpoSpacing.screenPadding),
+      padding:
+          const EdgeInsets.symmetric(horizontal: ExpoSpacing.screenPadding),
       child: Column(
         children: [
           for (int i = 0; i < d.notices.length; i++) ...[
@@ -602,8 +633,7 @@ class _HomeTabState extends State<HomeTab> {
               final n = d.notices[i];
               // Mirrors formatLatest: admin-typed Nepali date wins; blank
               // falls back to the publish instant rendered in English.
-              final dateLabel =
-                  (n['dateLabel'] ?? '').toString().trim();
+              final dateLabel = (n['dateLabel'] ?? '').toString().trim();
               String date = dateLabel;
               if (date.isEmpty) {
                 final p = n['publishedAt'];
@@ -615,10 +645,8 @@ class _HomeTabState extends State<HomeTab> {
                 title: '${n['title'] ?? 'Notice'}',
                 date: date,
                 kind: n['kind'] as String?,
-                description:
-                    (n['excerpt'] ?? n['description']) as String?,
-                onPress: () => context.push('/notice/${n['id']}',
-                    extra: n),
+                description: (n['excerpt'] ?? n['description']) as String?,
+                onPress: () => context.push('/notice/${n['id']}', extra: n),
               );
             }),
           ],
@@ -715,10 +743,7 @@ const _additionalFeatures = [
       icon: Icons.account_balance,
       route: '/constitution'),
   _LinkItem(
-      key: 'practice',
-      label: 'Practice',
-      icon: Icons.edit,
-      route: '/subjects'),
+      key: 'practice', label: 'Practice', icon: Icons.edit, route: '/subjects'),
   _LinkItem(
       key: 'gk',
       label: 'GK',

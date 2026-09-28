@@ -1,0 +1,215 @@
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'app_config.dart';
+import 'firestore_rest.dart';
+import 'prefs_service.dart';
+
+/// Firebase Identity Toolkit REST wrapper — mirrors src/core/firebase/auth.ts.
+/// Session is persisted in SharedPreferences (like the Expo app's session.ts).
+class AppUser {
+  final String uid;
+  final String? email;
+  final String? displayName;
+  final String? photoURL;
+
+  const AppUser({required this.uid, this.email, this.displayName, this.photoURL});
+
+  Map<String, dynamic> toJson() => {
+        'uid': uid,
+        'email': email,
+        'displayName': displayName,
+        'photoURL': photoURL,
+      };
+
+  factory AppUser.fromJson(Map<String, dynamic> json) => AppUser(
+        uid: json['uid'] as String,
+        email: json['email'] as String?,
+        displayName: json['displayName'] as String?,
+        photoURL: json['photoURL'] as String?,
+      );
+}
+
+class _Session {
+  final AppUser user;
+  final String idToken;
+  final String refreshToken;
+  final DateTime expiresAt;
+
+  _Session({
+    required this.user,
+    required this.idToken,
+    required this.refreshToken,
+    required this.expiresAt,
+  });
+
+  bool get isExpired => DateTime.now().isAfter(expiresAt.subtract(const Duration(minutes: 5)));
+
+  Map<String, dynamic> toJson() => {
+        'user': user.toJson(),
+        'idToken': idToken,
+        'refreshToken': refreshToken,
+        'expiresAt': expiresAt.toIso8601String(),
+      };
+
+  factory _Session.fromJson(Map<String, dynamic> json) => _Session(
+        user: AppUser.fromJson(json['user'] as Map<String, dynamic>),
+        idToken: json['idToken'] as String,
+        refreshToken: json['refreshToken'] as String,
+        expiresAt: DateTime.parse(json['expiresAt'] as String),
+      );
+}
+
+class AuthError implements Exception {
+  final String code;
+  AuthError(this.code);
+  @override
+  String toString() => code;
+}
+
+/// Identity Toolkit message -> auth/* code map (mirrors auth.ts ERROR_CODE_MAP).
+String _mapErrorCode(String raw) {
+  const map = {
+    'EMAIL_EXISTS': 'auth/email-already-in-use',
+    'EMAIL_NOT_FOUND': 'auth/invalid-credential',
+    'INVALID_PASSWORD': 'auth/invalid-credential',
+    'INVALID_LOGIN_CREDENTIALS': 'auth/invalid-credential',
+    'FEDERATED_USER_ID_ALREADY_LINKED': 'auth/account-exists-with-different-credential',
+    'USER_DISABLED': 'auth/user-disabled',
+    'WEAK_PASSWORD': 'auth/weak-password',
+    'TOO_MANY_ATTEMPTS_TRY_LATER': 'auth/too-many-requests',
+    'INVALID_EMAIL': 'auth/invalid-email',
+    'INVALID_OOB_CODE': 'auth/invalid-action-code',
+    'EXPIRED_OOB_CODE': 'auth/invalid-action-code',
+    'MISSING_OOB_CODE': 'auth/invalid-action-code',
+    'INVALID_CODE': 'auth/invalid-action-code',
+  };
+  return map[raw] ?? 'auth/unknown-error';
+}
+
+class AuthService {
+  static const _identityUrl = 'https://identitytoolkit.googleapis.com/v1/accounts';
+  static const _secureTokenUrl = 'https://securetoken.googleapis.com/v1/token';
+
+  static _Session? _session;
+
+  static Future<Map<String, dynamic>> _identityRequest(
+    String endpoint,
+    Map<String, dynamic> body,
+  ) async {
+    final res = await http.post(
+      Uri.parse('$_identityUrl:$endpoint?key=${AppConfig.firebaseApiKey}'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(body),
+    );
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200) {
+      final raw = (data['error'] as Map?)?['message'] as String? ?? 'UNKNOWN_ERROR';
+      throw AuthError(_mapErrorCode(raw));
+    }
+    return data;
+  }
+
+  static AppUser _toAppUser(Map<String, dynamic> res) => AppUser(
+        uid: res['localId'] as String,
+        email: res['email'] as String?,
+        displayName: res['displayName'] as String?,
+        photoURL: res['photoUrl'] as String?,
+      );
+
+  static Future<void> _storeSession(Map<String, dynamic> res, [AppUser? override]) async {
+    final user = override ?? _toAppUser(res);
+    final expiresIn = int.tryParse('${res['expiresIn'] ?? '3600'}') ?? 3600;
+    _session = _Session(
+      user: user,
+      idToken: res['idToken'] as String,
+      refreshToken: res['refreshToken'] as String,
+      expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
+    );
+    await PrefsService.setString(PrefsService.sessionKey, json.encode(_session!.toJson()));
+  }
+
+  /// Restore session from storage. Returns the user or null.
+  static Future<AppUser?> restoreSession() async {
+    final raw = await PrefsService.getString(PrefsService.sessionKey);
+    if (raw == null) return null;
+    try {
+      _session = _Session.fromJson(json.decode(raw) as Map<String, dynamic>);
+      if (_session!.isExpired) {
+        await _refreshToken();
+      }
+      return _session!.user;
+    } catch (_) {
+      await PrefsService.remove(PrefsService.sessionKey);
+      _session = null;
+      return null;
+    }
+  }
+
+  static Future<void> _refreshToken() async {
+    final refreshToken = _session?.refreshToken;
+    if (refreshToken == null) throw AuthError('auth/no-session');
+    final res = await http.post(
+      Uri.parse('$_secureTokenUrl?key=${AppConfig.firebaseApiKey}'),
+      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+      body: 'grant_type=refresh_token&refresh_token=${Uri.encodeComponent(refreshToken)}',
+    );
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200) throw AuthError('auth/session-expired');
+    final expiresIn = int.tryParse('${data['expires_in'] ?? '3600'}') ?? 3600;
+    _session = _Session(
+      user: _session!.user,
+      idToken: data['id_token'] as String,
+      refreshToken: data['refresh_token'] as String,
+      expiresAt: DateTime.now().add(Duration(seconds: expiresIn)),
+    );
+    await PrefsService.setString(PrefsService.sessionKey, json.encode(_session!.toJson()));
+  }
+
+  /// A valid (refreshed if needed) ID token for Firestore REST calls.
+  static Future<String> getValidIdToken() async {
+    if (_session == null) return '';
+    if (_session!.isExpired) {
+      await _refreshToken();
+    }
+    return _session!.idToken;
+  }
+
+  static AppUser? get currentUser => _session?.user;
+
+  static Future<AppUser> signInWithEmail(String email, String password) async {
+    final res = await _identityRequest('signInWithPassword', {
+      'email': email,
+      'password': password,
+      'returnSecureToken': true,
+    });
+    await _storeSession(res);
+    return _session!.user;
+  }
+
+  static Future<AppUser> signUpWithEmail(String email, String password) async {
+    final res = await _identityRequest('signUp', {
+      'email': email,
+      'password': password,
+      'returnSecureToken': true,
+    });
+    await _storeSession(res);
+    return _session!.user;
+  }
+
+  static Future<void> sendPasswordReset(String email) async {
+    await _identityRequest('sendOobCode', {
+      'requestType': 'PASSWORD_RESET',
+      'email': email,
+    });
+  }
+
+  static Future<void> logout() async {
+    final uid = _session?.user.uid;
+    _session = null;
+    await PrefsService.remove(PrefsService.sessionKey);
+    if (uid != null) {
+      // Release the one-device claim (best effort).
+      await FirestoreRest.deleteDocument('users/$uid/session/active').catchError((_) {});
+    }
+  }
+}

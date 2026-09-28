@@ -141,8 +141,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
             final m = _num(monthly.first['price']);
             final y = _num(yearly.first['price']);
             if (m > 0 && y > 0 && y < m * 12) {
-              yearlySave =
-                  'Save ${(((m * 12 - y) / (m * 12)) * 100).round()}% yearly';
+              yearlySave = 'Save ${(((m * 12 - y) / (m * 12)) * 100).round()}%';
             }
           }
 

@@ -68,13 +68,22 @@ class _NotesScreenState extends State<NotesScreen> {
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'My Notes'),
+          const SubpageHeader(title: 'Keep Notes'),
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('Loading Notes...'),
+                ],
+              ),
+            );
           }
           final notes = snap.data ?? [];
           if (notes.isEmpty) {
@@ -90,9 +99,8 @@ class _NotesScreenState extends State<NotesScreen> {
                         Icon(Icons.note_alt_outlined,
                             size: 64, color: Colors.grey),
                         SizedBox(height: 12),
-                        Text('No notes yet.',
-                            style: TextStyle(color: Colors.grey)),
-                        Text('Tap + to write your first note.',
+                        Text('No notes yet. Tap + to create one.',
+                            textAlign: TextAlign.center,
                             style: TextStyle(color: Colors.grey)),
                       ],
                     ),
@@ -135,7 +143,7 @@ class _NotesScreenState extends State<NotesScreen> {
                         Text(
                           ((n['title'] as String?)?.isNotEmpty == true)
                               ? n['title'] as String
-                              : 'Untitled',
+                              : 'Title',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
@@ -144,7 +152,7 @@ class _NotesScreenState extends State<NotesScreen> {
                         const SizedBox(height: 4),
                         Expanded(
                           child: Text((n['body'] as String?) ?? '',
-                              maxLines: 4,
+                              maxLines: 3,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 13)),
                         ),

@@ -35,6 +35,15 @@ class ExpoPalette {
   final Color textDisabled;
   final Color border;
   final Color divider;
+  // Theme tones (mirrors ThemeColors info/success/warning/error/accent in
+  // src/core/theme/tokens.ts — light takes the brand values, dark takes the
+  // lifted variants). Notice kind visuals resolve through these, never
+  // hardcoded hexes.
+  final Color info;
+  final Color success;
+  final Color warning;
+  final Color danger;
+  final Color accent;
 
   const ExpoPalette({
     required this.primary,
@@ -46,6 +55,11 @@ class ExpoPalette {
     required this.textDisabled,
     required this.border,
     required this.divider,
+    required this.info,
+    required this.success,
+    required this.warning,
+    required this.danger,
+    required this.accent,
   });
 
   static const light = ExpoPalette(
@@ -58,6 +72,11 @@ class ExpoPalette {
     textDisabled: Color(0xFF94A3B8),
     border: Color(0xFFE2E8F0),
     divider: Color(0xFFE5EAF4),
+    info: Color(0xFF2563EB),
+    success: Color(0xFF16A34A),
+    warning: Color(0xFFF59E0B),
+    danger: Color(0xFFDC2626),
+    accent: Color(0xFFF59E0B),
   );
 
   static const dark = ExpoPalette(
@@ -70,6 +89,11 @@ class ExpoPalette {
     textDisabled: Color(0xFF64748B),
     border: Color(0xFF263349),
     divider: Color(0xFF1F2937),
+    info: Color(0xFF60A5FA),
+    success: Color(0xFF22C55E),
+    warning: Color(0xFFF59E0B),
+    danger: Color(0xFFF87171),
+    accent: Color(0xFFF59E0B),
   );
 
   static ExpoPalette of(BuildContext context) =>
@@ -95,6 +119,7 @@ class ExpoRadius {
 
 /// Type scale from the Expo tokens.
 class ExpoType {
+  static const double h2 = 20;
   static const double h3 = 17;
   static const double bodyLarge = 16;
   static const double body = 14;

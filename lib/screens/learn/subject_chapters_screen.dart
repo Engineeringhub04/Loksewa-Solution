@@ -1,23 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../services/auth_service.dart';
+import '../../services/firestore_rest.dart';
+import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/app_toast.dart';
 
-/// Subject chapters — mirrors app/subjects/chapters/[subjectId].tsx.
-/// Summary card + progress ring + chapter cards with P/R/T mode tags;
-/// tapping a chapter opens a bottom sheet: Practice / Read / Theory.
+/// Subject chapters — exact port of app/subjects/chapters/[subjectId].tsx.
+/// Summary gradient card + progress ring + chapter cards with P/R/T tags;
+/// tapping a chapter opens the Practice / Read / Theory bottom sheet.
 class SubjectChaptersScreen extends StatefulWidget {
   final String subjectId;
   const SubjectChaptersScreen({super.key, required this.subjectId});
 
   @override
-  State<SubjectChaptersScreen> createState() => _SubjectChaptersScreenState();
+  State<SubjectChaptersScreen> createState() =>
+      _SubjectChaptersScreenState();
 }
 
 class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
-  late Future<_ChapterData> _future;
+  late Future<_ChapterPage> _future;
+  bool _ne = true; // language toggle: NE default, EN alternate (React)
+  Map<String, dynamic>? _premiumChapter;
+  Map<String, dynamic>? _sheetChapter;
 
   @override
   void initState() {
@@ -25,155 +30,95 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
     _future = _load();
   }
 
-  Future<_ChapterData> _load() async {
-    final token = await AuthService.getValidIdToken();
-    String? courseId;
-    String? subcourseId;
+  Future<_ChapterPage> _load() async {
     final user = AuthService.currentUser;
+    final token = await AuthService.getValidIdToken();
+    var courseId = 'civil-engineering';
+    var subcourseId = 'civil-assistant-sub-engineer';
+    bool isPremium = false;
     if (user != null) {
       try {
-        final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
+        final doc = await FirestoreRest.getDocument('users/${user.uid}',
             idToken: token);
-        courseId = userDoc?['courseId'] as String?;
-        subcourseId = userDoc?['subcourseId'] as String?;
+        courseId = (doc?['courseId'] as String?) ?? courseId;
+        subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
+        isPremium = _hasActivePremium(doc);
       } catch (_) {}
     }
-
     String subjectName = 'Subject';
+    bool subjectPro = false;
     try {
-      final subjectDoc = await FirestoreRest.getDocument(
+      final doc = await FirestoreRest.getDocument(
           'app_subjects_details/${widget.subjectId}',
           idToken: token);
-      subjectName = (subjectDoc?['nameNe'] as String?) ??
-          (subjectDoc?['name'] as String?) ??
-          subjectName;
+      subjectName = (doc?['name'] as String?) ?? subjectName;
+      subjectPro = doc?['pro'] == true;
     } catch (_) {}
-
-    final all = await FirestoreRest.listDocuments(
-        'app_subjects_chapter_details',
-        idToken: token,
-        pageSize: 200);
-    final chapters = all.where((c) {
-      if (c['isPublished'] == false) return false;
-      final subj = (c['subjectId'] as String?) ?? '';
-      if (_canon(subj) != _canon(widget.subjectId)) return false;
-      final unitId = c['unitId'] as String?;
-      if (unitId != null && unitId.isNotEmpty) return false;
-      final cc = c['courseId'] as String?;
-      final sc = c['subcourseId'] as String?;
-      if (courseId != null && cc != null && cc != courseId) return false;
-      if (subcourseId != null && sc != null && sc != subcourseId) {
-        return false;
-      }
-      return true;
-    }).toList();
-    chapters.sort((a, b) => _num(a['order']).compareTo(_num(b['order'])));
-
-    return _ChapterData(
+    final chapters = await fetchSubjectChaptersWithProgress(
+        courseId, subcourseId, widget.subjectId, user?.uid);
+    return _ChapterPage(
       subjectName: subjectName,
-      courseId: courseId ?? '',
-      subcourseId: subcourseId ?? '',
+      subjectPro: subjectPro,
+      courseId: courseId,
+      subcourseId: subcourseId,
       chapters: chapters,
+      isPremium: isPremium,
     );
   }
 
-  static String _canon(String v) {
-    final parts = v.split('__').where((p) => p.isNotEmpty).toList();
-    return parts.isNotEmpty ? parts.last : v;
+  static bool _hasActivePremium(Map<String, dynamic>? userDoc) {
+    final pro = userDoc?['pro'];
+    if (pro is bool) return pro;
+    if (pro is Map) {
+      final active = pro['active'];
+      if (active is bool) return active;
+      final exp = pro['expiresAt'];
+      if (exp is String) {
+        final dt = DateTime.tryParse(exp);
+        if (dt != null) return dt.isAfter(DateTime.now());
+      }
+    }
+    return false;
   }
 
-  static double _num(dynamic v) =>
-      v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
+  String _chapterName(Map<String, dynamic> c) =>
+      _ne ? '${c['nameNe'] ?? c['name']}' : '${c['name'] ?? c['nameNe']}';
 
-  void _showModeSheet(Map<String, dynamic> chapter, _ChapterData d) {
-    final chapterId = chapter['id'] as String;
-    final chapterName =
-        (chapter['nameNe'] as String?) ?? (chapter['name'] as String?) ?? '';
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(chapterName,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              const Text('Choose a study mode',
-                  style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 16),
-              _modeTile(
-                context,
-                Icons.quiz_outlined,
-                'Practice',
-                'MCQ questions with explanations',
-                Colors.blue,
-                () => _goMode('/subjects/practice', chapterId, chapterName, d),
-              ),
-              _modeTile(
-                context,
-                Icons.menu_book_outlined,
-                'Read',
-                'Question & answer format',
-                Colors.green,
-                () => _goMode('/subjects/read', chapterId, chapterName, d),
-              ),
-              _modeTile(
-                context,
-                Icons.description_outlined,
-                'Theory',
-                'Study notes & reference PDF',
-                AppColors.accent,
-                () => _goMode('/subjects/theory', chapterId, chapterName, d),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  String _chapterNameAlt(Map<String, dynamic> c) =>
+      _ne ? '${c['name']}' : '${c['nameNe'] ?? c['name']}';
+
+  /// Chapter progress attached by fetchSubjectChaptersWithProgress.
+  static int _pct(Map<String, dynamic> c) =>
+      (((c['progress'] as Map?)?['percentage']) as num?)?.toInt() ?? 0;
+
+  /// React: completed = progress.completed === true || percentage >= 100.
+  static bool _done(Map<String, dynamic> c) =>
+      ((c['progress'] as Map?)?['completed']) == true || _pct(c) >= 100;
+
+  void _onChapterTap(Map<String, dynamic> c, _ChapterPage d) {
+    final locked = c['pro'] == true && !d.isPremium;
+    if (locked) {
+      setState(() => _premiumChapter = c);
+      return;
+    }
+    setState(() => _sheetChapter = c);
   }
 
-  Widget _modeTile(BuildContext context, IconData icon, String title,
-      String subtitle, Color color, VoidCallback onTap) {
-    return ListTile(
-      leading: Container(
-        width: 44,
-        height: 44,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Icon(icon, color: color),
-      ),
-      title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-      onTap: () {
-        Navigator.pop(context);
-        onTap();
-      },
-    );
-  }
-
-  void _goMode(String route, String chapterId, String chapterName,
-      _ChapterData d) {
+  void _goMode(String route, Map<String, dynamic> c, _ChapterPage d) {
+    setState(() => _sheetChapter = null);
     final params = {
       'courseId': d.courseId,
       'subcourseId': d.subcourseId,
       'subjectId': widget.subjectId,
-      'chapterId': chapterId,
+      'chapterId': '${c['id']}',
+      'unitId': '',
       'subjectName': d.subjectName,
-      'chapterName': chapterName,
+      'chapterName': _chapterName(c),
+      'subjectPro': d.subjectPro ? 'true' : 'false',
+      'chapterPro': (c['pro'] == true) ? 'true' : 'false',
     };
     final qs = params.entries
-        .map((e) =>
-            '${e.key}=${Uri.encodeComponent(e.value)}')
+        .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
         .join('&');
     context.push('$route?$qs');
   }
@@ -183,125 +128,579 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Chapters'),
+          SubpageHeader(
+            title: 'Chapter',
+            actions: [
+              _LanguagePill(
+                ne: _ne,
+                onToggle: () => setState(() => _ne = !_ne),
+              ),
+            ],
+          ),
           Expanded(
-            child: FutureBuilder<_ChapterData>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError || !snap.hasData) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+            child: FutureBuilder<_ChapterPage>(
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError) {
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Failed to load chapters.'),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: () =>
+                              setState(() => _future = _load()),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                final d = snap.data!;
+                return Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: () async =>
+                          setState(() => _future = _load()),
+                      child: ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(
+                                left: 4, bottom: 8),
+                            child: Text(
+                              d.subjectName,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.6),
+                              ),
+                            ),
+                          ),
+                          _summaryCard(context, d),
+                          const SizedBox(height: 16),
+                          _listHeader(context, d),
+                          const SizedBox(height: 8),
+                          if (d.chapters.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Center(
+                                  child: Text('No chapters found for this subject.',
+                                      style: TextStyle(
+                                          color: Colors.grey))),
+                            )
+                          else
+                            ...d.chapters.map(
+                                (c) => _chapterCard(context, c, d)),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    ),
+                    if (_premiumChapter != null)
+                      _gateDialog(context, d, _premiumChapter!),
+                    if (_sheetChapter != null)
+                      _modeSheet(context, d, _sheetChapter!),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryCard(BuildContext context, _ChapterPage d) {
+    final total = d.chapters.length;
+    final avg = total == 0
+        ? 0
+        : (d.chapters.map(_pct).reduce((a, b) => a + b) / total).round();
+    final complete = d.chapters.where(_done).length;
+    final inProgress =
+        d.chapters.where((c) => _pct(c) > 0 && !_done(c)).length;
+    final premium = d.chapters.where((c) => c['pro'] == true).length;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -100,
+            right: -40,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -125,
+            left: -70,
+            child: Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF00002D).withValues(alpha: 0.16),
+              ),
+            ),
+          ),
+          Column(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text('Failed to load chapters.'),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () => setState(() => _future = _load()),
-                    child: const Text('Retry'),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          d.subjectName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Total Added Topics',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.78),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
+                  _ProgressRing(progress: avg),
                 ],
               ),
-            );
-          }
-          final d = snap.data!;
-          final progress =
-              d.chapters.isEmpty ? 0.0 : 0.0; // completed tracking lands later
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Card(
-                color: AppColors.navy,
-                child: Padding(
-                  padding: const EdgeInsets.all(18),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(d.subjectName,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 19,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            Text('${d.chapters.length} chapters',
-                                style: const TextStyle(
-                                    color: Colors.white70)),
-                          ],
-                        ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  _SummaryStat(
+                      icon: Icons.layers,
+                      label: 'Total Added Topics',
+                      value: total,
+                      accent: const Color(0xFFC7D9FF)),
+                  _SummaryStat(
+                      icon: Icons.check_circle,
+                      label: 'Complete',
+                      value: complete,
+                      accent: const Color(0xFFB8E1FF)),
+                  _SummaryStat(
+                      icon: Icons.show_chart,
+                      label: 'In Progress',
+                      value: inProgress,
+                      accent: const Color(0xFFC8F2DC)),
+                  _SummaryStat(
+                      icon: Icons.diamond,
+                      label: 'Premium',
+                      value: premium,
+                      accent: const Color(0xFFFFD2A6)),
+                ],
+              ),
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(19),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(19),
+                    onTap: () => showToast(
+                        context,
+                        'This feature will be available in the next update.',
+                        ToastVariant.info),
+                    child: Container(
+                      constraints: const BoxConstraints(minHeight: 38),
+                      padding: const EdgeInsets.symmetric(horizontal: 13),
+                      alignment: Alignment.center,
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.analytics,
+                              size: 17, color: Color(0xFF0C2D91)),
+                          SizedBox(width: 6),
+                          Text('View Practice Analytics',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF0C2D91))),
+                        ],
                       ),
-                      SizedBox(
-                        width: 56,
-                        height: 56,
-                        child: CircularProgressIndicator(
-                          value: progress,
-                          backgroundColor: Colors.white24,
-                          valueColor: const AlwaysStoppedAnimation<Color>(
-                              Colors.amber),
-                          strokeWidth: 6,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
-              if (d.chapters.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Center(
-                      child: Text('No chapters found.',
-                          style: TextStyle(color: Colors.grey))),
-                )
-              else
-                ...d.chapters.map((c) {
-                  final name = (c['nameNe'] as String?) ??
-                      (c['name'] as String?) ??
-                      'Chapter';
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: ListTile(
-                      leading: Container(
-                        width: 44,
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: AppColors.navy.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          '${_num(c['order']).toInt()}',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.navy),
-                        ),
-                      ),
-                      title: Text(name,
-                          style:
-                              const TextStyle(fontWeight: FontWeight.w600)),
-                      subtitle: const Row(
-                        children: [
-                          _ModeTag(label: 'P', color: Colors.blue),
-                          _ModeTag(label: 'R', color: Colors.green),
-                          _ModeTag(label: 'T', color: AppColors.accent),
-                        ],
-                      ),
-                      trailing: const Icon(Icons.chevron_right,
-                          color: Colors.grey),
-                      onTap: () => _showModeSheet(c, d),
-                    ),
-                  );
-                }),
             ],
-          );
-        },
-      ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _listHeader(BuildContext context, _ChapterPage d) {
+    final total = d.chapters.length;
+    final avg = total == 0
+        ? 0
+        : (d.chapters.map(_pct).reduce((a, b) => a + b) / total).round();
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        const Text('Chapter',
+            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+        Text('$avg% Progress',
+            style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context)
+                    .colorScheme
+                    .onSurface
+                    .withValues(alpha: 0.6))),
+      ],
+    );
+  }
+
+  Widget _chapterCard(
+      BuildContext context, Map<String, dynamic> c, _ChapterPage d) {
+    final progress = _pct(c);
+    final isLocked = c['pro'] == true && !d.isPremium;
+    final isPurchased = c['pro'] == true && d.isPremium;
+    final order = '${c['order']}'.padLeft(2, '0');
+    final cardColor = Theme.of(context).cardColor;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: cardColor,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => _onChapterTap(c, d),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                  color: Theme.of(context)
+                      .dividerColor
+                      .withValues(alpha: 0.6)),
+              boxShadow: const [
+                BoxShadow(
+                    color: Color(0x0D0F172A),
+                    blurRadius: 8,
+                    offset: Offset(0, 3)),
+              ],
+            ),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(13),
+                        color: isLocked
+                            ? const Color(0xFFFFF0DE)
+                            : isPurchased
+                                ? const Color(0xFFD1FAE5)
+                                : const Color(0xFFE7EEFF),
+                      ),
+                      child: Text(order,
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: isLocked
+                                  ? const Color(0xFFB45309)
+                                  : isPurchased
+                                      ? const Color(0xFF047857)
+                                      : const Color(0xFF0C2D91))),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(_chapterName(c),
+                              style: const TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis),
+                          Text(_chapterNameAlt(c),
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6)),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        ],
+                      ),
+                    ),
+                    if (c['pro'] == true)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 5),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: isPurchased
+                              ? const Color(0xFFD1FAE5)
+                              : const Color(0xFFFFF0DE),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                                isPurchased
+                                    ? Icons.check_circle
+                                    : Icons.lock,
+                                size: 12,
+                                color: isPurchased
+                                    ? const Color(0xFF047857)
+                                    : const Color(0xFFB45309)),
+                            const SizedBox(width: 4),
+                            Text(
+                                isPurchased
+                                    ? 'Purchased (Active)'
+                                    : 'Premium',
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: isPurchased
+                                        ? const Color(0xFF047857)
+                                        : const Color(0xFFB45309))),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 13),
+                Row(
+                  children: [
+                    const _ModeTag(
+                        label: 'P',
+                        bg: Color(0xFFE7EEFF),
+                        fg: Color(0xFF0C2D91)),
+                    const SizedBox(width: 9),
+                    const _ModeTag(
+                        label: 'R',
+                        bg: Color(0xFFE7F7F0),
+                        fg: Color(0xFF047857)),
+                    const SizedBox(width: 9),
+                    const _ModeTag(
+                        label: 'T',
+                        bg: Color(0xFFFFF0DE),
+                        fg: Color(0xFFB45309)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$progress% Progress',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6))),
+                          const SizedBox(height: 4),
+                          Container(
+                            height: 5,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(3),
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .surfaceContainerHighest,
+                            ),
+                            child: FractionallySizedBox(
+                              alignment: Alignment.centerLeft,
+                              widthFactor: progress / 100,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius:
+                                      BorderRadius.circular(3),
+                                  color: progress >= 100
+                                      ? const Color(0xFF059669)
+                                      : const Color(0xFF2563EB),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                        isLocked
+                            ? Icons.lock_outline
+                            : Icons.chevron_right,
+                        size: 18,
+                        color: isLocked
+                            ? const Color(0xFFB45309)
+                            : Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.5)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _gateDialog(
+      BuildContext context, _ChapterPage d, Map<String, dynamic> c) {
+    return _PremiumGate(
+      itemName: _chapterName(c),
+      title: 'Premium Chapter',
+      message:
+          'An active subscription is required to access this chapter.',
+      onConfirm: () {
+        setState(() => _premiumChapter = null);
+        context.push('/subscription');
+      },
+      onCancel: () => setState(() => _premiumChapter = null),
+    );
+  }
+
+  Widget _modeSheet(
+      BuildContext context, _ChapterPage d, Map<String, dynamic> c) {
+    return GestureDetector(
+      onTap: () => setState(() => _sheetChapter = null),
+      child: Container(
+        color: const Color(0x6B0F172A),
+        child: Align(
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              padding: const EdgeInsets.all(22),
+              decoration: BoxDecoration(
+                color: Theme.of(context).cardColor,
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(28),
+                  topRight: Radius.circular(28),
+                ),
+              ),
+              child: SafeArea(
+                top: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 44,
+                        height: 5,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(3),
+                          color: const Color(0xFFCBD5E1),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(_chapterName(c),
+                        style: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 4),
+                    Text('Free',
+                        style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurface
+                                .withValues(alpha: 0.6))),
+                    const SizedBox(height: 18),
+                    _ModeButton(
+                      icon: Icons.play_circle_outline,
+                      label: 'Practice Mode',
+                      color: const Color(0xFF1D4ED8),
+                      primary: true,
+                      onTap: () => _goMode('/subjects/practice', c, d),
+                    ),
+                    const SizedBox(height: 10),
+                    _ModeButton(
+                      icon: Icons.book_outlined,
+                      label: 'Read Mode',
+                      color: const Color(0xFF1D4ED8),
+                      onTap: () => _goMode('/subjects/read', c, d),
+                    ),
+                    const SizedBox(height: 10),
+                    _ModeButton(
+                      icon: Icons.school_outlined,
+                      label: 'Theory Mode',
+                      color: const Color(0xFF1D4ED8),
+                      onTap: () => _goMode('/subjects/theory', c, d),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LanguagePill extends StatelessWidget {
+  final bool ne;
+  final VoidCallback onToggle;
+  const _LanguagePill({required this.ne, required this.onToggle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onToggle,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 64),
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.language,
+                  size: 18, color: Colors.white),
+              const SizedBox(width: 4),
+              // React shows the language it switches TO: ne -> "EN", en -> "नेपाली"
+              Text(ne ? 'EN' : 'नेपाली',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -309,35 +708,257 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
 
 class _ModeTag extends StatelessWidget {
   final String label;
-  final Color color;
-  const _ModeTag({required this.label, required this.color});
+  final Color bg;
+  final Color fg;
+  const _ModeTag(
+      {required this.label, required this.bg, required this.fg});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(right: 4, top: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      width: 25,
+      height: 25,
+      alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(8),
+        color: bg,
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+              fontSize: 11, fontWeight: FontWeight.bold, color: fg)),
     );
   }
 }
 
-class _ChapterData {
+class _ModeButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool primary;
+  final VoidCallback onTap;
+
+  const _ModeButton(
+      {required this.icon,
+      required this.label,
+      required this.color,
+      this.primary = false,
+      required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(icon, size: 18, color: primary ? Colors.white : color),
+        const SizedBox(width: 8),
+        Text(label,
+            style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: primary ? Colors.white : color)),
+      ],
+    );
+    if (primary) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: color,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14)),
+          ),
+          onPressed: onTap,
+          child: content,
+        ),
+      );
+    }
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: color,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ),
+        onPressed: onTap,
+        child: content,
+      ),
+    );
+  }
+}
+
+class _PremiumGate extends StatelessWidget {
+  final String? itemName;
+  final String title;
+  final String message;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  const _PremiumGate(
+      {this.itemName,
+      required this.title,
+      required this.message,
+      required this.onConfirm,
+      required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.5),
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock, size: 40, color: Color(0xFF9A3412)),
+              const SizedBox(height: 12),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(message, textAlign: TextAlign.center),
+              if (itemName != null) ...[
+                const SizedBox(height: 6),
+                Text(itemName!,
+                    style:
+                        const TextStyle(fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1D4ED8),
+                      foregroundColor: Colors.white),
+                  onPressed: onConfirm,
+                  child: const Text('Go To Subscription Plan'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(onPressed: onCancel, child: const Text('Close')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProgressRing extends StatelessWidget {
+  final int progress;
+  const _ProgressRing({required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 78,
+      height: 78,
+      child: CustomPaint(
+        painter: _RingPainter(progress / 100, const Color(0xFFFFD2A6)),
+        child: Center(
+          child: Text('$progress%',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold)),
+        ),
+      ),
+    );
+  }
+}
+
+class _RingPainter extends CustomPainter {
+  final double value;
+  final Color color;
+  _RingPainter(this.value, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 8
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white.withValues(alpha: 0.2);
+    canvas.drawCircle(size.center(Offset.zero), 35, paint);
+    paint.color = color;
+    canvas.drawArc(
+        Rect.fromCircle(center: size.center(Offset.zero), radius: 35),
+        -3.14159265 / 2,
+        2 * 3.14159265 * value.clamp(0.0, 1.0),
+        false,
+        paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _RingPainter old) =>
+      old.value != value || old.color != color;
+}
+
+class _SummaryStat extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int value;
+  final Color accent;
+
+  const _SummaryStat(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: accent,
+          ),
+          child: Icon(icon, size: 15, color: const Color(0xFF0C2D91)),
+        ),
+        const SizedBox(height: 4),
+        Text('$value',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.bold)),
+        Text(label,
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 10),
+            textAlign: TextAlign.center),
+      ],
+    );
+  }
+}
+
+class _ChapterPage {
   final String subjectName;
+  final bool subjectPro;
   final String courseId;
   final String subcourseId;
   final List<Map<String, dynamic>> chapters;
+  final bool isPremium;
 
-  const _ChapterData({
+  const _ChapterPage({
     required this.subjectName,
+    required this.subjectPro,
     required this.courseId,
     required this.subcourseId,
-    this.chapters = const [],
+    required this.chapters,
+    required this.isPremium,
   });
 }

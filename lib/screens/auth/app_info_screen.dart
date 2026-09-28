@@ -25,7 +25,7 @@ class AppInfoScreen extends StatelessWidget {
   static const _socials = [
     ('Facebook', 'https://www.facebook.com/profile.php?id=61580182268110'),
     ('YouTube', 'https://www.youtube.com/loksewasolution0'),
-    ('Instagram', 'https://www.instagram.com/loksewasolution'),
+    ('Instagram', 'https://www.instagram.com/loksewasolution?igsh=dmtlc3Zza2F1Y2xr&utm_source=qr'),
     ('X', 'https://x.com/loksewa_soln'),
   ];
 
@@ -147,7 +147,7 @@ class AppInfoScreen extends StatelessWidget {
               ListTile(
                 leading: const Icon(Icons.description_outlined,
                     color: AppColors.navy),
-                title: const Text('Terms & Conditions'),
+                title: const Text('Terms and Conditions'),
                 trailing: const Icon(Icons.chevron_right),
                 contentPadding: EdgeInsets.zero,
                 onTap: () => context.push('/terms-conditions'),
@@ -156,7 +156,7 @@ class AppInfoScreen extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           const Text(
-            'Made for Nepali students 🇳🇵',
+            'Made for Nepali students',
             style: TextStyle(color: Colors.grey, fontSize: 12),
             textAlign: TextAlign.center,
           ),

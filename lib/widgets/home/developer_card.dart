@@ -160,33 +160,12 @@ class DeveloperCard extends StatelessWidget {
                     ],
                     // NOTE: external portfolio links need url_launcher
                     // (not a current dependency), so the button is
-                    // intentionally non-navigating for now.
+                    // intentionally non-navigating for now. Pressing still
+                    // gives the 0.85 opacity feedback — the visual result of
+                    // the Expo card's pressed-opacity.
                     if (viewUrl != null && viewUrl!.isNotEmpty) ...[
                       const SizedBox(height: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(999),
-                          color: const Color(0xFF38BDF8),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'Visit Portfolio',
-                              style: TextStyle(
-                                color: Color(0xFF0F172A),
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 6),
-                            Icon(Icons.arrow_forward,
-                                size: 14, color: Color(0xFF0F172A)),
-                          ],
-                        ),
-                      ),
+                      _PortfolioButton(viewUrl: viewUrl!),
                     ],
                   ],
                 ),
@@ -204,4 +183,57 @@ class DeveloperCard extends StatelessWidget {
         child: const Icon(Icons.person,
             size: 36, color: Colors.white70),
       );
+}
+
+/// The "Visit Portfolio" pill with the Expo card's press feedback: the
+/// button drops to 0.85 opacity while pressed. It stays non-navigating —
+/// external links need url_launcher, which is not a dependency (flagged in
+/// the final report).
+class _PortfolioButton extends StatefulWidget {
+  final String viewUrl;
+  const _PortfolioButton({required this.viewUrl});
+
+  @override
+  State<_PortfolioButton> createState() => _PortfolioButtonState();
+}
+
+class _PortfolioButtonState extends State<_PortfolioButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: () {},
+      child: Opacity(
+        opacity: _pressed ? 0.85 : 1.0,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: const Color(0xFF38BDF8),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Visit Portfolio',
+                style: TextStyle(
+                  color: Color(0xFF0F172A),
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              SizedBox(width: 6),
+              Icon(Icons.arrow_forward,
+                  size: 14, color: Color(0xFF0F172A)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

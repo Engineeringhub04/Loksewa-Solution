@@ -47,9 +47,14 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
     }
   }
 
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
   String _date(DateTime? dt) {
     if (dt == null) return '';
-    return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+    return '${_months[dt.month - 1]} ${dt.day}, ${dt.year}';
   }
 
   @override
@@ -60,7 +65,16 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
           const SubpageHeader(title: 'Exam History'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text('Loading Exam History...'),
+                ],
+              ),
+            )
           : _error != null
               ? Center(
                   child: Column(
@@ -78,8 +92,11 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text('No attempts yet.'),
+                          const Text("You haven't taken any tests yet."),
                           const SizedBox(height: 12),
+                          // The Flutter router has no exam-tab route (router is
+                          // read-only), so this lands on the home tabs shell,
+                          // matching React's "start a mock test" intent.
                           ElevatedButton(
                             onPressed: () => context.go('/'),
                             child: const Text('Start a Mock Test'),
@@ -94,6 +111,9 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
                         itemCount: _attempts.length,
                         itemBuilder: (c, i) {
                           final a = _attempts[i];
+                          final scoreStr = a.score == a.score.roundToDouble()
+                              ? a.score.toInt().toString()
+                              : a.score.toStringAsFixed(2);
                           final pct = a.totalMarks > 0
                               ? (a.score / a.totalMarks * 100).round()
                               : 0;
@@ -101,7 +121,7 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
                             child: ListTile(
                               title: Text(a.examTitle),
                               subtitle: Text(
-                                  '${_date(a.submittedAt)} · ${a.correctCount}/${a.totalMarks} correct'),
+                                  '${_date(a.submittedAt)} · Score: $scoreStr/${a.totalMarks}'),
                               trailing: Text('$pct%',
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold,

@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../services/auth_service.dart';
+import '../../services/firestore_rest.dart';
+import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/home/subject_card_colored.dart';
 
-/// Subjects list — mirrors app/subjects/index.tsx.
-/// Journey gradient card + 2-column subject grid, filtered by the
-/// user's enrolled course/subcourse.
+/// Subjects list — exact port of app/subjects/index.tsx.
+/// Journey gradient card + measured 2-column grid of SubjectCardColored.
 class SubjectsScreen extends StatefulWidget {
   const SubjectsScreen({super.key});
 
@@ -16,7 +16,20 @@ class SubjectsScreen extends StatefulWidget {
 }
 
 class _SubjectsScreenState extends State<SubjectsScreen> {
-  late Future<List<Map<String, dynamic>>> _future;
+  late Future<_SubjectPage> _future;
+  Map<String, dynamic>? _premiumSubject;
+
+  static const _colors = [
+    Color(0xFF2563EB),
+    Color(0xFF7C3AED),
+    Color(0xFF059669),
+    Color(0xFFEA580C),
+  ];
+  static const _icons = [
+    Icons.public_outlined,
+    Icons.work_outline,
+    Icons.build_outlined,
+  ];
 
   @override
   void initState() {
@@ -24,174 +37,469 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     _future = _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
-    final token = await AuthService.getValidIdToken();
-    String? courseId;
-    String? subcourseId;
+  Future<_SubjectPage> _load() async {
     final user = AuthService.currentUser;
+    final token = await AuthService.getValidIdToken();
+    var courseId = 'civil-engineering';
+    var subcourseId = 'civil-assistant-sub-engineer';
+    var courseName = 'Civil Engineering';
+    var subcourseName = 'Civil Assistant Sub Engineer';
+    bool isPremium = false;
     if (user != null) {
       try {
-        final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
+        final doc = await FirestoreRest.getDocument('users/${user.uid}',
             idToken: token);
-        courseId = userDoc?['courseId'] as String?;
-        subcourseId = userDoc?['subcourseId'] as String?;
+        courseId = (doc?['courseId'] as String?) ?? courseId;
+        subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
+        isPremium = _hasActivePremium(doc);
       } catch (_) {}
     }
-    final all = await FirestoreRest.listDocuments('app_subjects_details',
-        idToken: token, pageSize: 100);
-    final filtered = all.where((s) {
-      if (s['isPublished'] == false) return false;
-      final c = s['courseId'] as String?;
-      final sc = s['subcourseId'] as String?;
-      if (courseId != null && c != null && c != courseId) return false;
-      if (subcourseId != null && sc != null && sc != subcourseId) {
-        return false;
-      }
-      return true;
-    }).toList();
-    filtered.sort((a, b) => _num(a['order']).compareTo(_num(b['order'])));
-    return filtered;
+    try {
+      final cDoc = await FirestoreRest.getDocument('app_courses/$courseId',
+          idToken: token);
+      courseName = (cDoc?['name'] as String?) ?? courseName;
+    } catch (_) {}
+    try {
+      final scDoc = await FirestoreRest.getDocument(
+          'app_courses/$courseId/subcourses/$subcourseId',
+          idToken: token);
+      subcourseName = (scDoc?['name'] as String?) ?? subcourseName;
+    } catch (_) {}
+    final subjects = await fetchSubjectDetails(courseId, subcourseId);
+    SubjectLearningStats stats =
+        const SubjectLearningStats(complete: 0, inProgress: 0);
+    if (user != null && subjects.isNotEmpty) {
+      try {
+        stats = await fetchSubjectLearningStats(
+          uid: user.uid,
+          courseId: courseId,
+          subcourseId: subcourseId,
+          subjectIds: subjects.map((s) => '${s['id']}').toList(),
+        );
+      } catch (_) {}
+    }
+    return _SubjectPage(
+      courseId: courseId,
+      subcourseId: subcourseId,
+      courseName: courseName,
+      subcourseName: subcourseName,
+      subjects: subjects,
+      complete: stats.complete,
+      inProgress: stats.inProgress,
+      isPremium: isPremium,
+    );
   }
 
-  static double _num(dynamic v) =>
-      v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
+  static bool _hasActivePremium(Map<String, dynamic>? userDoc) {
+    final pro = userDoc?['pro'];
+    if (pro is bool) return pro;
+    if (pro is Map) {
+      final active = pro['active'];
+      if (active is bool) return active;
+      final exp = pro['expiresAt'];
+      if (exp is String) {
+        final dt = DateTime.tryParse(exp);
+        if (dt != null) return dt.isAfter(DateTime.now());
+      }
+    }
+    return false;
+  }
 
-  bool _isTechnical(Map<String, dynamic> s) =>
-      s['technical'] == true ||
-      (s['category'] as String? ?? '').contains('प्राविधिक') ||
-      (s['category'] as String? ?? '').toLowerCase().contains('technical');
+  void _handleSubjectAction(Map<String, dynamic> s, _SubjectPage d) {
+    final id = '${s['id']}';
+    final name = '${s['name'] ?? 'Subject'}';
+    final key = '$id $name'.toLowerCase();
+    final hasUnits =
+        key.contains('technical') || key.contains('प्राविधिक');
+    final pro = s['pro'] == true;
+    if (pro && !d.isPremium && !hasUnits) {
+      setState(() => _premiumSubject = s);
+      return;
+    }
+    context.push(hasUnits
+        ? '/subjects/units/$id'
+        : '/subjects/chapters/$id');
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Subjects'),
+          const SubpageHeader(title: 'All Subjects'),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Failed to load subjects.'),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () => setState(() => _future = _load()),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            );
-          }
-          final subjects = snap.data ?? [];
-          return RefreshIndicator(
-            onRefresh: () async => setState(() => _future = _load()),
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [AppColors.navy, AppColors.deepNavy],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Your Learning Journey',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold)),
-                      SizedBox(height: 6),
-                      Text(
-                          'Pick a subject and start practicing, reading or studying theory.',
-                          style: TextStyle(color: Colors.white70)),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                if (subjects.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(
-                        child: Text('No subjects found for your course.',
-                            style: TextStyle(color: Colors.grey))),
-                  )
-                else
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    mainAxisSpacing: 12,
-                    crossAxisSpacing: 12,
-                    childAspectRatio: 1.1,
-                    children: subjects.map((s) {
-                      final name = (s['nameNe'] as String?) ??
-                          (s['name'] as String?) ??
-                          'Subject';
-                      return InkWell(
-                        onTap: () {
-                          final id = s['id'] as String;
-                          context.push(_isTechnical(s)
-                              ? '/subjects/units/$id'
-                              : '/subjects/chapters/$id');
-                        },
-                        borderRadius: BorderRadius.circular(14),
-                        child: Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            border:
-                                Border.all(color: Colors.grey.shade300),
-                            color: Colors.white,
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              CircleAvatar(
-                                radius: 24,
-                                backgroundColor:
-                                    AppColors.navy.withValues(alpha: 0.1),
-                                child: Text(
-                                  name.isNotEmpty ? name[0] : 'S',
-                                  style: const TextStyle(
-                                      fontSize: 22,
-                                      fontWeight: FontWeight.bold,
-                                      color: AppColors.navy),
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(name,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600)),
-                            ],
-                          ),
+            child: FutureBuilder<_SubjectPage>(
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snap.hasError) {
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Failed to load subjects.'),
+                        const SizedBox(height: 8),
+                        ElevatedButton(
+                          onPressed: () =>
+                              setState(() => _future = _load()),
+                          child: const Text('Retry'),
                         ),
-                      );
-                    }).toList(),
-                  ),
-              ],
+                      ],
+                    ),
+                  );
+                }
+                final d = snap.data!;
+                final premiumCount =
+                    d.subjects.where((s) => s['pro'] == true).length;
+                return Stack(
+                  children: [
+                    RefreshIndicator(
+                      onRefresh: () async =>
+                          setState(() => _future = _load()),
+                      child: ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          _journeyCard(d, premiumCount),
+                          const SizedBox(height: 16),
+                          if (d.subjects.isEmpty)
+                            const Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Center(
+                                  child: Text('Content coming soon',
+                                      style:
+                                          TextStyle(color: Colors.grey))),
+                            )
+                          else
+                            LayoutBuilder(
+                              builder: (context, constraints) {
+                                final cardWidth =
+                                    ((constraints.maxWidth - 12) / 2)
+                                        .floorToDouble();
+                                return Wrap(
+                                  spacing: 12,
+                                  runSpacing: 12,
+                                  children: [
+                                    for (var i = 0;
+                                        i < d.subjects.length;
+                                        i++)
+                                      SubjectCardColored(
+                                        name:
+                                            '${d.subjects[i]['name'] ?? 'Subject'}',
+                                        icon: _icons[i % _icons.length],
+                                        backgroundColor:
+                                            _colors[i % _colors.length],
+                                        premium:
+                                            d.subjects[i]['pro'] == true,
+                                        premiumLabel: 'Premium',
+                                        purchased:
+                                            d.subjects[i]['pro'] == true &&
+                                                d.isPremium,
+                                        purchasedLabel:
+                                            'Purchased (Active)',
+                                        footerLabel: 'View Chapter',
+                                        width: cardWidth,
+                                        height: 150,
+                                        onPress: () =>
+                                            _handleSubjectAction(
+                                                d.subjects[i], d),
+                                        onFooterPress: () =>
+                                            _handleSubjectAction(
+                                                d.subjects[i], d),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    ),
+                    if (_premiumSubject != null)
+                      _PremiumGateDialog(
+                        itemName:
+                            '${_premiumSubject!['name'] ?? 'Subject'}',
+                        title: 'Premium Subject',
+                        message:
+                            'A subscription is required to access this premium subject.',
+                        onConfirm: () {
+                          setState(() => _premiumSubject = null);
+                          context.push('/subscription');
+                        },
+                        onCancel: () =>
+                            setState(() => _premiumSubject = null),
+                      ),
+                  ],
+                );
+              },
             ),
-          );
-        },
-      ),
           ),
         ],
       ),
     );
   }
+
+  Widget _journeyCard(_SubjectPage d, int premiumCount) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(28),
+        gradient: const LinearGradient(
+          colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x470C2D91),
+              blurRadius: 16,
+              offset: Offset(0, 8)),
+        ],
+      ),
+      child: Stack(
+        children: [
+          Positioned(
+            top: -100,
+            right: -40,
+            child: Container(
+              width: 170,
+              height: 170,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -125,
+            left: -70,
+            child: Container(
+              width: 180,
+              height: 180,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: const Color(0xFF00002D).withValues(alpha: 0.16),
+              ),
+            ),
+          ),
+          Column(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Your Progress Overview',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.15,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${d.subjects.length} subjects available',
+                          style: const TextStyle(
+                              color: Color(0xFFD6E2FF), fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    constraints: const BoxConstraints(maxWidth: 168),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 11, vertical: 8),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      color: const Color(0xFF9A3412),
+                    ),
+                    child: Text(
+                      '${d.courseName} • ${d.subcourseName}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  _JourneyStat(
+                      icon: Icons.check_circle,
+                      label: 'Complete',
+                      value: d.complete,
+                      accent: const Color(0xFFC7D9FF)),
+                  const SizedBox(width: 10),
+                  _JourneyStat(
+                      icon: Icons.show_chart,
+                      label: 'In Progress',
+                      value: d.inProgress,
+                      accent: const Color(0xFFB8E1FF)),
+                  const SizedBox(width: 10),
+                  _JourneyStat(
+                      icon: Icons.diamond,
+                      label: 'Premium',
+                      value: premiumCount,
+                      accent: const Color(0xFFFFD2A6)),
+                ],
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _JourneyStat extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int value;
+  final Color accent;
+
+  const _JourneyStat(
+      {required this.icon,
+      required this.label,
+      required this.value,
+      required this.accent});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(19),
+          color: const Color(0xFF6984CC).withValues(alpha: 0.58),
+          border: Border.all(
+              color: Colors.white.withValues(alpha: 0.09)),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: accent,
+                border: Border.all(
+                    color: accent.withValues(alpha: 0.8), width: 2),
+              ),
+              child:
+                  Icon(icon, size: 21, color: const Color(0xFF0C2D91)),
+            ),
+            const SizedBox(height: 6),
+            Text('$value',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    height: 1.7)),
+            const SizedBox(height: 2),
+            Text(label,
+                style: const TextStyle(
+                    color: Color(0xFFE2EAFF), fontSize: 11),
+                textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PremiumGateDialog extends StatelessWidget {
+  final String? itemName;
+  final String title;
+  final String message;
+  final VoidCallback onConfirm;
+  final VoidCallback onCancel;
+
+  const _PremiumGateDialog(
+      {this.itemName,
+      required this.title,
+      required this.message,
+      required this.onConfirm,
+      required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.5),
+      child: Center(
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 32),
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: Theme.of(context).cardColor,
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.lock, size: 40, color: Color(0xFF9A3412)),
+              const SizedBox(height: 12),
+              Text(title,
+                  style: const TextStyle(
+                      fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(message, textAlign: TextAlign.center),
+              if (itemName != null) ...[
+                const SizedBox(height: 6),
+                Text(itemName!,
+                    style:
+                        const TextStyle(fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center),
+              ],
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1D4ED8),
+                      foregroundColor: Colors.white),
+                  onPressed: onConfirm,
+                  child: const Text('Go To Subscription Plan'),
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextButton(onPressed: onCancel, child: const Text('Close')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SubjectPage {
+  final String courseId;
+  final String subcourseId;
+  final String courseName;
+  final String subcourseName;
+  final List<Map<String, dynamic>> subjects;
+  final int complete;
+  final int inProgress;
+  final bool isPremium;
+
+  const _SubjectPage({
+    required this.courseId,
+    required this.subcourseId,
+    required this.courseName,
+    required this.subcourseName,
+    required this.subjects,
+    required this.complete,
+    required this.inProgress,
+    required this.isPremium,
+  });
 }

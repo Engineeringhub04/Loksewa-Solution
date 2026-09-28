@@ -4,17 +4,21 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
+import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Notifications inbox — mirrors app/notifications.tsx.
+/// Notification inbox — mirrors app/notifications.tsx +
+/// src/core/firebase/services/notifications.ts.
 ///
-/// Merges the personal inbox (`users/{uid}/notifications`) with the global
-/// feed (`app_global_notification`, excluding `segment == 'nonlogin'`
-/// campaigns). Read state is tracked locally in SharedPreferences (the same
-/// approach the Expo app uses for global notifications) because the REST list
-/// API does not return document ids needed for server-side mark-read.
-/// Tapping a row opens the detail screen with the full payload passed along.
+/// Merges the personal inbox (`users/{uid}/notifications`, durable
+/// server-side `read` field) with the global feed (`app_global_notification`,
+/// `segment == 'nonlogin'` campaigns excluded, read state kept locally per
+/// account under `loksewa:globalNotificationReadIds:{uid}` — the exact key the
+/// Expo app uses). Admins additionally see derived report rows built from
+/// `app_report_history` (newest 30, read state shared with the global set).
+/// Rows sort newest-first by createdAt.
 class NotificationsScreen extends StatefulWidget {
   const NotificationsScreen({super.key});
 
@@ -22,222 +26,748 @@ class NotificationsScreen extends StatefulWidget {
   State<NotificationsScreen> createState() => _NotificationsScreenState();
 }
 
+class _Notif {
+  final String id;
+  final String? docId; // personal doc id — null for global/admin rows
+  final String title;
+  final String preview;
+  bool read;
+  final DateTime? createdAt;
+  final String? deepLink;
+  final String category;
+  final String? imageUrl;
+  final String source; // 'personal' | 'global'
+  final bool updatedNotice;
+
+  _Notif({
+    required this.id,
+    this.docId,
+    required this.title,
+    required this.preview,
+    required this.read,
+    this.createdAt,
+    this.deepLink,
+    required this.category,
+    this.imageUrl,
+    required this.source,
+    this.updatedNotice = false,
+  });
+}
+
+String _normalizeCategory(dynamic value) {
+  if (value == 'app') return 'App Notice';
+  if (value == 'user') return 'User / Personal';
+  if (value == 'other') return 'Other';
+  final s = (value ?? '').toString().trim();
+  return s.isEmpty ? 'App Notice' : s;
+}
+
+DateTime? _asDate(dynamic v) => v is DateTime ? v : null;
+
 class _NotificationsScreenState extends State<NotificationsScreen> {
-  late Future<List<Map<String, dynamic>>> _future;
-  Set<String> _readIds = {};
+  List<_Notif>? _items;
+  Object? _error;
+
+  String get _globalReadKey =>
+      'loksewa:globalNotificationReadIds:${AuthService.currentUser?.uid ?? 'guest'}';
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _load();
   }
 
-  String get _readKey =>
-      'loksewa:notificationReadIds:${AuthService.currentUser?.uid ?? 'guest'}';
-
-  String _itemKey(Map<String, dynamic> n) {
-    final created = n['createdAt'];
-    final ms = created is DateTime ? created.millisecondsSinceEpoch : 0;
-    return "${n['_source']}:${n['title']}:$ms";
+  Future<Set<String>> _getGlobalReadIds() async {
+    try {
+      final raw = await PrefsService.getString(_globalReadKey);
+      if (raw == null || raw.isEmpty) return {};
+      final List list = json.decode(raw);
+      return list.map((e) => e.toString()).toSet();
+    } catch (_) {
+      return {};
+    }
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
+  Future<void> _saveGlobalReadIds(Set<String> ids) async {
+    try {
+      await PrefsService.setString(_globalReadKey, json.encode(ids.toList()));
+    } catch (_) {
+      // Local read-state is best effort; a failed write only leaves the row unread.
+    }
+  }
+
+  Future<void> _load() async {
     final uid = AuthService.currentUser?.uid;
-    final idToken = await AuthService.getValidIdToken() ?? '';
+    if (uid == null) {
+      setState(() {
+        _items = [];
+        _error = null;
+      });
+      return;
+    }
+    try {
+      final token = await AuthService.getValidIdToken();
+      final profile =
+          await FirestoreRest.getDocument('users/$uid', idToken: token);
+      final isAdmin = profile?['isAdmin'] == true;
 
-    final results = await Future.wait([
-      uid == null
-          ? Future.value(<Map<String, dynamic>>[])
-          : FirestoreRest.listDocuments('users/$uid/notifications',
-              idToken: idToken),
-      FirestoreRest.listDocuments('app_global_notification',
-          idToken: idToken),
-    ]);
+      final results = await Future.wait([
+        FirestoreRest.listDocuments('users/$uid/notifications',
+            idToken: token),
+        FirestoreRest.listDocuments('app_global_notification',
+            idToken: token),
+        isAdmin
+            ? FirestoreRest.listDocuments('app_report_history',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
+        _getGlobalReadIds(),
+      ]);
 
-    final personal = results[0]
-        .map((n) => {...n, '_source': 'personal'})
-        .toList();
-    final global = results[1]
-        .where((n) => (n['segment'] ?? '').toString() != 'nonlogin')
-        .map((n) => {
-              ...n,
-              '_source': 'global',
-              // Mirror notifications.ts: global rows fall back through bodyLogin/body.
-              'preview': (n['preview'] ?? n['bodyLogin'] ?? n['body'] ?? '')
-                  .toString(),
-            })
-        .toList();
+      final personalRows = results[0] as List<Map<String, dynamic>>;
+      final globalRows = results[1] as List<Map<String, dynamic>>;
+      final reportRows = results[2] as List<Map<String, dynamic>>;
+      final readIds = results[3] as Set<String>;
 
-    final raw = await PrefsService.getString(_readKey);
-    final List stored = raw == null || raw.isEmpty ? [] : json.decode(raw);
-    _readIds = stored.map((e) => e.toString()).toSet();
+      final personal = personalRows
+          .map((row) => _Notif(
+                id: (row['id'] ?? '').toString(),
+                docId: (row['id'] ?? '').toString(),
+                title: (row['title'] ?? 'Notification').toString(),
+                preview: (row['preview'] ?? '').toString(),
+                read: row['read'] == true,
+                createdAt: _asDate(row['createdAt']),
+                deepLink: (row['deepLink'] as String?),
+                category: _normalizeCategory(row['category']),
+                imageUrl: (row['imageUrl'] as String?),
+                source: 'personal',
+                updatedNotice: row['updatedNotice'] == true,
+              ))
+          .toList();
 
-    final all = [...personal, ...global];
-    all.sort((a, b) {
-      final ca = a['createdAt'];
-      final cb = b['createdAt'];
-      final ta = ca is DateTime ? ca.millisecondsSinceEpoch : 0;
-      final tb = cb is DateTime ? cb.millisecondsSinceEpoch : 0;
-      return tb.compareTo(ta);
+      final global = globalRows
+          .where((row) => (row['segment'] ?? '').toString() != 'nonlogin')
+          .map((row) {
+        final docId = (row['id'] ?? '').toString();
+        final id = 'global:$docId';
+        return _Notif(
+          id: id,
+          title: (row['title'] ?? 'Notification').toString(),
+          // Mirrors notifications.ts: global rows fall back through bodyLogin/body.
+          preview: (row['preview'] ?? row['bodyLogin'] ?? row['body'] ?? '')
+              .toString(),
+          read: readIds.contains(id),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: (row['deepLink'] as String?),
+          category: _normalizeCategory(row['category']),
+          imageUrl: (row['imageUrl'] as String?),
+          source: 'global',
+          updatedNotice: row['updatedNotice'] == true,
+        );
+      }).toList();
+
+      // Admin-only derived report feed — mirrors fetchAdminReportNotifications.
+      final adminReports = reportRows
+          .map((row) {
+            final docId = (row['id'] ?? '').toString();
+            final id = 'adminreport:$docId';
+            final reporter =
+                (row['reporterName'] ?? 'A user').toString().trim();
+            final reporterName = reporter.isEmpty ? 'A user' : reporter;
+            final context = (row['contextLabel'] ?? '').toString().trim();
+            final reason = (row['reason'] ?? '').toString().trim();
+            final target = (row['targetTitle'] ?? '').toString().trim();
+            final status = (row['status'] ?? 'pending').toString();
+            final parts = <String>[
+              '$reporterName reported${reason.isNotEmpty ? ': $reason' : ' an issue'}.'
+            ];
+            if (target.isNotEmpty) parts.add('On: $target');
+            if (status != 'pending') parts.add('($status)');
+            return _Notif(
+              id: id,
+              title: context.isNotEmpty
+                  ? 'New report \u00b7 $context'
+                  : 'New report received',
+              preview: parts.join(' '),
+              read: readIds.contains(id),
+              createdAt: _asDate(row['createdAt']),
+              deepLink: '/admin/report-history/$docId',
+              category: 'New Report',
+              source: 'global',
+            );
+          })
+          .toList()
+        ..sort((a, b) => (b.createdAt?.millisecondsSinceEpoch ?? 0)
+            .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
+      final adminTop =
+          adminReports.length > 30 ? adminReports.sublist(0, 30) : adminReports;
+
+      final all = [...personal, ...global, ...adminTop];
+      all.sort((a, b) => (b.createdAt?.millisecondsSinceEpoch ?? 0)
+          .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
+
+      if (!mounted) return;
+      setState(() {
+        _items = all;
+        _error = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+      });
+    }
+  }
+
+  Future<void> _markRead(_Notif item) async {
+    if (item.read) return;
+    final uid = AuthService.currentUser?.uid;
+    setState(() => item.read = true);
+    if (uid == null) return;
+    try {
+      if (item.source == 'global') {
+        final ids = await _getGlobalReadIds();
+        ids.add(item.id);
+        await _saveGlobalReadIds(ids);
+      } else if (item.docId != null) {
+        // Durable server-side read — mirrors markNotificationRead's
+        // updateDocument('users/{uid}/notifications/{id}', { read: true }).
+        final token = await AuthService.getValidIdToken();
+        await FirestoreRest.updateDocument(
+            'users/$uid/notifications/${item.docId}', {'read': true},
+            idToken: token);
+      }
+    } catch (_) {
+      // Best effort — the row already looks read.
+    }
+  }
+
+  Future<void> _markAllRead() async {
+    final items = _items;
+    final uid = AuthService.currentUser?.uid;
+    if (items == null || uid == null) return;
+    if (!items.any((i) => !i.read)) return;
+    setState(() {
+      for (final i in items) {
+        i.read = true;
+      }
     });
-    return all;
+    showToast(context, 'All notifications marked as read', ToastVariant.success);
+    try {
+      final token = await AuthService.getValidIdToken();
+      final globalIds =
+          items.where((i) => i.source == 'global').map((i) => i.id).toList();
+      final ids = await _getGlobalReadIds();
+      ids.addAll(globalIds);
+      await _saveGlobalReadIds(ids);
+      // Mirrors markAllNotificationsRead: batched merge writes of
+      // { read: true } in chunks of 400 (chunking lives in commitWrites).
+      final writes = items
+          .where((i) => i.source == 'personal' && i.docId != null)
+          .map((i) => FirestoreWrite(
+              'users/$uid/notifications/${i.docId}', {'read': true},
+              merge: true))
+          .toList();
+      await FirestoreRest.commitWrites(writes, idToken: token);
+    } catch (_) {
+      // Best effort.
+    }
   }
 
-  Future<void> _markRead(Map<String, dynamic> n) async {
-    final key = _itemKey(n);
-    if (_readIds.contains(key)) return;
-    _readIds = {..._readIds, key};
-    await PrefsService.setString(_readKey, json.encode(_readIds.toList()));
-    setState(() {});
-  }
-
-  Future<void> _markAllRead(List<Map<String, dynamic>> items) async {
-    _readIds = {..._readIds, ...items.map(_itemKey)};
-    await PrefsService.setString(_readKey, json.encode(_readIds.toList()));
-    setState(() {});
+  void _open(_Notif item) {
+    _markRead(item);
+    context.push(
+      '/notification/${Uri.encodeComponent(item.id)}',
+      extra: {
+        'title': item.title,
+        'body': item.preview,
+        'category': item.category,
+        'imageUrl': item.imageUrl ?? '',
+        'deepLink': item.deepLink ?? '',
+        'updatedNotice': item.updatedNotice,
+        'createdAtMs': item.createdAt?.millisecondsSinceEpoch ?? 0,
+      },
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final items = _items;
+    final hasUnread = items?.any((i) => !i.read) ?? false;
     return Scaffold(
       body: Column(
         children: [
-          SubpageHeader(title: 'Notifications', actions: [
-          FutureBuilder<List<Map<String, dynamic>>>(
-            future: _future,
-            builder: (context, snap) => TextButton(
-              onPressed: (snap.hasData && snap.data!.isNotEmpty)
-                  ? () => _markAllRead(snap.data!)
-                  : null,
-              child: const Text('Mark all read',
-                  style: TextStyle(color: Colors.white)),
-            ),
+          SubpageHeader(
+            title: 'Notifications',
+            showThemeToggle: false,
+            actions: [
+              // Theme toggle first, then the mark-all pill — same order as
+              // the Expo rightSlot (which also uses gap 4 between them).
+              GestureDetector(
+                onTap: () => ThemeService.toggle(context),
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Theme.of(context).brightness == Brightness.dark
+                        ? Icons.light_mode_outlined
+                        : Icons.dark_mode_outlined,
+                    size: 20,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              _MarkAllButton(
+                  hasUnread: hasUnread, onTap: _markAllRead),
+            ],
           ),
-        ]),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
+            child: items == null && _error == null
+                ? _loadingState(context)
+                : _error != null && items == null
+                    ? _errorState(context)
+                    : RefreshIndicator(
+                        onRefresh: _load,
+                        child: items!.isEmpty
+                            ? ListView(
+                                physics:
+                                    const AlwaysScrollableScrollPhysics(),
+                                children: const [
+                                  SizedBox(height: 120),
+                                  _EmptyInbox(),
+                                ],
+                              )
+                            : ListView.builder(
+                                padding: const EdgeInsets.only(
+                                    top: 16, bottom: 32),
+                                itemCount: items.length,
+                                itemBuilder: (context, i) =>
+                                    _NotificationRow(
+                                  key: ValueKey(
+                                      '${items[i].source}:${items[i].id}'),
+                                  item: items[i],
+                                  onTap: () => _open(items[i]),
+                                ),
+                              ),
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _loadingState(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(color: palette.primary),
+          const SizedBox(height: 16),
+          Text('Loading Notifications...',
+              style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          Text('Checking your inbox',
+              style:
+                  TextStyle(color: palette.textSecondary, fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorState(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 64, color: palette.textDisabled),
+            const SizedBox(height: 12),
+            Text('Data Not Found',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text("We couldn't load this content. Please try again.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textSecondary, fontSize: 14)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: () {
+                setState(() {
+                  _error = null;
+                  _items = null;
+                });
+                _load();
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 18, vertical: 9),
+                decoration: BoxDecoration(
+                  color: palette.primary,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('Failed to load notifications:\n${snap.error}',
-                        textAlign: TextAlign.center),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: () => setState(() => _future = _load()),
-                      child: const Text('Retry'),
-                    ),
+                    Icon(Icons.refresh, size: 15, color: Colors.white),
+                    SizedBox(width: 6),
+                    Text('Try Again',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
                   ],
                 ),
               ),
-            );
-          }
-          final items = snap.data ?? [];
-          if (items.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(32),
-                child: Text(
-                  'No notifications yet.\nImportant updates will appear here.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The "Mark all read" pill — mirrors styles.markAllButton in
+/// app/notifications.tsx: height 36, paddingHorizontal 10, radius 10,
+/// rgba(255,255,255,0.2) fill + white 35% hairline border, checkmark-done
+/// 15px + 11px bold label (letterSpacing 0.1, maxWidth 78 so the pill never
+/// resizes). Dimmed to 0.45 when nothing is unread, 0.75 while pressed.
+class _MarkAllButton extends StatefulWidget {
+  final bool hasUnread;
+  final VoidCallback onTap;
+
+  const _MarkAllButton({required this.hasUnread, required this.onTap});
+
+  @override
+  State<_MarkAllButton> createState() => _MarkAllButtonState();
+}
+
+class _MarkAllButtonState extends State<_MarkAllButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Opacity(
+      opacity: !widget.hasUnread ? 0.45 : (_pressed ? 0.75 : 1.0),
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTap: widget.hasUnread ? widget.onTap : null,
+        child: Container(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.2),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.35),
+              width: 0.5,
+            ),
+          ),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.done_all,
+                  size: 15, color: Colors.white),
+              const SizedBox(width: 4),
+              ConstrainedBox(
+                constraints:
+                    const BoxConstraints(maxWidth: 78),
+                child: const Text(
+                  'Mark all read',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.1,
+                  ),
                 ),
               ),
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: () async => setState(() => _future = _load()),
-            child: ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: items.length,
-              itemBuilder: (context, i) {
-                final n = items[i];
-                final read = _readIds.contains(_itemKey(n));
-                final created = n['createdAt'];
-                return Card(
-                  color: read ? null : AppColors.navy.withValues(alpha: 0.05),
-                  child: ListTile(
-                    leading: n['imageUrl'] != null &&
-                            (n['imageUrl'] ?? '').toString().isNotEmpty
-                        ? ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.network(
-                              (n['imageUrl'] ?? '').toString(),
-                              width: 48,
-                              height: 48,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => const Icon(
-                                  Icons.notifications,
-                                  color: AppColors.navy),
-                            ),
-                          )
-                        : const Icon(Icons.notifications,
-                            color: AppColors.navy),
-                    title: Text(
-                      (n['title'] ?? 'Notification').toString(),
-                      style: TextStyle(
-                          fontWeight:
-                              read ? FontWeight.normal : FontWeight.bold),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyInbox extends StatelessWidget {
+  const _EmptyInbox();
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.inbox_outlined,
+              size: 64, color: palette.textDisabled),
+          const SizedBox(height: 12),
+          Text('No notifications yet',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  color: palette.textPrimary,
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
+IconData _categoryIcon(String category) {
+  final v = category.toLowerCase();
+  if (v.contains('course') || v.contains('class')) {
+    return Icons.school_outlined;
+  }
+  if (v.contains('mcq') || v.contains('test') || v.contains('exam')) {
+    return Icons.assignment_outlined;
+  }
+  // Before 'update': "Report Update" must show the flag, not the download glyph.
+  if (v.contains('report')) return Icons.flag_outlined;
+  if (v.contains('update') || v.contains('version')) {
+    return Icons.cloud_download_outlined;
+  }
+  if (v.contains('problem') || v.contains('maintenance')) {
+    return Icons.build_outlined;
+  }
+  if (v.contains('result') || v.contains('achievement')) {
+    return Icons.emoji_events_outlined;
+  }
+  if (v.contains('user') || v.contains('personal')) {
+    return Icons.person_outlined;
+  }
+  return Icons.notifications_outlined;
+}
+
+const _enMonths = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'
+];
+
+/// Mirrors formatTimeAgo in src/core/notifications/timeAgo.ts (English).
+String _timeAgo(DateTime? createdAt) {
+  if (createdAt == null) return '';
+  final diff = DateTime.now().difference(createdAt);
+  if (diff.isNegative) return 'Just now';
+  final mins = diff.inMinutes;
+  if (mins < 1) return 'Just now';
+  final hours = mins ~/ 60;
+  final days = hours ~/ 24;
+  // Older than a month → absolute date, en-GB style.
+  if (days > 30) {
+    return '${createdAt.day} ${_enMonths[createdAt.month - 1]} ${createdAt.year}';
+  }
+  final String time;
+  if (days >= 1) {
+    time = '${days}d';
+  } else if (hours >= 1) {
+    time = '${hours}h';
+  } else {
+    time = '${mins}m';
+  }
+  return '$time ago';
+}
+
+/// One inbox row — mirrors NotificationRow in
+/// src/components/cards/NotificationRow.tsx.
+class _NotificationRow extends StatefulWidget {
+  final _Notif item;
+  final VoidCallback onTap;
+
+  const _NotificationRow(
+      {super.key, required this.item, required this.onTap});
+
+  @override
+  State<_NotificationRow> createState() => _NotificationRowState();
+}
+
+class _NotificationRowState extends State<_NotificationRow> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    final item = widget.item;
+    final unread = !item.read;
+    final primary = palette.primary;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTap: widget.onTap,
+        child: Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(ExpoRadius.lg),
+            border: Border.all(
+              color: unread
+                  ? primary.withValues(alpha: 0x55 / 0xFF)
+                  : palette.divider,
+              width: 0.5,
+            ),
+            color: _pressed
+                ? palette.surfaceAlt
+                : unread
+                    ? primary.withValues(alpha: 0x10 / 0xFF)
+                    : palette.surface,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: primary.withValues(alpha: 0x1A / 0xFF),
                     ),
-                    subtitle: Column(
+                    alignment: Alignment.center,
+                    child: Icon(_categoryIcon(item.category),
+                        size: 20, color: primary),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text((n['preview'] ?? '').toString(),
-                            maxLines: 2, overflow: TextOverflow.ellipsis),
-                        const SizedBox(height: 4),
                         Row(
                           children: [
-                            if ((n['category'] ?? '').toString().isNotEmpty)
-                              Text((n['category'] ?? '').toString(),
-                                  style: const TextStyle(
-                                      fontSize: 11, color: Colors.grey)),
-                            if ((n['category'] ?? '').toString().isNotEmpty &&
-                                created is DateTime)
-                              const Text(' · ',
-                                  style: TextStyle(
-                                      fontSize: 11, color: Colors.grey)),
-                            if (created is DateTime)
-                              Text(
-                                  '${created.day}/${created.month}/${created.year}',
-                                  style: const TextStyle(
-                                      fontSize: 11, color: Colors.grey)),
-                            if (n['updatedNotice'] == true) ...[
-                              const SizedBox(width: 6),
-                              const Icon(Icons.update,
-                                  size: 14, color: AppColors.accent),
+                            Expanded(
+                              child: Text(
+                                item.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: palette.textPrimary,
+                                  fontSize: ExpoType.body,
+                                  fontWeight: unread
+                                      ? FontWeight.bold
+                                      : FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            if (unread) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: primary,
+                                ),
+                              ),
                             ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        if (item.preview.isNotEmpty)
+                          Text(
+                            item.preview,
+                            maxLines: 3,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: ExpoType.bodySmall,
+                              height: 18 / 12,
+                            ),
+                          ),
+                        const SizedBox(height: 7),
+                        Row(
+                          children: [
+                            if (item.category.isNotEmpty)
+                              Text(
+                                item.category,
+                                style: TextStyle(
+                                  color: primary,
+                                  fontSize: ExpoType.caption,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            if (item.updatedNotice) ...[
+                              if (item.category.isNotEmpty)
+                                const SizedBox(width: 9),
+                              Text(
+                                'Updated Notice',
+                                style: TextStyle(
+                                  color: primary,
+                                  fontSize: ExpoType.caption,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                            Builder(builder: (_) {
+                              final ts = _timeAgo(item.createdAt);
+                              if (ts.isEmpty) {
+                                return const SizedBox.shrink();
+                              }
+                              return Expanded(
+                                child: Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    ts,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
+                                      fontSize: ExpoType.caption,
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }),
                           ],
                         ),
                       ],
                     ),
-                    trailing: read
-                        ? null
-                        : const Icon(Icons.circle,
-                            size: 10, color: AppColors.accent),
-                    onTap: () {
-                      _markRead(n);
-                      context.push('/notification/${Uri.encodeComponent(_itemKey(n))}',
-                          extra: n);
-                    },
                   ),
-                );
-              },
-            ),
-          );
-        },
-      ),
+                ],
+              ),
+              if (item.imageUrl != null && item.imageUrl!.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(ExpoRadius.md),
+                    child: Container(
+                      color: palette.surfaceAlt,
+                      child: Image.network(
+                        item.imageUrl!,
+                        width: double.infinity,
+                        height: 150,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                            const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

@@ -259,31 +259,22 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
           const Card(
             child: Column(
               children: [
-                ListTile(
-                  leading:
-                      Icon(Icons.mail_outline, color: AppColors.navy),
-                  title: Text('Email us',
-                      style: TextStyle(fontSize: 13, color: Colors.grey)),
-                  subtitle: Text('contact@kbr.com.np',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                _ContactRow(
+                  icon: Icons.mail_outline,
+                  label: 'Email us',
+                  value: 'contact@kbr.com.np',
                 ),
                 Divider(height: 1, indent: 16),
-                ListTile(
-                  leading:
-                      Icon(Icons.call_outlined, color: AppColors.navy),
-                  title: Text('Call us',
-                      style: TextStyle(fontSize: 13, color: Colors.grey)),
-                  subtitle: Text('+977-9810768297',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                _ContactRow(
+                  icon: Icons.call_outlined,
+                  label: 'Call us',
+                  value: '+977-9810768297',
                 ),
                 Divider(height: 1, indent: 16),
-                ListTile(
-                  leading:
-                      Icon(Icons.language, color: AppColors.navy),
-                  title: Text('Visit our website',
-                      style: TextStyle(fontSize: 13, color: Colors.grey)),
-                  subtitle: Text('kbr.com.np',
-                      style: TextStyle(fontWeight: FontWeight.w600)),
+                _ContactRow(
+                  icon: Icons.language,
+                  label: 'Visit our website',
+                  value: 'kbr.com.np',
                 ),
               ],
             ),
@@ -383,6 +374,54 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
       trailing:
           const Icon(Icons.chevron_right, color: Colors.grey),
       onTap: onTap,
+    );
+  }
+}
+
+/// A contact row — mirrors the contact rows in app/settings/help-center.tsx:
+/// primary-tinted icon box, label above the value, open icon on the right.
+class _ContactRow extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  const _ContactRow(
+      {required this.icon, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.navy.withValues(alpha: 0.09),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child:
+                Icon(icon, size: 19, color: AppColors.navy),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.grey)),
+                const SizedBox(height: 2),
+                Text(value,
+                    style: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.w600)),
+              ],
+            ),
+          ),
+          const Icon(Icons.open_in_new,
+              size: 17, color: Colors.grey),
+        ],
+      ),
     );
   }
 }

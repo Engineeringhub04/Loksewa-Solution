@@ -103,6 +103,11 @@ class SubpageHeader extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (actions != null) ...actions!,
+                // The empty balancing box only applies when the screen adds
+                // no actions of its own: with custom actions (e.g. the
+                // notifications mark-all pill, which replaces the whole
+                // right slot like Expo's rightSlot) a phantom box would
+                // render visibly at the far right.
                 if (showThemeToggle)
                   GestureDetector(
                     onTap: () => ThemeService.toggle(context),
@@ -116,7 +121,7 @@ class SubpageHeader extends StatelessWidget {
                       ),
                     ),
                   )
-                else
+                else if (actions == null)
                   _iconBox(),
               ],
             ),

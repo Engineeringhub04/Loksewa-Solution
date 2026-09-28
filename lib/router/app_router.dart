@@ -111,72 +111,60 @@ import '../screens/admin/admin_subscription_detail_screen.dart';
 String? _qp(GoRouterState s, String key) => s.uri.queryParameters[key];
 
 /// Full route table — mirrors the Expo app/ directory 1:1.
-
-/// Slide-in page transition shared by every route: the new page slides in
-/// from the right (300ms, ease-out) on push/go, and slides back on pop.
-CustomTransitionPage<void> _slidePage(ValueKey<String> key, Widget child) {
-  return CustomTransitionPage<void>(
-    key: key,
-    child: child,
-    transitionDuration: const Duration(milliseconds: 300),
-    reverseTransitionDuration: const Duration(milliseconds: 300),
-    transitionsBuilder: (context, animation, secondaryAnimation, child) {
-      final tween = Tween<Offset>(
-        begin: const Offset(1.0, 0.0),
-        end: Offset.zero,
-      ).chain(CurveTween(curve: Curves.easeOut));
-      return SlideTransition(
-        position: animation.drive(tween),
-        child: child,
-      );
-    },
-  );
-}
-
 final appRouter = GoRouter(
   initialLocation: '/splash',
   routes: [
-    GoRoute(path: '/splash', pageBuilder: (_, state) => _slidePage(state.pageKey, const SplashScreen())),
-    GoRoute(path: '/', pageBuilder: (_, state) => _slidePage(state.pageKey, const TabsScreen())),
+    GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
+    GoRoute(path: '/', builder: (_, __) => const TabsScreen()),
     GoRoute(
-        path: '/onboarding', pageBuilder: (_, state) => _slidePage(state.pageKey, const OnboardingScreen())),
+        path: '/onboarding', builder: (_, __) => const OnboardingScreen()),
 
     // ---- Auth ----
-    GoRoute(path: '/login', pageBuilder: (_, state) => _slidePage(state.pageKey, const LoginScreen())),
-    GoRoute(path: '/signup', pageBuilder: (_, state) => _slidePage(state.pageKey, const SignupScreen())),
+    GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+    GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
     GoRoute(
-        path: '/forgot-password', pageBuilder: (_, state) => _slidePage(state.pageKey, const ForgotPasswordScreen())),
+        path: '/forgot-password',
+        builder: (_, __) => const ForgotPasswordScreen()),
     GoRoute(
-        path: '/reset-password', pageBuilder: (_, state) => _slidePage(state.pageKey, const ResetPasswordScreen())),
+        path: '/reset-password',
+        builder: (_, __) => const ResetPasswordScreen()),
     GoRoute(
-        path: '/blocking/maintenance', pageBuilder: (_, state) => _slidePage(state.pageKey, const MaintenanceScreen())),
+        path: '/blocking/maintenance',
+        builder: (_, __) => const MaintenanceScreen()),
     GoRoute(
-        path: '/blocking/no-internet', pageBuilder: (_, state) => _slidePage(state.pageKey, const NoInternetScreen())),
+        path: '/blocking/no-internet',
+        builder: (_, __) => const NoInternetScreen()),
 
     // ---- Static / info ----
-    GoRoute(path: '/about', pageBuilder: (_, state) => _slidePage(state.pageKey, const AboutScreen())),
-    GoRoute(path: '/app-info', pageBuilder: (_, state) => _slidePage(state.pageKey, const AppInfoScreen())),
+    GoRoute(path: '/about', builder: (_, __) => const AboutScreen()),
+    GoRoute(path: '/app-info', builder: (_, __) => const AppInfoScreen()),
     GoRoute(
-        path: '/contact-us', pageBuilder: (_, state) => _slidePage(state.pageKey, const ContactUsScreen())),
+        path: '/contact-us', builder: (_, __) => const ContactUsScreen()),
     GoRoute(
-        path: '/privacy-policy', pageBuilder: (_, state) => _slidePage(state.pageKey, const PrivacyPolicyScreen())),
+        path: '/privacy-policy',
+        builder: (_, __) => const PrivacyPolicyScreen()),
     GoRoute(
-        path: '/terms-conditions', pageBuilder: (_, state) => _slidePage(state.pageKey, const TermsConditionsScreen())),
+        path: '/terms-conditions',
+        builder: (_, __) => const TermsConditionsScreen()),
     GoRoute(
         path: '/terms-of-service',
         redirect: (_, __) => '/terms-conditions'),
     GoRoute(
-        path: '/delete-account', pageBuilder: (_, state) => _slidePage(state.pageKey, const DeleteAccountScreen())),
-    GoRoute(path: '/feedback', pageBuilder: (_, state) => _slidePage(state.pageKey, const FeedbackScreen())),
+        path: '/delete-account',
+        builder: (_, __) => const DeleteAccountScreen()),
+    GoRoute(path: '/feedback', builder: (_, __) => const FeedbackScreen()),
     GoRoute(
-        path: '/settings/help-center', pageBuilder: (_, state) => _slidePage(state.pageKey, const HelpCenterScreen())),
+        path: '/settings/help-center',
+        builder: (_, __) => const HelpCenterScreen()),
     GoRoute(
-        path: '/help-center', pageBuilder: (_, state) => _slidePage(state.pageKey, const HelpCenterScreen())),
-    GoRoute(path: '/help', pageBuilder: (_, state) => _slidePage(state.pageKey, const HelpCenterScreen())),
+        path: '/help-center', builder: (_, __) => const HelpCenterScreen()),
+    GoRoute(path: '/help', builder: (_, __) => const HelpCenterScreen()),
     GoRoute(
-        path: '/settings/report-problem', pageBuilder: (_, state) => _slidePage(state.pageKey, const ReportProblemScreen())),
+        path: '/settings/report-problem',
+        builder: (_, __) => const ReportProblemScreen()),
     GoRoute(
-        path: '/under-construction', pageBuilder: (_, state) => _slidePage(state.pageKey, const UnderConstructionScreen())),
+        path: '/under-construction',
+        builder: (_, __) => const UnderConstructionScreen()),
     // Home-tab shortcuts that point at the placeholder in the Expo app
     GoRoute(
         path: '/current-affairs',
@@ -199,16 +187,21 @@ final appRouter = GoRouter(
     // ---- Learn ----
     // Standalone profile page for the home header avatar tap (the Profile
     // tab shell is unchanged; this reuses the same tab content).
-    GoRoute(path: '/profile', pageBuilder: (_, state) => _slidePage(state.pageKey, const Scaffold(body: ProfileTab()))),
-    GoRoute(path: '/subjects', pageBuilder: (_, state) => _slidePage(state.pageKey, const SubjectsScreen())),
+    GoRoute(path: '/profile', builder: (_, __) => const Scaffold(body: ProfileTab())),
+    GoRoute(path: '/subjects', builder: (_, __) => const SubjectsScreen()),
     GoRoute(
-      path: '/subjects/chapters/:subjectId', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectChaptersScreen(subjectId: s.pathParameters['subjectId']!)),
+      path: '/subjects/chapters/:subjectId',
+      builder: (_, s) =>
+          SubjectChaptersScreen(subjectId: s.pathParameters['subjectId']!),
     ),
     GoRoute(
-      path: '/subjects/units/:subjectId', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectUnitsScreen(subjectId: s.pathParameters['subjectId']!)),
+      path: '/subjects/units/:subjectId',
+      builder: (_, s) =>
+          SubjectUnitsScreen(subjectId: s.pathParameters['subjectId']!),
     ),
     GoRoute(
-      path: '/subjects/practice', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectPracticeScreen(
+      path: '/subjects/practice',
+      builder: (_, s) => SubjectPracticeScreen(
         courseId: _qp(s, 'courseId') ?? '',
         subcourseId: _qp(s, 'subcourseId') ?? '',
         subjectId: _qp(s, 'subjectId') ?? '',
@@ -217,10 +210,11 @@ final appRouter = GoRouter(
         subjectName: _qp(s, 'subjectName'),
         chapterName: _qp(s, 'chapterName'),
         unitName: _qp(s, 'unitName'),
-      )),
+      ),
     ),
     GoRoute(
-      path: '/subjects/read', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectReadScreen(
+      path: '/subjects/read',
+      builder: (_, s) => SubjectReadScreen(
         courseId: _qp(s, 'courseId') ?? '',
         subcourseId: _qp(s, 'subcourseId') ?? '',
         subjectId: _qp(s, 'subjectId') ?? '',
@@ -229,10 +223,11 @@ final appRouter = GoRouter(
         subjectName: _qp(s, 'subjectName'),
         chapterName: _qp(s, 'chapterName'),
         unitName: _qp(s, 'unitName'),
-      )),
+      ),
     ),
     GoRoute(
-      path: '/subjects/theory', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectTheoryScreen(
+      path: '/subjects/theory',
+      builder: (_, s) => SubjectTheoryScreen(
         courseId: _qp(s, 'courseId') ?? '',
         subcourseId: _qp(s, 'subcourseId') ?? '',
         subjectId: _qp(s, 'subjectId') ?? '',
@@ -241,187 +236,248 @@ final appRouter = GoRouter(
         subjectName: _qp(s, 'subjectName'),
         chapterName: _qp(s, 'chapterName'),
         unitName: _qp(s, 'unitName'),
-      )),
+      ),
     ),
-    GoRoute(path: '/syllabus', pageBuilder: (_, state) => _slidePage(state.pageKey, const SyllabusScreen())),
+    GoRoute(path: '/syllabus', builder: (_, __) => const SyllabusScreen()),
     GoRoute(
-        path: '/course-details', pageBuilder: (_, state) => _slidePage(state.pageKey, const CourseDetailsScreen())),
+        path: '/course-details',
+        builder: (_, __) => const CourseDetailsScreen()),
     GoRoute(
-      path: '/course-setup', pageBuilder: (_, s) => _slidePage(s.pageKey, CourseSetupScreen(mode: _qp(s, 'mode'))),
+      path: '/course-setup',
+      builder: (_, s) => CourseSetupScreen(mode: _qp(s, 'mode') ?? 'initial'),
     ),
-    GoRoute(path: '/notes', pageBuilder: (_, state) => _slidePage(state.pageKey, const NotesScreen())),
+    GoRoute(path: '/notes', builder: (_, __) => const NotesScreen()),
     GoRoute(
-        path: '/notes/new', pageBuilder: (_, state) => _slidePage(state.pageKey, const NoteDetailScreen(id: 'new'))),
+        path: '/notes/new',
+        builder: (_, __) => const NoteDetailScreen(id: 'new')),
     GoRoute(
-      path: '/notes/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, NoteDetailScreen(id: s.pathParameters['id']!)),
+      path: '/notes/:id',
+      builder: (_, s) => NoteDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-      path: '/pdf/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, PdfScreen(
+      path: '/pdf/:id',
+      builder: (_, s) => PdfScreen(
         id: s.pathParameters['id']!,
         uri: _qp(s, 'uri'),
         title: _qp(s, 'title'),
-      )),
+      ),
     ),
 
     // ---- Exam engine ----
     GoRoute(
-      path: '/exam/:setId', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamDetailScreen(setId: s.pathParameters['setId']!)),
+      path: '/exam/:setId',
+      builder: (_, s) => ExamDetailScreen(setId: s.pathParameters['setId']!),
     ),
     GoRoute(
-      path: '/exam/:setId/quiz', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamQuizScreen(setId: s.pathParameters['setId']!)),
+      path: '/exam/:setId/quiz',
+      builder: (_, s) => ExamQuizScreen(setId: s.pathParameters['setId']!),
     ),
     GoRoute(
-      path: '/exam/:setId/ranking', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamRankingScreen(setId: s.pathParameters['setId']!)),
+      path: '/exam/:setId/ranking',
+      builder: (_, s) => ExamRankingScreen(setId: s.pathParameters['setId']!),
     ),
     GoRoute(
-      path: '/exam/:setId/review', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamReviewScreen(setId: s.pathParameters['setId']!)),
+      path: '/exam/:setId/review',
+      builder: (_, s) => ExamReviewScreen(setId: s.pathParameters['setId']!),
     ),
     GoRoute(
-      path: '/exam/:setId/summary', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamSummaryScreen(setId: s.pathParameters['setId']!)),
+      path: '/exam/:setId/summary',
+      builder: (_, s) => ExamSummaryScreen(setId: s.pathParameters['setId']!),
     ),
     GoRoute(
-      path: '/mock-test/:id/instructions', pageBuilder: (_, s) => _slidePage(s.pageKey, MockInstructionsScreen(id: s.pathParameters['id']!)),
+      path: '/mock-test/:id/instructions',
+      builder: (_, s) => MockInstructionsScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-      path: '/mock-test/:id/attempt', pageBuilder: (_, s) => _slidePage(s.pageKey, MockAttemptScreen(id: s.pathParameters['id']!)),
+      path: '/mock-test/:id/attempt',
+      builder: (_, s) => MockAttemptScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/daily-test', pageBuilder: (_, state) => _slidePage(state.pageKey, const DailyTestScreen())),
+    GoRoute(path: '/daily-test', builder: (_, __) => const DailyTestScreen()),
     GoRoute(
-        path: '/daily-test/models', pageBuilder: (_, state) => _slidePage(state.pageKey, const DailyTestModelsScreen())),
+        path: '/daily-test/models',
+        builder: (_, __) => const DailyTestModelsScreen()),
     GoRoute(
-        path: '/daily-test/history', pageBuilder: (_, state) => _slidePage(state.pageKey, const DailyTestHistoryScreen())),
+        path: '/daily-test/history',
+        builder: (_, __) => const DailyTestHistoryScreen()),
     GoRoute(
-      path: '/daily-test/:modelId/quiz', pageBuilder: (_, s) => _slidePage(s.pageKey, DailyQuizScreen(modelId: s.pathParameters['modelId']!)),
-    ),
-    GoRoute(
-      path: '/daily-test/:modelId/review', pageBuilder: (_, s) => _slidePage(s.pageKey, DailyReviewScreen(modelId: s.pathParameters['modelId']!)),
-    ),
-    GoRoute(
-      path: '/daily-test/:modelId/summary', pageBuilder: (_, s) => _slidePage(s.pageKey, DailySummaryScreen(modelId: s.pathParameters['modelId']!)),
+      path: '/daily-test/:modelId/quiz',
+      builder: (_, s) => DailyQuizScreen(modelId: s.pathParameters['modelId']!),
     ),
     GoRoute(
-      path: '/live-exam/:id/waiting', pageBuilder: (_, s) => _slidePage(s.pageKey, LiveExamWaitingScreen(id: s.pathParameters['id']!)),
+      path: '/daily-test/:modelId/review',
+      builder: (_, s) =>
+          DailyReviewScreen(modelId: s.pathParameters['modelId']!),
     ),
     GoRoute(
-      path: '/quiz/:subjectId', pageBuilder: (_, s) => _slidePage(s.pageKey, SubjectQuizScreen(subjectId: s.pathParameters['subjectId']!)),
+      path: '/daily-test/:modelId/summary',
+      builder: (_, s) =>
+          DailySummaryScreen(modelId: s.pathParameters['modelId']!),
     ),
     GoRoute(
-        path: '/question-of-the-day', pageBuilder: (_, state) => _slidePage(state.pageKey, const QuestionOfDayScreen())),
+      path: '/live-exam/:id/waiting',
+      builder: (_, s) => LiveExamWaitingScreen(id: s.pathParameters['id']!),
+    ),
     GoRoute(
-        path: '/exam-history', pageBuilder: (_, state) => _slidePage(state.pageKey, const ExamHistoryScreen())),
+      path: '/quiz/:subjectId',
+      builder: (_, s) =>
+          SubjectQuizScreen(subjectId: s.pathParameters['subjectId']!),
+    ),
+    GoRoute(
+        path: '/question-of-the-day',
+        builder: (_, __) => const QuestionOfDayScreen()),
+    GoRoute(
+        path: '/exam-history', builder: (_, __) => const ExamHistoryScreen()),
     GoRoute(path: '/exam-results', redirect: (_, __) => '/exam-history'),
     GoRoute(
-      path: '/result/:attemptId', pageBuilder: (_, s) => _slidePage(s.pageKey, ResultScreen(attemptId: s.pathParameters['attemptId']!)),
+      path: '/result/:attemptId',
+      builder: (_, s) => ResultScreen(attemptId: s.pathParameters['attemptId']!),
     ),
-    GoRoute(path: '/leaderboard', pageBuilder: (_, state) => _slidePage(state.pageKey, const LeaderboardScreen())),
+    GoRoute(path: '/leaderboard', builder: (_, __) => const LeaderboardScreen()),
 
     // ---- Shop ----
     GoRoute(
-      path: '/exam-purchase/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamPurchaseScreen(id: s.pathParameters['id']!)),
+      path: '/exam-purchase/:id',
+      builder: (_, s) => ExamPurchaseScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/subscription', pageBuilder: (_, state) => _slidePage(state.pageKey, const SubscriptionScreen())),
+        path: '/subscription', builder: (_, __) => const SubscriptionScreen()),
     GoRoute(path: '/premium', redirect: (_, __) => '/subscription'),
     GoRoute(
-      path: '/subscription/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, SubscriptionDetailScreen(id: s.pathParameters['id']!)),
+      path: '/subscription/:id',
+      builder: (_, s) => SubscriptionDetailScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/checkout', pageBuilder: (_, state) => _slidePage(state.pageKey, const CheckoutScreen())),
+    GoRoute(path: '/checkout', builder: (_, __) => const CheckoutScreen()),
     GoRoute(
-      path: '/subscription/exam-purchase/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, SubscriptionExamPurchaseScreen(id: s.pathParameters['id']!)),
-    ),
-    GoRoute(
-        path: '/purchase-details', pageBuilder: (_, state) => _slidePage(state.pageKey, const PurchaseDetailsScreen())),
-    GoRoute(
-      path: '/purchase-details/content/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, ContentPurchaseDetailScreen(id: s.pathParameters['id']!)),
+      path: '/subscription/exam-purchase/:id',
+      builder: (_, s) =>
+          SubscriptionExamPurchaseScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/achievements', pageBuilder: (_, state) => _slidePage(state.pageKey, const AchievementsScreen())),
+        path: '/purchase-details',
+        builder: (_, __) => const PurchaseDetailsScreen()),
+    GoRoute(
+      path: '/purchase-details/content/:id',
+      builder: (_, s) =>
+          ContentPurchaseDetailScreen(id: s.pathParameters['id']!),
+    ),
+    GoRoute(
+        path: '/achievements', builder: (_, __) => const AchievementsScreen()),
     // literal routes before the :id param route
     GoRoute(
-        path: '/exam-answer/upload', pageBuilder: (_, state) => _slidePage(state.pageKey, const UploadAnswerScreen())),
+        path: '/exam-answer/upload',
+        builder: (_, __) => const UploadAnswerScreen()),
     GoRoute(
-        path: '/exam-answer/my-submissions', pageBuilder: (_, state) => _slidePage(state.pageKey, const MySubmissionsScreen())),
+        path: '/exam-answer/my-submissions',
+        builder: (_, __) => const MySubmissionsScreen()),
     GoRoute(
-      path: '/exam-answer/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, ExamAnswerScreen(id: s.pathParameters['id']!)),
+      path: '/exam-answer/:id',
+      builder: (_, s) => ExamAnswerScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/report-question', pageBuilder: (_, state) => _slidePage(state.pageKey, const ReportQuestionScreen())),
+        path: '/report-question',
+        builder: (_, __) => const ReportQuestionScreen()),
     GoRoute(
-        path: '/report-history', pageBuilder: (_, state) => _slidePage(state.pageKey, const ReportHistoryScreen())),
+        path: '/report-history',
+        builder: (_, __) => const ReportHistoryScreen()),
     GoRoute(
-      path: '/report-history/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, ReportDetailScreen(id: s.pathParameters['id']!)),
+      path: '/report-history/:id',
+      builder: (_, s) => ReportDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/additional-features/gk', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdditionalGkScreen())),
+        path: '/additional-features/gk',
+        builder: (_, __) => const AdditionalGkScreen()),
     GoRoute(
-        path: '/additional-features/pm', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdditionalPmScreen())),
+        path: '/additional-features/pm',
+        builder: (_, __) => const AdditionalPmScreen()),
     GoRoute(
-      path: '/additional-features/:featureId/:topicId', pageBuilder: (_, s) => _slidePage(s.pageKey, AdditionalTopicScreen(
+      path: '/additional-features/:featureId/:topicId',
+      builder: (_, s) => AdditionalTopicScreen(
         featureId: s.pathParameters['featureId']!,
         topicId: s.pathParameters['topicId']!,
-      )),
+      ),
     ),
 
     // ---- User ----
     GoRoute(
-        path: '/edit-profile', pageBuilder: (_, state) => _slidePage(state.pageKey, const EditProfileScreen())),
-    GoRoute(path: '/bookmarks', pageBuilder: (_, state) => _slidePage(state.pageKey, const BookmarksScreen())),
+        path: '/edit-profile', builder: (_, __) => const EditProfileScreen()),
+    GoRoute(path: '/bookmarks', builder: (_, __) => const BookmarksScreen()),
     GoRoute(path: '/saved', redirect: (_, __) => '/bookmarks'),
     GoRoute(
-      path: '/bookmarks/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, BookmarkDetailScreen(id: s.pathParameters['id']!)),
+      path: '/bookmarks/:id',
+      builder: (_, s) => BookmarkDetailScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/downloads', pageBuilder: (_, state) => _slidePage(state.pageKey, const DownloadsScreen())),
+    GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
     GoRoute(
-        path: '/notifications', pageBuilder: (_, state) => _slidePage(state.pageKey, const NotificationsScreen())),
+        path: '/notifications', builder: (_, __) => const NotificationsScreen()),
     GoRoute(
-      path: '/notification/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, NotificationDetailScreen(id: s.pathParameters['id']!)),
+      path: '/notification/:id',
+      builder: (_, s) =>
+          NotificationDetailScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/notices', pageBuilder: (_, state) => _slidePage(state.pageKey, const NoticesScreen())),
+    GoRoute(path: '/notices', builder: (_, __) => const NoticesScreen()),
     GoRoute(path: '/notice-board', redirect: (_, __) => '/notices'),
     GoRoute(
-      path: '/notice/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, NoticeDetailScreen(id: s.pathParameters['id']!)),
+      path: '/notice/:id',
+      builder: (_, s) => NoticeDetailScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/gorkhapatra', pageBuilder: (_, state) => _slidePage(state.pageKey, const GorkhapatraScreen())),
+    GoRoute(path: '/gorkhapatra', builder: (_, __) => const GorkhapatraScreen()),
     GoRoute(
-      path: '/gorkhapatra/:slug', pageBuilder: (_, s) => _slidePage(s.pageKey, GorkhapatraDetailScreen(slug: s.pathParameters['slug']!)),
+      path: '/gorkhapatra/:slug',
+      builder: (_, s) => GorkhapatraDetailScreen(slug: s.pathParameters['slug']!),
     ),
     GoRoute(
-        path: '/constitution', pageBuilder: (_, state) => _slidePage(state.pageKey, const ConstitutionScreen())),
+        path: '/constitution', builder: (_, __) => const ConstitutionScreen()),
     GoRoute(
-      path: '/constitution/:sectionId', pageBuilder: (_, s) => _slidePage(s.pageKey, ConstitutionSectionScreen(sectionId: s.pathParameters['sectionId']!)),
+      path: '/constitution/:sectionId',
+      builder: (_, s) =>
+          ConstitutionSectionScreen(sectionId: s.pathParameters['sectionId']!),
     ),
-    GoRoute(path: '/search', pageBuilder: (_, state) => _slidePage(state.pageKey, const SearchScreen())),
+    GoRoute(path: '/search', builder: (_, __) => const SearchScreen()),
     GoRoute(
-        path: '/discussion/create', pageBuilder: (_, s) => _slidePage(s.pageKey, DiscussionCreateScreen(editId: _qp(s, 'editId')))),
+        path: '/discussion/create',
+        builder: (_, s) => DiscussionCreateScreen(editId: _qp(s, 'editId'))),
     GoRoute(
-      path: '/discussion/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, DiscussionDetailScreen(id: s.pathParameters['id']!)),
+      path: '/discussion/:id',
+      builder: (_, s) => DiscussionDetailScreen(id: s.pathParameters['id']!),
     ),
-    GoRoute(path: '/analytics', pageBuilder: (_, state) => _slidePage(state.pageKey, const AnalyticsScreen())),
+    GoRoute(path: '/analytics', builder: (_, __) => const AnalyticsScreen()),
 
     // ---- Admin ----
-    GoRoute(path: '/admin', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdminHomeScreen())),
+    GoRoute(path: '/admin', builder: (_, __) => const AdminHomeScreen()),
     GoRoute(
-        path: '/admin/exam-purchases', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdminExamPurchasesScreen())),
+        path: '/admin/exam-purchases',
+        builder: (_, __) => const AdminExamPurchasesScreen()),
     GoRoute(
-      path: '/admin/exam-purchases/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, AdminExamPurchaseDetailScreen(id: s.pathParameters['id']!)),
+      path: '/admin/exam-purchases/:id',
+      builder: (_, s) =>
+          AdminExamPurchaseDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-      path: '/admin/content-purchases/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, AdminContentPurchaseDetailScreen(id: s.pathParameters['id']!)),
+      path: '/admin/content-purchases/:id',
+      builder: (_, s) =>
+          AdminContentPurchaseDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-      path: '/admin/exam-answer/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, AdminExamAnswerScreen(id: s.pathParameters['id']!)),
+      path: '/admin/exam-answer/:id',
+      builder: (_, s) => AdminExamAnswerScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/admin/purchase-details', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdminPurchaseDetailsScreen())),
+        path: '/admin/purchase-details',
+        builder: (_, __) => const AdminPurchaseDetailsScreen()),
     GoRoute(
-        path: '/admin/report-history', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdminReportHistoryScreen())),
+        path: '/admin/report-history',
+        builder: (_, __) => const AdminReportHistoryScreen()),
     GoRoute(
-      path: '/admin/report-history/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, AdminReportDetailScreen(id: s.pathParameters['id']!)),
+      path: '/admin/report-history/:id',
+      builder: (_, s) => AdminReportDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(
-        path: '/admin/subscriptions', pageBuilder: (_, state) => _slidePage(state.pageKey, const AdminSubscriptionsScreen())),
+        path: '/admin/subscriptions',
+        builder: (_, __) => const AdminSubscriptionsScreen()),
     GoRoute(
-      path: '/admin/subscriptions/:id', pageBuilder: (_, s) => _slidePage(s.pageKey, AdminSubscriptionDetailScreen(id: s.pathParameters['id']!)),
+      path: '/admin/subscriptions/:id',
+      builder: (_, s) =>
+          AdminSubscriptionDetailScreen(id: s.pathParameters['id']!),
     ),
   ],
   errorBuilder: (_, s) => Scaffold(

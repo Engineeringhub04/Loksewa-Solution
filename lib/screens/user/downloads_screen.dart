@@ -2,15 +2,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Downloads — mirrors app/downloads.tsx.
 ///
-/// The Expo app keeps downloads as a local list via `loadDownloads()`
-/// (AsyncStorage key `loksewa:downloads`). This screen keeps the same local
-/// list in SharedPreferences through PrefsService: storage-used strip,
-/// per-item remove, and clear-all with confirmation. Item shape:
-/// {id, title, type: pdf|note|other, sizeBytes, downloadedAt}.
+/// The Expo app keeps downloads as a local list (`loksewa:downloads` AsyncStorage
+/// key); this screen keeps the same local list in SharedPreferences.
+/// Item shape: {id, title, type: pdf|note|other, sizeBytes, downloadedAt (ms)}.
+/// - storage strip: "Storage used: {bytes}" row + "Clear All" text button
+/// - remove is direct (trash icon, no confirm) + "Download removed" toast
+/// - clear-all behind a confirm dialog: "Remove all downloaded files?"
 class DownloadsScreen extends StatefulWidget {
   const DownloadsScreen({super.key});
 
@@ -21,6 +23,7 @@ class DownloadsScreen extends StatefulWidget {
 class _DownloadsScreenState extends State<DownloadsScreen> {
   static const _key = 'loksewa:downloads';
   bool _loading = true;
+  bool _error = false;
   List<Map<String, dynamic>> _items = [];
 
   @override
@@ -30,7 +33,10 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _error = false;
+    });
     try {
       final raw = await PrefsService.getString(_key);
       final List list = raw == null || raw.isEmpty ? [] : json.decode(raw);
@@ -39,51 +45,37 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
     } catch (_) {
+      _error = true;
       _items = [];
     }
-    setState(() => _loading = false);
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _persist() async {
     await PrefsService.setString(_key, json.encode(_items));
   }
 
-  Future<void> _removeAt(int index) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Remove download?'),
-        content: Text('Remove "${(_items[index]['title'] ?? '').toString()}"?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Remove')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    setState(() => _items.removeAt(index));
+  Future<void> _remove(String id) async {
+    setState(() => _items.removeWhere((e) => (e['id'] ?? '').toString() == id));
     await _persist();
+    if (mounted) {
+      showToast(context, 'Download removed', ToastVariant.success);
+    }
   }
 
   Future<void> _clearAll() async {
-    if (_items.isEmpty) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('Clear all downloads?'),
-        content: const Text(
-            'This removes the download list from this device. Files already saved stay on the device.'),
+        title: const Text('Remove all downloaded files?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: const Text('Clear all')),
+              child: const Text('Clear All',
+                  style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -93,7 +85,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   int get _totalBytes => _items.fold<int>(
-      0, (sum, e) => sum + ((e['sizeBytes'] is int) ? e['sizeBytes'] as int : 0));
+      0,
+      (sum, e) =>
+          sum + ((e['sizeBytes'] is num) ? (e['sizeBytes'] as num).toInt() : 0));
 
   String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
@@ -101,106 +95,169 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
 
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  String _dateStr(dynamic raw) {
+    final ms = raw is num ? raw.toInt() : int.tryParse(raw.toString());
+    if (ms == null) return '';
+    final dt = DateTime.fromMillisecondsSinceEpoch(ms);
+    return '${_months[dt.month - 1]} ${dt.day}, ${dt.year}';
+  }
+
   IconData _iconFor(String type) {
     switch (type) {
       case 'pdf':
-        return Icons.picture_as_pdf;
+        return Icons.description_outlined;
       case 'note':
-        return Icons.note;
+        return Icons.edit_outlined;
       default:
-        return Icons.insert_drive_file;
+        return Icons.inbox_outlined;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
     return Scaffold(
       body: Column(
         children: [
-          SubpageHeader(title: 'Downloads', actions: [
-          if (_items.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep),
-              tooltip: 'Clear all',
-              onPressed: _clearAll,
-            ),
-        ]),
+          const SubpageHeader(title: 'Downloads'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  margin: const EdgeInsets.all(16),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.navy.withValues(alpha: 0.06),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 12),
+                        Text('Loading Downloads...'),
+                      ],
+                    ),
+                  )
+                : Column(
                     children: [
-                      const Icon(Icons.storage, color: AppColors.navy),
-                      const SizedBox(width: 12),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('${_items.length} items',
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.bold)),
-                          Text('Storage used: ${_formatBytes(_totalBytes)}',
-                              style:
-                                  const TextStyle(color: Colors.grey)),
-                        ],
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                        child: Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              'Storage used: ${_formatBytes(_totalBytes)}',
+                              style: TextStyle(
+                                  color: onSurface.withValues(alpha: 0.65),
+                                  fontSize: 14),
+                            ),
+                            if (_items.isNotEmpty)
+                              TextButton(
+                                onPressed: _clearAll,
+                                child: const Text('Clear All'),
+                              ),
+                          ],
+                        ),
+                      ),
+                      Expanded(
+                        child: _error
+                            ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Text(
+                                        'Could not load downloads.'),
+                                    const SizedBox(height: 12),
+                                    ElevatedButton(
+                                        onPressed: _load,
+                                        child: const Text('Retry')),
+                                  ],
+                                ),
+                              )
+                            : _items.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      'No downloads yet',
+                                      style: TextStyle(
+                                          color: onSurface.withValues(
+                                              alpha: 0.55),
+                                          fontSize: 15),
+                                    ),
+                                  )
+                                : RefreshIndicator(
+                                    onRefresh: _load,
+                                    child: ListView.builder(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          16, 0, 16, 16),
+                                      itemCount: _items.length,
+                                      itemBuilder: (context, i) {
+                                        final item = _items[i];
+                                        final id = (item['id'] ?? '')
+                                            .toString();
+                                        final type = (item['type'] ?? 'other')
+                                            .toString();
+                                        final size = (item['sizeBytes']
+                                                    is num)
+                                            ? (item['sizeBytes'] as num)
+                                                .toInt()
+                                            : 0;
+                                        return Card(
+                                          margin: const EdgeInsets.only(
+                                              bottom: 8),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(12),
+                                            child: Row(
+                                              children: [
+                                                Icon(_iconFor(type),
+                                                    size: 24,
+                                                    color: AppColors.navy),
+                                                const SizedBox(width: 8),
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      Text(
+                                                        (item['title'] ?? '')
+                                                            .toString(),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis,
+                                                        style: const TextStyle(
+                                                            fontWeight:
+                                                                FontWeight
+                                                                    .w500),
+                                                      ),
+                                                      Text(
+                                                        '${_formatBytes(size)} · ${_dateStr(item['downloadedAt'])}',
+                                                        style: TextStyle(
+                                                            fontSize: 11,
+                                                            color: onSurface
+                                                                .withValues(
+                                                                    alpha:
+                                                                        0.55)),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(Icons
+                                                      .delete_outline,
+                                                      size: 20),
+                                                  onPressed: () =>
+                                                      _remove(id),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
                       ),
                     ],
                   ),
-                ),
-                Expanded(
-                  child: _items.isEmpty
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(32),
-                            child: Text(
-                              'No downloads yet.\nDownloaded PDFs and notes will appear here.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          itemCount: _items.length,
-                          itemBuilder: (context, i) {
-                            final item = _items[i];
-                            final type =
-                                (item['type'] ?? 'other').toString();
-                            final downloadedAt =
-                                (item['downloadedAt'] ?? '').toString();
-                            return Card(
-                              child: ListTile(
-                                leading: Icon(_iconFor(type),
-                                    color: AppColors.navy),
-                                title: Text(
-                                    (item['title'] ?? '').toString(),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis),
-                                subtitle: Text(
-                                    '${type.toUpperCase()} · ${_formatBytes(item['sizeBytes'] is int ? item['sizeBytes'] as int : 0)}'
-                                    '${downloadedAt.isNotEmpty ? ' · $downloadedAt' : ''}'),
-                                trailing: IconButton(
-                                  icon:
-                                      const Icon(Icons.delete_outline),
-                                  onPressed: () => _removeAt(i),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
           ),
         ],
       ),

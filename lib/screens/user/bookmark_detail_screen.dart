@@ -3,13 +3,15 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Bookmark detail — mirrors app/bookmarks/[id].tsx.
 ///
-/// Renders the saved snapshot payload: title, meta rows, the question with
-/// its options (correct option revealed via toggle using payload.answerIndex),
-/// explanation, and body text. Remove deletes the bookmark document.
+/// Renders the saved snapshot payload: origin card (context icon + source
+/// label + saved date), meta rows, the question with its options (correct
+/// option revealed via toggle using payload.answerIndex), explanation, and
+/// body text. Remove deletes the bookmark document.
 class BookmarkDetailScreen extends StatefulWidget {
   final String id;
   const BookmarkDetailScreen({super.key, required this.id});
@@ -22,6 +24,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   late Future<Map<String, dynamic>?> _future;
   bool _revealAnswer = false;
   bool _removing = false;
+  Map<String, dynamic>? _loaded;
 
   @override
   void initState() {
@@ -32,24 +35,35 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   Future<Map<String, dynamic>?> _load() async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null) throw Exception('Not signed in.');
-    final idToken = await AuthService.getValidIdToken() ?? '';
+    final idToken = await AuthService.getValidIdToken();
     return FirestoreRest.getDocument('users/$uid/bookmarks/${widget.id}',
         idToken: idToken);
   }
 
-  Future<void> _remove() async {
+  Future<void> _remove(Map<String, dynamic> b) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('Remove bookmark?'),
-        content: const Text('This bookmark will be permanently removed.'),
+        icon: const Icon(Icons.bookmark_outline),
+        title: const Text('Remove this bookmark?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text((b['title'] ?? '').toString(),
+                style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            const Text('You can save it again any time.'),
+          ],
+        ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(c, false),
               child: const Text('Cancel')),
           TextButton(
               onPressed: () => Navigator.pop(c, true),
-              child: const Text('Remove')),
+              child:
+                  const Text('Remove', style: TextStyle(color: Colors.red))),
         ],
       ),
     );
@@ -58,11 +72,14 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     if (uid == null) return;
     setState(() => _removing = true);
     try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
+      final idToken = await AuthService.getValidIdToken();
       await FirestoreRest.deleteDocument(
           'users/$uid/bookmarks/${widget.id}',
           idToken: idToken);
-      if (mounted) context.pop();
+      if (mounted) {
+        showToast(context, 'Removed from bookmarks', ToastVariant.info);
+        context.pop();
+      }
     } catch (e) {
       setState(() => _removing = false);
       if (mounted) {
@@ -89,7 +106,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
                 )
               : IconButton(
                   icon: const Icon(Icons.delete_outline),
-                  onPressed: _remove,
+                  onPressed: _loaded == null ? null : () => _remove(_loaded!),
                 ),
         ]),
           Expanded(
@@ -113,6 +130,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
             );
           }
           final b = snap.data!;
+          _loaded = b;
           final payload = b['payload'];
           final Map<String, dynamic> p =
               payload is Map ? Map<String, dynamic>.from(payload) : {};
@@ -125,17 +143,10 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              _originCard(b),
+              const SizedBox(height: 12),
               Text((b['title'] ?? '').toString(),
                   style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                children: [
-                  Chip(label: Text((b['context'] ?? 'other').toString())),
-                  if ((b['sourceLabel'] ?? '').toString().isNotEmpty)
-                    Chip(label: Text((b['sourceLabel'] ?? '').toString())),
-                ],
-              ),
               if (metaRows.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 Card(
@@ -228,8 +239,109 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     );
   }
 
-  Widget _optionTile(int index, String text, int answerIndex) {
-    final isCorrect = _revealAnswer && index == answerIndex;
+  static const _ctxColors = <String, Color>{
+    'exam': Color(0xFF2563EB),
+    'read': Color(0xFF0D9488),
+    'practice': Color(0xFFEA580C),
+    'daily-test': Color(0xFF7C3AED),
+    'qotd': Color(0xFFD97706),
+    'quiz': Color(0xFFDB2777),
+    'discussion': Color(0xFF4F46E5),
+    'article': Color(0xFF059669),
+    'note': Color(0xFF475569),
+    'chapter': Color(0xFF0891B2),
+    'other': Color(0xFF64748B),
+  };
+
+  static const _ctxIcons = <String, IconData>{
+    'exam': Icons.school_outlined,
+    'read': Icons.menu_book_outlined,
+    'practice': Icons.fitness_center_outlined,
+    'daily-test': Icons.calendar_today_outlined,
+    'qotd': Icons.wb_sunny_outlined,
+    'quiz': Icons.help_outline,
+    'discussion': Icons.forum_outlined,
+    'article': Icons.newspaper_outlined,
+    'note': Icons.description_outlined,
+    'chapter': Icons.layers_outlined,
+    'other': Icons.bookmark_outline,
+  };
+
+  static const _months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+
+  String _savedDate(dynamic raw) {
+    DateTime? dt;
+    if (raw is DateTime) {
+      dt = raw;
+    } else if (raw is num) {
+      dt = DateTime.fromMillisecondsSinceEpoch(raw.toInt());
+    } else if (raw is String) {
+      dt = DateTime.tryParse(raw);
+    }
+    if (dt == null) return '';
+    return '${dt.day} ${_months[dt.month - 1]} ${dt.year}';
+  }
+
+  Widget _originCard(Map<String, dynamic> b) {
+    final ctx = (b['context'] ?? 'other').toString();
+    final color = _ctxColors[ctx] ?? _ctxColors['other']!;
+    final icon = _ctxIcons[ctx] ?? _ctxIcons['other']!;
+    final label = (b['sourceLabel'] ?? '').toString().isNotEmpty
+        ? (b['sourceLabel'] ?? '').toString()
+        : (ctx == 'quiz'
+            ? 'Quiz'
+            : ctx == 'exam'
+                ? 'Exam'
+                : ctx.replaceAll('-', ' '));
+    final date = _savedDate(b['createdAt']);
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 21, color: color),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label.toUpperCase(),
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1,
+                        color: color),
+                  ),
+                  if (date.isNotEmpty)
+                    Text(
+                      'Saved on $date',
+                      style: TextStyle(
+                          fontSize: 11,
+                          color: onSurface.withValues(alpha: 0.5)),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _optionTile(int index, String text, int answerIndex) {    final isCorrect = _revealAnswer && index == answerIndex;
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
       padding: const EdgeInsets.all(12),

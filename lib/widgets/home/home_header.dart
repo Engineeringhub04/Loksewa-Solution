@@ -152,8 +152,11 @@ String _greeting() {
   return 'Good evening';
 }
 
-/// Avatar shared by both header states: photo when available, initial letter
-/// otherwise, with a gold ring for premium members.
+/// Avatar shared by both header states — mirrors ProfileAvatar + Avatar in
+/// the React app: photo when available, first+last initials otherwise; free
+/// users wear the green glow ring (#22C55E), premium users the fixed
+/// multi-colour sweep ring. Both rings occupy the same outer box so the
+/// header never reflows when the subscription state changes.
 class _Avatar extends StatelessWidget {
   final String? photoURL;
   final String? displayName;
@@ -167,49 +170,90 @@ class _Avatar extends StatelessWidget {
     required this.size,
   });
 
+  static const _ringColors = [
+    Color(0xFF4C7CF0),
+    Color(0xFF7B5FE8),
+    Color(0xFFE257A6),
+    Color(0xFFF6B94E),
+  ];
+
+  String _initials() {
+    final name = (displayName ?? '').trim();
+    if (name.isEmpty) return '?';
+    final parts = name.split(RegExp(r'\s+'));
+    final first = parts.first.isNotEmpty ? parts.first[0] : '';
+    final last = parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
+    return (first + last).toUpperCase();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final initial = (displayName?.trim().isNotEmpty ?? false)
-        ? displayName!.trim()[0].toUpperCase()
-        : 'L';
-    Widget face = (photoURL != null && photoURL!.isNotEmpty)
-        ? ClipOval(
-            child: Image.network(
-              photoURL!,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => _initialFace(initial, size),
-            ),
-          )
-        : _initialFace(initial, size);
+    final palette = ExpoPalette.of(context);
+    Widget face;
+    if (photoURL != null && photoURL!.isNotEmpty) {
+      face = ClipOval(
+        child: Image.network(
+          photoURL!,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _initialFace(palette),
+        ),
+      );
+    } else {
+      face = _initialFace(palette);
+    }
+
     if (pro) {
-      face = Container(
-        padding: const EdgeInsets.all(2),
+      // Fixed multi-colour sweep (conic-gradient equivalent).
+      final ringWidth = size >= 36 ? 5.5 : 4.0;
+      return Container(
+        padding: EdgeInsets.all(ringWidth),
         decoration: const BoxDecoration(
           shape: BoxShape.circle,
-          color: Color(0xFFF59E0B),
+          gradient: SweepGradient(colors: _ringColors),
         ),
         child: ClipOval(child: SizedBox(width: size, height: size, child: face)),
       );
     }
-    return face;
+
+    // Free-tier green glow ring.
+    final border = size >= 36 ? 2.5 : 2.0;
+    final padding = size >= 36 ? 3.0 : 2.0;
+    final halo = size >= 36 ? 12.0 : 8.0;
+    return Container(
+      padding: EdgeInsets.all(padding),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: const Color(0x3822C55E),
+        border: Border.all(
+            color: const Color(0xFF22C55E), width: border),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF22C55E).withValues(alpha: 0.9),
+            blurRadius: halo,
+          ),
+        ],
+      ),
+      child: ClipOval(child: SizedBox(width: size, height: size, child: face)),
+    );
   }
 
-  Widget _initialFace(String initial, double size) => Container(
+  Widget _initialFace(ExpoPalette palette) => Container(
         width: size,
         height: size,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: Colors.white.withValues(alpha: 0.25),
+          color: palette.surfaceAlt,
         ),
         alignment: Alignment.center,
         child: Text(
-          initial,
+          _initials(),
           style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-            fontSize: size * 0.42,
+            color: palette.primary,
+            fontWeight: FontWeight.w600,
+            fontSize: size * 0.38,
+            height: 1.26,
           ),
         ),
       );
@@ -490,7 +534,7 @@ class _CourseInfoCard extends StatelessWidget {
             ),
             boxShadow: const [
               BoxShadow(
-                  color: Colors.black26,
+                  color: Color(0x33000000),
                   blurRadius: 8,
                   offset: Offset(0, 4)),
             ],

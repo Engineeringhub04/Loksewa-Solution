@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/widgets/home/home_header.dart';
@@ -13,6 +14,7 @@ import 'package:loksewa_solution/widgets/home/subject_card_colored.dart';
 import 'package:loksewa_solution/widgets/home/quick_link_button.dart';
 import 'package:loksewa_solution/widgets/home/grid_button.dart';
 import 'package:loksewa_solution/widgets/home/notice_card.dart';
+import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/developer_card.dart';
 
 /// Home tab — faithful port of app/(tabs)/index.tsx:
@@ -55,6 +57,7 @@ class _HomeTabState extends State<HomeTab> {
     String? subcourseId;
     String? courseName;
     String? subcourseName;
+    String? photoURL;
     bool isPremium = false;
     if (user != null) {
       try {
@@ -63,6 +66,12 @@ class _HomeTabState extends State<HomeTab> {
         courseId = userDoc?['courseId'] as String?;
         subcourseId = userDoc?['subcourseId'] as String?;
         isPremium = _isPremiumActive(userDoc);
+        // React passes `storeProfile?.photoURL ?? user?.photoURL` — the
+        // Firestore user doc photo wins over the auth photoURL.
+        final docPhoto = userDoc?['photoURL'] as String?;
+        photoURL = (docPhoto != null && docPhoto.isNotEmpty)
+            ? docPhoto
+            : user.photoURL;
       } catch (_) {}
       // Resolve human-readable course names for the header.
       // Collection is `app_courses` (mirrors courses.ts COURSES_COLLECTION).
@@ -88,7 +97,7 @@ class _HomeTabState extends State<HomeTab> {
 
     List<Map<String, dynamic>> banners = [];
     List<Map<String, dynamic>> notices = [];
-    Map<String, dynamic>? qotd;
+    QotdCardStatus qotdStatus = QotdCardStatus.empty;
     Map<String, dynamic>? developer;
     int notificationCount = 0;
     try {
@@ -96,15 +105,43 @@ class _HomeTabState extends State<HomeTab> {
           idToken: token, pageSize: 20);
     } catch (_) {}
     try {
+      // Mirrors fetchNotices (services/notices.ts): pageSize 30, drop
+      // `status == 'hidden'`, apply the subcourse targeting client-side,
+      // then sort newest-first by publishedAt; Home shows the first 3.
       final allNotices = await FirestoreRest.listDocuments('app_notices',
-          idToken: token, pageSize: 10);
-      allNotices
-          .sort((a, b) => _num(b['createdAt']).compareTo(_num(a['createdAt'])));
-      notices = allNotices.take(3).toList();
+          idToken: token, pageSize: 30);
+      final visible = allNotices.where((n) {
+        if ((n['status'] ?? '').toString() == 'hidden') return false;
+        final targets = n['targetSubcourseIds'];
+        final List list = targets is List ? targets : const [];
+        if (list.isEmpty) return true;
+        if (subcourseId == null || subcourseId.isEmpty) return false;
+        return list.map((e) => e.toString()).contains(subcourseId);
+      }).toList();
+      visible.sort((a, b) {
+        final pa = a['publishedAt'];
+        final pb = b['publishedAt'];
+        final ta = pa is DateTime ? pa.millisecondsSinceEpoch : 0;
+        final tb = pb is DateTime ? pb.millisecondsSinceEpoch : 0;
+        return tb.compareTo(ta);
+      });
+      notices = visible.take(3).toList();
     } catch (_) {}
+    // QOTD status from the same source React uses: the qotd store's
+    // `app_qotd_daily/{dateKey}__{courseId}__{subcourseId}` doc + today's
+    // result (NOT `app_question_of_the_day/today`, which doesn't exist).
     try {
-      qotd = await FirestoreRest.getDocument('app_question_of_the_day/today',
-          idToken: token);
+      final uid = user?.uid ?? '';
+      if (uid.isNotEmpty && courseId != null && subcourseId != null) {
+        final day = await fetchQotdDay(uid, courseId, subcourseId);
+        if (day.courseId == courseId && day.subcourseId == subcourseId) {
+          qotdStatus = day.result != null
+              ? QotdCardStatus.completed
+              : day.question != null
+                  ? QotdCardStatus.live
+                  : QotdCardStatus.empty;
+        }
+      }
     } catch (_) {}
     try {
       final devs = await FirestoreRest.listDocuments('app_developers',
@@ -145,11 +182,12 @@ class _HomeTabState extends State<HomeTab> {
       subcourseId: subcourseId,
       courseName: courseName,
       subcourseName: subcourseName,
+      photoURL: photoURL ?? user?.photoURL,
       isPremium: isPremium,
       notificationCount: notificationCount,
       banners: banners,
       notices: notices,
-      qotd: qotd,
+      qotdStatus: qotdStatus,
       subjects: subjects,
       developer: developer,
     );
@@ -219,17 +257,6 @@ class _HomeTabState extends State<HomeTab> {
   static double _num(dynamic v) =>
       v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
 
-  static QotdCardStatus _qotdStatus(Map<String, dynamic>? q) {
-    if (q == null) return QotdCardStatus.empty;
-    final hasQuestion =
-        '${q['questionNe'] ?? q['question'] ?? ''}'.trim().isNotEmpty;
-    if (!hasQuestion) return QotdCardStatus.empty;
-    final done = q['result'] != null ||
-        q['answered'] == true ||
-        q['completed'] == true;
-    return done ? QotdCardStatus.completed : QotdCardStatus.live;
-  }
-
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
@@ -287,11 +314,10 @@ class _HomeTabState extends State<HomeTab> {
                     // Question of the Day.
                     const SizedBox(height: ExpoSpacing.sm),
                     QuestionOfDayCard(
-                      status: _qotdStatus(d.qotd),
+                      status: d.qotdStatus,
                       onPress: () =>
                           context.push('/question-of-the-day'),
                     ),
-                    const SizedBox(height: 18),
                     // Subjects.
                     _sectionHeaderRow(context, 'Subjects', '/subjects'),
                     _subjectsRail(d),
@@ -393,7 +419,7 @@ class _HomeTabState extends State<HomeTab> {
                 builder: (context, offset, _) => HomeHeader(
                   scrollOffset: offset < 0 ? 0 : offset,
                   displayName: user?.displayName ?? user?.email,
-                  photoURL: user?.photoURL,
+                  photoURL: d.photoURL,
                   pro: d.isPremium,
                   notificationCount: d.notificationCount,
                   courseName: d.courseName,
@@ -428,7 +454,7 @@ class _HomeTabState extends State<HomeTab> {
             title,
             style: TextStyle(
               fontSize: ExpoType.h3,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.bold,
               color: palette.textPrimary,
             ),
           ),
@@ -574,14 +600,25 @@ class _HomeTabState extends State<HomeTab> {
             if (i > 0) const SizedBox(height: 8),
             Builder(builder: (context) {
               final n = d.notices[i];
+              // Mirrors formatLatest: admin-typed Nepali date wins; blank
+              // falls back to the publish instant rendered in English.
+              final dateLabel =
+                  (n['dateLabel'] ?? '').toString().trim();
+              String date = dateLabel;
+              if (date.isEmpty) {
+                final p = n['publishedAt'];
+                if (p is DateTime) {
+                  date = noticeNeDate(p);
+                }
+              }
               return NoticeCard(
                 title: '${n['title'] ?? 'Notice'}',
-                date:
-                    '${n['dateLabel'] ?? n['date'] ?? ''}'.trim(),
+                date: date,
                 kind: n['kind'] as String?,
                 description:
                     (n['excerpt'] ?? n['description']) as String?,
-                onPress: () => context.push('/notice/${n['id']}'),
+                onPress: () => context.push('/notice/${n['id']}',
+                    extra: n),
               );
             }),
           ],
@@ -596,11 +633,12 @@ class _HomeData {
   final String? subcourseId;
   final String? courseName;
   final String? subcourseName;
+  final String? photoURL;
   final bool isPremium;
   final int notificationCount;
   final List<Map<String, dynamic>> banners;
   final List<Map<String, dynamic>> notices;
-  final Map<String, dynamic>? qotd;
+  final QotdCardStatus qotdStatus;
   final List<Map<String, dynamic>> subjects;
   final Map<String, dynamic>? developer;
 
@@ -609,11 +647,12 @@ class _HomeData {
     this.subcourseId,
     this.courseName,
     this.subcourseName,
+    this.photoURL,
     this.isPremium = false,
     this.notificationCount = 0,
     this.banners = const [],
     this.notices = const [],
-    this.qotd,
+    this.qotdStatus = QotdCardStatus.empty,
     this.subjects = const [],
     this.developer,
   });

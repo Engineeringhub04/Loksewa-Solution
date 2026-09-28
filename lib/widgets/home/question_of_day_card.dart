@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../theme/app_theme.dart';
 
 /// "Daily challenge" gradient card (mirrors QuestionOfDayCard.tsx).
-enum QotdCardStatus { live, completed, empty }
+enum QotdCardStatus { loading, live, completed, empty }
 
 class QuestionOfDayCard extends StatefulWidget {
   final QotdCardStatus status;
@@ -60,7 +60,9 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
         ? 'COMPLETED'
         : empty
             ? 'NO QUESTION'
-            : 'LIVE';
+            : widget.status == QotdCardStatus.loading
+                ? 'LOADING'
+                : 'LIVE';
     final subtitle = done
         ? 'Today\u2019s challenge is complete. See you tomorrow.'
         : empty
@@ -72,8 +74,8 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
             ? const Color(0xFF94A3B8)
             : const Color(0xFFFF6B6B);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+    return Container(
+      margin: const EdgeInsets.only(left: 16, right: 16, bottom: 18),
       child: Material(
         color: Colors.transparent,
         borderRadius: BorderRadius.circular(ExpoRadius.lg),
@@ -81,6 +83,7 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
           onTap: widget.onPress,
           borderRadius: BorderRadius.circular(ExpoRadius.lg),
           child: Container(
+            constraints: const BoxConstraints(minHeight: 154),
             padding: const EdgeInsets.all(17),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(ExpoRadius.lg),
@@ -158,6 +161,14 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
                             border: Border.all(
                                 color:
                                     Colors.white.withValues(alpha: 0.1)),
+                            boxShadow: live
+                                ? const [
+                                    BoxShadow(
+                                      color: Color(0xE6EF4444),
+                                      blurRadius: 10,
+                                    ),
+                                  ]
+                                : null,
                           ),
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
@@ -232,7 +243,7 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
                               Text(
                                 subtitle,
                                 style: TextStyle(
-                                  color: const Color(0xFFEFFFFF)
+                                  color: const Color(0xFFEFF6FF)
                                       .withValues(alpha: 0.78),
                                   fontSize: ExpoType.bodySmall,
                                   height: 18 / 12,

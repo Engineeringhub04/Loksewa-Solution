@@ -2,10 +2,19 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 
+/// A single document write for [FirestoreRest.commitWrites] — mirrors the
+/// WriteSpec built by setWrite() in firestoreRest.ts.
+class FirestoreWrite {
+  final String path;
+  final Map<String, dynamic> data;
+  final bool merge;
+
+  const FirestoreWrite(this.path, this.data, {this.merge = false});
+}
+
 /// Firestore REST API client — mirrors src/core/firebase/firestoreRest.ts.
 /// Same endpoints, same document paths, no native SDK.
-class FirestoreRest {
-  static String get _base =>
+class FirestoreRest {  static String get _base =>
       'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
 
   static Map<String, String> _headers(String idToken) => {
@@ -124,6 +133,50 @@ class FirestoreRest {
     if (res.statusCode != 200 && res.statusCode != 404) {
       throw Exception('deleteDocument $path: ${res.statusCode}');
     }
+  }
+
+  /// Commits one or more writes atomically via the `:commit` endpoint —
+  /// mirrors commitWrites() in firestoreRest.ts (replaces writeBatch).
+  /// Sent in chunks of 400 writes per request, exactly like
+  /// markAllNotificationsRead on the Expo side.
+  static Future<void> commitWrites(List<FirestoreWrite> writes,
+      {String idToken = ''}) async {
+    const resourceBase =
+        'projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
+    for (var i = 0; i < writes.length; i += 400) {
+      final end = (i + 400).clamp(0, writes.length);
+      final chunk = writes.sublist(i, end);
+      final body = {
+        'writes': chunk.map((w) {
+          final write = <String, dynamic>{
+            'update': {
+              'name': '$resourceBase/${w.path}',
+              'fields': w.data
+                  .map((k, v) => MapEntry(k, _encodeValue(v))),
+            },
+          };
+          if (w.merge) {
+            write['updateMask'] = {
+              'fieldPaths': w.data.keys.toList()
+            };
+          }
+          return write;
+        }).toList(),
+      };
+      final res = await http.post(Uri.parse('$_base:commit'),
+          headers: _headers(idToken), body: json.encode(body));
+      if (res.statusCode != 200) {
+        throw Exception('commitWrites: ${res.statusCode} ${res.body}');
+      }
+    }
+  }
+
+  /// Merges [data] into the document at [path] — mirrors updateDocument()
+  /// in firestoreRest.ts (a merge write through :commit).
+  static Future<void> updateDocument(String path, Map<String, dynamic> data,
+      {String idToken = ''}) {
+    return commitWrites([FirestoreWrite(path, data, merge: true)],
+        idToken: idToken);
   }
 
   /// Marks a field to be set to the server's commit time (approximated client-side).

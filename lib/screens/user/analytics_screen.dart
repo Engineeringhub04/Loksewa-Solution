@@ -36,7 +36,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   Future<List<Map<String, dynamic>>> _load() async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null) throw Exception('Not signed in.');
-    final idToken = await AuthService.getValidIdToken() ?? '';
+    final idToken = await AuthService.getValidIdToken();
     return FirestoreRest.listDocuments('users/$uid/app_analytics',
         idToken: idToken);
   }
@@ -51,7 +51,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Analytics'),
+          const SubpageHeader(title: 'Performance Analytics'),
           Expanded(
             child: FutureBuilder<List<Map<String, dynamic>>>(
         future: _future,

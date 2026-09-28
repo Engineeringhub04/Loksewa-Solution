@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../../theme/app_theme.dart';
 
-/// Compact premium subject card for Home's horizontal rail
-/// (mirrors SubjectCardColored.tsx). 150x130, gradient with a glow accent.
+/// Compact premium subject card — exact port of SubjectCardColored.tsx.
+/// Default 150x130 (Home's horizontal rail); the Subjects grid passes a
+/// measured width + height 150 so two cards fill the row.
 class SubjectCardColored extends StatelessWidget {
   final String name;
   final IconData icon;
@@ -12,6 +12,10 @@ class SubjectCardColored extends StatelessWidget {
   final String premiumLabel;
   final bool purchased;
   final String purchasedLabel;
+  final String? footerLabel;
+  final VoidCallback? onFooterPress;
+  final double? width;
+  final double? height;
 
   const SubjectCardColored({
     super.key,
@@ -22,7 +26,11 @@ class SubjectCardColored extends StatelessWidget {
     this.premium = false,
     this.premiumLabel = 'Premium',
     this.purchased = false,
-    this.purchasedLabel = 'Purchased',
+    this.purchasedLabel = 'Purchased (Active)',
+    this.footerLabel,
+    this.onFooterPress,
+    this.width,
+    this.height,
   });
 
   Color _darken(Color c, int amount) {
@@ -40,8 +48,8 @@ class SubjectCardColored extends StatelessWidget {
         onTap: onPress,
         borderRadius: BorderRadius.circular(18),
         child: Container(
-          width: 150,
-          height: 130,
+          width: width ?? 150,
+          height: height ?? 130,
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
@@ -52,7 +60,9 @@ class SubjectCardColored extends StatelessWidget {
             ),
             boxShadow: const [
               BoxShadow(
-                  color: Colors.black26, blurRadius: 8, offset: Offset(0, 4)),
+                  color: Color(0x2E000000),
+                  blurRadius: 8,
+                  offset: Offset(0, 4)),
             ],
           ),
           child: Stack(
@@ -70,11 +80,11 @@ class SubjectCardColored extends StatelessWidget {
                   ),
                 ),
               ),
-              // Premium / purchased tag.
+              // Premium / purchased tag (top:8 right:8).
               if (premium)
                 Positioned(
-                  top: 0,
-                  right: 0,
+                  top: 8,
+                  right: 8,
                   child: Container(
                     constraints: const BoxConstraints(maxWidth: 76),
                     padding: const EdgeInsets.symmetric(
@@ -120,26 +130,64 @@ class SubjectCardColored extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 40,
+                  SizedBox(
                     height: 40,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      color: Colors.white.withValues(alpha: 0.22),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color:
+                                Colors.white.withValues(alpha: 0.22),
+                          ),
+                          child:
+                              Icon(icon, size: 24, color: Colors.white),
+                        ),
+                      ],
                     ),
-                    child: Icon(icon, size: 24, color: Colors.white),
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: ExpoType.bodyLarge,
-                      fontWeight: FontWeight.bold,
+                  Padding(
+                    padding: const EdgeInsets.only(right: 2),
+                    child: Text(
+                      name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
+                  if (footerLabel != null) ...[
+                    const Spacer(),
+                    InkWell(
+                      onTap: onFooterPress ?? onPress,
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              footerLabel!,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const Icon(Icons.arrow_forward,
+                                size: 14, color: Colors.white),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],

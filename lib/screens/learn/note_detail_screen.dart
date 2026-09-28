@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/app_toast.dart';
 
 /// Note editor — mirrors app/notes/[id].tsx.
 /// Title, body, color picker, save/delete. Local-first via SharedPreferences.
@@ -95,8 +96,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     }
     await PrefsService.setString('loksewa:notes', json.encode(notes));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Note saved')));
+    showToast(context, 'Note saved', ToastVariant.success);
     context.pop();
   }
 
@@ -104,8 +104,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete note?'),
-        content: const Text('This cannot be undone.'),
+        title: const Text('Delete this note?'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -122,8 +121,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     notes.removeWhere((n) => n['id'] == widget.id);
     await PrefsService.setString('loksewa:notes', json.encode(notes));
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(const SnackBar(content: Text('Note deleted')));
+    showToast(context, 'Note deleted', ToastVariant.success);
     context.pop();
   }
 
@@ -169,7 +167,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                       TextField(
                         controller: _bodyCtrl,
                         decoration: const InputDecoration(
-                          hintText: 'Write your note...',
+                          hintText: 'Start writing...',
                           border: InputBorder.none,
                         ),
                         maxLines: null,
@@ -184,8 +182,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                           return GestureDetector(
                             onTap: () => setState(() => _color = c),
                             child: Container(
-                              width: 36,
-                              height: 36,
+                              width: 32,
+                              height: 32,
                               margin:
                                   const EdgeInsets.only(right: 10),
                               decoration: BoxDecoration(
@@ -195,14 +193,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                                   color: selected
                                       ? AppColors.navy
                                       : Colors.grey.shade400,
-                                  width: selected ? 2.5 : 1,
+                                  width: selected ? 2 : 1,
                                 ),
                               ),
-                              child: selected
-                                  ? const Icon(Icons.check,
-                                      size: 18,
-                                      color: AppColors.navy)
-                                  : null,
                             ),
                           );
                         }).toList(),

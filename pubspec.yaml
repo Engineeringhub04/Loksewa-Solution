@@ -27,3 +27,5 @@ flutter:
   uses-material-design: true
   assets:
     - assets/images/app_logo.png
+    - assets/images/ws-weeklytest.png
+    - assets/images/ws-leaderboard_analytics.png

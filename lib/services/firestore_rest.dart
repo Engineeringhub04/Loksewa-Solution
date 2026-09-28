@@ -86,9 +86,16 @@ class FirestoreRest {
     if (res.statusCode != 200) throw Exception('listDocuments $collectionPath: ${res.statusCode}');
     final body = json.decode(res.body) as Map<String, dynamic>;
     final docs = body['documents'] as List? ?? [];
-    return docs
-        .map((d) => _decodeFields(d as Map<String, dynamic>))
-        .toList();
+    return docs.map((d) {
+      final doc = d as Map<String, dynamic>;
+      final fields = _decodeFields(doc);
+      // Inject the document id from the resource name, like the Expo
+      // fromFirestoreDocument() does (docs store no `id` field themselves).
+      final name = doc['name'] as String? ?? '';
+      final id = name.split('/').last;
+      if (id.isNotEmpty) fields['id'] = id;
+      return fields;
+    }).toList();
   }
 
   static Future<void> setDocument(

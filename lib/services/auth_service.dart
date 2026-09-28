@@ -199,11 +199,66 @@ class AuthService {
     return _session!.user;
   }
 
+  /// Google Sign-In via Identity Toolkit signInWithIdp — mirrors
+  /// signInWithGoogleIdTokenResult in auth.ts. Returns the user plus whether
+  /// the account was just created. Login passes allowCreate: false (lookup
+  /// only); signup passes allowCreate: true.
+  static Future<({AppUser user, bool isNewUser})> signInWithGoogleIdToken(
+    String idToken, {
+    required bool allowCreate,
+  }) async {
+    final res = await _identityRequest('signInWithIdp', {
+      // Keep the OAuth token URL-safe in the REST postBody.
+      'postBody':
+          'id_token=${Uri.encodeComponent(idToken)}&providerId=google.com',
+      'requestUri': 'http://localhost',
+      'returnSecureToken': true,
+      // Ask Firebase to return the provider-conflict marker instead of
+      // silently linking or creating.
+      'returnIdpCredential': true,
+      'autoCreate': allowCreate,
+    });
+    // With one-account-per-email enabled, Firebase can return HTTP 200 with
+    // EMAIL_EXISTS instead of issuing a second account — never authenticate
+    // an email/password account through a Google credential silently.
+    if (res['needConfirmation'] == true ||
+        res['errorMessage'] == 'EMAIL_EXISTS' ||
+        res['errorMessage'] == 'FEDERATED_USER_ID_ALREADY_LINKED') {
+      throw AuthError('auth/account-exists-with-different-credential');
+    }
+    final isNewUser = res['isNewUser'] == true;
+    if (!allowCreate && isNewUser) {
+      // Defensive guard in case the backend ignores autoCreate. Never persist
+      // a session for an unexpected new account on the login screen.
+      throw AuthError('auth/google-account-creation-blocked');
+    }
+    await _storeSession(res);
+    return (user: _session!.user, isNewUser: isNewUser);
+  }
+
   static Future<void> sendPasswordReset(String email) async {
     await _identityRequest('sendOobCode', {
       'requestType': 'PASSWORD_RESET',
       'email': email,
     });
+  }
+
+  /// Validates a Firebase action-link oobCode — mirrors
+  /// verifyPasswordResetCode in auth.ts.
+  static Future<({String? email, String? requestType})>
+      verifyPasswordResetCode(String oobCode) async {
+    final res = await _identityRequest('resetPassword', {'oobCode': oobCode});
+    return (
+      email: res['email'] as String?,
+      requestType: res['requestType'] as String?,
+    );
+  }
+
+  /// Completes a password reset — mirrors confirmPasswordReset in auth.ts.
+  static Future<void> confirmPasswordReset(
+      String oobCode, String newPassword) async {
+    await _identityRequest(
+        'resetPassword', {'oobCode': oobCode, 'newPassword': newPassword});
   }
 
   static Future<void> logout() async {

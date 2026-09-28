@@ -25,6 +25,7 @@ import '../screens/auth/under_construction_screen.dart';
 
 // Learn
 import '../screens/learn/subjects_screen.dart';
+import '../screens/learn/profile_tab.dart';
 import '../screens/learn/subject_chapters_screen.dart';
 import '../screens/learn/subject_units_screen.dart';
 import '../screens/learn/subject_practice_screen.dart';
@@ -184,6 +185,9 @@ final appRouter = GoRouter(
     GoRoute(path: '/settings', redirect: (_, __) => '/'),
 
     // ---- Learn ----
+    // Standalone profile page for the home header avatar tap (the Profile
+    // tab shell is unchanged; this reuses the same tab content).
+    GoRoute(path: '/profile', builder: (_, __) => const Scaffold(body: ProfileTab())),
     GoRoute(path: '/subjects', builder: (_, __) => const SubjectsScreen()),
     GoRoute(
       path: '/subjects/chapters/:subjectId',

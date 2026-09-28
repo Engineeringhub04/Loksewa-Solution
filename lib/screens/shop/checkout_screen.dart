@@ -345,7 +345,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       String value, String title, String subtitle, IconData icon) {
     final selected = _method == value;
     return Card(
-      color: selected ? AppColors.navy.withOpacity(0.06) : null,
+      color: selected ? AppColors.navy.withValues(alpha: 0.06) : null,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: BorderSide(

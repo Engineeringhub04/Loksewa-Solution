@@ -153,7 +153,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                   padding: const EdgeInsets.all(24),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                        colors: [color, color.withOpacity(0.7)],
+                        colors: [color, color.withValues(alpha: 0.7)],
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight),
                     borderRadius: BorderRadius.circular(16),
@@ -334,7 +334,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   }
 
   Widget _infoCard(String title, String body, Color color) => Card(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(

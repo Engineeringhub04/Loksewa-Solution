@@ -110,7 +110,7 @@ class _PdfScreenState extends State<PdfScreen> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 14, vertical: 7),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.85),
+                    color: Colors.black.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Row(
@@ -139,7 +139,7 @@ class _PdfScreenState extends State<PdfScreen> {
                   width: 40,
                   height: 40,
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.85),
+                    color: Colors.black.withValues(alpha: 0.85),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.close,

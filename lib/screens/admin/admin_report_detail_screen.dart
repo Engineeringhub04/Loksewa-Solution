@@ -194,7 +194,7 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: color.withOpacity(0.15),
+                            color: color.withValues(alpha: 0.15),
                             borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(label,

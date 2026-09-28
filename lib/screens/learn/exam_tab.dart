@@ -304,7 +304,7 @@ class _ExamTabState extends State<ExamTab> {
                             width: 48,
                             height: 48,
                             decoration: BoxDecoration(
-                              color: AppColors.navy.withOpacity(0.1),
+                              color: AppColors.navy.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(10),
                             ),
                             child: const Icon(Icons.assignment,
@@ -322,7 +322,7 @@ class _ExamTabState extends State<ExamTab> {
                             decoration: BoxDecoration(
                               color: isFree
                                   ? Colors.green.shade100
-                                  : AppColors.accent.withOpacity(0.15),
+                                  : AppColors.accent.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(20),
                             ),
                             child: Text(

@@ -145,7 +145,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
+          color: color.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: color),
@@ -269,7 +269,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
                         width: 44,
                         height: 44,
                         decoration: BoxDecoration(
-                          color: AppColors.navy.withOpacity(0.1),
+                          color: AppColors.navy.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         alignment: Alignment.center,
@@ -315,7 +315,7 @@ class _ModeTag extends StatelessWidget {
       margin: const EdgeInsets.only(right: 4, top: 4),
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(label,

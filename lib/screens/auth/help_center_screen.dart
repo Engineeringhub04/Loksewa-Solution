@@ -329,7 +329,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
             width: 26,
             height: 26,
             decoration: BoxDecoration(
-              color: item.color.withOpacity(0.12),
+              color: item.color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(6),
             ),
             child: Icon(Icons.help_outline,
@@ -364,7 +364,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
+          color: color.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(10),
         ),
         child: Icon(icon, color: color, size: 20),

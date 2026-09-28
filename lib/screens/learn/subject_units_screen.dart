@@ -161,7 +161,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
         width: 44,
         height: 44,
         decoration: BoxDecoration(
-          color: color.withOpacity(0.12),
+          color: color.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(icon, color: color),
@@ -258,7 +258,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
                           width: 44,
                           height: 44,
                           decoration: BoxDecoration(
-                            color: AppColors.navy.withOpacity(0.1),
+                            color: AppColors.navy.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           alignment: Alignment.center,

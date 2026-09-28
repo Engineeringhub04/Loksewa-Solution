@@ -142,7 +142,7 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
             color: (reviewed
                     ? (passed ? Colors.green : Colors.red)
                     : Colors.amber.shade700)
-                .withOpacity(0.15),
+                .withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(

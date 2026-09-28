@@ -194,7 +194,7 @@ class _FeatureHomeState extends State<_FeatureHome> {
                     child: ListTile(
                       leading: CircleAvatar(
                         backgroundColor:
-                            AppColors.navy.withOpacity(0.1),
+                            AppColors.navy.withValues(alpha: 0.1),
                         child: Icon(_iconFor(titleEn),
                             color: AppColors.navy),
                       ),

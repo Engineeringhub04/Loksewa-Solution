@@ -379,7 +379,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                       icon = Icons.cancel;
                     }
                   } else if (pos == _selected) {
-                    bg = AppColors.navy.withOpacity(0.08);
+                    bg = AppColors.navy.withValues(alpha: 0.08);
                   }
                   return Container(
                     margin: const EdgeInsets.only(bottom: 8),

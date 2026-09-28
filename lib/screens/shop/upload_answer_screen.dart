@@ -189,7 +189,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                     children: [
                       if (_examSet != null)
                         Card(
-                          color: AppColors.navy.withOpacity(0.06),
+                          color: AppColors.navy.withValues(alpha: 0.06),
                           child: Padding(
                             padding: const EdgeInsets.all(16),
                             child: Text(

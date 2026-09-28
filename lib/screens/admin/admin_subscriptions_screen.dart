@@ -178,7 +178,7 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.15),
+          backgroundColor: color.withValues(alpha: 0.15),
           child: Text(who.trim().isEmpty ? '?' : who.trim()[0].toUpperCase(),
               style:
                   TextStyle(color: color, fontWeight: FontWeight.bold)),
@@ -199,7 +199,7 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.15),
+                    color: color.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(label,

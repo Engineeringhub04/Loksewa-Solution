@@ -123,7 +123,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
                           ? Chip(
                               label: Text(_labels[_rating]),
                               backgroundColor:
-                                  _tone().withOpacity(0.15),
+                                  _tone().withValues(alpha: 0.15),
                             )
                           : const Text(
                               'Tap a star to rate',

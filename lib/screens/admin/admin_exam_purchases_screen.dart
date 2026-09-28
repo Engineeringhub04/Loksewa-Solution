@@ -114,7 +114,7 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
       label: Text(label),
       selected: active,
       onSelected: (_) => setState(() => _filter = value),
-      selectedColor: (color ?? AppColors.navy).withOpacity(0.2),
+      selectedColor: (color ?? AppColors.navy).withValues(alpha: 0.2),
     );
   }
 
@@ -131,7 +131,7 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.15),
+          backgroundColor: color.withValues(alpha: 0.15),
           child: Icon(
             status == 'active'
                 ? Icons.check_circle
@@ -155,7 +155,7 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
               padding:
                   const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
+                color: color.withValues(alpha: 0.15),
                 borderRadius: BorderRadius.circular(999),
               ),
               child: Text(label,

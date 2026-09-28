@@ -212,7 +212,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       borderRadius: BorderRadius.circular(4),
                       color: i == _index
                           ? slide.accentColor
-                          : Colors.white.withOpacity(0.3),
+                          : Colors.white.withValues(alpha: 0.3),
                     ),
                   ),
                 ),
@@ -228,7 +228,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                           onPressed: _finish,
                           style: ElevatedButton.styleFrom(
                             backgroundColor:
-                                Colors.white.withOpacity(0.18),
+                                Colors.white.withValues(alpha: 0.18),
                             foregroundColor: Colors.white,
                             padding:
                                 const EdgeInsets.symmetric(vertical: 16),
@@ -345,10 +345,10 @@ class _SlideView extends StatelessWidget {
               padding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: slide.accentColor.withOpacity(0.18),
+                color: slide.accentColor.withValues(alpha: 0.18),
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
-                    color: slide.accentColor.withOpacity(0.5)),
+                    color: slide.accentColor.withValues(alpha: 0.5)),
               ),
               child: Text(
                 slide.tag!,
@@ -375,7 +375,7 @@ class _SlideView extends StatelessWidget {
           Text(
             slide.description,
             style: TextStyle(
-              color: Colors.white.withOpacity(0.75),
+              color: Colors.white.withValues(alpha: 0.75),
               fontSize: 15,
               height: 1.5,
             ),

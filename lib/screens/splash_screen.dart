@@ -87,7 +87,7 @@ class _SplashScreenState extends State<SplashScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).width;
+    final width = MediaQuery.of(context).size.width;
     final logoSize = (width * 0.44).clamp(0, 188).toDouble();
     final logoRadius = logoSize * 0.2237;
 
@@ -115,7 +115,7 @@ class _SplashScreenState extends State<SplashScreen> {
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(logoRadius),
                       color: const Color(0xFF000030),
-                      border: Border.all(color: Colors.white.withOpacity(0.14)),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
                       boxShadow: const [
                         BoxShadow(
                           color: Colors.black54,
@@ -235,7 +235,7 @@ class _SplashPainter extends CustomPainter {
     );
 
     final iconPaint = Paint()
-      ..color = stroke.withOpacity(0.24)
+      ..color = stroke.withValues(alpha: 0.24)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.2
       ..strokeCap = StrokeCap.round
@@ -257,7 +257,7 @@ class _SplashPainter extends CustomPainter {
 
     // Dotted path (top right)
     final dotted = Paint()
-      ..color = stroke.withOpacity(0.24)
+      ..color = stroke.withValues(alpha: 0.24)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4;
     final dottedPath = Path()
@@ -277,12 +277,12 @@ class _SplashPainter extends CustomPainter {
         ..moveTo(-35, y)
         ..cubicTo(w * 0.18, y - 27, w * 0.42, y + 30, w * 0.62, y + 120)
         ..cubicTo(w * 0.78, y + 194, w * 0.88, y + 228, w + 40, y + 241);
-      canvas.drawPath(wave, wavePaint..color = stroke.withOpacity(0.19 - i * 0.03));
+      canvas.drawPath(wave, wavePaint..color = stroke.withValues(alpha: 0.19 - i * 0.03));
     }
 
     // Scattered dots
     final dotPaint = Paint()
-      ..color = stroke.withOpacity(0.3)
+      ..color = stroke.withValues(alpha: 0.3)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.9;
     for (final d in [

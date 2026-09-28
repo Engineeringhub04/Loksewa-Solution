@@ -198,7 +198,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 Container(
                   height: heights[i],
                   decoration: BoxDecoration(
-                    color: Colors.blue.shade700.withOpacity(0.12),
+                    color: Colors.blue.shade700.withValues(alpha: 0.12),
                     borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(10)),
                     border: Border.all(color: Colors.blue.shade200),

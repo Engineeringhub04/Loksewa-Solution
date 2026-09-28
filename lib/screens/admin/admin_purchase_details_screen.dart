@@ -106,9 +106,9 @@ class _AdminPurchaseDetailsScreenState
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: AppColors.navy.withOpacity(0.06),
+                    color: AppColors.navy.withValues(alpha: 0.06),
                     border: Border.all(
-                        color: AppColors.navy.withOpacity(0.2)),
+                        color: AppColors.navy.withValues(alpha: 0.2)),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: const Row(
@@ -198,7 +198,7 @@ class _AdminPurchaseDetailsScreenState
                   padding: const EdgeInsets.symmetric(
                       horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.15),
+                    color: color.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(label,

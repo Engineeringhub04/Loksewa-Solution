@@ -162,7 +162,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                               CircleAvatar(
                                 radius: 24,
                                 backgroundColor:
-                                    AppColors.navy.withOpacity(0.1),
+                                    AppColors.navy.withValues(alpha: 0.1),
                                 child: Text(
                                   name.isNotEmpty ? name[0] : 'S',
                                   style: const TextStyle(

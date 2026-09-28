@@ -226,7 +226,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         trailing: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: _statusColor(status).withOpacity(0.15),
+            color: _statusColor(status).withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(status.toUpperCase(),

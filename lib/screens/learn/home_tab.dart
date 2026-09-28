@@ -198,7 +198,7 @@ class _HomeTabState extends State<HomeTab> {
             margin: const EdgeInsets.only(right: 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              color: AppColors.navy.withOpacity(0.08),
+              color: AppColors.navy.withValues(alpha: 0.08),
             ),
             clipBehavior: Clip.antiAlias,
             child: url != null && url.isNotEmpty
@@ -314,7 +314,7 @@ class _HomeTabState extends State<HomeTab> {
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                color: AppColors.navy.withOpacity(0.06),
+                color: AppColors.navy.withValues(alpha: 0.06),
                 border: Border.all(color: Colors.grey.shade300),
               ),
               child: Column(

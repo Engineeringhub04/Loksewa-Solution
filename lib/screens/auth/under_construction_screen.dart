@@ -62,7 +62,7 @@ class UnderConstructionScreen extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 11, vertical: 5),
                     decoration: BoxDecoration(
-                      color: Colors.amber.withOpacity(0.15),
+                      color: Colors.amber.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: const Row(

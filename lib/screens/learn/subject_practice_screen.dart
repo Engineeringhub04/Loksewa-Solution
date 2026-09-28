@@ -197,7 +197,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: _diffColor(q.difficulty).withOpacity(0.12),
+                      color: _diffColor(q.difficulty).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(q.difficulty,
@@ -241,7 +241,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                           ? Colors.green
                           : answered && isSelected
                               ? Colors.red
-                              : AppColors.navy.withOpacity(0.1),
+                              : AppColors.navy.withValues(alpha: 0.1),
                       child: Text(String.fromCharCode(65 + i),
                           style: TextStyle(
                               fontSize: 13,

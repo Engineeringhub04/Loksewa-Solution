@@ -791,7 +791,7 @@ MockScore scoreMockAttempt(
     }
   }
   final raw = correctCount - incorrectCount * 0.25;
-  final score = (raw < 0 ? 0 : (raw * 100).round() / 100);
+  final score = (raw < 0 ? 0.0 : (raw * 100).round() / 100);
   return MockScore(
     score: score,
     totalMarks: questions.length,
@@ -1369,7 +1369,7 @@ class QotdSummary {
 }
 
 Future<QotdQuestion?> fetchTodayQuestion(String courseId, String subcourseId) async {
-  final docId = '${todayDateKey()}__$courseId__$subcourseId';
+  final docId = '${todayDateKey()}__${courseId}__${subcourseId}';
   final doc = await ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null);
   if (doc == null) return null;
   return QotdQuestion.fromMap(doc);

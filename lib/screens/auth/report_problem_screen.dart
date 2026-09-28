@@ -170,7 +170,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
         width: 34,
         height: 34,
         decoration: BoxDecoration(
-          color: selected ? item.$5 : item.$5.withOpacity(0.12),
+          color: selected ? item.$5 : item.$5.withValues(alpha: 0.12),
           borderRadius: BorderRadius.circular(17),
         ),
         child: Icon(item.$4,

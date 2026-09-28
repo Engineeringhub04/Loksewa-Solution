@@ -97,7 +97,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppColors.navy.withOpacity(0.08),
+                  color: AppColors.navy.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Row(
@@ -122,7 +122,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                         width: 42,
                         height: 42,
                         decoration: BoxDecoration(
-                          color: AppColors.navy.withOpacity(0.1),
+                          color: AppColors.navy.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(Icons.school_outlined,
@@ -141,7 +141,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
                         width: 42,
                         height: 42,
                         decoration: BoxDecoration(
-                          color: AppColors.navy.withOpacity(0.1),
+                          color: AppColors.navy.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Icon(Icons.layers_outlined,

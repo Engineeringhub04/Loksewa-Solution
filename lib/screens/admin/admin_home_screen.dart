@@ -118,7 +118,7 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
         leading: CircleAvatar(
-          backgroundColor: color.withOpacity(0.12),
+          backgroundColor: color.withValues(alpha: 0.12),
           child: Icon(icon, color: color),
         ),
         title:

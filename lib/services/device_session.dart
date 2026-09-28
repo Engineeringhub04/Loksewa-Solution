@@ -89,9 +89,15 @@ class DeviceSession {
     }
   }
 
+  /// Consumes the parked eviction notice.
+  /// Returns null when no notice was parked (login shows NO banner),
+  /// '' when parked without a device name (generic banner),
+  /// otherwise the other device's name.
   static Future<String?> consumeEvictionNotice() async {
-    final name = await PrefsService.getString(PrefsService.evictionNotice);
-    await PrefsService.remove(PrefsService.evictionNotice);
-    return name;
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey(PrefsService.evictionNotice)) return null;
+    final name = prefs.getString(PrefsService.evictionNotice);
+    await prefs.remove(PrefsService.evictionNotice);
+    return name ?? '';
   }
 }

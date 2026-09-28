@@ -23,12 +23,12 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    DeviceSession.consumeEvictionNotice().then((name) {
-      if (!mounted) return;
+    DeviceSession.consumeEvictionNotice().then((notice) {
+      if (!mounted || notice == null) return; // no notice parked: no banner
       setState(() {
-        _evictionNotice = name == null
+        _evictionNotice = notice.isEmpty
             ? 'Your account was signed in on another device, so this phone was signed out.'
-            : 'Your account was signed in on "$name", so this phone was signed out.';
+            : 'Your account was signed in on "$notice", so this phone was signed out.';
       });
     });
   }
@@ -50,6 +50,8 @@ class _LoginScreenState extends State<LoginScreen> {
         return 'Too many attempts. Please try again later.';
       case 'auth/invalid-email':
         return 'Please enter a valid email address.';
+      case 'auth/invalid-api-key':
+        return 'Server configuration error. Please update to the latest version of the app.';
       default:
         return 'Sign-in failed. Please try again.';
     }

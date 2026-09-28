@@ -68,6 +68,9 @@ class AuthError implements Exception {
 
 /// Identity Toolkit message -> auth/* code map (mirrors auth.ts ERROR_CODE_MAP).
 String _mapErrorCode(String raw) {
+  // Config-level failures (e.g. a mis-baked API key) get their own code so
+  // the UI can tell the user to update instead of retrying blindly.
+  if (raw.contains('API key')) return 'auth/invalid-api-key';
   const map = {
     'EMAIL_EXISTS': 'auth/email-already-in-use',
     'EMAIL_NOT_FOUND': 'auth/invalid-credential',

@@ -49,22 +49,38 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
     }
     String subjectName = widget.subjectId;
     bool subjectPro = false;
-    try {
-      final doc = await FirestoreRest.getDocument(
-          'app_subjects_details/${widget.subjectId}',
-          idToken: token);
-      subjectName = (doc?['name'] as String?) ?? subjectName;
-      subjectPro = doc?['pro'] == true;
-    } catch (_) {}
-    final units = await fetchSubjectUnitsWithChapters(
-        courseId, subcourseId, widget.subjectId, user?.uid);
-    List<Map<String, dynamic>> directChapters = [];
-    try {
-      directChapters = await fetchSubjectChaptersWithProgress(
-          courseId, subcourseId, widget.subjectId, user?.uid);
-    } catch (_) {
-      // Technical Subject normally has no direct chapters — tolerated.
+    // The subject-name lookup, the units+chapters fetch and the direct-chapter
+    // fetch are independent — run all three concurrently instead of one after
+    // another.
+    Future<Map<String, dynamic>?> safeDoc(String path) async {
+      try {
+        return await FirestoreRest.getDocument(path, idToken: token);
+      } catch (_) {
+        return null;
+      }
     }
+
+    Future<List<Map<String, dynamic>>> safeDirectChapters() async {
+      try {
+        return await fetchSubjectChaptersWithProgress(
+            courseId, subcourseId, widget.subjectId, user?.uid);
+      } catch (_) {
+        // Technical Subject normally has no direct chapters — tolerated.
+        return <Map<String, dynamic>>[];
+      }
+    }
+
+    final results = await Future.wait([
+      safeDoc('app_subjects_details/${widget.subjectId}'),
+      fetchSubjectUnitsWithChapters(
+          courseId, subcourseId, widget.subjectId, user?.uid),
+      safeDirectChapters(),
+    ]);
+    final doc = results[0] as Map<String, dynamic>?;
+    final units = results[1] as List<Map<String, dynamic>>;
+    final directChapters = results[2] as List<Map<String, dynamic>>;
+    subjectName = (doc?['name'] as String?) ?? subjectName;
+    subjectPro = doc?['pro'] == true;
     final tracks = <_Track>[];
     if (directChapters.isNotEmpty) {
       tracks.add(_Track(

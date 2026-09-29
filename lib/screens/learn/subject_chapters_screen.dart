@@ -47,15 +47,25 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
     }
     String subjectName = 'Subject';
     bool subjectPro = false;
-    try {
-      final doc = await FirestoreRest.getDocument(
-          'app_subjects_details/${widget.subjectId}',
-          idToken: token);
-      subjectName = (doc?['name'] as String?) ?? subjectName;
-      subjectPro = doc?['pro'] == true;
-    } catch (_) {}
-    final chapters = await fetchSubjectChaptersWithProgress(
-        courseId, subcourseId, widget.subjectId, user?.uid);
+    // The subject-name lookup and the chapter+progress fetch are independent —
+    // run them concurrently instead of one after another.
+    Future<Map<String, dynamic>?> safeDoc(String path) async {
+      try {
+        return await FirestoreRest.getDocument(path, idToken: token);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final results = await Future.wait([
+      safeDoc('app_subjects_details/${widget.subjectId}'),
+      fetchSubjectChaptersWithProgress(
+          courseId, subcourseId, widget.subjectId, user?.uid),
+    ]);
+    final doc = results[0] as Map<String, dynamic>?;
+    final chapters = results[1] as List<Map<String, dynamic>>;
+    subjectName = (doc?['name'] as String?) ?? subjectName;
+    subjectPro = doc?['pro'] == true;
     return _ChapterPage(
       subjectName: subjectName,
       subjectPro: subjectPro,

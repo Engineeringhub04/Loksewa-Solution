@@ -54,18 +54,26 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         isPremium = _hasActivePremium(doc);
       } catch (_) {}
     }
-    try {
-      final cDoc = await FirestoreRest.getDocument('app_courses/$courseId',
-          idToken: token);
-      courseName = (cDoc?['name'] as String?) ?? courseName;
-    } catch (_) {}
-    try {
-      final scDoc = await FirestoreRest.getDocument(
-          'app_courses/$courseId/subcourses/$subcourseId',
-          idToken: token);
-      subcourseName = (scDoc?['name'] as String?) ?? subcourseName;
-    } catch (_) {}
-    final subjects = await fetchSubjectDetails(courseId, subcourseId);
+    // The two name lookups and the subject catalogue are independent — fetch
+    // them concurrently instead of one after another.
+    Future<Map<String, dynamic>?> safeDoc(String path) async {
+      try {
+        return await FirestoreRest.getDocument(path, idToken: token);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final results = await Future.wait([
+      safeDoc('app_courses/$courseId'),
+      safeDoc('app_courses/$courseId/subcourses/$subcourseId'),
+      fetchSubjectDetails(courseId, subcourseId),
+    ]);
+    final cDoc = results[0] as Map<String, dynamic>?;
+    final scDoc = results[1] as Map<String, dynamic>?;
+    final subjects = results[2] as List<Map<String, dynamic>>;
+    courseName = (cDoc?['name'] as String?) ?? courseName;
+    subcourseName = (scDoc?['name'] as String?) ?? subcourseName;
     SubjectLearningStats stats =
         const SubjectLearningStats(complete: 0, inProgress: 0);
     if (user != null && subjects.isNotEmpty) {

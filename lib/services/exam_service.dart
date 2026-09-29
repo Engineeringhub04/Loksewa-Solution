@@ -1206,6 +1206,45 @@ Future<void> saveDailyTestResult({
 }
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// In-memory catalogue cache — mirrors cachedOrInFlight in the React services
+// (subjectDetails.ts, subjectChapterDetails.ts, subjectUnitDetails.ts):
+// 3-minute TTL plus in-flight dedupe so concurrent callers share a single
+// Firestore request. Only catalogue data is cached (never per-user progress).
+// ---------------------------------------------------------------------------
+const _catalogStaleMs = 3 * 60 * 1000;
+
+class _CatalogCacheEntry {
+  final List<Map<String, dynamic>> result;
+  final int cachedAt;
+  _CatalogCacheEntry(this.result, this.cachedAt);
+}
+
+final Map<String, _CatalogCacheEntry> _catalogCache = {};
+final Map<String, Future<List<Map<String, dynamic>>>> _catalogInFlight = {};
+
+Future<List<Map<String, dynamic>>> _cachedOrInFlight(
+  String key,
+  Future<List<Map<String, dynamic>>> Function() loader,
+) {
+  final now = DateTime.now().millisecondsSinceEpoch;
+  final entry = _catalogCache[key];
+  if (entry != null && now - entry.cachedAt <= _catalogStaleMs) {
+    return Future.value(entry.result);
+  }
+  final existing = _catalogInFlight[key];
+  if (existing != null) return existing;
+  final request = loader().then((result) {
+    _catalogCache[key] =
+        _CatalogCacheEntry(result, DateTime.now().millisecondsSinceEpoch);
+    return result;
+  }).whenComplete(() {
+    _catalogInFlight.remove(key);
+  });
+  _catalogInFlight[key] = request;
+  return request;
+}
+
 // Learning progress stats — mirrors fetchSubjectLearningStats() in
 // learningProgress.ts: counts progress docs (one per subject+chapter) as
 // complete when percentage >= 100 (or completed with no remaining questions),
@@ -1251,9 +1290,9 @@ Future<SubjectLearningStats> fetchSubjectLearningStats({
     where: ExamRest.fieldFilter('subjectId', 'IN', ids),
     limit: 200,
   );
-  var complete = 0;
-  var inProgress = 0;
-  for (final d in docs) {
+  // React refreshes every denominator concurrently (Promise.all) — a
+  // sequential await per document is what made the subject page take minutes.
+  final refreshed = await Future.wait(docs.map((d) async {
     final attempted =
         ((d['attemptedQuestionIds'] as List?) ?? []).whereType<String>().length;
     final total = _num(d['totalQuestions']);
@@ -1271,10 +1310,15 @@ Future<SubjectLearningStats> fetchSubjectLearningStats({
       );
       if (qs.isNotEmpty) currentTotal = qs.length;
     } catch (_) {}
-    final pct = currentTotal > 0
-        ? ((attempted / currentTotal * 100).round().clamp(0, 100))
-        : (done ? 100 : 0);
-    if (pct >= 100 || (done && currentTotal <= attempted)) {
+    return (attempted: attempted, done: done, currentTotal: currentTotal);
+  }));
+  var complete = 0;
+  var inProgress = 0;
+  for (final r in refreshed) {
+    final pct = r.currentTotal > 0
+        ? ((r.attempted / r.currentTotal * 100).round().clamp(0, 100))
+        : (r.done ? 100 : 0);
+    if (pct >= 100 || (r.done && r.currentTotal <= r.attempted)) {
       complete++;
     } else if (pct > 0) {
       inProgress++;
@@ -1315,18 +1359,25 @@ String appSubjectSlug(String v) {
 }
 
 /// Deterministic direct reads — never scans the collection (subjectDetails.ts).
+/// The 3 seed reads run concurrently and the scope is cached for 3 minutes,
+/// mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchSubjectDetails(
-    String courseId, String subcourseId) async {
-  final out = <Map<String, dynamic>>[];
-  for (final slug in subjectSeedSlugs) {
-    final doc = await ExamRest.getDoc(
-        'app_subjects_details/${courseId}__${subcourseId}__$slug');
-    if (doc == null) continue;
-    out.add({...doc, 'id': '${courseId}__${subcourseId}__$slug'});
-  }
-  out.sort((a, b) =>
-      (_num(a['order'], 0)).compareTo(_num(b['order'], 0)));
-  return out;
+    String courseId, String subcourseId) {
+  return _cachedOrInFlight('${courseId}__${subcourseId}', () async {
+    final docs = await Future.wait(subjectSeedSlugs.map((slug) =>
+        ExamRest.getDoc(
+            'app_subjects_details/${courseId}__${subcourseId}__$slug')));
+    final out = <Map<String, dynamic>>[];
+    for (var i = 0; i < docs.length; i++) {
+      final doc = docs[i];
+      if (doc == null) continue;
+      final slug = subjectSeedSlugs[i];
+      out.add({...doc, 'id': '${courseId}__${subcourseId}__$slug'});
+    }
+    out.sort((a, b) =>
+        (_num(a['order'], 0)).compareTo(_num(b['order'], 0)));
+    return out;
+  });
 }
 
 Map<String, dynamic> _subjectChapterFromDoc(Map<String, dynamic> doc) {
@@ -1352,35 +1403,41 @@ Map<String, dynamic> _subjectChapterFromDoc(Map<String, dynamic> doc) {
 }
 
 /// Direct (unit-less) chapters: runQuery where course==, client filters
-/// (subjectChapterDetails.ts loadDirectChapters).
+/// (subjectChapterDetails.ts loadDirectChapters). Cached 3 minutes per scope,
+/// mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchSubjectChapters(
-    String course, String subcourse, String subjectId) async {
+    String course, String subcourse, String subjectId) {
   final logical = canonicalCatalogSlug(subjectId);
-  final docs = await ExamRest.runQuery(
-    'app_subjects_chapter_details',
-    where: ExamRest.fieldFilter('course', 'EQUAL', course),
-    limit: 300,
-  );
-  final out = docs
-      .where((d) =>
-          '${d['subcourse'] ?? ''}' == subcourse &&
-          canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-          _bool(d['isPublished']) == true &&
-          !(d['unitId'] is String && (d['unitId'] as String).trim().isNotEmpty))
-      .map(_subjectChapterFromDoc)
-      .toList();
-  out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
-  return out;
+  return _cachedOrInFlight('${course}__${subcourse}__$logical', () async {
+    final docs = await ExamRest.runQuery(
+      'app_subjects_chapter_details',
+      where: ExamRest.fieldFilter('course', 'EQUAL', course),
+      limit: 300,
+    );
+    final out = docs
+        .where((d) =>
+            '${d['subcourse'] ?? ''}' == subcourse &&
+            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
+            _bool(d['isPublished']) == true &&
+            !(d['unitId'] is String && (d['unitId'] as String).trim().isNotEmpty))
+        .map(_subjectChapterFromDoc)
+        .toList();
+    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
+    return out;
+  });
 }
 
 /// Direct chapters with per-user learning progress attached
 /// (subjectChapterDetails.ts fetchSubjectChaptersWithProgress).
 /// Progress doc read: users/{uid}/learning_progress/{logicalSlug}__{chapterId}.
+/// Progress reads run concurrently (React: Promise.all). The cached chapter
+/// maps are never mutated — progress is attached on copies, like React's
+/// withProgress spread.
 Future<List<Map<String, dynamic>>> fetchSubjectChaptersWithProgress(
     String course, String subcourse, String subjectId, String? uid) async {
   final logical = _canonicalLearningId(subjectId);
   final chapters = await fetchSubjectChapters(course, subcourse, logical);
-  for (final c in chapters) {
+  Future<Map<String, dynamic>> withProgress(Map<String, dynamic> c) async {
     Map<String, dynamic>? p;
     if (uid != null && uid.isNotEmpty) {
       try {
@@ -1395,79 +1452,93 @@ Future<List<Map<String, dynamic>>> fetchSubjectChaptersWithProgress(
     final pct = total > 0
         ? ((attempted / total * 100).round().clamp(0, 100))
         : (completed ? 100 : 0);
-    c['progress'] = {
-      'chapterId': '${c['id']}',
-      'attempted': attempted,
-      'correct': correct,
-      'totalQuestions': total,
-      'percentage': pct,
-      'completed': completed || pct >= 100,
+    return {
+      ...c,
+      'progress': {
+        'chapterId': '${c['id']}',
+        'attempted': attempted,
+        'correct': correct,
+        'totalQuestions': total,
+        'percentage': pct,
+        'completed': completed || pct >= 100,
+      },
     };
   }
-  return chapters;
+
+  return Future.wait(chapters.map(withProgress));
 }
 
-/// Units for a subject (subjectUnitDetails.ts).
+/// Units for a subject (subjectUnitDetails.ts). Cached 3 minutes per scope,
+/// mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchSubjectUnits(
-    String course, String subcourse, String subjectId) async {
+    String course, String subcourse, String subjectId) {
   final logical = canonicalCatalogSlug(subjectId);
-  final docs = await ExamRest.runQuery(
-    'app_subjects_units_details',
-    where: ExamRest.fieldFilter('course', 'EQUAL', course),
-    limit: 300,
-  );
-  final out = docs
-      .where((d) =>
-          '${d['subcourse'] ?? ''}' == subcourse &&
-          canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-          _bool(d['isPublished']) == true)
-      .map((d) => {
-            'id': '${d['id'] ?? ''}',
-            'name': (d['name'] as String?)?.isNotEmpty == true
-                ? d['name']
-                : 'Unit',
-            'nameNe': d['nameNe'] ?? d['name'] ?? 'Unit',
-            'order': _num(d['order'], 0),
-            'course': d['course'] ?? '',
-            'subcourse': d['subcourse'] ?? '',
-            'subjectId': d['subjectId'] ?? '',
-            'pro': _bool(d['pro']),
-            'price': _num(d['price'], 0),
-          })
-      .toList();
-  out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
-  return out;
+  return _cachedOrInFlight('${course}__${subcourse}__$logical', () async {
+    final docs = await ExamRest.runQuery(
+      'app_subjects_units_details',
+      where: ExamRest.fieldFilter('course', 'EQUAL', course),
+      limit: 300,
+    );
+    final out = docs
+        .where((d) =>
+            '${d['subcourse'] ?? ''}' == subcourse &&
+            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
+            _bool(d['isPublished']) == true)
+        .map((d) => {
+              'id': '${d['id'] ?? ''}',
+              'name': (d['name'] as String?)?.isNotEmpty == true
+                  ? d['name']
+                  : 'Unit',
+              'nameNe': d['nameNe'] ?? d['name'] ?? 'Unit',
+              'order': _num(d['order'], 0),
+              'course': d['course'] ?? '',
+              'subcourse': d['subcourse'] ?? '',
+              'subjectId': d['subjectId'] ?? '',
+              'pro': _bool(d['pro']),
+              'price': _num(d['price'], 0),
+            })
+        .toList();
+    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
+    return out;
+  });
 }
 
 /// Unit-chapters for one unit (subjectUnitDetails.ts loadUnitChapters).
+/// Cached 3 minutes per unit, mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchUnitChapters(
-    String course, String subcourse, String subjectId, String unitId) async {
+    String course, String subcourse, String subjectId, String unitId) {
   final logical = canonicalCatalogSlug(subjectId);
   final targetUnit = canonicalCatalogSlug(unitId);
-  final docs = await ExamRest.runQuery(
-    'app_subjects_unit-chapters_details',
-    where: ExamRest.fieldFilter('course', 'EQUAL', course),
-    limit: 300,
-  );
-  final out = docs
-      .where((d) =>
-          '${d['subcourse'] ?? ''}' == subcourse &&
-          canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-          canonicalCatalogSlug('${d['unitId'] ?? ''}') == targetUnit &&
-          _bool(d['isPublished']) == true)
-      .map(_subjectChapterFromDoc)
-      .toList();
-  out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
-  return out;
+  return _cachedOrInFlight(
+      '${course}__${subcourse}__${logical}__$targetUnit', () async {
+    final docs = await ExamRest.runQuery(
+      'app_subjects_unit-chapters_details',
+      where: ExamRest.fieldFilter('course', 'EQUAL', course),
+      limit: 300,
+    );
+    final out = docs
+        .where((d) =>
+            '${d['subcourse'] ?? ''}' == subcourse &&
+            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
+            canonicalCatalogSlug('${d['unitId'] ?? ''}') == targetUnit &&
+            _bool(d['isPublished']) == true)
+        .map(_subjectChapterFromDoc)
+        .toList();
+    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
+    return out;
+  });
 }
 
 /// Units with their unit-chapters and per-user learning progress attached
 /// (subjectUnitDetails.ts fetchSubjectUnitsWithChapters).
+/// Every unit's chapter lookup and every chapter's progress read runs
+/// concurrently (React: nested Promise.all) — the sequential awaits here were
+/// the main reason the units page took minutes. Cached maps are never mutated.
 Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
     String course, String subcourse, String subjectId, String? uid) async {
   final logical = _canonicalLearningId(subjectId);
   final units = await fetchSubjectUnits(course, subcourse, logical);
-  for (final u in units) {
+  Future<Map<String, dynamic>> withChapters(Map<String, dynamic> u) async {
     List<Map<String, dynamic>> chapters = [];
     try {
       chapters =
@@ -1475,7 +1546,7 @@ Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
     } catch (_) {
       // Keep the unit visible even if its chapter lookup is unavailable.
     }
-    for (final c in chapters) {
+    final withP = await Future.wait(chapters.map((c) async {
       Map<String, dynamic>? p;
       if (uid != null && uid.isNotEmpty) {
         try {
@@ -1490,19 +1561,23 @@ Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
       final pct = total > 0
           ? ((attempted / total * 100).round().clamp(0, 100))
           : (completed ? 100 : 0);
-      c['progress'] = {
-        'chapterId': '${c['id']}',
-        'attempted': attempted,
-        'correct': correct,
-        'totalQuestions': total,
-        'percentage': pct,
-        // Units layer: completed is the persisted flag only (no pct>=100).
-        'completed': completed,
+      return {
+        ...c,
+        'progress': {
+          'chapterId': '${c['id']}',
+          'attempted': attempted,
+          'correct': correct,
+          'totalQuestions': total,
+          'percentage': pct,
+          // Units layer: completed is the persisted flag only (no pct>=100).
+          'completed': completed,
+        },
       };
-    }
-    u['chapters'] = chapters;
+    }));
+    return {...u, 'chapters': withP};
   }
-  return units;
+
+  return Future.wait(units.map(withChapters));
 }
 
 /// Per-chapter learning progress doc:

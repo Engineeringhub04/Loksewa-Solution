@@ -7,6 +7,7 @@ import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/daily_test_card.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Daily test attempt history — mirrors app/daily-test/history.tsx.
@@ -100,7 +101,11 @@ class _DailyTestHistoryScreenState extends State<DailyTestHistoryScreen> {
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        label: 'Loading Daily Test...',
+        hint: "Preparing today's test",
+        tinted: false,
+      );
     }
     if (_activities.isEmpty) {
       return Center(

@@ -109,6 +109,11 @@ class DailyTestCard extends StatelessWidget {
   final VoidCallback onPrimaryPress;
   final VoidCallback onSubscribePress;
 
+  /// When true, the card lays out at its natural content height (the Spacer
+  /// that pushes the CTA to the bottom is dropped). Used only by the
+  /// offstage height measurer — never for a visible card.
+  final bool measureContent;
+
   const DailyTestCard({
     super.key,
     required this.model,
@@ -122,6 +127,7 @@ class DailyTestCard extends StatelessWidget {
     this.todayKey,
     required this.onPrimaryPress,
     required this.onSubscribePress,
+    this.measureContent = false,
   });
 
   bool get _isMissed => slot == DailyTestSlot.missed;
@@ -231,7 +237,7 @@ class DailyTestCard extends StatelessWidget {
                       _pill(_tierPill()),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   // Eyebrow: slot · release date · test X of Y.
                   _Eyebrow(
                     slotLabel: dailyTestSlotLabel(slot),
@@ -239,7 +245,7 @@ class DailyTestCard extends StatelessWidget {
                     indexInDay: indexInDay,
                     totalInDay: totalInDay,
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   // Title + score badge.
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -280,7 +286,7 @@ class DailyTestCard extends StatelessWidget {
                       ],
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   // Category row.
                   Wrap(
                     spacing: 8,
@@ -309,7 +315,7 @@ class DailyTestCard extends StatelessWidget {
                             soft: true)),
                     ],
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   // Exam config chips.
                   Wrap(
                     spacing: 14,
@@ -328,7 +334,7 @@ class DailyTestCard extends StatelessWidget {
                                   style: TextStyle(
                                     color: Colors.white
                                         .withValues(alpha: 0.82),
-                                    fontSize: 12,
+                                    fontSize: 11,
                                   ),
                                 ),
                               ],
@@ -336,38 +342,47 @@ class DailyTestCard extends StatelessWidget {
                         .toList(),
                   ),
                   // Pushes the CTA to the bottom edge so every card in the
-                  // strip lines up.
-                  const Spacer(),
-                  SizedBox(
-                    width: double.infinity,
-                    child: Opacity(
-                      opacity: cta.onPress == null ? 1 : 1,
-                      child: ElevatedButton.icon(
-                        onPressed: cta.onPress,
-                        icon: Icon(cta.icon, size: 16, color: ctaInk),
-                        label: Text(cta.label,
-                            style: TextStyle(
-                                color: ctaInk,
-                                fontSize: 14,
-                                fontWeight: FontWeight.w700)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: cta.muted
-                              ? Colors.transparent
-                              : cta.green
-                                  ? const Color(0xFF16A34A)
-                                  : Colors.white,
-                          foregroundColor: ctaInk,
-                          disabledBackgroundColor: cta.muted
-                              ? Colors.transparent
-                              : Colors.white.withValues(alpha: 0.5),
-                          elevation: 0,
-                          side: cta.muted
-                              ? const BorderSide(
-                                  color: Color.fromRGBO(255, 255, 255, 0.5))
-                              : BorderSide.none,
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14)),
+                  // strip lines up. Skipped in measurement mode so the card
+                  // reports its natural content height.
+                  if (measureContent)
+                    const SizedBox.shrink()
+                  else
+                    const Spacer(),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: Opacity(
+                        opacity: cta.onPress == null ? 1 : 1,
+                        child: ElevatedButton.icon(
+                          onPressed: cta.onPress,
+                          icon: Icon(cta.icon, size: 16, color: ctaInk),
+                          label: Text(cta.label,
+                              style: TextStyle(
+                                  color: ctaInk,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: cta.muted
+                                ? Colors.transparent
+                                : cta.green
+                                    ? const Color(0xFF16A34A)
+                                    : Colors.white,
+                            foregroundColor: ctaInk,
+                            disabledBackgroundColor: cta.muted
+                                ? Colors.transparent
+                                : Colors.white.withValues(alpha: 0.5),
+                            elevation: 0,
+                            side: cta.muted
+                                ? const BorderSide(
+                                    color:
+                                        Color.fromRGBO(255, 255, 255, 0.5))
+                                : BorderSide.none,
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(16)),
+                          ),
                         ),
                       ),
                     ),
@@ -486,7 +501,7 @@ class DailyTestCard extends StatelessWidget {
       return _LivePill(bg: p.bg ?? Colors.white);
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: p.bg ??
             (p.soft
@@ -804,7 +819,7 @@ class DailyTestMiniCard extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            fontSize: 14, fontWeight: FontWeight.w700),
+                            fontSize: 12, fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 1),
                       Wrap(
@@ -873,14 +888,14 @@ class DailyTestMiniCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
         decoration: BoxDecoration(
-          color: const Color(0xFF16A34A).withValues(alpha: 0.08),
+          color: const Color(0xFF16A34A).withValues(alpha: 0x14 / 0xFF),
           border: Border.all(color: const Color(0xFF16A34A)),
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text('$scorePercent%',
             style: const TextStyle(
                 color: Color(0xFF16A34A),
-                fontSize: 13,
+                fontSize: 12,
                 fontWeight: FontWeight.w700)),
       );
     }

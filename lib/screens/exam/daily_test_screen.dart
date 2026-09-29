@@ -9,6 +9,8 @@ import '../../services/exam_service.dart';
 import '../../services/server_clock.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/daily_test_card.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Daily test landing — mirrors app/daily-test/index.tsx.
@@ -68,6 +70,11 @@ class _DailyTestScreenState extends State<DailyTestScreen>
   Timer? _autoSlideTimer;
   Timer? _resumeTimer;
   Timer? _midnightTimer;
+
+  /// PageView height hugs the tallest slide's content (React sizes its
+  /// carousel to content; a fixed tall box left dead space under the cards).
+  double _slideHeight = 320;
+  final Map<String, double> _measuredHeights = {};
 
   @override
   void initState() {
@@ -377,6 +384,9 @@ class _DailyTestScreenState extends State<DailyTestScreen>
     slides.add(upcoming);
 
     _nextDateKey = nextDateKey;
+    // Fresh slides → re-measure heights on the next frames.
+    _measuredHeights.clear();
+    _slideHeight = 320;
     setState(() => _slides = slides);
     _setupCarousel();
   }
@@ -438,7 +448,11 @@ class _DailyTestScreenState extends State<DailyTestScreen>
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        label: 'Loading Daily Test...',
+        hint: "Preparing today's test",
+        tinted: false,
+      );
     }
     if (_error != null) {
       return Center(
@@ -526,22 +540,31 @@ class _DailyTestScreenState extends State<DailyTestScreen>
             ] else if (todayModels.isNotEmpty)
               _emptyCard(
                   'A new daily test will appear here soon.'),
-            if (_activities.isNotEmpty) ...[
-              const SizedBox(height: 24),
-              _sectionHeader(
-                title: 'Your History',
-                actionLabel: 'View All',
-                onAction: () => context.push('/daily-test/history'),
-              ),
-              const SizedBox(height: 12),
-              ..._activities.take(3).map((a) => Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
+            // Your History is always shown — with an empty state when the
+            // user has no finished tests yet (React parity).
+            const SizedBox(height: 24),
+            _sectionHeader(
+              title: 'Your History',
+              actionLabel: 'View All',
+              onAction: () => context.push('/daily-test/history'),
+            ),
+            const SizedBox(height: 12),
+            if (_activities.isNotEmpty)
+              for (var i = 0;
+                  i < (_activities.length > 3 ? 3 : _activities.length);
+                  i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: StaggerEntrance(
+                    delayMs: i * 60,
                     child: DailyTestHistoryCard(
-                      activity: a,
-                      onTap: () => _openHistoryActivity(a),
+                      activity: _activities[i],
+                      onTap: () => _openHistoryActivity(_activities[i]),
                     ),
-                  )),
-            ],
+                  ),
+                )
+            else
+              _emptyHistoryBox(),
           ],
         ),
       ),
@@ -652,7 +675,45 @@ class _DailyTestScreenState extends State<DailyTestScreen>
     );
   }
 
+  Widget _slideCard(int i, {bool measure = false}) {
+    final s = _slides[i];
+    final existing = _resultsById[s.model.id];
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: DailyTestCard(
+        model: s.model,
+        slot: s.slot,
+        completed: s.completed,
+        scorePercent: existing?.score,
+        hasPremiumAccess: _profile?.hasActivePremium ?? false,
+        demo: isDailyTestDemo(s.model),
+        indexInDay: s.indexInDay,
+        totalInDay: s.totalInDay,
+        todayKey: _dayKey,
+        measureContent: measure,
+        onPrimaryPress: () => _openModel(s.model, s.slot),
+        onSubscribePress: () => context.push('/subscription'),
+      ),
+    );
+  }
+
+  void _reportSlideHeight(String id, double height) {
+    // The card enforces minHeight 300 itself; clamp absurd values.
+    final h = height.clamp(300.0, 640.0);
+    if ((_measuredHeights[id] ?? -1) == h) return;
+    _measuredHeights[id] = h;
+    final maxH =
+        _measuredHeights.values.fold(300.0, (a, b) => a > b ? a : b);
+    if ((maxH - _slideHeight).abs() > 0.5 && mounted) {
+      setState(() => _slideHeight = maxH);
+    }
+  }
+
   Widget _carousel() {
+    // Slide width = viewport minus the screen's horizontal padding (16 each
+    // side), matching the PageView's real item extent so the offstage
+    // measurement lays out text exactly like the visible card.
+    final slideWidth = MediaQuery.of(context).size.width - 32;
     return Column(
       children: [
         Listener(
@@ -660,34 +721,33 @@ class _DailyTestScreenState extends State<DailyTestScreen>
           onPointerUp: (_) => _scheduleResume(),
           onPointerCancel: (_) => _scheduleResume(),
           child: SizedBox(
-            height: 372,
+            height: _slideHeight,
             child: PageView.builder(
               controller: _pageController,
               itemCount: _slides.length,
-              onPageChanged: (i) =>
-                  setState(() => _slideIndex = i),
-              itemBuilder: (ctx, i) {
-                final s = _slides[i];
-                final existing = _resultsById[s.model.id];
-                return Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 2),
-                  child: DailyTestCard(
-                    model: s.model,
-                    slot: s.slot,
-                    completed: s.completed,
-                    scorePercent: existing?.score,
-                    hasPremiumAccess:
-                        _profile?.hasActivePremium ?? false,
-                    demo: isDailyTestDemo(s.model),
-                    indexInDay: s.indexInDay,
-                    totalInDay: s.totalInDay,
-                    todayKey: _dayKey,
-                    onPrimaryPress: () => _openModel(s.model, s.slot),
-                    onSubscribePress: () =>
-                        context.push('/subscription'),
+              onPageChanged: (i) => setState(() => _slideIndex = i),
+              itemBuilder: (ctx, i) => _slideCard(i),
+            ),
+          ),
+        ),
+        // Offstage: measure every slide's natural content height at the real
+        // slide width, then hug the tallest one. (measureContent drops the
+        // Spacer so the card reports content height, not stretched height.)
+        Offstage(
+          offstage: true,
+          child: SizedBox(
+            width: slideWidth,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < _slides.length; i++)
+                  _SizeReporter(
+                    key: ValueKey('measure-${_slides[i].model.id}'),
+                    onSize: (s) =>
+                        _reportSlideHeight(_slides[i].model.id, s.height),
+                    child: _slideCard(i, measure: true),
                   ),
-                );
-              },
+              ],
             ),
           ),
         ),
@@ -774,4 +834,99 @@ class _DailyTestScreenState extends State<DailyTestScreen>
               const TextStyle(fontSize: 14, color: Color(0xFF6B7280))),
     );
   }
+
+  /// "Your History" empty state — mirrors index.tsx's `emptyRecent`: a
+  /// dashed hairline box with a clock icon and the recentEmpty string.
+  Widget _emptyHistoryBox() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final border =
+        isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
+    final secondary =
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
+    return CustomPaint(
+      painter: _DashedRoundedRectPainter(color: border, radius: 16),
+      child: Container(
+        width: double.infinity,
+        padding:
+            const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.schedule_outlined, size: 22, color: secondary),
+            const SizedBox(height: 8),
+            Text(
+              'Your finished daily tests will show up here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, color: secondary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Reports its child's laid-out size once per frame change. Used to measure
+/// carousel slides offstage so the PageView can hug the tallest card.
+class _SizeReporter extends StatefulWidget {
+  final Widget child;
+  final ValueChanged<Size> onSize;
+
+  const _SizeReporter({super.key, required this.child, required this.onSize});
+
+  @override
+  State<_SizeReporter> createState() => _SizeReporterState();
+}
+
+class _SizeReporterState extends State<_SizeReporter> {
+  Size? _last;
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final size = context.size;
+      if (size != null && size != _last) {
+        _last = size;
+        widget.onSize(size);
+      }
+    });
+    return widget.child;
+  }
+}
+
+/// Dashed rounded-rectangle stroke (React Native's `borderStyle: 'dashed'`
+/// has no direct Flutter equivalent).
+class _DashedRoundedRectPainter extends CustomPainter {
+  final Color color;
+  final double radius;
+
+  const _DashedRoundedRectPainter({required this.color, required this.radius});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    final path = Path()
+      ..addRRect(RRect.fromRectAndRadius(
+          Offset.zero & size, Radius.circular(radius)));
+    const dashLen = 6.0;
+    const gapLen = 4.0;
+    final dashed = Path();
+    for (final metric in path.computeMetrics()) {
+      var dist = 0.0;
+      while (dist < metric.length) {
+        dashed.addPath(
+            metric.extractPath(dist, dist + dashLen), Offset.zero);
+        dist += dashLen + gapLen;
+      }
+    }
+    canvas.drawPath(dashed, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _DashedRoundedRectPainter old) =>
+      old.color != color || old.radius != radius;
 }

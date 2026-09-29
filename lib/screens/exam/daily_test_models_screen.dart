@@ -9,6 +9,8 @@ import '../../services/exam_service.dart';
 import '../../services/server_clock.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/daily_test_card.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// All daily test models grouped by release date, newest first.
@@ -252,7 +254,11 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        label: 'Loading Daily Test...',
+        hint: "Preparing today's test",
+        tinted: false,
+      );
     }
     if (_error == 'no-course') {
       return Center(
@@ -327,6 +333,16 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
     final dates = byDate.keys.toList()
       ..sort((a, b) => b.compareTo(a));
 
+    // Running row offsets across date groups, so the entrance stagger reads
+    // as one list rather than restarting at every date heading (React parity:
+    // `let row = -1` incremented per model, delay capped at 8*60ms).
+    final rowOffsets = <int>[];
+    var running = 0;
+    for (final d in dates) {
+      rowOffsets.add(running);
+      running += byDate[d]!.length;
+    }
+
     return RefreshIndicator(
       onRefresh: () => _load(refreshing: true),
       child: ListView.builder(
@@ -342,6 +358,7 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
           }
           final date = dates[i - 1];
           final items = byDate[date]!;
+          final rowBase = rowOffsets[i - 1];
           return Padding(
             padding: const EdgeInsets.only(bottom: 18),
             child: Column(
@@ -349,22 +366,29 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
               children: [
                 _dateHeading(date, items.length, isDark),
                 const SizedBox(height: 10),
-                ...items.map((m) {
-                  final slot = _slotFor(m);
-                  final existing = _resultsById[m.id];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: DailyTestMiniCard(
-                      model: m,
-                      slot: slot,
-                      completed: existing != null,
-                      scorePercent: existing?.score,
-                      hasPremiumAccess: _profile?.hasActivePremium ?? false,
-                      todayKey: _dayKey,
-                      onTap: () => _onTapModel(m),
-                    ),
-                  );
-                }),
+                for (var j = 0; j < items.length; j++)
+                  Builder(builder: (context) {
+                    final m = items[j];
+                    final slot = _slotFor(m);
+                    final existing = _resultsById[m.id];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: StaggerEntrance(
+                        delayMs:
+                            (rowBase + j).clamp(0, 8) * 60,
+                        child: DailyTestMiniCard(
+                          model: m,
+                          slot: slot,
+                          completed: existing != null,
+                          scorePercent: existing?.score,
+                          hasPremiumAccess:
+                              _profile?.hasActivePremium ?? false,
+                          todayKey: _dayKey,
+                          onTap: () => _onTapModel(m),
+                        ),
+                      ),
+                    );
+                  }),
               ],
             ),
           );
@@ -407,10 +431,12 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
   }
 
   Widget _dateHeading(String date, int count, bool isDark) {
+    final bool isToday = date == _dayKey;
+    final bool isFuture = date.compareTo(_dayKey) > 0;
     final Color tone;
-    if (date == _dayKey) {
+    if (isToday) {
       tone = const Color(0xFF2563EB);
-    } else if (date.compareTo(_dayKey) > 0) {
+    } else if (isFuture) {
       tone = const Color(0xFF6366F1);
     } else {
       tone = isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
@@ -418,57 +444,56 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
     final rel = relativeDayLabel(date, _dayKey).toUpperCase();
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: tone.withValues(alpha: 0.08),
-                border: Border.all(
-                    color: tone.withValues(alpha: 0.25)),
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.calendar_today, size: 12, color: tone),
-                  const SizedBox(width: 5),
-                  Text(rel,
-                      style: TextStyle(
-                          color: tone,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6)),
-                ],
-              ),
+    final border =
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFE5E7EB);
+    // React parity: the icon carries the tense — flash for today,
+    // time for future, calendar for the past.
+    final IconData icon = isToday
+        ? Icons.bolt
+        : isFuture
+            ? Icons.schedule_outlined
+            : Icons.calendar_today_outlined;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Row(
+        children: [
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: tone.withValues(alpha: 0x14 / 0xFF),
+              border: Border.all(
+                  color: tone.withValues(alpha: 0x40 / 0xFF)),
+              borderRadius: BorderRadius.circular(999),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                formatDateKeyLong(date),
-                style: TextStyle(
-                    color: secondary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 12, color: tone),
+                const SizedBox(width: 4),
+                Text(rel,
+                    style: TextStyle(
+                        color: tone,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.6)),
+              ],
             ),
-            Text(count == 1 ? '1 test' : '$count tests',
-                style:
-                    TextStyle(color: secondary, fontSize: 12)),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Container(
-          height: 1,
-          color: isDark
-              ? const Color(0xFF1E293B)
-              : const Color(0xFFE5E7EB),
-        ),
-      ],
+          ),
+          const SizedBox(width: 7),
+          Text(
+            formatDateKeyLong(date),
+            style: TextStyle(color: secondary, fontSize: 11),
+          ),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Container(height: 1, color: border),
+          ),
+          const SizedBox(width: 7),
+          Text(count == 1 ? '1 test' : '$count tests',
+              style: TextStyle(color: secondary, fontSize: 11)),
+        ],
+      ),
     );
   }
 }

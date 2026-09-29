@@ -46,33 +46,41 @@ class SubjectCardColored extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onPress,
+    return Container(
+      decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
-        child: ClipRRect(
+        boxShadow: const [
+          BoxShadow(
+              color: Color(0x2E000000),
+              blurRadius: 8,
+              offset: Offset(0, 4)),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          onTap: onPress,
           borderRadius: BorderRadius.circular(18),
-          child: Container(
-            width: width ?? 150,
-            height: height ?? 130,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              gradient: LinearGradient(
-                colors: [backgroundColor, _darken(backgroundColor, 40)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              width: width ?? 150,
+              height: height ?? 130,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                gradient: LinearGradient(
+                  colors: [backgroundColor, _darken(backgroundColor, 40)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
               ),
-              boxShadow: const [
-                BoxShadow(
-                    color: Color(0x2E000000),
-                    blurRadius: 8,
-                    offset: Offset(0, 4)),
-              ],
-            ),
-            child: Stack(
-              children: [
+              child: Stack(
+                // The glow bubble bleeds past the card edges on purpose —
+                // ClipRRect (not the Stack) clips it, so it tucks under the
+                // rounded border instead of showing a hard straight cut.
+                clipBehavior: Clip.none,
+                children: [
                 // Glow accent, top-right — relative to the card edges.
                 Positioned(
                   top: -20,
@@ -91,8 +99,10 @@ class SubjectCardColored extends StatelessWidget {
                   Positioned(
                     top: 8,
                     right: 8,
+                    // No maxWidth cap: the tag is right-anchored so it grows
+                    // leftward and sizes to its content — capping it made the
+                    // Row overflow (RenderFlex 17px) when the label ran wide.
                     child: Container(
-                      constraints: const BoxConstraints(maxWidth: 76),
                       padding: const EdgeInsets.symmetric(
                           horizontal: 4, vertical: 3),
                       decoration: BoxDecoration(
@@ -180,12 +190,16 @@ class SubjectCardColored extends StatelessWidget {
                                 mainAxisAlignment:
                                     MainAxisAlignment.spaceBetween,
                                 children: [
-                                  Text(
-                                    footerLabel!,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
+                                  Flexible(
+                                    child: Text(
+                                      footerLabel!,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
                                   ),
                                   const Icon(Icons.arrow_forward,
@@ -203,6 +217,7 @@ class SubjectCardColored extends StatelessWidget {
             ),
           ),
         ),
+      ),
       ),
     );
   }

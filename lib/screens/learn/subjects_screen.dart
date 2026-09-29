@@ -250,14 +250,8 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
   Widget _journeyCard(_SubjectPage d, int premiumCount) {
     return Container(
-      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        borderRadius: BorderRadius.circular(24),
         boxShadow: const [
           BoxShadow(
               color: Color(0x470C2D91),
@@ -265,105 +259,124 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
               offset: Offset(0, 8)),
         ],
       ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -100,
-            right: -40,
-            child: Container(
-              width: 170,
-              height: 170,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
-              ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
-          Positioned(
-            bottom: -125,
-            left: -70,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF00002D).withValues(alpha: 0.16),
-              ),
-            ),
-          ),
-          Column(
+          child: Stack(
+            // Glow bubbles bleed past the card edges on purpose — ClipRRect
+            // (not the Stack) clips them, so they tuck under the rounded
+            // border instead of showing a hard straight cut.
+            clipBehavior: Clip.none,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
+              Positioned(
+                top: -100,
+                right: -40,
+                child: Container(
+                  width: 170,
+                  height: 170,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: -125,
+                left: -70,
+                child: Container(
+                  width: 180,
+                  height: 180,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF00002D).withValues(alpha: 0.16),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text(
-                          'Your Progress Overview',
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.15,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Your Progress Overview',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.15,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                '${d.subjects.length} subjects available',
+                                style: const TextStyle(
+                                    color: Color(0xFFD6E2FF), fontSize: 12),
+                              ),
+                            ],
                           ),
                         ),
-                        const SizedBox(height: 6),
-                        Text(
-                          '${d.subjects.length} subjects available',
-                          style: const TextStyle(
-                              color: Color(0xFFD6E2FF), fontSize: 14),
+                        Container(
+                          constraints: const BoxConstraints(maxWidth: 168),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 11, vertical: 8),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(12),
+                            color: const Color(0xFF9A3412),
+                          ),
+                          child: Text(
+                            '${d.courseName} • ${d.subcourseName}',
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
-                  ),
-                  Container(
-                    constraints: const BoxConstraints(maxWidth: 168),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 11, vertical: 8),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
-                      color: const Color(0xFF9A3412),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        _JourneyStat(
+                            icon: Icons.check_circle,
+                            label: 'Complete',
+                            value: d.complete,
+                            accent: const Color(0xFFC7D9FF)),
+                        const SizedBox(width: 8),
+                        _JourneyStat(
+                            icon: Icons.show_chart,
+                            label: 'In Progress',
+                            value: d.inProgress,
+                            accent: const Color(0xFFB8E1FF)),
+                        const SizedBox(width: 8),
+                        _JourneyStat(
+                            icon: Icons.diamond,
+                            label: 'Premium',
+                            value: premiumCount,
+                            accent: const Color(0xFFFFD2A6)),
+                      ],
                     ),
-                    child: Text(
-                      '${d.courseName} • ${d.subcourseName}',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  _JourneyStat(
-                      icon: Icons.check_circle,
-                      label: 'Complete',
-                      value: d.complete,
-                      accent: const Color(0xFFC7D9FF)),
-                  const SizedBox(width: 10),
-                  _JourneyStat(
-                      icon: Icons.show_chart,
-                      label: 'In Progress',
-                      value: d.inProgress,
-                      accent: const Color(0xFFB8E1FF)),
-                  const SizedBox(width: 10),
-                  _JourneyStat(
-                      icon: Icons.diamond,
-                      label: 'Premium',
-                      value: premiumCount,
-                      accent: const Color(0xFFFFD2A6)),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -385,8 +398,7 @@ class _JourneyStat extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(19),
           color: const Color(0xFF6984CC).withValues(alpha: 0.58),
@@ -396,8 +408,8 @@ class _JourneyStat extends StatelessWidget {
         child: Column(
           children: [
             Container(
-              width: 42,
-              height: 42,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: accent,
@@ -405,19 +417,19 @@ class _JourneyStat extends StatelessWidget {
                     color: accent.withValues(alpha: 0.8), width: 2),
               ),
               child:
-                  Icon(icon, size: 21, color: const Color(0xFF0C2D91)),
+                  Icon(icon, size: 18, color: const Color(0xFF0C2D91)),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text('$value',
                 style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 20,
+                    fontSize: 17,
                     fontWeight: FontWeight.bold,
-                    height: 1.7)),
+                    height: 1.2)),
             const SizedBox(height: 2),
             Text(label,
                 style: const TextStyle(
-                    color: Color(0xFFE2EAFF), fontSize: 11),
+                    color: Color(0xFFE2EAFF), fontSize: 10),
                 textAlign: TextAlign.center),
           ],
         ),

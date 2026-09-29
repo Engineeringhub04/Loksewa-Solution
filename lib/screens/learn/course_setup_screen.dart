@@ -1,16 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../services/auth_service.dart';
 import '../../services/firestore_rest.dart';
-import '../../widgets/subpage_header.dart';
+import '../../services/theme_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 
-/// Course + subcourse selector. Mirrors app/course-setup.tsx exactly:
-/// - Courses from `app_courses` (NOT `courses`), sorted by `order`.
-/// - Subcourses from `app_courses/{courseId}/subcourses`, with the legacy
-///   flat `app_subcourses` collection as fallback.
-/// - Currently-enrolled selections shown in blue, new selections in red.
-/// - Save writes users/{uid} (merge): courseId, subcourseId, courseSetupComplete.
+/// Course + subcourse selector — mirrors app/course-setup.tsx exactly.
+///
+/// - Hand-rolled curved gradient header (26px bottom radius, like React's own
+///   header on this screen — NOT the shared SubpageHeader), with a working
+///   theme toggle. The system status bar is tinted brand-blue via
+///   [AnnotatedRegion] so no light band sits above the header.
+/// - Courses from `app_courses` sorted by `order` (client-side, like React).
+/// - Subcourses from `app_courses/{courseId}/subcourses`, falling back to the
+///   legacy flat `app_subcourses` collection filtered by `courseId`.
+/// - Blue = currently-enrolled selection, red = a NEW pick that differs.
+/// - Save writes users/{uid} (merge): courseId, subcourseId,
+///   courseSetupComplete — with the user's ID token (anonymous reads/writes
+///   are rejected by the Firestore rules, which is why the course list used
+///   to come back empty).
 class CourseSetupScreen extends StatefulWidget {
   final String mode; // 'update' | 'initial'
 
@@ -28,140 +39,141 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
   List<Map<String, dynamic>> _subcourses = [];
   String? _selectedCourse;
   String? _selectedSubcourse;
-  String? _enrolledCourse;
-  String? _enrolledSubcourse;
+  String? _savedCourseId;
+  String? _savedSubcourseId;
   bool _loadingCourses = true;
-  bool _loadingSubcourses = false;
+  bool _loadingSub = false;
+  bool _subcourseError = false;
   bool _saving = false;
-  String? _subcourseError;
 
   bool get _updateMode => widget.mode == 'update';
-
-  bool _canSave() =>
+  bool get _canSave =>
       _selectedCourse != null && _selectedSubcourse != null && !_saving;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _boot();
   }
 
-  Future<void> _load() async {
+  Future<void> _boot() async {
     await _loadSaved();
     await _loadCourses();
   }
 
+  Future<String> _token() => AuthService.getValidIdToken();
+
+  /// Seeds the working selection from the user's enrolled course, like React's
+  /// applySaved(): only fills in while nothing is chosen yet, so a late fetch
+  /// never overwrites a tap the user already made.
   Future<void> _loadSaved() async {
     try {
       final user = AuthService.currentUser;
       if (user == null) return;
-      final doc =
-          await FirestoreRest.getDocument('users/${user.uid}');
+      final doc = await FirestoreRest.getDocument('users/${user.uid}',
+          idToken: await _token());
       if (!mounted) return;
-      if (doc == null) return;
-      final courseId = doc['courseId'];
-      final subcourseId = doc['subcourseId'];
+      final cid = _str(doc?['courseId']);
+      final scid = _str(doc?['subcourseId']);
+      if (cid == null) return;
       setState(() {
-        _selectedCourse = courseId is String && courseId.isNotEmpty ? courseId : null;
-        _selectedSubcourse =
-            subcourseId is String && subcourseId.isNotEmpty ? subcourseId : null;
-        _enrolledCourse = _selectedCourse;
-        _enrolledSubcourse = _selectedSubcourse;
+        _savedCourseId = cid;
+        _savedSubcourseId = scid;
+        _selectedCourse ??= cid;
+        _selectedSubcourse ??= scid;
       });
       if (_selectedCourse != null) {
         await _loadSubcourses(_selectedCourse!);
       }
     } catch (_) {
-      // non-fatal: user can still pick manually
+      // Non-fatal — the screen still works as a fresh setup.
     }
   }
 
-  Future<void> _loadCourses() async {
-    setState(() => _loadingCourses = true);
-    try {
-      final docs = await FirestoreRest.listDocuments(_courseCol,
-          pageSize: 100);
-      final list = docs
-          .where((d) => d['active'] != false)
-          .toList()
-        ..sort((a, b) => _ord(a).compareTo(_ord(b)));
-      if (!mounted) return;
-      setState(() {
-        _courses = list;
-        _loadingCourses = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _loadingCourses = false);
-      showToast(context, 'Could not load courses. Please try again.',
-          ToastVariant.error);
-    }
-  }
+  String? _str(dynamic v) =>
+      (v is String && v.isNotEmpty) ? v : null;
 
   int _ord(Map<String, dynamic> d) {
     final o = d['order'];
-    return o is num ? o.toInt() : 999999;
+    return o is num ? o.toInt() : 0;
+  }
+
+  /// Mirrors React's fetchCourses: one direct read, client-side order sort.
+  /// Pull-to-refresh re-runs this; it never shows the full-page spinner.
+  Future<void> _loadCourses() async {
+    try {
+      final docs = await FirestoreRest.listDocuments(_courseCol,
+          idToken: await _token(), pageSize: 100);
+      docs.sort((a, b) => _ord(a).compareTo(_ord(b)));
+      if (!mounted) return;
+      setState(() {
+        _courses = docs;
+        _loadingCourses = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingCourses = false);
+      showToast(context, 'Failed to load courses', ToastVariant.error);
+    }
   }
 
   Future<void> _loadSubcourses(String courseId) async {
     setState(() {
-      _loadingSubcourses = true;
-      _subcourseError = null;
+      _loadingSub = true;
+      _subcourseError = false;
     });
     try {
-      // Modern layout first: app_courses/{courseId}/subcourses.
+      final token = await _token();
       var docs = await FirestoreRest.listDocuments(
           '$_courseCol/$courseId/subcourses',
+          idToken: token,
           pageSize: 200);
-      var list = docs
-          .where((d) => d['active'] != false)
-          .toList()
-        ..sort((a, b) => _ord(a).compareTo(_ord(b)));
-
-      if (list.isEmpty) {
+      if (docs.isEmpty) {
         // Legacy layout: flat `app_subcourses` filtered client-side.
         try {
           final legacy = await FirestoreRest.listDocuments(_legacySubCol,
-              pageSize: 200);
-          list = legacy
-              .where((d) =>
-                  d['active'] != false && d['courseId'] == courseId)
-              .toList()
-            ..sort((a, b) => _ord(a).compareTo(_ord(b)));
+              idToken: token, pageSize: 200);
+          docs = legacy
+              .where((d) => d['courseId'] == courseId)
+              .toList();
         } catch (_) {
-          // ignore — keep empty, the error below explains
+          // keep empty — the error state below explains
         }
       }
-
+      docs.sort((a, b) => _ord(a).compareTo(_ord(b)));
       if (!mounted) return;
       setState(() {
-        _subcourses = list;
-        _loadingSubcourses = false;
-        _subcourseError =
-            list.isEmpty ? 'No subcourses found for this course yet.' : null;
+        _subcourses = docs;
+        _loadingSub = false;
+        _subcourseError = docs.isEmpty;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
-        _loadingSubcourses = false;
-        _subcourseError = 'Could not load subcourses. Please try again.';
+        _loadingSub = false;
+        _subcourseError = true;
       });
+      showToast(context, 'Failed to load subcourses', ToastVariant.error);
     }
   }
 
+  /// The ONLY place the subcourse selection is reset, like React's
+  /// handleSelectCourse: tapping back onto the enrolled course restores its
+  /// subcourse instead of wiping it.
   void _selectCourse(String id) {
     if (id == _selectedCourse) return;
     setState(() {
       _selectedCourse = id;
-      _selectedSubcourse = null;
+      _selectedSubcourse =
+          (id == _savedCourseId) ? _savedSubcourseId : null;
       _subcourses = [];
-      _subcourseError = null;
+      _subcourseError = false;
     });
     _loadSubcourses(id);
   }
 
   Future<void> _save() async {
-    if (!_canSave()) return;
+    if (!_canSave) return;
     final user = AuthService.currentUser;
     if (user == null) {
       context.go('/login');
@@ -176,165 +188,434 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
           'subcourseId': _selectedSubcourse,
           'courseSetupComplete': true,
         },
-        idToken: '',
+        idToken: await _token(),
         merge: true,
       );
       if (!mounted) return;
-      showToast(
-          context,
-          _updateMode ? 'Course updated.' : 'Course saved.',
-          ToastVariant.success);
+      setState(() => _saving = false);
       if (_updateMode) {
+        showToast(context, 'Course updated successfully', ToastVariant.success);
         context.pop();
       } else {
+        showToast(context, 'Course setup complete', ToastVariant.success);
         context.go('/');
       }
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() => _saving = false);
-      showToast(context, 'Could not save. Please try again.', ToastVariant.error);
+      showToast(context, 'Failed to save. Please try again.', ToastVariant.error);
     }
-  }
-
-  String _courseLabel(Map<String, dynamic> d) {
-    final n = d['name'];
-    if (n is String && n.isNotEmpty) return n;
-    return d['id']?.toString() ?? 'Course';
-  }
-
-  String _subLabel(Map<String, dynamic> d) {
-    final t = d['title'] ?? d['name'];
-    if (t is String && t.isNotEmpty) return t;
-    return d['id']?.toString() ?? 'Subcourse';
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
-      body: SafeArea(
-        child: Column(
+    final pal = ExpoPalette.of(context);
+    final topPad = MediaQuery.paddingOf(context).top;
+    final bottomPad = MediaQuery.paddingOf(context).bottom;
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      // Brand-blue status bar so no light band sits above the header; the
+      // header gradient starts immediately below it, like React's
+      // edge-to-edge header (paddingTop: insets.top + 12).
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Color(0xFF2563EB),
+        statusBarIconBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: pal.background,
+        body: Column(
           children: [
-            SubpageHeader(
-              title: _updateMode ? 'Update Course' : 'Select Your Course',
-              showBack: _updateMode,
-            ),
+            _header(topPad),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Courses section
-                    const Text('Choose Course',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF111827))),
-                    const SizedBox(height: 12),
-                    if (_loadingCourses)
-                      const Center(
-                          child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: CircularProgressIndicator(),
-                      ))
-                    else if (_courses.isEmpty)
-                      _emptyCard('No courses found.')
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _courses
-                            .map((c) => _Chip(
-                                  label: _courseLabel(c),
-                                  enrolled: c['id'] == _enrolledCourse,
-                                  selected: c['id'] == _selectedCourse,
-                                  onTap: () => _selectCourse('${c['id']}'),
-                                ))
-                            .toList(),
+              child: RefreshIndicator(
+                onRefresh: _loadCourses,
+                color: const Color(0xFF2563EB),
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding:
+                      const EdgeInsets.fromLTRB(20, 24, 20, 100),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _Entrance(
+                        delayMs: 0,
+                        slide: _Slide.up,
+                        child: _titleSection(pal),
                       ),
-
-                    const SizedBox(height: 24),
-
-                    // Subcourses section
-                    const Text('Choose Subcourse',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF111827))),
-                    const SizedBox(height: 12),
-                    if (_selectedCourse == null)
-                      _emptyCard('Select a course first to see its subcourses.')
-                    else if (_loadingSubcourses)
-                      const Center(
-                          child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24),
-                        child: CircularProgressIndicator(),
-                      ))
-                    else if (_subcourseError != null)
-                      _emptyCard(_subcourseError!)
-                    else
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: _subcourses
-                            .map((s) => _Chip(
-                                  label: _subLabel(s),
-                                  enrolled: s['id'] == _enrolledSubcourse,
-                                  selected: s['id'] == _selectedSubcourse,
-                                  red: true,
-                                  onTap: () => setState(() =>
-                                      _selectedSubcourse = '${s['id']}'),
-                                ))
-                            .toList(),
+                      const SizedBox(height: 24),
+                      _Entrance(
+                        delayMs: 200,
+                        slide: _Slide.down,
+                        child: _courseSection(pal),
                       ),
-
-                    const SizedBox(height: 24),
-
-                    // Legend
-                    if (_enrolledCourse != null)
-                      const Row(
-                        children: [
-                          _LegendDot(
-                              color: Color(0xFF2563EB),
-                              label: 'Currently enrolled'),
-                          SizedBox(width: 16),
-                          _LegendDot(
-                              color: Color(0xFFDC2626), label: 'New selection'),
-                        ],
-                      ),
-                  ],
+                      if (_selectedCourse != null) ...[
+                        const SizedBox(height: 24),
+                        _Entrance(
+                          delayMs: 0,
+                          slide: _Slide.down,
+                          child: _subcourseSection(pal),
+                        ),
+                      ],
+                      if (_savedCourseId != null) ...[
+                        const SizedBox(height: 24),
+                        _Entrance(
+                          delayMs: 0,
+                          slide: _Slide.none,
+                          child: _legend(pal),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _canSave() ? _save : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2563EB),
-                    disabledBackgroundColor: const Color(0xFF93C5FD),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
+            _bottomBar(pal, bottomPad),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- header
+
+  Widget _header(double topPad) {
+    return Container(
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Color(0xFF2563EB),
+            Color(0xFF1D4ED8),
+            Color(0xFF0B1F5B),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.only(
+          bottomLeft: Radius.circular(26),
+          bottomRight: Radius.circular(26),
+        ),
+      ),
+      padding: EdgeInsets.only(top: topPad + 12, bottom: 20),
+      child: _Entrance(
+        delayMs: 0,
+        slide: _Slide.none,
+        durationMs: 400,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              // Update mode: back button. Initial mode: static school icon.
+              _updateMode
+                  ? GestureDetector(
+                      onTap: () => context.pop(),
+                      child: _iconBox(const Icon(Icons.arrow_back,
+                          size: 20, color: Colors.white)),
+                    )
+                  : _iconBox(const Icon(Icons.school,
+                      size: 22, color: Colors.white)),
+              Expanded(
+                child: Text(
+                  _updateMode ? 'Update Your Course' : 'Setup Your Course',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
-                  child: _saving
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2.5, color: Colors.white),
-                        )
-                      : Text(
-                          _updateMode ? 'Update Course' : 'Save and Continue',
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                              color: Colors.white),
-                        ),
                 ),
+              ),
+              _themeToggle(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _iconBox(Widget child) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      alignment: Alignment.center,
+      child: child,
+    );
+  }
+
+  Widget _themeToggle() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return GestureDetector(
+      onTap: () => ThemeService.toggle(context),
+      child: _iconBox(Icon(
+        isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+        size: 20,
+        color: Colors.white,
+      )),
+    );
+  }
+
+  // ------------------------------------------------------------- sections
+
+  Widget _titleSection(ExpoPalette pal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _updateMode ? 'Update Your Course' : 'Setup Your New Course',
+          style: TextStyle(
+            color: pal.textPrimary,
+            fontSize: 26,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _updateMode
+              ? 'Change your selected course or subcourse anytime'
+              : 'Choose a course to start your learning journey',
+          style: TextStyle(color: pal.textSecondary, fontSize: 14),
+        ),
+      ],
+    );
+  }
+
+  Widget _sectionHeader(ExpoPalette pal,
+      {required IconData icon,
+      required Color iconColor,
+      required String title}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: pal.surfaceAlt,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            alignment: Alignment.center,
+            child: Icon(icon, size: 18, color: iconColor),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            title,
+            style: TextStyle(
+              color: pal.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _courseSection(ExpoPalette pal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(pal,
+            icon: Icons.school,
+            iconColor: const Color(0xFF2563EB),
+            title: 'Select Course'),
+        if (_loadingCourses)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: CircularProgressIndicator(
+                  color: Color(0xFF2563EB)),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (int i = 0; i < _courses.length; i++)
+                _Entrance(
+                  delayMs: 250 + i * 80,
+                  durationMs: 350,
+                  slide: _Slide.down,
+                  child: _chip(
+                    pal,
+                    label: _label(_courses[i]),
+                    selected: _courses[i]['id'] == _selectedCourse,
+                    color: const Color(0xFF2563EB),
+                    onTap: () =>
+                        _selectCourse('${_courses[i]['id']}'),
+                  ),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _subcourseSection(ExpoPalette pal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(pal,
+            icon: Icons.book,
+            iconColor: const Color(0xFFDC2626),
+            title: 'Select Subcourse'),
+        if (_loadingSub)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 20),
+            child: Center(
+              child: CircularProgressIndicator(
+                  color: Color(0xFFDC2626)),
+            ),
+          )
+        else if (_subcourseError)
+          _Entrance(
+            delayMs: 0,
+            durationMs: 300,
+            slide: _Slide.none,
+            child: Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF2F2),
+                borderRadius: BorderRadius.circular(12),
+                border:
+                    Border.all(color: const Color(0xFFFECACA)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.error_outline,
+                      size: 20, color: Color(0xFFDC2626)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'No subcourses found for this course yet. Please contact support or try again later.',
+                      style: TextStyle(
+                        color: Color(0xFF991B1B),
+                        fontSize: 13,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (int i = 0; i < _subcourses.length; i++)
+                _Entrance(
+                  delayMs: i * 80,
+                  durationMs: 350,
+                  slide: _Slide.down,
+                  child: Builder(builder: (context) {
+                    final sub = _subcourses[i];
+                    final isSelected =
+                        sub['id'] == _selectedSubcourse;
+                    // Blue = the subcourse you're already enrolled in.
+                    // Red  = a NEW pick that differs from what's saved.
+                    final isEnrolled = isSelected &&
+                        sub['id'] == _savedSubcourseId &&
+                        _selectedCourse == _savedCourseId;
+                    return _chip(
+                      pal,
+                      label: _subLabel(sub),
+                      selected: isSelected,
+                      color: isEnrolled
+                          ? const Color(0xFF2563EB)
+                          : const Color(0xFFDC2626),
+                      onTap: () => setState(() =>
+                          _selectedSubcourse = '${sub['id']}'),
+                    );
+                  }),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _legend(ExpoPalette pal) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: pal.surfaceAlt,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          _legendItem(pal,
+              color: const Color(0xFF2563EB),
+              label: 'Currently enrolled'),
+          const SizedBox(width: 16),
+          _legendItem(pal,
+              color: const Color(0xFFDC2626),
+              label: 'New selection'),
+        ],
+      ),
+    );
+  }
+
+  Widget _legendItem(ExpoPalette pal,
+      {required Color color, required String label}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration:
+              BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 6),
+        Text(label,
+            style: TextStyle(
+                color: pal.textSecondary, fontSize: 12)),
+      ],
+    );
+  }
+
+  Widget _chip(ExpoPalette pal,
+      {required String label,
+      required bool selected,
+      required Color color,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(
+            horizontal: 18, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? color : pal.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+              color: selected ? color : pal.border, width: 1.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (selected) ...[
+              const Icon(Icons.check_circle,
+                  size: 18, color: Colors.white),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight:
+                    selected ? FontWeight.bold : FontWeight.w500,
+                color:
+                    selected ? Colors.white : pal.textPrimary,
               ),
             ),
           ],
@@ -343,56 +624,60 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     );
   }
 
-  Widget _emptyCard(String message) => Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-        ),
-        child: Text(message,
-            style: const TextStyle(color: Color(0xFF6B7280), fontSize: 14)),
-      );
-}
+  String _label(Map<String, dynamic> d) {
+    final n = d['name'];
+    if (n is String && n.isNotEmpty) return n;
+    return d['id']?.toString() ?? 'Course';
+  }
 
-class _Chip extends StatelessWidget {
-  final String label;
-  final bool enrolled;
-  final bool selected;
-  final bool red;
-  final VoidCallback onTap;
+  String _subLabel(Map<String, dynamic> d) {
+    final n = _label(d);
+    final level = d['level'];
+    if (level is String && level.isNotEmpty) return '$n ($level)';
+    return n;
+  }
 
-  const _Chip(
-      {required this.label,
-      required this.enrolled,
-      required this.selected,
-      required this.onTap,
-      this.red = false});
+  // ------------------------------------------------------------ bottom bar
 
-  @override
-  Widget build(BuildContext context) {
-    // Blue = already-enrolled selection, red = new selection — mirrors RN.
-    final color =
-        red ? const Color(0xFFDC2626) : const Color(0xFF2563EB);
-    final isOn = selected || enrolled;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: isOn ? color : Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: isOn ? color : const Color(0xFFD1D5DB), width: 1.5),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: isOn ? Colors.white : const Color(0xFF374151),
+  Widget _bottomBar(ExpoPalette pal, double bottomPad) {
+    return Container(
+      padding:
+          EdgeInsets.fromLTRB(20, 12, 20, bottomPad + 16),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        border: Border(top: BorderSide(color: pal.divider)),
+      ),
+      child: _Entrance(
+        delayMs: 0,
+        slide: _Slide.up,
+        child: SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _canSave ? _save : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
+              disabledBackgroundColor: const Color(0xFF9CA3AF),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+              elevation: 4,
+              shadowColor:
+                  const Color(0xFF2563EB).withValues(alpha: 0.3),
+            ),
+            child: _saving
+                ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2.5, color: Colors.white),
+                  )
+                : Text(
+                    _updateMode ? 'Update Course' : 'Save Course',
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white),
+                  ),
           ),
         ),
       ),
@@ -400,26 +685,55 @@ class _Chip extends StatelessWidget {
   }
 }
 
-class _LegendDot extends StatelessWidget {
-  final Color color;
-  final String label;
+enum _Slide { none, down, up }
 
-  const _LegendDot({required this.color, required this.label});
+/// Entrance animation mirroring react-native-reanimated's FadeIn / FadeInDown
+/// / FadeInUp used across the Expo app.
+class _Entrance extends StatefulWidget {
+  final int delayMs;
+  final int durationMs;
+  final _Slide slide;
+  final Widget child;
+
+  const _Entrance({
+    required this.delayMs,
+    required this.child,
+    this.durationMs = 400,
+    this.slide = _Slide.none,
+  });
+
+  @override
+  State<_Entrance> createState() => _EntranceState();
+}
+
+class _EntranceState extends State<_Entrance> {
+  bool _go = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) setState(() => _go = true);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 6),
-        Text(label,
-            style: const TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
-      ],
+    final offset = switch (widget.slide) {
+      _Slide.down => const Offset(0, -0.12),
+      _Slide.up => const Offset(0, 0.12),
+      _Slide.none => Offset.zero,
+    };
+    return AnimatedOpacity(
+      opacity: _go ? 1 : 0,
+      duration: Duration(milliseconds: widget.durationMs),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _go ? Offset.zero : offset,
+        duration: Duration(milliseconds: widget.durationMs),
+        curve: Curves.easeOut,
+        child: widget.child,
+      ),
     );
   }
 }

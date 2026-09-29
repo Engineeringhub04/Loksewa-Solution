@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_rest.dart';
+import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
 
-/// Onboarding — mirrors app/onboarding.tsx.
+/// Onboarding — iPhone-style modern flow (4 slides, no separate welcome page).
+///
+/// Cream background, illustration + title + description per slide, small dot
+/// indicators, and a circular arrow button that CONTINUOUSLY morphs into a
+/// full-width "Sign Up" pill while swiping from slide 3 to slide 4
+/// (finger-driven: the morph follows the PageView scroll position).
 /// Slides come from Firestore `app_onboarding-settings` (ordered by `order`);
 /// the 4 hardcoded slides are the fallback.
 class _Slide {
@@ -13,9 +19,6 @@ class _Slide {
   final String description;
   final String? assetPath;
   final String? imageUrl;
-  final Color backgroundColor;
-  final Color accentColor;
-  final String? tag;
 
   const _Slide({
     required this.id,
@@ -23,15 +26,7 @@ class _Slide {
     required this.description,
     this.assetPath,
     this.imageUrl,
-    required this.backgroundColor,
-    required this.accentColor,
-    this.tag,
   });
-}
-
-Color _hex(String hex) {
-  final h = hex.replaceFirst('#', '');
-  return Color(int.parse('FF$h', radix: 16));
 }
 
 const _hardcodedSlides = [
@@ -41,9 +36,6 @@ const _hardcodedSlides = [
     description:
         'Challenge yourself with timed mock tests every week and track your improvement over time.',
     assetPath: 'assets/images/ws-weeklytest.png',
-    backgroundColor: Color(0xFF0F172A),
-    accentColor: Color(0xFF3B82F6),
-    tag: 'Practice',
   ),
   _Slide(
     id: 'slide-2',
@@ -51,9 +43,6 @@ const _hardcodedSlides = [
     description:
         'Track your progress, compete with thousands of students across Nepal, and rise to the top.',
     assetPath: 'assets/images/ws-leaderboard_analytics.png',
-    backgroundColor: Color(0xFF0B1F28),
-    accentColor: Color(0xFF10B981),
-    tag: 'Compete',
   ),
   _Slide(
     id: 'slide-3',
@@ -61,9 +50,6 @@ const _hardcodedSlides = [
     description:
         'Strengthen your preparation with fresh daily questions covering all Loksewa subjects.',
     imageUrl: 'https://i.ibb.co/hN8gtSc/dailytest-wlc.png',
-    backgroundColor: Color(0xFF1E1510),
-    accentColor: Color(0xFFF97316),
-    tag: 'Daily',
   ),
   _Slide(
     id: 'slide-4',
@@ -71,9 +57,6 @@ const _hardcodedSlides = [
     description:
         'Connect with fellow aspirants, discuss tricky questions, and learn together as a community.',
     imageUrl: 'https://i.ibb.co/9HYXh3nr/discussion-wlc.png',
-    backgroundColor: Color(0xFF1B1B3D),
-    accentColor: Color(0xFF8B5CF6),
-    tag: 'Community',
   ),
 ];
 
@@ -82,6 +65,13 @@ const _localImageMap = {
   'assets/images/ws-leaderboard_analytics.png':
       'assets/images/ws-leaderboard_analytics.png',
 };
+
+// Video palette.
+const _cream = Color(0xFFFDF4EF);
+const _navy = Color(0xFF232A3B);
+const _ink = Color(0xFF1F2937);
+const _grey = Color(0xFF6B7280);
+const _dotIdle = Color(0xFFD1D5DB);
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -98,14 +88,32 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   @override
   void initState() {
     super.initState();
+    _controller.addListener(_onScroll);
     _loadRemoteSlides();
   }
 
   @override
   void dispose() {
+    _controller.removeListener(_onScroll);
     _controller.dispose();
     super.dispose();
   }
+
+  /// Rebuilds every frame while scrolling so the morph button, dots and
+  /// top-bar fades track the finger continuously.
+  void _onScroll() {
+    if (mounted) setState(() {});
+  }
+
+  /// Fractional page position; falls back to the settled index before the
+  /// controller has laid out.
+  double get _page => _controller.hasClients && _controller.page != null
+      ? _controller.page!
+      : _index.toDouble();
+
+  /// 0 on slides 1-3, easing to 1 as the user swipes onto slide 4.
+  double get _morphT =>
+      Curves.easeOutCubic.transform((_page - 2).clamp(0.0, 1.0));
 
   Future<void> _loadRemoteSlides() async {
     try {
@@ -126,9 +134,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             title: d['title'] as String? ?? '',
             description: d['description'] as String? ?? '',
             assetPath: isLocal ? _localImageMap[imageLink] : null,
-            imageUrl: isLocal ? null : imageLink,
-            backgroundColor: _hex(d['backgroundColor'] as String? ?? '#0B1330'),
-            accentColor: const Color(0xFF3B82F6),
+            imageUrl:
+                isLocal ? null : (imageLink.isEmpty ? null : imageLink),
           );
         }).toList();
         if (mounted) setState(() => _slides = slides);
@@ -138,177 +145,179 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
   }
 
-  Future<void> _finish() async {
+  Future<void> _finishSignup() async {
+    await PrefsService.setBool(PrefsService.onboardingSeen, true);
+    if (mounted) context.go('/signup');
+  }
+
+  Future<void> _finishLogin() async {
     await PrefsService.setBool(PrefsService.onboardingSeen, true);
     if (mounted) context.go('/login');
   }
 
   void _goTo(int i) {
     _controller.animateToPage(
-      i,
-      duration: const Duration(milliseconds: 300),
+      i.clamp(0, _slides.length - 1),
+      duration: const Duration(milliseconds: 350),
       curve: Curves.easeInOut,
     );
   }
 
+  void _onMorphTap() {
+    if (_morphT < 0.5) {
+      _goTo(_index + 1);
+    } else {
+      _finishSignup();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isLast = _index == _slides.length - 1;
-    final isFirst = _index == 0;
-    final slide = _slides[_index];
+    final morphT = _morphT;
+    final screenW = MediaQuery.of(context).size.width;
+    final fullW = screenW - 48; // 24px margins, like the video's pill
+
+    // Button geometry, driven by the swipe.
+    final btnW = 56 + (fullW - 56) * morphT;
+    final btnR = 28 + (16 - 28) * morphT;
+    final showText = morphT > 0.4;
 
     return Scaffold(
-      body: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        color: slide.backgroundColor,
-        child: SafeArea(
-          child: Column(
-            children: [
-              // Top bar: Skip
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                child: Row(
-                  children: [
-                    const SizedBox(width: 80),
-                    const Spacer(),
-                    if (!isLast)
-                      TextButton(
-                        onPressed: () => _goTo(_slides.length - 1),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text('Skip',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w600)),
-                            Icon(Icons.chevron_right,
-                                size: 14, color: Colors.white70),
-                          ],
-                        ),
+      backgroundColor: _cream,
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Top bar: back chevron (from slide 2) + Skip (slides 1-3).
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+              child: Row(
+                children: [
+                  Opacity(
+                    opacity: _page.clamp(0.0, 1.0),
+                    child: IconButton(
+                      onPressed: _page > 0.5 ? () => _goTo(_index - 1) : null,
+                      icon: const Icon(Icons.chevron_left,
+                          size: 28, color: _ink),
+                    ),
+                  ),
+                  const Spacer(),
+                  Opacity(
+                    opacity: 1 - morphT,
+                    child: TextButton(
+                      onPressed: morphT < 0.5 ? () => _goTo(3) : null,
+                      child: const Text(
+                        'Skip',
+                        style: TextStyle(
+                            color: _ink,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w500),
                       ),
-                  ],
-                ),
+                    ),
+                  ),
+                ],
               ),
-              // Slides
-              Expanded(
-                child: PageView.builder(
-                  controller: _controller,
-                  itemCount: _slides.length,
-                  onPageChanged: (i) => setState(() => _index = i),
-                  itemBuilder: (context, i) => _SlideView(slide: _slides[i]),
-                ),
+            ),
+            // Slides.
+            Expanded(
+              child: PageView.builder(
+                controller: _controller,
+                itemCount: _slides.length,
+                onPageChanged: (i) => setState(() => _index = i),
+                itemBuilder: (context, i) =>
+                    _SlideView(slide: _slides[i]),
               ),
-              // Dots
-              Row(
+            ),
+            // Dots (fade out while morphing into the CTA).
+            Opacity(
+              opacity: 1 - morphT,
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(
                   _slides.length,
                   (i) => AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: i == _index ? 24 : 8,
+                    width: i == _index ? 20 : 8,
                     height: 8,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(4),
-                      color: i == _index
-                          ? slide.accentColor
-                          : Colors.white.withValues(alpha: 0.3),
+                      color: i == _index ? _ink : _dotIdle,
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 24),
-              // Bottom nav
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 0, 24, 20),
-                child: isLast
-                    ? SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          onPressed: _finish,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.18),
-                            foregroundColor: Colors.white,
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 16),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+            ),
+            const SizedBox(height: 28),
+            // Morphing CTA: circle arrow -> full-width "Sign Up" pill.
+            Center(
+              child: GestureDetector(
+                onTap: _onMorphTap,
+                child: Container(
+                  width: btnW,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: _navy,
+                    borderRadius: BorderRadius.circular(btnR),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (showText) ...[
+                        const SizedBox(width: 24),
+                        Opacity(
+                          opacity: morphT,
+                          child: const Text(
+                            'Sign Up',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
                             ),
-                          ),
-                          child: const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Text('Get Started',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16)),
-                              SizedBox(width: 8),
-                              Icon(Icons.arrow_forward, size: 18),
-                            ],
                           ),
                         ),
-                      )
-                    : Row(
-                        children: [
-                          if (!isFirst)
-                            Expanded(
-                              child: OutlinedButton(
-                                onPressed: () => _goTo(_index - 1),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.white,
-                                  side: const BorderSide(
-                                      color: Colors.white30),
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 14),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(14),
-                                  ),
-                                ),
-                                child: const Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                  children: [
-                                    Icon(Icons.arrow_back, size: 18),
-                                    SizedBox(width: 6),
-                                    Text('Back'),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          if (!isFirst) const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => _goTo(_index + 1),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: slide.accentColor,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 14),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(14),
-                                ),
-                              ),
-                              child: const Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.center,
-                                children: [
-                                  Text('Next',
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.w600)),
-                                  SizedBox(width: 6),
-                                  Icon(Icons.arrow_forward, size: 18),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
+                        const Spacer(),
+                        const Icon(Icons.arrow_forward,
+                            size: 20, color: Colors.white),
+                        const SizedBox(width: 24),
+                      ] else
+                        const Icon(Icons.arrow_forward,
+                            size: 20, color: Colors.white),
+                    ],
+                  ),
+                ),
               ),
-            ],
-          ),
+            ),
+            // Login row (reserved space so the button never jumps).
+            SizedBox(
+              height: 40,
+              child: Opacity(
+                opacity: morphT,
+                child: Center(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Already have an account? ',
+                        style: TextStyle(color: _grey, fontSize: 14),
+                      ),
+                      GestureDetector(
+                        onTap: morphT > 0.5 ? _finishLogin : null,
+                        child: const Text(
+                          'Login',
+                          style: TextStyle(
+                            color: _ink,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
         ),
       ),
     );
@@ -321,61 +330,47 @@ class _SlideView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget image;
-    if (slide.assetPath != null) {
-      image = Image.asset(slide.assetPath!, fit: BoxFit.contain);
-    } else if (slide.imageUrl != null) {
-      image = Image.network(
-        slide.imageUrl!,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) =>
-            const Icon(Icons.image, size: 120, color: Colors.white24),
-      );
-    } else {
-      image = const Icon(Icons.image, size: 120, color: Colors.white24);
-    }
+    final provider =
+        OnboardingCache.resolve(slide.assetPath, slide.imageUrl);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          if (slide.tag != null)
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: slide.accentColor.withValues(alpha: 0.18),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                    color: slide.accentColor.withValues(alpha: 0.5)),
-              ),
-              child: Text(
-                slide.tag!,
-                style: TextStyle(
-                  color: slide.accentColor,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12,
-                ),
-              ),
-            ),
-          const SizedBox(height: 24),
-          SizedBox(height: 220, child: image),
-          const SizedBox(height: 32),
+          SizedBox(
+            height: 260,
+            child: provider != null
+                ? Image(
+                    image: provider,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Icon(
+                      Icons.image_outlined,
+                      size: 120,
+                      color: _dotIdle,
+                    ),
+                  )
+                : const Icon(
+                    Icons.image_outlined,
+                    size: 120,
+                    color: _dotIdle,
+                  ),
+          ),
+          const SizedBox(height: 36),
           Text(
             slide.title,
             style: const TextStyle(
-              color: Colors.white,
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
+              color: _ink,
+              fontSize: 24,
+              fontWeight: FontWeight.w700,
             ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 12),
           Text(
             slide.description,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.75),
+            style: const TextStyle(
+              color: _grey,
               fontSize: 15,
               height: 1.5,
             ),

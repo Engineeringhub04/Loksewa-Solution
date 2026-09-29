@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
 import '../services/device_session.dart';
+import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
 import '../services/remote_config.dart';
 
@@ -82,6 +83,12 @@ class _SplashScreenState extends State<SplashScreen> {
       context.go('/');
       return;
     }
+    // Warm the onboarding image cache (disk + memory) so the onboarding
+    // screen shows instantly. Hard deadline: the splash never hangs.
+    if (!mounted) return;
+    await OnboardingCache.warmUp(context)
+        .timeout(const Duration(seconds: 10), onTimeout: () {});
+    if (!mounted) return;
     context.go('/onboarding');
   }
 

@@ -345,17 +345,8 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                                     16, 8, 16, 48),
                                 child: _selectedTrack == 'all'
                                     ? Column(
-                                        children: d.tracks
-                                            .asMap()
-                                            .entries
-                                            .map((e) => _StaggeredReveal(
-                                                  index: e.key,
-                                                  animationKey:
-                                                      'all-${d.tracks.length}',
-                                                  child: _unitCard(
-                                                      context, e.value, d),
-                                                ))
-                                            .toList(),
+                                        children:
+                                            _allListChildren(context, d),
                                       )
                                     : Column(
                                         children: _selectedTrackChapters(d)
@@ -740,6 +731,32 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
   }
 
   // ---------------------------------------------------------- unit card
+  /// Children for the 'all' track view: one unit card per real unit,
+  /// then the direct-chapters track's chapters as flat chapter rows (no
+  /// section header, no unit card — the direct track's own card is excluded
+  /// on purpose). Stagger indices continue across both groups.
+  List<Widget> _allListChildren(BuildContext context, _UnitPage d) {
+    final children = <Widget>[];
+    final units = d.tracks.where((t) => !t.direct).toList();
+    for (var i = 0; i < units.length; i++) {
+      children.add(_StaggeredReveal(
+        index: i,
+        animationKey: 'all-${d.tracks.length}',
+        child: _unitCard(context, units[i], d),
+      ));
+    }
+    final directChapters =
+        d.tracks.where((t) => t.direct).expand((t) => t.chapters).toList();
+    for (var j = 0; j < directChapters.length; j++) {
+      children.add(_StaggeredReveal(
+        index: units.length + j,
+        animationKey: 'all-${d.tracks.length}',
+        child: _chapterCard(context, directChapters[j], d),
+      ));
+    }
+    return children;
+  }
+
   Widget _unitCard(BuildContext context, _Track t, _UnitPage d) {
     final isExpanded = _expandedUnit == t.id;
     final palette = ExpoPalette.of(context);
@@ -758,18 +775,21 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
         key: _unitKeys.putIfAbsent(t.id, () => GlobalKey()),
-        clipBehavior: Clip.antiAlias,
+        // Shadow lives OUTSIDE the clip (same pattern as the stats card) so
+        // it is never cut flush at the card's bounds. No Border.all — the
+        // thin grey stroke was reading as a harsh "cut" edge on the sides.
         decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-              color: Theme.of(context).dividerColor.withValues(alpha: 0.6)),
           boxShadow: const [
             BoxShadow(
-                color: Color(0x140C2D91), blurRadius: 9, offset: Offset(0, 4)),
+                color: Color(0x140C2D91), blurRadius: 12, offset: Offset(0, 6)),
           ],
         ),
-        child: Column(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            color: Theme.of(context).cardColor,
+            child: Column(
           children: [
             // Subtle press-scale feedback on the header; the InkWell keeps
             // its own onTap so the toggle fires exactly once.
@@ -807,12 +827,8 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                               ),
                             ],
                           ),
-                          child: Icon(
-                              t.direct
-                                  ? Icons.photo_album_outlined
-                                  : Icons.layers_outlined,
-                              size: 22,
-                              color: Colors.white),
+                          child: Icon(_unitIconFor(t.label),
+                              size: 22, color: Colors.white),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -923,8 +939,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                       ),
                     )
                   : const SizedBox(width: double.infinity),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -1547,6 +1565,52 @@ class _ModeButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Picks a distinct icon per unit from its label: keyword match first
+/// (first match wins), then a stable FNV-1a hash over a curated icon list.
+/// (String.hashCode is NOT stable across runs, so it can't be used here.)
+IconData _unitIconFor(String label) {
+  final l = label.toLowerCase();
+  if (l.contains('survey')) return Icons.map_outlined;
+  if (l.contains('construction') || l.contains('material')) {
+    return Icons.construction_outlined;
+  }
+  if (l.contains('mechanic') || l.contains('structure')) {
+    return Icons.architecture_outlined;
+  }
+  if (l.contains('water') || l.contains('hydro') || l.contains('irrigation')) {
+    return Icons.water_drop_outlined;
+  }
+  if (l.contains('electr')) return Icons.bolt_outlined;
+  if (l.contains('soil') || l.contains('geo')) return Icons.landscape_outlined;
+  if (l.contains('estimat') || l.contains('cost')) {
+    return Icons.calculate_outlined;
+  }
+  if (l.contains('draw')) return Icons.brush_outlined;
+  if (l.contains('environ')) return Icons.eco_outlined;
+  if (l.contains('transport') || l.contains('road') || l.contains('highway')) {
+    return Icons.route_outlined;
+  }
+  if (l.contains('building')) return Icons.apartment_outlined;
+  const fallback = [
+    Icons.layers_outlined,
+    Icons.science_outlined,
+    Icons.menu_book_outlined,
+    Icons.school_outlined,
+    Icons.public_outlined,
+    Icons.build_outlined,
+    Icons.settings_outlined,
+    Icons.lightbulb_outlined,
+    Icons.assignment_outlined,
+    Icons.category_outlined,
+  ];
+  var hash = 0x811c9dc5;
+  for (final cu in l.codeUnits) {
+    hash ^= cu;
+    hash = (hash * 0x01000193) & 0xffffffff;
+  }
+  return fallback[hash % fallback.length];
 }
 
 class _Track {

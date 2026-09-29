@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 
+import '../../services/pdf_source.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -15,10 +16,13 @@ import '../../widgets/subpage_header.dart';
 /// Native in-app PDF viewer (pdfx): the PDF is downloaded once into a local
 /// cache and rendered by the phone's own native PDF engine
 /// (Android PdfRenderer) — no Google Docs / Drive / third-party web viewer.
-/// The header is LOCKED to the light theme (no theme toggle), with a white
-/// fullscreen button on the right. A floating page counter sits at the
-/// bottom-centre. Fullscreen hides the header and shows a black close button
-/// at the top-right.
+/// Share links (Drive `/file/d/<id>/view`, Dropbox) are rewritten into
+/// direct-download URLs first (Dart port of the React app's
+/// `src/core/media/pdfSource.ts`) — a raw share link serves an HTML page,
+/// not PDF bytes. The header is LOCKED to the light theme (no theme toggle),
+/// with a white fullscreen button on the right. A floating page counter sits
+/// at the bottom-centre. Fullscreen hides the header and shows a black close
+/// button at the top-right.
 class PdfScreen extends StatefulWidget {
   final String id;
   final String? uri;
@@ -111,6 +115,43 @@ class _PdfScreenState extends State<PdfScreen> {
 
   static String _mb(int bytes) => (bytes / 1048576).toStringAsFixed(1);
 
+  /// Tries each candidate URL until one returns bytes that actually start
+  /// with the PDF magic bytes — this transparently gets past Google Drive
+  /// share links (HTML preview page) and its virus-scan interstitial.
+  /// (Dart port of the React app's fetchPdfAsBase64 candidate loop.)
+  static Future<Uint8List> _downloadPdf(
+    String url,
+    void Function(int received, int? total) onProgress,
+  ) async {
+    final candidates = PdfSource.candidateUrls(url);
+    Object? lastError;
+    for (final candidate in candidates) {
+      try {
+        final bytes = await _downloadWithProgress(candidate, onProgress);
+        if (PdfSource.looksLikePdf(bytes)) return bytes;
+        lastError = Exception('not a pdf');
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError ?? Exception('download failed');
+  }
+
+  /// A cached file is only reusable when it is a real PDF. Older builds
+  /// cached Drive's HTML preview page (the raw share link was downloaded
+  /// as-is) — those stale entries must re-download, not be reused forever.
+  static bool _isCachedPdf(File file) {
+    try {
+      if (!file.existsSync() || file.lengthSync() < 5) return false;
+      final raf = file.openSync(mode: FileMode.read);
+      final head = raf.readSync(5);
+      raf.closeSync();
+      return PdfSource.looksLikePdf(Uint8List.fromList(head));
+    } catch (_) {
+      return false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -134,12 +175,21 @@ class _PdfScreenState extends State<PdfScreen> {
       if (!dir.existsSync()) dir.createSync(recursive: true);
       final file = File('${dir.path}/$_cacheName');
 
+      // Drop a stale cache entry (e.g. an HTML preview page cached by an
+      // older build that downloaded the raw share link) so this open
+      // re-downloads through the direct-download candidates.
+      if (file.existsSync() && !_isCachedPdf(file)) {
+        try {
+          file.deleteSync();
+        } catch (_) {}
+      }
+
       // Download once; reuse the cached file afterwards.
       if (!file.existsSync() || file.lengthSync() == 0) {
         setState(() => _downloading = true);
         final bytes = await (widget.downloadBytes != null
             ? widget.downloadBytes!(_uri)
-            : _downloadWithProgress(_uri, (received, total) {
+            : _downloadPdf(_uri, (received, total) {
                 if (!mounted) return;
                 // Throttle UI updates: chunks can arrive hundreds per
                 // second on fast networks.

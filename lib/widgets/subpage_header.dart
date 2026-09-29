@@ -1,25 +1,23 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/theme_service.dart';
 
 /// Shared curved blue gradient header used across sub-pages.
 /// Mirrors `SubpageHeader.tsx` from the Expo app: diagonal gradient
-/// #2563EB → #1D4ED8 → #0B1F5B (top-left to bottom-right), 36×36 translucent
-/// back button, centered 18px bold white title, and a working theme toggle
-/// on the right with an optional `actions` slot to its left.
+/// #2563EB → #1D4ED8 → #0B1F5B (top-left to bottom-right), 26px bottom corner
+/// radius, 36×36 translucent back button, centered 18px bold white title, and
+/// a working theme toggle on the right with an optional `actions` slot to its
+/// left.
 ///
 /// Top inset handling: the gradient container is full-bleed (it paints behind
 /// the status bar) and a SafeArea inside it adds exactly one status-bar inset
 /// before the 12px content padding — the same `insets.top + 12` as React.
-/// Because SafeArea zeroes the padding it consumes for its descendants, this
-/// stays correct whether or not the screen also wraps its body in SafeArea
-/// (no double inset either way).
-///
-/// Bottom corners are SQUARE (no 26px radius). React's SubpageHeader rounds
-/// them, which exposes the page background in the corner cutouts; the user
-/// explicitly asked for a full-blue header with no light band, so the
-/// corners are filled with the header's own blue.
+/// The status bar itself is transparent with light icons (React's
+/// `<StatusBar translucent backgroundColor="transparent"
+/// barStyle="light-content" />`), so the gradient flows seamlessly under the
+/// clock — no white band above the header.
 ///
 /// No entry animation here on purpose — the page transition IS the animation.
 class SubpageHeader extends StatelessWidget {
@@ -60,20 +58,31 @@ class SubpageHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Container(
-      decoration: const BoxDecoration(
-        // Solid fallback painted under the gradient so the header can never
-        // render colourless. Bottom corners are intentionally square: the
-        // 26px radius React uses exposes the page background in the corner
-        // cutouts (read as a white band), and full-blue was explicitly
-        // requested.
-        color: Color(0xFF1D4ED8),
-        gradient: LinearGradient(
-          colors: _gradientColors,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+    // Transparent status bar with light icons so the full-bleed gradient
+    // flows under the clock — mirrors React's translucent StatusBar and
+    // kills the white band that used to sit above the header.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
       ),
+      child: Container(
+        decoration: const BoxDecoration(
+          // Solid fallback painted under the gradient so the header can never
+          // render colourless. 26px bottom radius, exactly like React's
+          // SubpageHeader (borderBottomLeftRadius/borderBottomRightRadius).
+          color: Color(0xFF1D4ED8),
+          gradient: LinearGradient(
+            colors: _gradientColors,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(26),
+            bottomRight: Radius.circular(26),
+          ),
+        ),
       child: SafeArea(
         top: true,
         bottom: false,
@@ -141,6 +150,7 @@ class SubpageHeader extends StatelessWidget {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

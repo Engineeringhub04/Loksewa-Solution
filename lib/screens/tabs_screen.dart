@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/screens/learn/home_tab.dart';
 import 'package:loksewa_solution/screens/learn/exam_tab.dart';
@@ -25,8 +26,17 @@ class _TabsScreenState extends State<TabsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(index: _index, children: _tabs),
+    // Transparent status bar with light icons on the tab shell — every tab
+    // header is a dark full-bleed gradient, so it flows under the clock
+    // (React's translucent StatusBar), with no white band on top.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        body: IndexedStack(index: _index, children: _tabs),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
         onTap: (i) => setState(() => _index = i),
@@ -55,6 +65,7 @@ class _TabsScreenState extends State<TabsScreen> {
             label: 'Profile',
           ),
         ],
+      ),
       ),
     );
   }

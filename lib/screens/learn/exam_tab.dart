@@ -168,6 +168,11 @@ class _ExamTabState extends State<ExamTab> {
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
+                      // 26px bottom curve, like React's tab headers.
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(26),
+                        bottomRight: Radius.circular(26),
+                      ),
                     ),
                     child: const SafeArea(
                       child: Padding(

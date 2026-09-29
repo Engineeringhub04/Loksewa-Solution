@@ -101,6 +101,9 @@ class _GorkhapatraScreenState extends State<GorkhapatraScreen> {
     return Scaffold(
       backgroundColor: bg,
       body: SafeArea(
+        // SubpageHeader paints behind the status bar itself
+        // (React parity) — no top inset here or the header gets pushed down.
+        top: false,
         child: Column(
           children: [
             const SubpageHeader(title: 'Gorkhapatra Loksewa'),

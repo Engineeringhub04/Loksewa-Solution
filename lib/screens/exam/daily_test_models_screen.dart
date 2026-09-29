@@ -146,6 +146,9 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen> {
       backgroundColor:
           isDark ? const Color(0xFF0B1120) : const Color(0xFFF5F6FA),
       body: SafeArea(
+        // SubpageHeader paints behind the status bar itself
+        // (React parity) — no top inset here or the header gets pushed down.
+        top: false,
         child: Column(
           children: [
             const SubpageHeader(title: 'All Models'),

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/preloading.dart';
 
 /// Discussion tab — mirrors app/(tabs)/discussion.tsx.
 /// Gradient header + search, post list with like/report/delete, FAB.
@@ -235,7 +236,10 @@ class _DiscussionTabState extends State<DiscussionTab> {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return const Padding(
                     padding: EdgeInsets.all(32),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading Discussions...',
+                    ),
                   );
                 }
                 if (snap.hasError) {

@@ -5,6 +5,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 
 /// Note editor — mirrors app/notes/[id].tsx.
 /// Title, body, color picker, save/delete. Local-first via SharedPreferences.
@@ -148,7 +149,10 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         ]),
           Expanded(
             child: !_loaded
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Note...',
+          )
           : Column(
               children: [
                 Expanded(

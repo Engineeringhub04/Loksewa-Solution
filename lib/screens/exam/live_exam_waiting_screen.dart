@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Live exam waiting room — mirrors app/live-exam/[id]/waiting.tsx.
 /// Confirm join → countdown → auto-start; late join is blocked.
@@ -127,7 +128,10 @@ class _LiveExamWaitingScreenState extends State<LiveExamWaitingScreen> {
           const SubpageHeader(title: 'Waiting Room'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading...',
+          )
           : _error != null
               ? Center(
                   child: Column(
@@ -168,7 +172,10 @@ class _LiveExamWaitingScreenState extends State<LiveExamWaitingScreen> {
                                       fontSize: 48,
                                       fontWeight: FontWeight.bold)),
                             ] else
-                              const CircularProgressIndicator(),
+                              const PreloadingWidget(
+                                tinted: false,
+                                label: 'Joining exam...',
+                              ),
                           ],
                         ),
                       ),

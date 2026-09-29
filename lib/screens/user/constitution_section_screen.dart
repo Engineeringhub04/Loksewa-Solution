@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Constitution section reader — mirrors app/constitution/[sectionId].tsx.
 ///
@@ -64,7 +65,10 @@ class _ConstitutionSectionScreenState extends State<ConstitutionSectionScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading...',
+            );
           }
           if (snap.hasError) {
             return Center(

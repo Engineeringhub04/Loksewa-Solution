@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Admin desk — every subscription request, newest first. A request is NEVER
 /// removed after review; it just changes tag. Mirrors
@@ -72,7 +73,10 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Subscriptions...',
+            );
           }
           if (snap.hasError) {
             if (snap.error is _Denied) {

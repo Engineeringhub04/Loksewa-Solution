@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Discussion detail — mirrors app/discussion/[id].tsx.
 ///
@@ -284,7 +285,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Discussion...',
+            );
           }
           if (snap.hasError) {
             return Center(

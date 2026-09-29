@@ -125,6 +125,11 @@ class SubpageHeader extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     if (actions != null) ...actions!,
+                    // Small breathing room between custom actions (e.g. the
+                    // language pill) and the theme toggle so the two buttons
+                    // don't sit stuck together.
+                    if (actions != null && showThemeToggle)
+                      const SizedBox(width: 8),
                     // The empty balancing box only applies when the screen adds
                     // no actions of its own: with custom actions (e.g. the
                     // notifications mark-all pill, which replaces the whole

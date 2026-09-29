@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Admin → review one content purchase request. Mirrors
 /// app/admin/content-purchases/[id].tsx. Collection: app_content_purchases.
@@ -185,7 +186,10 @@ class _AdminContentPurchaseDetailScreenState
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Details...',
+            );
           }
           if (snap.hasError) {
             if (snap.error is _Denied) {
@@ -363,7 +367,9 @@ class _AdminContentPurchaseDetailScreenState
         if (_busy)
           Container(
             color: Colors.black45,
-            child: const Center(child: CircularProgressIndicator()),
+            child: const PreloadingWidget(
+              label: 'Working...',
+            ),
           ),
       ],
     );

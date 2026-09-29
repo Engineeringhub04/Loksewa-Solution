@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Delete Account — mirrors app/delete-account.tsx.
 /// Type DELETE to confirm, confirm dialog, then the profile document is
@@ -249,16 +250,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
             Container(
               color: Colors.black54,
               child: const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(color: Colors.white),
-                    SizedBox(height: 12),
-                    Text(
-                      'Deleting your account...',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ],
+                child: PreloadingWidget(
+                  label: 'Deleting your account...',
                 ),
               ),
             ),

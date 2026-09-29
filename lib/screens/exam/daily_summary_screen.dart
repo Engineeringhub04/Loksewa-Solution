@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Daily test summary — mirrors app/daily-test/[modelId]/summary.tsx.
 ///
@@ -190,7 +191,10 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        tinted: false,
+        label: 'Loading Summary...',
+      );
     }
     if (_error != null || _model == null || _answers == null) {
       return Center(

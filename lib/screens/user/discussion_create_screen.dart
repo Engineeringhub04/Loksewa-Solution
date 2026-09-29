@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Create / edit discussion — mirrors app/discussion/create.tsx.
 ///
@@ -202,7 +203,10 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
           ]),
             Expanded(
               child: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const PreloadingWidget(
+              tinted: false,
+              label: 'Loading...',
+            )
             : ListView(
                 padding: const EdgeInsets.all(16),
                 children: [

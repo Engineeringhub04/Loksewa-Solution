@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam ranking — mirrors app/exam/[setId]/ranking.tsx.
 /// Best score per user, sorted by score desc then fastest time.
@@ -58,7 +59,10 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
           const SubpageHeader(title: 'Ranking'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Ranking...',
+          )
           : _error != null
               ? Center(
                   child: Column(

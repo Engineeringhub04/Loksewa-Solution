@@ -16,6 +16,7 @@ import 'package:loksewa_solution/widgets/home/grid_button.dart';
 import 'package:loksewa_solution/widgets/home/notice_card.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/developer_card.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 
 /// Home tab — faithful port of app/(tabs)/index.tsx:
 /// collapsing HomeHeader, BannerCarousel, QuestionOfDayCard, Subjects rail,
@@ -287,8 +288,8 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
             // stark flash, and the header never renders half-faded over it.
             return Container(
               color: const Color(0xFF03145C),
-              child: const Center(
-                child: CircularProgressIndicator(color: Colors.white),
+              child: const PreloadingWidget(
+                label: 'Loading...',
               ),
             );
           }

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Admin → Report Details Control: every report from every user, newest first.
 /// Mirrors app/admin/report-history/index.tsx. Collection: app_report_history.
@@ -67,7 +68,10 @@ class _AdminReportHistoryScreenState extends State<AdminReportHistoryScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Reports...',
+            );
           }
           if (snap.hasError) {
             if (snap.error is _Denied) {

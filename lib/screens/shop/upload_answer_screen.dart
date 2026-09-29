@@ -13,6 +13,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 class UploadAnswerScreen extends StatefulWidget {
   const UploadAnswerScreen({super.key});
@@ -179,7 +180,10 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           SubpageHeader(title: isEdit ? 'Edit Answer Sheet' : 'Upload Answer Sheet'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading...',
+          )
           : _done
               ? _success()
               : SingleChildScrollView(

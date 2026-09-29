@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Result — mirrors app/result/[attemptId].tsx.
 /// Score ring, correct/incorrect/unattempted stats, per-question review,
@@ -64,15 +65,9 @@ class _ResultScreenState extends State<ResultScreen> {
           const SubpageHeader(title: 'Result'),
           Expanded(
             child: _loading
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 12),
-                  Text('Calculating result...'),
-                ],
-              ),
+          ? const PreloadingWidget(
+              tinted: false,
+              label: 'Calculating result...',
             )
           : _error != null
               ? Center(

@@ -4,11 +4,22 @@ import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Subject practice mode — exact port of app/subjects/practice.tsx.
-/// Daily-limit gating (free min(30,len) / premium min(100,len)), premium
-/// questions capped to 100, per-question lock-in, Firestore progress sync.
+/// Subject practice mode — React parity port of app/subjects/practice.tsx.
+///
+/// UI mirrors the React screen section by section: daily-limit row, question
+/// badge + bookmark/report actions, question card with difficulty pill, option
+/// tiles (default / selected / correct / wrong), explanation panel, curved
+/// bottom Previous/Next bar, and the AppDialog-style popups (daily-limit,
+/// all-questions-complete, pause/leave). Question changes animate with a
+/// fade + slight slide. Text sizes are scaled ~1-2px below the old design.
+///
+/// Business logic (question fetching, daily-limit gating, premium caps,
+/// per-question lock-in, Firestore progress sync) is unchanged.
 class SubjectPracticeScreen extends StatefulWidget {
   final String subjectId;
   final String chapterId;
@@ -52,6 +63,9 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   bool _showLeaveConfirm = false;
   bool _hasSpecificAccess = false;
   bool _profilePremium = false;
+  // +1 when moving to the next question, -1 for previous — drives the
+  // question transition direction.
+  int _slideDir = 0;
   final ScrollController _scrollController = ScrollController();
 
   String get _unitId => widget.unitId ?? '';
@@ -199,6 +213,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         _selectedAnswers = Map<String, int>.from(
             (next['selectedAnswerIndexes'] as Map?) ?? {});
         _current = 0;
+        _slideDir = 0;
         _loading = false;
       });
     } catch (_) {
@@ -319,6 +334,15 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     }
   }
 
+  void _goToQuestion(int delta) {
+    final next = _current + delta;
+    if (next < 0 || next >= _questions.length) return;
+    setState(() {
+      _slideDir = delta > 0 ? 1 : -1;
+      _current = next;
+    });
+  }
+
   void _onNext() {
     if (_current == _questions.length - 1) {
       if (_proSubjectActive) {
@@ -328,421 +352,550 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       }
       return;
     }
-    setState(() => _current++);
+    _goToQuestion(1);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Scaffold(
-      body: Column(
-        children: [
-          SubpageHeader(
-            title: 'Practice Mode',
-            onBackPress: () => setState(() => _showLeaveConfirm = true),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _loadError
-                    ? _errorState()
-                    : _questions.isEmpty
-                        ? _emptyState()
-                        : _mainList(theme),
-          ),
-        ],
-      ),
-      bottomNavigationBar: _loading || _loadError || _questions.isEmpty
-          ? null
-          : _bottomBar(theme),
-    );
-  }
-
-  Widget _errorState() {
+    final palette = ExpoPalette.of(context);
+    final hasContent = !_loading && !_loadError && _questions.isNotEmpty;
+    // The dialogs sit on top of the whole Scaffold (Positioned.fill) so the
+    // barrier dims the header and the bottom bar too — a Stack overlay inside
+    // the body would leave the header bright and leak background slivers at
+    // its curved corners in light mode.
     return Stack(
       children: [
-        Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+        Scaffold(
+          backgroundColor: palette.background,
+          body: Column(
             children: [
-              const Text('Something went wrong.'),
-              const SizedBox(height: 8),
-              ElevatedButton(
-                  onPressed: _load, child: const Text('Retry')),
+              SubpageHeader(
+                title: 'Practice Mode',
+                onBackPress: () =>
+                    setState(() => _showLeaveConfirm = true),
+              ),
+              Expanded(
+                child: _loading
+                    ? const PreloadingWidget(
+                        tinted: false,
+                        label: 'Loading...',
+                        hint: 'Fetching your content',
+                      )
+                    : _loadError
+                        ? _errorState(palette)
+                        : _questions.isEmpty
+                            ? _emptyState(palette)
+                            : _mainList(palette),
+              ),
+              if (hasContent) _bottomBar(palette),
             ],
           ),
         ),
-        if (_showLeaveConfirm) _leaveDialog(),
+        if (_showLimit)
+          Positioned.fill(child: _limitDialog(palette)),
+        if (_showWaiting)
+          Positioned.fill(child: _waitingDialog(palette)),
+        if (_showLeaveConfirm)
+          Positioned.fill(child: _leaveDialog(palette)),
       ],
     );
   }
 
-  Widget _emptyState() {
-    return Stack(
-      children: [
-        const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text(
-              'Practice questions are not available for this chapter yet. Content is being prepared and will be added soon.',
-              textAlign: TextAlign.center,
+  /// Mirrors DataNotFound with a retry action.
+  Widget _errorState(ExpoPalette palette) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 64, color: palette.textDisabled),
+            const SizedBox(height: 12),
+            Text('Something went wrong',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text('Please try again.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textSecondary, fontSize: 13)),
+            const SizedBox(height: 20),
+            GestureDetector(
+              onTap: _load,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 18, vertical: 9),
+                decoration: BoxDecoration(
+                  color: palette.primary,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.refresh, size: 15, color: Colors.white),
+                    SizedBox(width: 6),
+                    Text('Retry',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
             ),
-          ),
+          ],
         ),
-        if (_showLeaveConfirm) _leaveDialog(),
-      ],
+      ),
     );
   }
 
-  Widget _mainList(ThemeData theme) {
+  /// Mirrors DataNotFound with the no-questions copy (no retry — the content
+  /// is being prepared, not failing to load).
+  Widget _emptyState(ExpoPalette palette) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 64, color: palette.textDisabled),
+            const SizedBox(height: 12),
+            Text('No questions are available for this chapter yet.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            Text(
+                'Practice questions are not available for this chapter yet. Content is being prepared and will be added soon.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                    color: palette.textSecondary, fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _mainList(ExpoPalette palette) {
     final q = _currentQuestion!;
     final premium = _premium;
-    return Stack(
+    return ListView(
+      controller: _scrollController,
+      padding: const EdgeInsets.all(16),
       children: [
-        ListView(
-          controller: _scrollController,
-          padding: const EdgeInsets.all(16),
-          children: [
-            // daily limit row
-            Container(
-              padding: const EdgeInsets.all(13),
-              decoration: BoxDecoration(
-                color: theme.cardColor,
-                border: Border.all(
-                    color: premium
-                        ? const Color(0xFF059669)
-                        : theme.dividerColor),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          premium
-                              ? 'Pro access active'
-                              : 'Daily limit reached: $_dailyUsed/$_dailyLimit',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: premium
-                                  ? const Color(0xFF059669)
-                                  : const Color(0xFF1D4ED8)),
-                        ),
-                        if (!premium)
-                          Text(
-                            'New questions are selected after midnight.',
-                            style: TextStyle(
-                                fontSize: 11,
-                                color: theme.colorScheme.onSurface
-                                    .withValues(alpha: 0.6)),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Icon(
-                      premium
-                          ? Icons.check_circle
-                          : Icons.speed,
-                      size: 22,
-                      color: premium
-                          ? const Color(0xFF059669)
-                          : const Color(0xFF1D4ED8)),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            // question meta row
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    color: const Color(0xFF1D4ED8).withValues(alpha: 0.08),
-                  ),
-                  child: Text('Question ${_current + 1}',
-                      style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1D4ED8))),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            // question card
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: theme.cardColor,
-                border: Border.all(color: theme.dividerColor),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(bilingual(q.text, q.textNe),
-                      style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w600,
-                          height: 1.35)),
-                  const SizedBox(height: 14),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(9),
-                      color: q.difficulty == 'easy'
-                          ? const Color(0x18059669)
-                          : q.difficulty == 'medium'
-                              ? const Color(0x20D97706)
-                              : const Color(0x18DC2626),
-                    ),
-                    child: Text(q.difficulty.toUpperCase(),
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: q.difficulty == 'easy'
-                                ? const Color(0xFF059669)
-                                : q.difficulty == 'medium'
-                                    ? const Color(0xFFD97706)
-                                    : const Color(0xFFDC2626))),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            // options
-            ...List.generate(q.options.length, (index) {
-              final isSelected = _currentSelected == index;
-              final isCorrect = index == q.correctIndex;
-              final showResult = _currentAttempted;
-              final background = showResult && isCorrect
-                  ? const Color(0x16059669)
-                  : showResult && isSelected && !isCorrect
-                      ? const Color(0x16DC2626)
-                      : theme.cardColor;
-              final border = showResult && isCorrect
-                  ? const Color(0xFF059669)
-                  : showResult && isSelected && !isCorrect
-                      ? const Color(0xFFDC2626)
-                      : isSelected
-                          ? const Color(0xFF1D4ED8)
-                          : theme.dividerColor;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color: background,
-                  borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => _selectOption(index),
-                    child: Container(
-                      constraints:
-                          const BoxConstraints(minHeight: 66),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 13, vertical: 12),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                            color: border, width: 1.4),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 32,
-                            height: 32,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                  color: border, width: 1.5),
-                              color:
-                                  isSelected || (showResult && isCorrect)
-                                      ? border
-                                      : Colors.transparent,
-                            ),
-                            child: Text(
-                                String.fromCharCode(65 + index),
-                                style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.bold,
-                                    color: isSelected ||
-                                            (showResult && isCorrect)
-                                        ? Colors.white
-                                        : theme.colorScheme.onSurface
-                                            .withValues(alpha: 0.6))),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(q.options[index],
-                                style: const TextStyle(
-                                    fontSize: 15, height: 1.33)),
-                          ),
-                          if (showResult && isCorrect)
-                            const Icon(Icons.check_circle,
-                                size: 22,
-                                color: Color(0xFF059669))
-                          else if (showResult && isSelected)
-                            const Icon(Icons.cancel,
-                                size: 22,
-                                color: Color(0xFFDC2626)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              );
-            }),
-            // explanation card
-            if (_currentAttempted) ...[
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                      color: _currentCorrect
-                          ? const Color(0x65059669)
-                          : const Color(0x65DC2626)),
-                  borderRadius: BorderRadius.circular(18),
-                  color: _currentCorrect
-                      ? const Color(0x10059669)
-                      : const Color(0x09DC2626),
-                ),
+        // Daily-limit row.
+        Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            border: Border.all(
+                color: premium ? palette.success : palette.border),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 42,
-                          height: 42,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: _currentCorrect
-                                ? const Color(0xFF059669)
-                                : const Color(0xFFDC2626),
-                          ),
-                          child: Icon(
-                              _currentCorrect
-                                  ? Icons.check
-                                  : Icons.close,
-                              size: 22,
-                              color: Colors.white),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  _currentCorrect
-                                      ? 'Correct Answer'
-                                      : 'Incorrect Answer',
-                                  style: TextStyle(
-                                      fontSize: 17,
-                                      fontWeight: FontWeight.w600,
-                                      color: _currentCorrect
-                                          ? const Color(0xFF059669)
-                                          : const Color(0xFFDC2626))),
-                              Text(
-                                  _currentCorrect
-                                      ? 'Your answer is correct.'
-                                      : 'The selected option is incorrect.',
-                                  style: TextStyle(
-                                      fontSize: 12,
-                                      color: theme.colorScheme
-                                          .onSurface
-                                          .withValues(alpha: 0.6))),
-                            ],
-                          ),
-                        ),
-                      ],
+                    Text(
+                      premium
+                          ? 'Pro access active'
+                          : 'Daily limit reached: $_dailyUsed/$_dailyLimit',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: premium
+                              ? palette.success
+                              : palette.primary),
                     ),
-                    Container(
-                        height: 1,
-                        margin:
-                            const EdgeInsets.symmetric(vertical: 10),
-                        color: _currentCorrect
-                            ? const Color(0x35059669)
-                            : const Color(0x35DC2626)),
-                    if (_currentSelected != null)
+                    if (!premium)
                       Text(
-                          'Selected option: ${q.options[_currentSelected!]}',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _currentCorrect
-                                  ? const Color(0xFF059669)
-                                  : const Color(0xFFDC2626))),
-                    if (!_currentCorrect)
-                      Text(
-                          'Correct option: ${q.options[q.correctIndex]}',
-                          style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF059669))),
-                    const SizedBox(height: 8),
-                    const Text('Explanation',
+                        'New questions are selected after midnight.',
                         style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 4),
-                    Text(bilingual(q.explanation, q.explanationNe),
+                            fontSize: 10,
+                            color: palette.textSecondary),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Icon(
+                  premium ? Icons.check_circle : Icons.speed,
+                  size: 22,
+                  color: premium ? palette.success : palette.primary),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Question badge + bookmark/report actions.
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                color: palette.primary.withValues(alpha: 0.08),
+              ),
+              child: Text('Question ${_current + 1}',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: palette.primary)),
+            ),
+            Row(
+              children: [
+                _actionBox(
+                  palette,
+                  _PracticeBookmarkButton(
+                    key: ValueKey('practice:${q.id}'),
+                    uid: AuthService.currentUser?.uid ?? '',
+                    chapterId: widget.chapterId,
+                    question: q,
+                    subjectName: widget.subjectName ?? '',
+                    chapterName: widget.chapterName ?? '',
+                    courseId: widget.courseId,
+                    subcourseId: widget.subcourseId,
+                    isPro: premium,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                _actionBox(
+                  palette,
+                  IconButton(
+                    onPressed: () =>
+                        context.push('/settings/report-problem'),
+                    icon: const Icon(Icons.flag_outlined, size: 22),
+                    color: palette.textSecondary,
+                    tooltip: 'Report',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                        minWidth: 36, minHeight: 36),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        // Question + options + explanation, animated on question change.
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder:
+              (Widget child, Animation<double> animation) {
+            final begin = Offset(0.05 * _slideDir, 0.015);
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(begin: begin, end: Offset.zero)
+                    .animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: KeyedSubtree(
+            key: ValueKey<int>(_current),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _questionCard(palette, q),
+                const SizedBox(height: 12),
+                ..._optionTiles(palette, q),
+                if (_currentAttempted) _explanationCard(palette, q),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
+  /// The 42x42 elevated action tile from practice.tsx (bookmark / report).
+  Widget _actionBox(ExpoPalette palette, Widget child) {
+    return Container(
+      width: 42,
+      height: 42,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: palette.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
+  Widget _questionCard(ExpoPalette palette, SubjectQuestion q) {
+    final diffColor = q.difficulty == 'easy'
+        ? palette.success
+        : q.difficulty == 'medium'
+            ? palette.warning
+            : palette.danger;
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(bilingual(q.text, q.textNe),
+              style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35)),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(9),
+              color: diffColor.withValues(
+                  alpha: q.difficulty == 'medium' ? 0.12 : 0.09),
+            ),
+            child: Text(q.difficulty.toUpperCase(),
+                style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: diffColor)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _optionTiles(ExpoPalette palette, SubjectQuestion q) {
+    return List.generate(q.options.length, (index) {
+      final isSelected = _currentSelected == index;
+      final isCorrect = index == q.correctIndex;
+      final showResult = _currentAttempted;
+      final border = showResult && isCorrect
+          ? palette.success
+          : showResult && isSelected && !isCorrect
+              ? palette.danger
+              : isSelected
+                  ? palette.primary
+                  : palette.border;
+      final background = showResult && isCorrect
+          ? palette.success.withValues(alpha: 0.08)
+          : showResult && isSelected && !isCorrect
+              ? palette.danger.withValues(alpha: 0.08)
+              : palette.surface;
+      final filled = isSelected || (showResult && isCorrect);
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Material(
+          color: background,
+          borderRadius: BorderRadius.circular(12),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => _selectOption(index),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 66),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 13, vertical: 12),
+              decoration: BoxDecoration(
+                border: Border.all(color: border, width: 1.4),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border:
+                          Border.all(color: border, width: 1.5),
+                      color: filled ? border : Colors.transparent,
+                    ),
+                    child: Text(
+                        String.fromCharCode(65 + index),
                         style: TextStyle(
-                            fontSize: 15,
-                            height: 1.4,
-                            color: theme.colorScheme.onSurface
-                                .withValues(alpha: 0.75))),
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: filled
+                                ? Colors.white
+                                : palette.textSecondary)),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(q.options[index],
+                        style: const TextStyle(
+                            fontSize: 14, height: 1.33)),
+                  ),
+                  if (showResult && isCorrect)
+                    Icon(Icons.check_circle,
+                        size: 22, color: palette.success)
+                  else if (showResult && isSelected)
+                    Icon(Icons.cancel,
+                        size: 22, color: palette.danger),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget _explanationCard(ExpoPalette palette, SubjectQuestion q) {
+    final ok = _currentCorrect;
+    final tone = ok ? palette.success : palette.danger;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: tone.withValues(alpha: 0.4)),
+        borderRadius: BorderRadius.circular(20),
+        color: tone.withValues(alpha: ok ? 0.06 : 0.035),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: tone,
+                ),
+                child: Icon(
+                    ok ? Icons.check : Icons.close,
+                    size: 22,
+                    color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(ok ? 'Correct Answer' : 'Incorrect Answer',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: tone)),
+                    Text(
+                        ok
+                            ? 'Your answer is correct.'
+                            : 'The selected option is incorrect.',
+                        style: TextStyle(
+                            fontSize: 10,
+                            color: palette.textSecondary)),
                   ],
                 ),
               ),
             ],
-            const SizedBox(height: 32),
+          ),
+          Container(
+              height: 1,
+              margin: const EdgeInsets.symmetric(vertical: 10),
+              color: tone.withValues(alpha: 0.2)),
+          if (_currentSelected != null) ...[
+            Text('Selected option: ${q.options[_currentSelected!]}',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: tone)),
+            const SizedBox(height: 8),
           ],
-        ),
-        if (_showLimit) _limitDialog(),
-        if (_showWaiting) _waitingDialog(),
-        if (_showLeaveConfirm) _leaveDialog(),
-      ],
+          if (!ok) ...[
+            Text('Correct option: ${q.options[q.correctIndex]}',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: palette.success)),
+            const SizedBox(height: 8),
+          ],
+          const Text('Explanation',
+              style:
+                  TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          Text(bilingual(q.explanation, q.explanationNe),
+              style: TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  color: palette.textSecondary)),
+        ],
+      ),
     );
   }
 
-  Widget _bottomBar(ThemeData theme) {
+  /// Bottom Previous/Next bar — a slightly curved card (rounded top corners)
+  /// rather than React's full-bleed square bar.
+  Widget _bottomBar(ExpoPalette palette) {
     final isLast = _current == _questions.length - 1;
     final nextDisabled =
         !_premium && _dailyUsed >= _dailyLimit && !_currentAttempted;
-    return SafeArea(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-        decoration: BoxDecoration(
-          color: theme.cardColor,
-          border: Border(top: BorderSide(color: theme.dividerColor)),
-        ),
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius:
+            const BorderRadius.vertical(top: Radius.circular(18)),
+        border: Border(top: BorderSide(color: palette.divider)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, -4),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        minimum: const EdgeInsets.fromLTRB(14, 10, 14, 10),
         child: Row(
           children: [
             Expanded(
               flex: 85,
               child: Opacity(
                 opacity: _current == 0 ? 0.45 : 1,
-                child: OutlinedButton.icon(
-                  onPressed: _current == 0
-                      ? null
-                      : () => setState(() => _current--),
-                  icon: const Icon(Icons.arrow_back,
-                      size: 19, color: Color(0xFF1D4ED8)),
-                  label: const Text('Previous',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF1D4ED8))),
-                  style: OutlinedButton.styleFrom(
-                    minimumSize: const Size(0, 50),
+                child: _barButton(
+                  palette: palette,
+                  filled: false,
+                  onTap:
+                      _current == 0 ? null : () => _goToQuestion(-1),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.arrow_back,
+                          size: 19, color: palette.primary),
+                      const SizedBox(width: 7),
+                      Text('Previous',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: palette.primary)),
+                    ],
                   ),
                 ),
               ),
@@ -750,13 +903,10 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
             const SizedBox(width: 10),
             Expanded(
               flex: 135,
-              child: ElevatedButton(
-                onPressed: nextDisabled ? null : _onNext,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1D4ED8),
-                  foregroundColor: Colors.white,
-                  minimumSize: const Size(0, 50),
-                ),
+              child: _barButton(
+                palette: palette,
+                filled: true,
+                onTap: nextDisabled ? null : _onNext,
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -769,9 +919,10 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                             : 'Next Question',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                            fontSize: 13,
+                            fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            height: 1.38),
+                            color: Colors.white,
+                            height: 1.35),
                       ),
                     ),
                     const SizedBox(width: 7),
@@ -787,69 +938,284 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     );
   }
 
-  Widget _sheet({
-    required String title,
+  Widget _barButton({
+    required ExpoPalette palette,
+    required bool filled,
+    required VoidCallback? onTap,
+    required Widget child,
+  }) {
+    return Material(
+      color: filled ? palette.primary : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 50),
+          padding: const EdgeInsets.symmetric(
+              horizontal: 12, vertical: 10),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: filled ? null : Border.all(color: palette.border),
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------- dialogs
+  // Mirrors React's AppDialog shell (src/components/feedback/AppDialog.tsx):
+  // full-screen overlay barrier, 26px rounded card with a gradient cap,
+  // scrollable body, and a footer where Cancel is visually secondary to the
+  // gradient Confirm. The card is clipped as one rounded shape so no
+  // background slivers leak at the corners in light mode.
+
+  /// Slightly darker companion for an accent, so the cap reads as a gradient.
+  Color _darken(Color color) {
+    int channel(double v) => (v * 0.72).round().clamp(0, 255);
+    return Color.fromARGB(
+      (color.a * 255).round(),
+      channel(color.r),
+      channel(color.g),
+      channel(color.b),
+    );
+  }
+
+  Widget _appDialog({
+    required ExpoPalette palette,
+    required Color accent,
     required IconData icon,
-    required Color iconColor,
+    required String title,
     required String message,
+    Widget? bodyExtra,
     required String confirmLabel,
     IconData? confirmIcon,
-    String? extra,
+    String? cancelLabel,
     required VoidCallback onConfirm,
     required VoidCallback onCancel,
-    bool singleButton = false,
   }) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.5),
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 40, color: iconColor),
-              const SizedBox(height: 12),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 8),
-              Text(message, textAlign: TextAlign.center),
-              if (extra != null) ...[
-                const SizedBox(height: 8),
-                Text(extra,
-                    style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
-                            .withValues(alpha: 0.6)),
-                    textAlign: TextAlign.center),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1D4ED8),
-                      foregroundColor: Colors.white),
-                  icon: confirmIcon != null
-                      ? Icon(confirmIcon, size: 18)
-                      : const SizedBox.shrink(),
-                  label: Text(confirmLabel),
-                  onPressed: onConfirm,
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final darker = _darken(accent);
+    return _FadeIn(
+      child: Container(
+        color: isDark
+            ? Colors.black.withValues(alpha: 0.6)
+            : const Color(0x800F172A),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 340),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(26),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 24,
+                      offset: const Offset(0, 12),
+                    ),
+                  ],
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(26),
+                  child: Container(
+                    color: palette.surface,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment:
+                          CrossAxisAlignment.stretch,
+                      children: [
+                        // Gradient cap.
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 18),
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: [accent, darker],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                          ),
+                          child: Stack(
+                            children: [
+                              Positioned(
+                                top: -34,
+                                right: -18,
+                                child: Container(
+                                  width: 110,
+                                  height: 110,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.white
+                                        .withValues(alpha: 0.14),
+                                  ),
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 46,
+                                    height: 46,
+                                    decoration: BoxDecoration(
+                                      borderRadius:
+                                          BorderRadius.circular(15),
+                                      color: Colors.white
+                                          .withValues(alpha: 0.2),
+                                    ),
+                                    child: Icon(icon,
+                                        size: 24,
+                                        color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Text(
+                                      title,
+                                      maxLines: 2,
+                                      overflow:
+                                          TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.white,
+                                        height: 1.3,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                        // Body.
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                message,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  height: 1.5,
+                                  color: palette.textSecondary,
+                                ),
+                              ),
+                              if (bodyExtra != null) ...[
+                                const SizedBox(height: 8),
+                                bodyExtra,
+                              ],
+                            ],
+                          ),
+                        ),
+                        // Footer.
+                        Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            border: Border(
+                              top: BorderSide(
+                                color: palette.divider,
+                                width: 0.5,
+                              ),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              if (cancelLabel != null) ...[
+                                Expanded(
+                                  flex: 10,
+                                  child: _ghostButton(palette,
+                                      cancelLabel, onCancel),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                              Expanded(
+                                flex: 14,
+                                child: _confirmButton(accent, darker,
+                                    confirmLabel, confirmIcon, onConfirm),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ),
-              if (!singleButton) ...[
-                const SizedBox(height: 8),
-                TextButton(
-                    onPressed: onCancel, child: const Text('Close')),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _ghostButton(
+      ExpoPalette palette, String label, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            border: Border.all(color: palette.border, width: 1.5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: palette.textSecondary),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _confirmButton(Color accent, Color darker, String label,
+      IconData? icon, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              vertical: 14, horizontal: 8),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            gradient: LinearGradient(
+              colors: [accent, darker],
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: Colors.white),
+                const SizedBox(width: 7),
               ],
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white),
+                ),
+              ),
             ],
           ),
         ),
@@ -857,15 +1223,22 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     );
   }
 
-  Widget _limitDialog() => _sheet(
+  Widget _limitDialog(ExpoPalette palette) => _appDialog(
+        palette: palette,
+        accent: const Color(0xFFD97706),
+        icon: Icons.diamond,
         title: 'Your Daily Practice limit is reached',
-        icon: Icons.diamond_outlined,
-        iconColor: const Color(0xFFD97706),
         message:
             'You have completed today\u2019s practice limit for this chapter.',
-        extra: 'To Crack Your Daily Limit! Subscribe to Our Pro Plan',
+        bodyExtra: Text(
+          'To Crack Your Daily Limit! Subscribe to Our Pro Plan',
+          textAlign: TextAlign.center,
+          style:
+              TextStyle(fontSize: 11, color: palette.textSecondary),
+        ),
         confirmLabel: 'Subscription',
         confirmIcon: Icons.diamond_outlined,
+        cancelLabel: 'Close',
         onConfirm: () {
           setState(() => _showLimit = false);
           context.push('/subscription');
@@ -873,30 +1246,265 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         onCancel: () => setState(() => _showLimit = false),
       );
 
-  Widget _waitingDialog() => _sheet(
+  Widget _waitingDialog(ExpoPalette palette) => _appDialog(
+        palette: palette,
+        accent: const Color(0xFF2563EB),
+        icon: Icons.done_all,
         title: 'All Available Questions Completed',
-        icon: Icons.checklist,
-        iconColor: const Color(0xFF1D4ED8),
         message:
             'You have practiced all currently available questions for this premium chapter. New questions will appear when they are uploaded.',
         confirmLabel: 'OK',
-        singleButton: true,
+        cancelLabel: null,
         onConfirm: () => setState(() => _showWaiting = false),
         onCancel: () => setState(() => _showWaiting = false),
       );
 
-  Widget _leaveDialog() => _sheet(
-        title: 'Pause Your Progress?',
+  Widget _leaveDialog(ExpoPalette palette) => _appDialog(
+        palette: palette,
+        accent: const Color(0xFF2563EB),
         icon: Icons.pause_circle_outline,
-        iconColor: const Color(0xFF1D4ED8),
+        title: 'Pause Your Progress?',
         message:
             'Your completed answers are safely stored. You can return whenever you are ready.',
-        extra: 'Progress synced in the background',
+        bodyExtra: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+                color: palette.success.withValues(alpha: 0.33)),
+            color: palette.success.withValues(alpha: 0.08),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.cloud_done_outlined,
+                  size: 19, color: palette.success),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  'Progress synced in the background',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: palette.success),
+                ),
+              ),
+            ],
+          ),
+        ),
         confirmLabel: 'Leave Practice',
+        cancelLabel: 'Keep Practicing',
         onConfirm: () {
           setState(() => _showLeaveConfirm = false);
           context.pop();
         },
         onCancel: () => setState(() => _showLeaveConfirm = false),
       );
+}
+
+/// Fade-in wrapper for the dialog overlay — mirrors AppDialog's
+/// FadeIn.duration(200) entrance.
+class _FadeIn extends StatefulWidget {
+  final Widget child;
+  const _FadeIn({required this.child});
+
+  @override
+  State<_FadeIn> createState() => _FadeInState();
+}
+
+class _FadeInState extends State<_FadeIn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+  )..forward();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: _controller,
+      child: widget.child,
+    );
+  }
+}
+
+/// Per-question bookmark toggle — the Flutter equivalent of React's
+/// BookmarkButton (context "practice", kind "question",
+/// refId "${chapterId}:${questionId}"). Bookmarks live at
+/// users/{uid}/bookmarks with the same doc-id scheme as the Expo app
+/// (`practice__<ref>`), so the Bookmarks screen lists them without changes.
+class _PracticeBookmarkButton extends StatefulWidget {
+  final String uid;
+  final String chapterId;
+  final SubjectQuestion question;
+  final String subjectName;
+  final String chapterName;
+  final String courseId;
+  final String subcourseId;
+  final bool isPro;
+
+  const _PracticeBookmarkButton({
+    super.key,
+    required this.uid,
+    required this.chapterId,
+    required this.question,
+    required this.subjectName,
+    required this.chapterName,
+    required this.courseId,
+    required this.subcourseId,
+    required this.isPro,
+  });
+
+  @override
+  State<_PracticeBookmarkButton> createState() =>
+      _PracticeBookmarkButtonState();
+}
+
+class _PracticeBookmarkButtonState
+    extends State<_PracticeBookmarkButton> {
+  static const _freeLimit = 15;
+  bool _saved = false;
+  bool _busy = false;
+
+  String get _refId => '${widget.chapterId}:${widget.question.id}';
+
+  /// Mirrors React's bookmarkDocId(): `practice__<safeSegment(refId)>`.
+  String get _docId {
+    var ref = _refId
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    if (ref.isEmpty) ref = 'item';
+    return 'practice__$ref';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+        'users/${widget.uid}/bookmarks/$_docId',
+        idToken: idToken,
+      );
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    if (_busy || widget.uid.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final path = 'users/${widget.uid}/bookmarks/$_docId';
+      if (_saved) {
+        await FirestoreRest.deleteDocument(path, idToken: idToken);
+        if (!mounted) return;
+        setState(() {
+          _saved = false;
+          _busy = false;
+        });
+        showToast(context, 'Bookmark removed.', ToastVariant.info);
+        return;
+      }
+      final rows = await FirestoreRest.listDocuments(
+        'users/${widget.uid}/bookmarks',
+        idToken: idToken,
+      );
+      // Free-tier cap: 15 bookmarks per sub-course (React parity).
+      final scoped = widget.subcourseId.isEmpty
+          ? rows.length
+          : rows
+              .where((r) =>
+                  (r['subcourseId'] ?? '') == widget.subcourseId)
+              .length;
+      if (scoped >= _freeLimit && !widget.isPro) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        showToast(context, 'Bookmark limit reached for this sub-course',
+            ToastVariant.warning);
+        return;
+      }
+      final q = widget.question;
+      final sourceLabel = [
+        if (widget.subjectName.isNotEmpty)
+          widget.subjectName
+        else
+          'Practice Mode',
+        if (widget.chapterName.isNotEmpty) widget.chapterName,
+      ].join(' · ');
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'context': 'practice',
+          'kind': 'question',
+          'refId': _refId,
+          'title': bilingual(q.text, q.textNe),
+          'preview': bilingual(q.explanation, q.explanationNe),
+          'sourceLabel': sourceLabel,
+          'courseId': widget.courseId,
+          'subcourseId': widget.subcourseId,
+          'payload': {
+            'question': bilingual(q.text, q.textNe),
+            'options': q.options,
+            'answerIndex': q.correctIndex,
+            'explanation':
+                bilingual(q.explanation, q.explanationNe),
+            'meta': widget.chapterName.isNotEmpty
+                ? [
+                    {
+                      'label': 'Chapter',
+                      'value': widget.chapterName
+                    }
+                  ]
+                : null,
+          },
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: idToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _busy = false;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return IconButton(
+      onPressed: _busy ? null : _toggle,
+      icon: Icon(
+          _saved ? Icons.bookmark : Icons.bookmark_border,
+          size: 22),
+      color: _saved ? palette.primary : palette.textSecondary,
+      tooltip: _saved ? 'Remove bookmark' : 'Bookmark',
+      padding: EdgeInsets.zero,
+      constraints:
+          const BoxConstraints(minWidth: 36, minHeight: 36),
+    );
+  }
 }

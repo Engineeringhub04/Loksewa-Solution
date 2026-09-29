@@ -8,6 +8,7 @@ import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/notice_visual.dart';
 import 'package:loksewa_solution/widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Dedicated Notices page — mirrors app/notices.tsx.
 ///
@@ -237,23 +238,10 @@ class _NoticesScreenState extends State<NoticesScreen> {
   }
 
   Widget _loadingState(ExpoPalette palette) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: palette.primary),
-          const SizedBox(height: 16),
-          Text('Loading...',
-              style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          Text('Fetching your content',
-              style: TextStyle(
-                  color: palette.textSecondary, fontSize: 13)),
-        ],
-      ),
+    return const PreloadingWidget(
+      tinted: false,
+      label: 'Loading Notices...',
+      hint: 'Fetching your content',
     );
   }
 

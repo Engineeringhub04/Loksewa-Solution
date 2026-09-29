@@ -8,6 +8,7 @@ import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Notification inbox — mirrors app/notifications.tsx +
 /// src/core/firebase/services/notifications.ts.
@@ -362,24 +363,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   }
 
   Widget _loadingState(BuildContext context) {
-    final palette = ExpoPalette.of(context);
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          CircularProgressIndicator(color: palette.primary),
-          const SizedBox(height: 16),
-          Text('Loading Notifications...',
-              style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          Text('Checking your inbox',
-              style:
-                  TextStyle(color: palette.textSecondary, fontSize: 13)),
-        ],
-      ),
+    return const PreloadingWidget(
+      tinted: false,
+      label: 'Loading Notifications...',
+      hint: 'Checking your inbox',
     );
   }
 

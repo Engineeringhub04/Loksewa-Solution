@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../app_toast.dart';
 import 'google_icon.dart';
+import '../preloading.dart';
 
 /// Shared auth buttons + divider + toast helper — mirrors the styles in
 /// login.tsx / signup.tsx / forgot-password.tsx.
@@ -242,12 +243,9 @@ class GoogleLoadingOverlay extends StatelessWidget {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                CircularProgressIndicator(color: Color(0xFF1D4ED8)),
-                SizedBox(height: 14),
-                Text(
-                  'Signing in with Google...',
-                  style:
-                      TextStyle(fontSize: 14, color: Color(0xFF374151)),
+                PreloadingWidget(
+                  tinted: false,
+                  label: 'Signing in with Google...',
                 ),
               ],
             ),

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam tab — mirrors app/(tabs)/exam.tsx.
 /// Gradient header, province filter chips, section tabs, exam-set cards,
@@ -136,7 +137,10 @@ class _ExamTabState extends State<ExamTab> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading...',
+            );
           }
           if (snap.hasError || !snap.hasData) {
             return Center(

@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Admin → exam purchase review queue. Mirrors app/admin/exam-purchases/index.tsx.
 /// Collection: app_exam_purchases. Statuses: pending (New), active (Approved), rejected.
@@ -59,7 +60,10 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Purchases...',
+            );
           }
           if (snap.hasError) {
             if (snap.error is _Denied) {

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam summary — mirrors app/exam/[setId]/summary.tsx.
 /// Score breakdown of the latest attempt + retake/review/ranking actions.
@@ -62,7 +63,10 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
           const SubpageHeader(title: 'Result'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Result...',
+          )
           : _error != null
               ? Center(
                   child: Column(

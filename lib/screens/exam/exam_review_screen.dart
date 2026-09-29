@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam answer review — mirrors app/exam/[setId]/review.tsx.
 /// Rebuilds the latest attempt exactly as answered; locked until the exam
@@ -71,7 +72,10 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
           const SubpageHeader(title: 'Review Answers'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Answers...',
+          )
           : _lockedMessage != null
               ? Center(
                   child: Padding(

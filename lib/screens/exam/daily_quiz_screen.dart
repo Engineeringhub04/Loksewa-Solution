@@ -10,6 +10,7 @@ import '../../services/exam_service.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/theme_service.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 
 /// Daily test quiz — mirrors app/daily-test/[modelId]/quiz.tsx.
 ///
@@ -611,7 +612,10 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        tinted: false,
+        label: 'Loading Questions...',
+      );
     }
     if (_blockTitle != null) {
       return Center(

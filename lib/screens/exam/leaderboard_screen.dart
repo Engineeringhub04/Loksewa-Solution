@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Main leaderboard — mirrors app/leaderboard.tsx.
 /// Podium top 3 (pinned), "your standing" card, then the scrolling ranks.
@@ -89,7 +90,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ]),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Leaderboard...',
+          )
           : _error != null
               ? Center(
                   child: Padding(

@@ -7,6 +7,7 @@ import '../../services/firestore_rest.dart';
 import '../../services/theme_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 
 /// Course + subcourse selector — mirrors app/course-setup.tsx exactly.
 ///
@@ -426,12 +427,9 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
             iconColor: const Color(0xFF2563EB),
             title: 'Select Course'),
         if (_loadingCourses)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Center(
-              child: CircularProgressIndicator(
-                  color: Color(0xFF2563EB)),
-            ),
+          const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Courses...',
           )
         else
           Wrap(
@@ -467,12 +465,9 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
             iconColor: const Color(0xFFDC2626),
             title: 'Select Subcourse'),
         if (_loadingSub)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Center(
-              child: CircularProgressIndicator(
-                  color: Color(0xFFDC2626)),
-            ),
+          const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Subcourses...',
           )
         else if (_subcourseError)
           _Entrance(

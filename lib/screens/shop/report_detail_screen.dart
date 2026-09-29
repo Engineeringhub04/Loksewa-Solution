@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 class ReportDetailScreen extends StatefulWidget {
   final String id;
@@ -36,7 +37,10 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Report...',
+            );
           }
           if (snap.hasError) {
             return Center(

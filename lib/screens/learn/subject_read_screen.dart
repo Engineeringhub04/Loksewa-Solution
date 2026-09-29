@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../services/firestore_rest.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Subject read mode — exact port of app/subjects/read.tsx.
+/// Subject read mode — faithful port of app/subjects/read.tsx.
+///
 /// Shuffled 'read'-mode question set as expand/collapse "Important
 /// Questions"; expand reveals options + explanation. Records activity
 /// progress once on leave (not per tap).
@@ -39,6 +45,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
   Set<String> _expanded = {};
   bool _loading = true;
   bool _loadError = false;
+  bool _isPremium = false;
 
   // Progress-tracking refs (port of read.tsx's refs).
   final Set<String> _opened = {};
@@ -98,6 +105,15 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
       _loadError = false;
     });
     try {
+      final token = await AuthService.getValidIdToken();
+      Map<String, dynamic>? userDoc;
+      try {
+        userDoc = await FirestoreRest.getDocument('users/${user.uid}',
+            idToken: token);
+      } catch (_) {}
+      _isPremium =
+          UserProfile.fromMap(user.uid, userDoc ?? {}).hasActivePremium;
+
       final questions = await fetchReadQuestionSet(
         courseId: widget.courseId.isEmpty
             ? 'civil-engineering'
@@ -155,11 +171,24 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
             ),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading...',
+                      hint: 'Fetching your content',
+                    )
                   : _loadError
-                      ? _errorState()
+                      ? _dataNotFound(
+                          title: 'Something went wrong',
+                          description: 'Retry',
+                          onRetry: _load,
+                        )
                       : _questions.isEmpty
-                          ? _emptyState()
+                          ? _dataNotFound(
+                              title:
+                                  'No questions are available for this chapter yet.',
+                              description:
+                                  'Read-mode questions are not available for this chapter yet. Content is being prepared and will be added soon.',
+                            )
                           : _mainList(),
             ),
           ],
@@ -168,321 +197,595 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
     );
   }
 
-  Widget _errorState() {
+  /// Mirrors src/components/feedback/DataNotFound.tsx.
+  Widget _dataNotFound({
+    required String title,
+    required String description,
+    VoidCallback? onRetry,
+  }) {
+    final palette = ExpoPalette.of(context);
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('Something went wrong.'),
-          const SizedBox(height: 8),
-          ElevatedButton(onPressed: _load, child: const Text('Retry')),
-        ],
-      ),
-    );
-  }
-
-  Widget _emptyState() {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(24),
-        child: Text(
-          'Read-mode questions are not available for this chapter yet. Content is being prepared and will be added soon.',
-          textAlign: TextAlign.center,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 64, color: palette.textDisabled),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: palette.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, color: palette.textSecondary, height: 20 / 13),
+            ),
+            if (onRetry != null) ...[
+              const SizedBox(height: 12),
+              InkWell(
+                onTap: onRetry,
+                borderRadius: BorderRadius.circular(999),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 9),
+                  decoration: BoxDecoration(
+                    color: palette.primary,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.refresh, size: 15, color: Colors.white),
+                      SizedBox(width: 6),
+                      Text('Try Again',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
   }
 
   Widget _mainList() {
-    final theme = Theme.of(context);
-    final allExpanded =
-        _questions.isNotEmpty && _questions.every((q) => _expanded.contains(q.id));
+    final palette = ExpoPalette.of(context);
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    final allExpanded = _questions.isNotEmpty &&
+        _questions.every((q) => _expanded.contains(q.id));
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + 48),
       children: [
-        // Section header: Important Questions + expand/collapse all
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: theme.cardColor,
-            border: Border.all(color: theme.dividerColor),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  color:
-                      const Color(0xFF1D4ED8).withValues(alpha: 0.08),
+        // Section header: Important Questions + expand/collapse all.
+        StaggerEntrance(
+          delayMs: 0,
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              border: Border.all(color: palette.border),
+              borderRadius: BorderRadius.circular(ExpoRadius.lg),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 2,
+                  offset: const Offset(0, 1),
                 ),
-                child: const Icon(Icons.bookmark,
-                    size: 22, color: Color(0xFF1D4ED8)),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Important Questions',
-                        style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                            height: 1.35)),
-                    Text(
-                      (widget.chapterName ?? '').isNotEmpty
-                          ? widget.chapterName!
-                          : 'Chapter',
-                      style: TextStyle(
-                          fontSize: 11,
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.6),
-                          height: 1.55),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+              ],
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: palette.primary.withValues(alpha: 0.08),
+                  ),
+                  child: Icon(Icons.bookmark,
+                      size: 22, color: palette.primary),
                 ),
-              ),
-              InkWell(
-                onTap: allExpanded ? _collapseAll : _expandAll,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 5, vertical: 7),
-                  child: Row(
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(
+                      Text(
+                        'Important Questions',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          height: 23 / 16,
+                          color: palette.textPrimary,
+                        ),
+                      ),
+                      Text(
+                        (widget.chapterName ?? '').isNotEmpty
+                            ? widget.chapterName!
+                            : 'Chapter',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: palette.textSecondary,
+                          height: 17 / 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                InkWell(
+                  onTap: allExpanded ? _collapseAll : _expandAll,
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 132),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 7),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
                           allExpanded
                               ? Icons.keyboard_arrow_up_outlined
                               : Icons.keyboard_arrow_down_outlined,
                           size: 19,
-                          color: const Color(0xFF1D4ED8)),
-                      const SizedBox(width: 4),
-                      Text(
-                          allExpanded
-                              ? 'Collapse All'
-                              : 'Expand All',
-                          style: const TextStyle(
-                              fontSize: 13,
+                          color: palette.primary,
+                        ),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            allExpanded ? 'Collapse All' : 'Expand All',
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                              fontSize: 12,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF2559C7),
-                              height: 1.3),
-                          textAlign: TextAlign.right),
-                    ],
+                              height: 17 / 12,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: 16),
-        // Question cards
+        // Question cards.
         ..._questions.asMap().entries.map((entry) {
           final index = entry.key;
           final q = entry.value;
-          final isOpen = _expanded.contains(q.id);
-          final difficultyColor = q.difficulty == 'easy'
-              ? const Color(0xFF059669)
-              : q.difficulty == 'medium'
-                  ? const Color(0xFFD97706)
-                  : const Color(0xFFDC2626);
-          final difficultyLabel = q.difficulty.isEmpty
-              ? ''
-              : q.difficulty[0].toUpperCase() +
-                  q.difficulty.substring(1);
-          final title = bilingual(q.text, q.textNe);
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: Container(
-              padding: const EdgeInsets.all(15),
-              decoration: BoxDecoration(
-                color: theme.cardColor,
-                border: Border.all(color: theme.dividerColor),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 11, vertical: 8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: const Color(0xFF1D4ED8)
-                              .withValues(alpha: 0.08),
-                        ),
-                        child: Text('Qn. ${index + 1}',
-                            style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF1D4ED8))),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: difficultyColor
-                              .withValues(alpha: 0.09),
-                        ),
-                        child: Text(difficultyLabel,
-                            style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: difficultyColor)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  Text(title,
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                          height: 1.33)),
-                  const SizedBox(height: 4),
-                  InkWell(
-                    onTap: () => _toggle(q.id),
-                    child: Padding(
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        children: [
-                          Icon(
-                              isOpen
-                                  ? Icons
-                                      .keyboard_arrow_up_outlined
-                                  : Icons
-                                      .keyboard_arrow_down_outlined,
-                              size: 24,
-                              color: const Color(0xFF1D4ED8)),
-                          const SizedBox(width: 8),
-                          Text(
-                              isOpen
-                                  ? 'Collapse answer'
-                                  : 'Tap to show answer',
-                              style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF1D4ED8))),
-                        ],
-                      ),
-                    ),
-                  ),
-                  if (isOpen) ...[
-                    const SizedBox(height: 8),
-                    ...q.options.asMap().entries.map((opt) {
-                      final correct = opt.key == q.correctIndex;
-                      final border = correct
-                          ? const Color(0x80059669)
-                          : theme.dividerColor;
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        child: Container(
-                          constraints: const BoxConstraints(
-                              minHeight: 53),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 11, vertical: 9),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: border),
-                            borderRadius: BorderRadius.circular(10),
-                            color: correct
-                                ? const Color(0x12059669)
-                                : theme.cardColor,
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 29,
-                                height: 29,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                      color: border, width: 1.4),
-                                  color: correct
-                                      ? const Color(0xFF059669)
-                                      : Colors.transparent,
-                                ),
-                                child: Text(
-                                    String.fromCharCode(
-                                        65 + opt.key),
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight:
-                                            FontWeight.bold,
-                                        color: correct
-                                            ? Colors.white
-                                            : theme
-                                                .colorScheme.onSurface
-                                                .withValues(
-                                                    alpha: 0.6))),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(opt.value,
-                                    style: const TextStyle(
-                                        fontSize: 14,
-                                        height: 1.36)),
-                              ),
-                              if (correct)
-                                const Icon(Icons.check_circle,
-                                    size: 20,
-                                    color: Color(0xFF059669)),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.all(13),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                            color: const Color(0x55D97706)),
-                        borderRadius: BorderRadius.circular(10),
-                        color: const Color(0x12D97706),
-                      ),
-                      child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
-                        children: [
-                          const Row(
-                            children: [
-                              Icon(Icons.lightbulb_outline,
-                                  size: 22,
-                                  color: Color(0xFFD97706)),
-                              SizedBox(width: 8),
-                              Text('Explanation',
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFFD97706))),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                              bilingual(
-                                  q.explanation, q.explanationNe),
-                              style: const TextStyle(
-                                  fontSize: 14, height: 1.43)),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+          return StaggerEntrance(
+            key: ValueKey('read_card_${q.id}'),
+            delayMs: (index < 8 ? index : 8) * 60,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: _questionCard(palette, q, index),
             ),
           );
         }),
-        const SizedBox(height: 32),
       ],
+    );
+  }
+
+  Widget _questionCard(
+      ExpoPalette palette, SubjectQuestion q, int index) {
+    final isOpen = _expanded.contains(q.id);
+    final difficultyColor = q.difficulty == 'easy'
+        ? palette.success
+        : q.difficulty == 'medium'
+            ? palette.warning
+            : palette.danger;
+    final difficultyLabel = q.difficulty.isEmpty
+        ? ''
+        : q.difficulty[0].toUpperCase() + q.difficulty.substring(1);
+    final title = bilingual(q.text, q.textNe);
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border.all(color: palette.border),
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 2,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 11, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: palette.primary.withValues(alpha: 0.08),
+                ),
+                child: Text(
+                  'Qn. ${index + 1}',
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: palette.primary),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: difficultyColor.withValues(alpha: 0.09),
+                ),
+                child: Text(
+                  difficultyLabel,
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: difficultyColor),
+                ),
+              ),
+              const Spacer(),
+              _ReadBookmarkButton(
+                uid: AuthService.currentUser?.uid ?? '',
+                isPro: _isPremium,
+                chapterId: widget.chapterId,
+                courseId: widget.courseId,
+                subcourseId: widget.subcourseId,
+                subjectName: widget.subjectName,
+                chapterName: widget.chapterName,
+                question: q,
+              ),
+              _smallActionButton(
+                icon: Icons.flag_outlined,
+                tooltip: 'Report',
+                palette: palette,
+                onTap: () =>
+                    context.push('/settings/report-problem'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+              height: 24 / 16,
+              color: palette.textPrimary,
+            ),
+          ),
+          InkWell(
+            onTap: () => _toggle(q.id),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    isOpen
+                        ? Icons.arrow_circle_up_outlined
+                        : Icons.arrow_circle_down_outlined,
+                    size: 24,
+                    color: palette.primary,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    isOpen ? 'Collapse answer' : 'Tap to show answer',
+                    style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: palette.primary,
+                        height: 16 / 11),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isOpen) ...[
+            const SizedBox(height: 14),
+            ...q.options.asMap().entries.map((opt) {
+              final correct = opt.key == q.correctIndex;
+              final border = correct
+                  ? palette.success.withValues(alpha: 0.5)
+                  : palette.border;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  constraints: const BoxConstraints(minHeight: 53),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 11, vertical: 9),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: border),
+                    borderRadius: BorderRadius.circular(ExpoRadius.md),
+                    color: correct
+                        ? palette.success.withValues(alpha: 0.07)
+                        : palette.surface,
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 29,
+                        height: 29,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: border, width: 1.4),
+                          color: correct
+                              ? palette.success
+                              : Colors.transparent,
+                        ),
+                        child: Text(
+                          String.fromCharCode(65 + opt.key),
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: correct
+                                ? Colors.white
+                                : palette.textSecondary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          opt.value,
+                          style: TextStyle(
+                              fontSize: 13,
+                              height: 19 / 13,
+                              color: palette.textPrimary),
+                        ),
+                      ),
+                      if (correct)
+                        Icon(Icons.check_circle,
+                            size: 20, color: palette.success),
+                    ],
+                  ),
+                ),
+              );
+            }),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(13),
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: palette.warning.withValues(alpha: 0.33)),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
+                color: palette.warning.withValues(alpha: 0.07),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.lightbulb_outline,
+                          size: 22, color: palette.warning),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Explanation',
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            height: 22 / 15,
+                            color: palette.warning),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    bilingual(q.explanation, q.explanationNe),
+                    style: TextStyle(
+                        fontSize: 13,
+                        height: 20 / 13,
+                        color: palette.textPrimary),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// 30×30 tap target mirroring read.tsx's `smallAction` style.
+  Widget _smallActionButton({
+    required IconData icon,
+    required String tooltip,
+    required ExpoPalette palette,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: 30,
+      height: 30,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Tooltip(
+          message: tooltip,
+          child: Icon(icon, size: 20, color: palette.textSecondary),
+        ),
+      ),
+    );
+  }
+}
+
+/// Per-question bookmark toggle for read mode — the Flutter equivalent of
+/// React's BookmarkButton (context "read", refId "${chapterId}:${question.id}").
+/// Bookmarks live at users/{uid}/bookmarks with the same doc-id scheme as the
+/// Expo app (`read__<safeSegment(refId)>`), so the Bookmarks screen lists them
+/// without changes.
+class _ReadBookmarkButton extends StatefulWidget {
+  final String uid;
+  final bool isPro;
+  final String chapterId;
+  final String courseId;
+  final String subcourseId;
+  final String? subjectName;
+  final String? chapterName;
+  final SubjectQuestion question;
+
+  const _ReadBookmarkButton({
+    required this.uid,
+    required this.isPro,
+    required this.chapterId,
+    required this.courseId,
+    required this.subcourseId,
+    this.subjectName,
+    this.chapterName,
+    required this.question,
+  });
+
+  @override
+  State<_ReadBookmarkButton> createState() => _ReadBookmarkButtonState();
+}
+
+class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
+  static const _freeLimit = 15;
+  bool _saved = false;
+  bool _busy = false;
+
+  /// Mirrors React's bookmarkDocId(): `read__<safeSegment(refId)>`.
+  String get _docId {
+    var ref = '${widget.chapterId}:${widget.question.id}'
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    if (ref.isEmpty) ref = 'item';
+    return 'read__$ref';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    if (_busy || widget.uid.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final path = 'users/${widget.uid}/bookmarks/$_docId';
+      if (_saved) {
+        await FirestoreRest.deleteDocument(path, idToken: idToken);
+        if (!mounted) return;
+        setState(() {
+          _saved = false;
+          _busy = false;
+        });
+        showToast(context, 'Bookmark removed.', ToastVariant.info);
+        return;
+      }
+      final rows = await FirestoreRest.listDocuments(
+          'users/${widget.uid}/bookmarks',
+          idToken: idToken);
+      if (rows.length >= _freeLimit && !widget.isPro) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        showToast(context, 'Bookmark slots are full', ToastVariant.warning);
+        return;
+      }
+      final q = widget.question;
+      final questionTitle = bilingual(q.text, q.textNe);
+      final explanationText = bilingual(q.explanation, q.explanationNe);
+      final chapterName =
+          (widget.chapterName ?? '').isNotEmpty ? widget.chapterName! : 'Chapter';
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'context': 'read',
+          'kind': 'question',
+          'type': 'question',
+          'refId': '${widget.chapterId}:${q.id}',
+          'title': questionTitle,
+          'preview': explanationText,
+          'sourceLabel':
+              '${(widget.subjectName ?? '').isNotEmpty ? widget.subjectName : 'Read Mode'} · $chapterName',
+          'courseId': widget.courseId,
+          'subcourseId': widget.subcourseId,
+          'payload': {
+            'question': questionTitle,
+            'options': q.options,
+            'answerIndex': q.correctIndex,
+            'explanation': explanationText,
+            'meta': [
+              {'label': 'Read Mode', 'value': chapterName},
+            ],
+          },
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: idToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _busy = false;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return SizedBox(
+      width: 30,
+      height: 30,
+      child: InkWell(
+        onTap: _busy ? null : _toggle,
+        borderRadius: BorderRadius.circular(15),
+        child: Tooltip(
+          message: _saved ? 'Remove bookmark' : 'Bookmark',
+          child: Icon(
+            _saved ? Icons.bookmark : Icons.bookmark_border,
+            size: 20,
+            color:
+                _saved ? palette.primary : palette.textSecondary,
+          ),
+        ),
+      ),
     );
   }
 }

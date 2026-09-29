@@ -5,6 +5,7 @@ import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/home/subject_card_colored.dart';
+import '../../widgets/preloading.dart';
 
 /// Subjects list — exact port of app/subjects/index.tsx.
 /// Journey gradient card + measured 2-column grid of SubjectCardColored.
@@ -140,7 +141,10 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading Subjects...',
+                  );
                 }
                 if (snap.hasError) {
                   return Center(

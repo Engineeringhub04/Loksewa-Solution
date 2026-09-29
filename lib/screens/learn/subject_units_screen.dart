@@ -6,6 +6,7 @@ import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 
 /// Subject units — exact port of app/subjects/units/[subjectId].tsx.
 /// Units are grouped into selectable tracks ("All" + one chip per unit, with a
@@ -178,7 +179,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
+                  return const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading Units...',
+                  );
                 }
                 if (snap.hasError) {
                   return Center(

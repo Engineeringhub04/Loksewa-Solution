@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Quiz practice — mirrors app/quiz/[subjectId].tsx.
 /// Untimed MCQ practice per subject with immediate inline feedback.
@@ -108,7 +109,10 @@ class _SubjectQuizScreenState extends State<SubjectQuizScreen> {
                 : 'Q ${_index + 1}/${_questions.length}'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Questions...',
+          )
           : _error != null
               ? Center(
                   child: Column(

@@ -21,8 +21,13 @@ import '../../widgets/subpage_header.dart';
 /// `src/core/media/pdfSource.ts`) — a raw share link serves an HTML page,
 /// not PDF bytes. The header is LOCKED to the light theme (no theme toggle),
 /// with a white fullscreen button on the right. A floating page counter sits
-/// at the bottom-centre. Fullscreen hides the header and shows a black close
-/// button at the top-right.
+/// at the bottom-centre.
+///
+/// Loading state is deliberately minimal: only the "Loading Pdf" label with
+/// the app's preloader — no download progress UI. Fullscreen is animated:
+/// the header slides up and away (~250 ms easeOut) while a floating close
+/// button fades in; tapping it slides the header back down and fades the
+/// button out.
 class PdfScreen extends StatefulWidget {
   final String id;
   final String? uri;
@@ -43,17 +48,21 @@ class PdfScreen extends StatefulWidget {
   State<PdfScreen> createState() => _PdfScreenState();
 }
 
-class _PdfScreenState extends State<PdfScreen> {
+class _PdfScreenState extends State<PdfScreen>
+    with SingleTickerProviderStateMixin {
   bool _fullscreen = false;
   bool _loading = true;
   String? _error; // non-null => error state; the value is the hint message
-  bool _downloading = false;
-  int _dlReceived = 0;
-  int? _dlTotal;
-  int _lastProgressUi = 0;
   PdfControllerPinch? _pdfController;
   int _page = 1;
   int _totalPages = 0;
+
+  /// Drives the fullscreen transition: header slides up / collapses while
+  /// the close button fades in (forward), and reverses on exit.
+  late final AnimationController _fsController;
+  late final Animation<Offset> _headerSlide;
+  late final Animation<double> _headerShrink;
+  late final Animation<double> _crossFade;
 
   String get _resolvedTitle {
     final t = (widget.title ?? '').trim();
@@ -73,12 +82,9 @@ class _PdfScreenState extends State<PdfScreen> {
     return '${safe.isEmpty ? 'doc' : safe}.pdf';
   }
 
-  /// Streams the PDF with live progress. Only the *connection* has a hard
-  /// timeout (30 s); the body itself may take as long as a slow network
-  /// needs — a stream stalled with no data for 90 s aborts as a timeout.
-  /// (The old pdf.js viewer rendered page 1 progressively; the native
-  /// renderer needs the whole file first, so on slow mobile data the user
-  /// must see progress instead of a blind spinner + 60 s cutoff.)
+  /// Streams the PDF. Only the *connection* has a hard timeout (30 s); the
+  /// body itself may take as long as a slow network needs — a stream stalled
+  /// with no data for 90 s aborts as a timeout.
   static Future<Uint8List> _downloadWithProgress(
     String url,
     void Function(int received, int? total) onProgress,
@@ -90,15 +96,16 @@ class _PdfScreenState extends State<PdfScreen> {
       if (res.statusCode != 200) {
         throw Exception('download failed (${res.statusCode})');
       }
-      final declared = res.contentLength;
-      final total = (declared != null && declared > 0) ? declared : null;
       final chunks = <List<int>>[];
       var received = 0;
       await for (final chunk
           in res.stream.timeout(const Duration(seconds: 90))) {
         chunks.add(chunk);
         received += chunk.length;
-        onProgress(received, total);
+        onProgress(received,
+            (res.contentLength != null && res.contentLength! > 0)
+                ? res.contentLength
+                : null);
       }
       final out = Uint8List(received);
       var offset = 0;
@@ -113,21 +120,17 @@ class _PdfScreenState extends State<PdfScreen> {
     }
   }
 
-  static String _mb(int bytes) => (bytes / 1048576).toStringAsFixed(1);
-
   /// Tries each candidate URL until one returns bytes that actually start
   /// with the PDF magic bytes — this transparently gets past Google Drive
   /// share links (HTML preview page) and its virus-scan interstitial.
   /// (Dart port of the React app's fetchPdfAsBase64 candidate loop.)
-  static Future<Uint8List> _downloadPdf(
-    String url,
-    void Function(int received, int? total) onProgress,
-  ) async {
+  static Future<Uint8List> _downloadPdf(String url) async {
     final candidates = PdfSource.candidateUrls(url);
     Object? lastError;
     for (final candidate in candidates) {
       try {
-        final bytes = await _downloadWithProgress(candidate, onProgress);
+        final bytes =
+            await _downloadWithProgress(candidate, (_, __) {});
         if (PdfSource.looksLikePdf(bytes)) return bytes;
         lastError = Exception('not a pdf');
       } catch (e) {
@@ -155,6 +158,21 @@ class _PdfScreenState extends State<PdfScreen> {
   @override
   void initState() {
     super.initState();
+    _fsController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 250),
+    );
+    final eased =
+        CurvedAnimation(parent: _fsController, curve: Curves.easeOut);
+    _headerSlide = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, -1),
+    ).animate(eased);
+    _headerShrink =
+        Tween<double>(begin: 1, end: 0).animate(eased);
+    _crossFade = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _fsController, curve: Curves.easeIn),
+    );
     if (_hasPaper) _openDocument();
   }
 
@@ -163,9 +181,6 @@ class _PdfScreenState extends State<PdfScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _downloading = false;
-      _dlReceived = 0;
-      _dlTotal = null;
     });
     try {
       final tmp = await getTemporaryDirectory();
@@ -186,21 +201,9 @@ class _PdfScreenState extends State<PdfScreen> {
 
       // Download once; reuse the cached file afterwards.
       if (!file.existsSync() || file.lengthSync() == 0) {
-        setState(() => _downloading = true);
         final bytes = await (widget.downloadBytes != null
             ? widget.downloadBytes!(_uri)
-            : _downloadPdf(_uri, (received, total) {
-                if (!mounted) return;
-                // Throttle UI updates: chunks can arrive hundreds per
-                // second on fast networks.
-                final now = DateTime.now().millisecondsSinceEpoch;
-                _dlReceived = received;
-                _dlTotal = total;
-                if (now - _lastProgressUi < 150) return;
-                _lastProgressUi = now;
-                setState(() {});
-              }));
-        if (mounted) setState(() => _downloading = false);
+            : _downloadPdf(_uri));
         await file.writeAsBytes(bytes, flush: true);
       }
 
@@ -235,13 +238,25 @@ class _PdfScreenState extends State<PdfScreen> {
     if (!mounted) return;
     setState(() {
       _loading = false;
-      _downloading = false;
       _error = hint;
     });
   }
 
+  void _enterFullscreen() {
+    if (_fullscreen) return;
+    setState(() => _fullscreen = true);
+    _fsController.forward();
+  }
+
+  void _exitFullscreen() {
+    if (!_fullscreen) return;
+    setState(() => _fullscreen = false);
+    _fsController.reverse();
+  }
+
   @override
   void dispose() {
+    _fsController.dispose();
     _pdfController?.dispose();
     super.dispose();
   }
@@ -299,6 +314,11 @@ class _PdfScreenState extends State<PdfScreen> {
       );
     }
 
+    // Only ONE PdfViewPinch instance ever exists on this screen — toggling
+    // fullscreen just slides the header away and fades in the close button
+    // instead of remounting the viewer (a second instance would re-render
+    // the whole document from scratch).
+    //
     // Light-locked body: the PDF paper is always read on a white page.
     return Scaffold(
       backgroundColor: Colors.white,
@@ -308,37 +328,56 @@ class _PdfScreenState extends State<PdfScreen> {
         top: false,
         child: Column(
           children: [
-            if (!_fullscreen)
-              SubpageHeader(
-                title: _resolvedTitle,
-                showThemeToggle: false,
-                actions: [
-                  _fullscreenButton(),
-                ],
+            // Animated header: slides up and collapses away on fullscreen,
+            // slides back down on exit (~250 ms easeOut). It stays mounted
+            // so the reverse animation has something to play on.
+            ClipRect(
+              child: SizeTransition(
+                sizeFactor: _headerShrink,
+                axis: Axis.vertical,
+                alignment: Alignment.topCenter,
+                child: SlideTransition(
+                  position: _headerSlide,
+                  child: SubpageHeader(
+                    title: _resolvedTitle,
+                    showThemeToggle: false,
+                    actions: [
+                      _fullscreenButton(),
+                    ],
+                  ),
+                ),
               ),
+            ),
             Expanded(
               child: Stack(
                 children: [
                   _body(),
-                  // Fullscreen close button — top right below the status bar.
-                  if (_fullscreen)
-                    Positioned(
-                      top: 12,
-                      right: 16,
-                      child: GestureDetector(
-                        onTap: () => setState(() => _fullscreen = false),
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: const BoxDecoration(
-                            color: Color(0xD9000000),
-                            shape: BoxShape.circle,
+                  // Fullscreen close button — fades in floating at the top
+                  // right (below the status bar); fades out on exit.
+                  Positioned(
+                    top: MediaQuery.of(context).padding.top + 12,
+                    right: 16,
+                    child: FadeTransition(
+                      key: const ValueKey('pdf-fullscreen-close'),
+                      opacity: _crossFade,
+                      child: IgnorePointer(
+                        ignoring: !_fullscreen,
+                        child: GestureDetector(
+                          onTap: _exitFullscreen,
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: const BoxDecoration(
+                              color: Color(0xD9000000),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.close,
+                                size: 22, color: Colors.white),
                           ),
-                          child: const Icon(Icons.close,
-                              size: 22, color: Colors.white),
                         ),
                       ),
                     ),
+                  ),
                   // Floating page counter — bottom centre (real page numbers
                   // now, driven by the native renderer).
                   if (_totalPages > 0 && !_loading && _error == null)
@@ -381,7 +420,7 @@ class _PdfScreenState extends State<PdfScreen> {
 
   Widget _fullscreenButton() {
     return GestureDetector(
-      onTap: () => setState(() => _fullscreen = true),
+      onTap: _enterFullscreen,
       child: Container(
         width: 36,
         height: 36,
@@ -394,64 +433,19 @@ class _PdfScreenState extends State<PdfScreen> {
     );
   }
 
-  /// Download progress UI — shown instead of the blind spinner while the
-  /// PDF streams in. Matters on slow mobile data: the old pdf.js viewer
-  /// rendered page 1 progressively, the native renderer needs the whole
-  /// file first, so the user must see % + MB instead of nothing.
-  Widget _downloadProgress() {
-    final total = _dlTotal;
-    final progress = (total != null && total > 0)
-        ? (_dlReceived / total).clamp(0.0, 1.0)
-        : null;
-    final sizeLabel = total != null && total > 0
-        ? '${_mb(_dlReceived)} / ${_mb(total)} MB'
-        : '${_mb(_dlReceived)} MB downloaded';
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 40),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const PreloadingWidget(
-            tinted: false,
-            label: 'Downloading paper...',
-            hint: 'One-time download, then it opens instantly',
-          ),
-          const SizedBox(height: 18),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: progress,
-              minHeight: 8,
-              backgroundColor: const Color(0xFFE2E8F0),
-              valueColor:
-                  const AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            progress != null
-                ? '$sizeLabel  •  ${(progress * 100).toStringAsFixed(0)}%'
-                : sizeLabel,
-            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-          ),
-        ],
-      ),
-    );
-  }
-
   /// In-app PDF body — native renderer (pdfx), no web viewer involved.
   Widget _body() {
     if (_loading) {
-      return ColoredBox(
+      // Minimal loading state: label + preloader only, no download
+      // progress UI.
+      return const ColoredBox(
         color: Colors.white,
         child: Center(
-          child: _downloading
-              ? _downloadProgress()
-              : const PreloadingWidget(
-                  tinted: false,
-                  label: 'Loading paper...',
-                  hint: 'Preparing your pages',
-                ),
+          child: PreloadingWidget(
+            tinted: false,
+            label: 'Loading Pdf',
+            hint: 'Preparing your pages',
+          ),
         ),
       );
     }
@@ -473,8 +467,7 @@ class _PdfScreenState extends State<PdfScreen> {
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF0F172A))),
                 const SizedBox(height: 8),
-                Text(
-                    _error!,
+                Text(_error!,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                         fontSize: 13, color: Color(0xFF6B7280))),

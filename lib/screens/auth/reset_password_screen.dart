@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 
 /// In-app password reset completion — mirrors app/reset-password.tsx.
 /// Reads the Firebase action-link params (oobCode, mode) from the route,
@@ -103,14 +104,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     return const Column(
       key: ValueKey('checking'),
       children: [
-        SizedBox(height: 24),
-        CircularProgressIndicator(color: _purple),
-        SizedBox(height: 16),
-        Text(
-          'Checking reset link...',
-          style: TextStyle(
-              fontSize: 15, color: Color(0xFF6B7280), height: 22 / 15),
-          textAlign: TextAlign.center,
+        PreloadingWidget(
+          key: ValueKey('checking'),
+          tinted: false,
+          label: 'Checking reset link...',
         ),
       ],
     );

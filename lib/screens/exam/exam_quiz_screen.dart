@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam quiz — mirrors app/exam/[setId]/quiz.tsx.
 /// Full-screen timed MCQ: option select, next/previous, question palette,
@@ -211,7 +212,10 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           ]),
             Expanded(
               child: _loading
-            ? const Center(child: CircularProgressIndicator())
+            ? const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Questions...',
+            )
             : _error != null
                 ? Center(
                     child: Column(

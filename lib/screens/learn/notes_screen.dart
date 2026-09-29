@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Keep Notes list — mirrors app/notes/index.tsx.
 /// Personal notes, local-first (SharedPreferences under 'loksewa:notes'),
@@ -74,15 +75,9 @@ class _NotesScreenState extends State<NotesScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 12),
-                  Text('Loading Notes...'),
-                ],
-              ),
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Notes...',
             );
           }
           final notes = snap.data ?? [];

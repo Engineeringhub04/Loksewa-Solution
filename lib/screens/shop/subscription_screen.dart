@@ -10,6 +10,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Client-side feature catalogue (mirrors PLAN_FEATURE_GROUPS in the Expo app).
 const List<Map<String, dynamic>> _featureGroups = [
@@ -116,7 +117,10 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Plans...',
+            );
           }
           if (snap.hasError) {
             return Center(

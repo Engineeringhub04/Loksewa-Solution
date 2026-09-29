@@ -2,11 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../services/firestore_rest.dart';
+import '../../services/report_service.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Subject theory mode — exact port of app/subjects/theory.tsx.
-/// Hero card with bilingual title + PDF resource card; opening the PDF
-/// marks the chapter as studied (tracked once on leave).
+///
+/// Hero card (icon circle, bilingual title, chapter · subject line, bookmark
+/// + report action row), PDF resource card, and the "Open Theory PDF"
+/// primary button. Opening the PDF marks the chapter as studied
+/// (tracked once on leave).
 class SubjectTheoryScreen extends StatefulWidget {
   final String subjectId;
   final String chapterId;
@@ -46,6 +53,13 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
   String get _chapterName => widget.chapterName ?? widget.chapterId;
   String get _subjectName => widget.subjectName ?? widget.subjectId;
 
+  String get _bilingualTitle {
+    final t = _theory;
+    final en = t == null ? _chapterName : '${t['title'] ?? ''}'.trim();
+    final ne = t == null ? '' : '${t['titleNe'] ?? ''}'.trim();
+    return bilingual(en.isNotEmpty ? en : _chapterName, ne);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -60,7 +74,9 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
   }
 
   void _recordProgress() {
-    if (_recorded) { return; }
+    if (_recorded) {
+      return;
+    }
     _recorded = true;
     final user = AuthService.currentUser;
     if (user == null) return;
@@ -86,9 +102,7 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
 
   Future<void> _load() async {
     final user = AuthService.currentUser;
-    if (user == null ||
-        widget.subjectId.isEmpty ||
-        widget.chapterId.isEmpty) {
+    if (user == null || widget.subjectId.isEmpty || widget.chapterId.isEmpty) {
       setState(() => _loading = false);
       return;
     }
@@ -122,22 +136,15 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
     final pdfUrl = _theory?['pdfUrl'] as String?;
     if (pdfUrl == null || pdfUrl.isEmpty) return;
     setState(() => _openedPdf = true);
-    final title = bilingual(
-      '${_theory?['title'] ?? ''}'.isNotEmpty
-          ? '${_theory?['title']}'
-          : _chapterName,
-      '${_theory?['titleNe'] ?? ''}',
-    );
     context.push(
-      '/pdf/${Uri.encodeComponent('${_theory?['id'] ?? widget.chapterId}')}' 
+      '/pdf/${Uri.encodeComponent('${_theory?['id'] ?? widget.chapterId}')}'
       '?uri=${Uri.encodeComponent(pdfUrl)}'
-      '&title=${Uri.encodeComponent(title)}',
+      '&title=${Uri.encodeComponent(_bilingualTitle)}',
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final isPublished = _theory != null && _theory!['isPublished'] != false;
     return PopScope(
       onPopInvokedWithResult: (didPop, _) {
@@ -149,45 +156,25 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
             const SubpageHeader(title: 'Theory Mode'),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading...',
+                      hint: 'Fetching your content',
+                    )
                   : _loadError
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text('Something went wrong.'),
-                              const SizedBox(height: 8),
-                              ElevatedButton(
-                                  onPressed: _load,
-                                  child: const Text('Retry')),
-                            ],
-                          ),
+                      ? _DataNotFound(
+                          title: 'Something went wrong',
+                          description: 'Retry',
+                          onRetry: _load,
                         )
                       : (!isPublished)
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.all(24),
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Text(
-                                      'Theory resource is not available for this chapter yet.',
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      '$_chapterName · $_subjectName',
-                                      style: TextStyle(
-                                          color: theme
-                                              .colorScheme.onSurface
-                                              .withValues(alpha: 0.6)),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ),
-                              ),
+                          ? _DataNotFound(
+                              title:
+                                  'Theory resource is not available for this chapter yet.',
+                              description:
+                                  '$_chapterName · $_subjectName',
                             )
-                          : _content(theme),
+                          : _content(context),
             ),
           ],
         ),
@@ -195,117 +182,496 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
     );
   }
 
-  Widget _content(ThemeData theme) {
+  Widget _content(BuildContext context) {
+    final theme = Theme.of(context);
     final t = _theory!;
     final pdfUrl = '${t['pdfUrl'] ?? ''}';
-    final title = bilingual(
-      '${t['title'] ?? ''}'.isNotEmpty
-          ? '${t['title']}'
-          : _chapterName,
-      '${t['titleNe'] ?? ''}',
-    );
+    final bottomPad = MediaQuery.of(context).padding.bottom + 32;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
       children: [
-        // hero card
-        Container(
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: theme.cardColor,
-            border: Border.all(color: theme.dividerColor),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Column(
-            children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color:
-                      const Color(0xFF1D4ED8).withValues(alpha: 0.08),
-                ),
-                child: const Icon(Icons.school_outlined,
-                    size: 30, color: Color(0xFF1D4ED8)),
-              ),
-              const SizedBox(height: 10),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.bold),
-                  textAlign: TextAlign.center),
-              const SizedBox(height: 10),
-              Text(
-                '$_chapterName · $_subjectName',
-                style: TextStyle(
-                    fontSize: 12,
-                    color: theme.colorScheme.onSurface
-                        .withValues(alpha: 0.6)),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
+        _heroCard(theme),
         const SizedBox(height: 16),
-        // PDF resource card
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: theme.cardColor,
-            border: Border.all(color: theme.dividerColor),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Theory Resource',
-                        style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    Text(
-                      pdfUrl.isNotEmpty
-                          ? 'Theory resource is ready for this chapter.'
-                          : 'Theory resource is not available for this chapter yet.',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurface
-                              .withValues(alpha: 0.6)),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                pdfUrl.isNotEmpty
-                    ? Icons.attach_file_outlined
-                    : Icons.description_outlined,
-                size: 28,
-                color: pdfUrl.isNotEmpty
-                    ? const Color(0xFF1D4ED8)
-                    : theme.colorScheme.onSurface
-                        .withValues(alpha: 0.5),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        if (pdfUrl.isNotEmpty)
-          ElevatedButton.icon(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF1D4ED8),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14)),
-            ),
-            icon: const Icon(Icons.open_in_new, size: 18),
-            label: const Text('Open Theory PDF'),
-            onPressed: _openPdf,
-          ),
-        const SizedBox(height: 32),
+        _pdfCard(theme, pdfUrl),
+        if (pdfUrl.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          _openButton(theme),
+        ],
       ],
+    );
+  }
+
+  /// Hero card — mirrors theory.tsx's heroCard: centered icon circle,
+  /// bilingual title, chapter · subject line, bookmark + report actions.
+  Widget _heroCard(ThemeData theme) {
+    final primary = theme.colorScheme.primary;
+    return Material(
+      color: theme.cardColor,
+      borderRadius: BorderRadius.circular(18),
+      elevation: 1,
+      shadowColor: Colors.black.withValues(alpha: 0.05),
+      child: Container(
+        padding: const EdgeInsets.all(22),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.dividerColor),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Column(
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: primary.withValues(alpha: 0.08),
+              ),
+              child:
+                  Icon(Icons.school_outlined, size: 30, color: primary),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              _bilingualTitle,
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            Text(
+              '$_chapterName · $_subjectName',
+              style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurface
+                      .withValues(alpha: 0.6)),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                _TheoryBookmarkButton(
+                  uid: AuthService.currentUser?.uid ?? '',
+                  chapterId: widget.chapterId,
+                  title: _bilingualTitle,
+                  preview: '$_chapterName · $_subjectName',
+                  sourceLabel: 'Theory Mode · $_subjectName',
+                  courseId: widget.courseId,
+                  subcourseId: widget.subcourseId,
+                  subjectName: _subjectName,
+                ),
+                const SizedBox(width: 6),
+                _TheoryReportButton(
+                  title: _bilingualTitle,
+                  contextLabel: 'Theory Mode · $_subjectName',
+                  chapterName: _chapterName,
+                  subjectName: _subjectName,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// PDF resource card — mirrors theory.tsx's pdfCard.
+  Widget _pdfCard(ThemeData theme, String pdfUrl) {
+    final primary = theme.colorScheme.primary;
+    final secondary =
+        theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    final hasPdf = pdfUrl.isNotEmpty;
+    return Material(
+      color: theme.cardColor,
+      borderRadius: BorderRadius.circular(18),
+      elevation: 1,
+      shadowColor: Colors.black.withValues(alpha: 0.05),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          border: Border.all(color: theme.dividerColor),
+          borderRadius: BorderRadius.circular(18),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Theory Resource',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(
+                    hasPdf
+                        ? 'Theory resource is ready for this chapter.'
+                        : 'Theory resource is not available for this chapter yet.',
+                    style:
+                        TextStyle(fontSize: 13, color: secondary),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Icon(
+              hasPdf
+                  ? Icons.attach_file_outlined
+                  : Icons.description_outlined,
+              size: 28,
+              color: hasPdf ? primary : secondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _openButton(ThemeData theme) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: theme.colorScheme.primary,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14)),
+        ),
+        icon: const Icon(Icons.open_in_new, size: 18),
+        label: const Text('Open Theory PDF',
+            style: TextStyle(
+                fontSize: 15, fontWeight: FontWeight.w600)),
+        onPressed: _openPdf,
+      ),
+    );
+  }
+}
+
+/// Port of React's DataNotFound — cloud-off icon, centered title +
+/// description, optional pill retry button.
+class _DataNotFound extends StatelessWidget {
+  final String title;
+  final String description;
+  final VoidCallback? onRetry;
+
+  const _DataNotFound({
+    required this.title,
+    required this.description,
+    this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final secondary =
+        theme.colorScheme.onSurface.withValues(alpha: 0.6);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined, size: 64, color: secondary),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              description,
+              style: TextStyle(fontSize: 14, color: secondary),
+              textAlign: TextAlign.center,
+            ),
+            if (onRetry != null) ...[
+              const SizedBox(height: 18),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 18, vertical: 9),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(999)),
+                ),
+                icon:
+                    const Icon(Icons.refresh, size: 15, color: Colors.white),
+                label: const Text('Try Again',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Port of React's BookmarkButton (context "chapter", kind "read",
+/// refId "<chapterId>:theory"). Bookmarks live at users/{uid}/bookmarks
+/// with the Expo doc-id scheme (`chapter__<safeSegment(refId)>`) so the
+/// Bookmarks screen lists them without changes.
+class _TheoryBookmarkButton extends StatefulWidget {
+  final String uid;
+  final String chapterId;
+  final String title;
+  final String preview;
+  final String sourceLabel;
+  final String courseId;
+  final String subcourseId;
+  final String subjectName;
+
+  const _TheoryBookmarkButton({
+    required this.uid,
+    required this.chapterId,
+    required this.title,
+    required this.preview,
+    required this.sourceLabel,
+    required this.courseId,
+    required this.subcourseId,
+    required this.subjectName,
+  });
+
+  @override
+  State<_TheoryBookmarkButton> createState() => _TheoryBookmarkButtonState();
+}
+
+class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
+  bool _saved = false;
+  bool _busy = false;
+
+  /// Mirrors React's bookmarkDocId(): `chapter__<safeSegment(refId)>`.
+  String get _docId {
+    var ref = '${widget.chapterId}:theory'
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    return 'chapter__${ref.isEmpty ? 'item' : ref}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    if (_busy || widget.uid.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final path = 'users/${widget.uid}/bookmarks/$_docId';
+      if (_saved) {
+        await FirestoreRest.deleteDocument(path, idToken: idToken);
+        if (!mounted) return;
+        setState(() {
+          _saved = false;
+          _busy = false;
+        });
+        showToast(context, 'Bookmark removed.', ToastVariant.info);
+        return;
+      }
+      final refId = '${widget.chapterId}:theory';
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'kind': 'read',
+          'context': 'chapter',
+          'type': 'chapter',
+          'refId': refId,
+          'title': widget.title,
+          'preview': widget.preview,
+          'sourceLabel': widget.sourceLabel,
+          'courseId': widget.courseId,
+          'subcourseId': widget.subcourseId,
+          'payload': {
+            'body': widget.preview,
+            'meta': [
+              {'label': 'Subject', 'value': widget.subjectName},
+              {'label': 'Chapter', 'value': widget.chapterId},
+            ],
+          },
+        },
+        idToken: idToken,
+        merge: true,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _busy = false;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(context, 'Could not save the bookmark.',
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return GestureDetector(
+      onTap: _toggle,
+      child: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        child: _busy
+            ? SizedBox(
+                width: 21,
+                height: 21,
+                child: CircularProgressIndicator(
+                    strokeWidth: 2, color: primary),
+              )
+            : Icon(
+                _saved ? Icons.bookmark : Icons.bookmark_outline,
+                size: 21,
+                color: primary,
+              ),
+      ),
+    );
+  }
+}
+
+/// Port of React's ReportButton on the theory screen — opens a small
+/// bottom sheet and files the report through ReportService.
+class _TheoryReportButton extends StatefulWidget {
+  final String title;
+  final String contextLabel;
+  final String chapterName;
+  final String subjectName;
+
+  const _TheoryReportButton({
+    required this.title,
+    required this.contextLabel,
+    required this.chapterName,
+    required this.subjectName,
+  });
+
+  @override
+  State<_TheoryReportButton> createState() => _TheoryReportButtonState();
+}
+
+class _TheoryReportButtonState extends State<_TheoryReportButton> {
+  Future<void> _openSheet() async {
+    final controller = TextEditingController();
+    final theme = Theme.of(context);
+    final sent = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: theme.cardColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheetContext) => Padding(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 12,
+          bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.dividerColor,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text('Report content',
+                style:
+                    TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(widget.title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSurface
+                        .withValues(alpha: 0.6))),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 4,
+              minLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Describe the problem...',
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: theme.colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () =>
+                    Navigator.of(sheetContext).pop(true),
+                child: const Text('Send report'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    final text = controller.text.trim();
+    controller.dispose();
+    if (sent != true || text.isEmpty || !mounted) return;
+    try {
+      await ReportService.submitProblemReport(
+        category: 'content',
+        description:
+            'Theory content report\n${widget.contextLabel}\n${widget.title}\n${widget.chapterName} · ${widget.subjectName}\n\n$text',
+      );
+      if (!mounted) return;
+      showToast(context, 'Report sent. Thank you.', ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+          context, 'Could not send the report.', ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return GestureDetector(
+      onTap: _openSheet,
+      child: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        child: Icon(Icons.flag_outlined, size: 21, color: primary),
+      ),
     );
   }
 }

@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam set detail — mirrors app/exam/[setId]/index.tsx.
 /// Shows meta info, rules and start/ranking/review entry points.
@@ -76,7 +77,10 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
           const SubpageHeader(title: 'Exam Details'),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Exam...',
+          )
           : _error != null
               ? Center(
                   child: Column(

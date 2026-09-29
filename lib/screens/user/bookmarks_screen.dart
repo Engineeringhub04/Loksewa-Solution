@@ -5,6 +5,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Bookmarks list — mirrors `app/bookmarks/index.tsx` exactly.
 ///
@@ -233,17 +234,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           const SubpageHeader(title: 'Bookmarks'),
           Expanded(
             child: _loading
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const CircularProgressIndicator(),
-                        const SizedBox(height: 12),
-                        Text('Loading...',
-                            style: TextStyle(
-                                fontSize: 14, color: pal.textSecondary)),
-                      ],
-                    ),
+                ? const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading Bookmarks...',
                   )
                 : _error && _items.isEmpty
                     ? _errorBody(pal)

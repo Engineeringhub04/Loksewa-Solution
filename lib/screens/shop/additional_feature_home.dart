@@ -6,6 +6,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Shared home screen for the two "additional feature" hubs (GK and PM) —
 /// mirrors `src/components/additional/AdditionalFeatureScreen.tsx`.
@@ -233,19 +234,9 @@ class _AdditionalFeatureHomeScreenState
           SubpageHeader(title: titleEn),
           Expanded(
             child: _loading
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(
-                            color: theme.colorScheme.primary),
-                        const SizedBox(height: 8),
-                        Text('Loading topics...',
-                            style: TextStyle(
-                                fontSize: 15,
-                                color: onCard.withValues(alpha: 0.6))),
-                      ],
-                    ),
+                ? const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading topics...',
                   )
                 : _error != null
                     ? RefreshIndicator(

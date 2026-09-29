@@ -7,6 +7,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Global search — mirrors app/search.tsx +
 /// src/core/firebase/services/search.ts.
@@ -156,9 +157,10 @@ class _SearchScreenState extends State<SearchScreen> {
             child: !showingResults
                 ? _recentView(palette)
                 : _searching
-                    ? Center(
-                        child: CircularProgressIndicator(
-                            color: palette.primary))
+                    ? const PreloadingWidget(
+                        tinted: false,
+                        label: 'Searching...',
+                      )
                     : !hasResults
                         ? _emptyResults(palette)
                         : _resultsList(palette),

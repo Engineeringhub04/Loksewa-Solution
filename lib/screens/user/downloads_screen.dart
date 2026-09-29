@@ -4,6 +4,7 @@ import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Downloads — mirrors app/downloads.tsx.
 ///
@@ -127,15 +128,9 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           const SubpageHeader(title: 'Downloads'),
           Expanded(
             child: _loading
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 12),
-                        Text('Loading Downloads...'),
-                      ],
-                    ),
+                ? const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading Downloads...',
                   )
                 : Column(
                     children: [

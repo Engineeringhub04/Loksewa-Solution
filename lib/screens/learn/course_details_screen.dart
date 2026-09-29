@@ -4,6 +4,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Course details — mirrors app/course-details.tsx.
 /// Reads the user's enrolled course/subcourse from users/{uid} and
@@ -73,7 +74,10 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Course...',
+            );
           }
           if (snap.hasError) {
             return Center(

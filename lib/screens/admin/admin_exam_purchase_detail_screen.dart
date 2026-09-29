@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Admin → review one exam purchase request. Mirrors
 /// app/admin/exam-purchases/[id].tsx. Approve tags it active; reject tags it
@@ -186,7 +187,10 @@ class _AdminExamPurchaseDetailScreenState
         future: _future,
         builder: (context, snap) {
           if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
+            return const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Details...',
+            );
           }
           if (snap.hasError) {
             if (snap.error is _Denied) {
@@ -358,7 +362,9 @@ class _AdminExamPurchaseDetailScreenState
         if (_busy)
           Container(
             color: Colors.black45,
-            child: const Center(child: CircularProgressIndicator()),
+            child: const PreloadingWidget(
+              label: 'Working...',
+            ),
           ),
       ],
     );

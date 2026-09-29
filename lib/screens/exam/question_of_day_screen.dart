@@ -6,6 +6,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 
 /// Question of the day — exact port of app/question-of-the-day.tsx.
 ///
@@ -276,18 +277,9 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen>
     );
   }
 
-  Widget _loadingView(ExpoPalette palette, String label) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const CircularProgressIndicator(),
-            const SizedBox(height: 12),
-            Text(label,
-                style: TextStyle(
-                    color: palette.textSecondary,
-                    fontSize: ExpoType.bodySmall)),
-          ],
-        ),
+  Widget _loadingView(ExpoPalette palette, String label) => PreloadingWidget(
+        tinted: false,
+        label: label,
       );
 
   Widget _notFound(

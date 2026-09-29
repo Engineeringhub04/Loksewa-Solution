@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Exam history — mirrors app/exam-history.tsx.
 /// All mock-test attempts for the user, newest first.
@@ -65,15 +66,9 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
           const SubpageHeader(title: 'Exam History'),
           Expanded(
             child: _loading
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 12),
-                  Text('Loading Exam History...'),
-                ],
-              ),
+          ? const PreloadingWidget(
+              tinted: false,
+              label: 'Loading Exam History...',
             )
           : _error != null
               ? Center(

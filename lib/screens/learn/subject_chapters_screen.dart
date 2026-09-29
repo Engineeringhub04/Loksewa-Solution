@@ -5,6 +5,7 @@ import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/stagger_entrance.dart';
 
 /// Subject chapters — exact port of app/subjects/chapters/[subjectId].tsx.
 /// Summary gradient card + progress ring + chapter cards with P/R/T tags;
@@ -18,16 +19,62 @@ class SubjectChaptersScreen extends StatefulWidget {
       _SubjectChaptersScreenState();
 }
 
-class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
+class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
+    with SingleTickerProviderStateMixin {
   late Future<_ChapterPage> _future;
   bool _ne = true; // language toggle: NE default, EN alternate (React)
   Map<String, dynamic>? _premiumChapter;
   Map<String, dynamic>? _sheetChapter;
 
+  /// Cached page data so the mode sheet / premium gate overlays can render
+  /// full-screen (above the header) outside the FutureBuilder.
+  _ChapterPage? _page;
+
+  /// Entry/exit animation for the Practice/Read/Theory bottom sheet:
+  /// slides up from the bottom + fades in, ~280ms easeOutCubic.
+  late final AnimationController _sheetController;
+  late final Animation<double> _sheetFade;
+  late final Animation<Offset> _sheetSlide;
+
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _sheetController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    final curved = CurvedAnimation(
+      parent: _sheetController,
+      curve: Curves.easeOutCubic,
+    );
+    _sheetFade = Tween<double>(begin: 0, end: 1).animate(curved);
+    _sheetSlide = Tween<Offset>(
+      begin: const Offset(0, 1),
+      end: Offset.zero,
+    ).animate(curved);
+    _future = _trackPage(_load());
+  }
+
+  @override
+  void dispose() {
+    _sheetController.dispose();
+    super.dispose();
+  }
+
+  void _reload() {
+    setState(() {
+      _page = null;
+      _future = _trackPage(_load());
+    });
+  }
+
+  /// Wires the loaded page into [_page] for the full-screen overlays.
+  /// Errors are swallowed here — the FutureBuilder below renders them.
+  Future<_ChapterPage> _trackPage(Future<_ChapterPage> future) {
+    future.then((d) {
+      if (mounted) setState(() => _page = d);
+    }, onError: (_) {});
+    return future;
   }
 
   Future<_ChapterPage> _load() async {
@@ -97,14 +144,6 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
   String _chapterNameAlt(Map<String, dynamic> c) =>
       _ne ? '${c['name']}' : '${c['nameNe'] ?? c['name']}';
 
-  /// Chapter progress attached by fetchSubjectChaptersWithProgress.
-  static int _pct(Map<String, dynamic> c) =>
-      (((c['progress'] as Map?)?['percentage']) as num?)?.toInt() ?? 0;
-
-  /// React: completed = progress.completed === true || percentage >= 100.
-  static bool _done(Map<String, dynamic> c) =>
-      ((c['progress'] as Map?)?['completed']) == true || _pct(c) >= 100;
-
   void _onChapterTap(Map<String, dynamic> c, _ChapterPage d) {
     final locked = c['pro'] == true && !d.isPremium;
     if (locked) {
@@ -112,6 +151,18 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
       return;
     }
     setState(() => _sheetChapter = c);
+    _sheetController.forward(from: 0);
+  }
+
+  /// Slides/fades the mode sheet back down, then removes it from the tree.
+  void _dismissSheet() {
+    final c = _sheetChapter;
+    if (c == null) return;
+    _sheetController.reverse().then((_) {
+      if (!mounted) return;
+      // Don't close a sheet that was re-opened while this one animated out.
+      if (identical(_sheetChapter, c)) setState(() => _sheetChapter = null);
+    });
   }
 
   void _goMode(String route, Map<String, dynamic> c, _ChapterPage d) {
@@ -135,47 +186,50 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // The overlays sit ABOVE the whole page (header included) so the dim
+    // barrier covers the full screen — otherwise the header's 26px bottom
+    // curve would reveal bright white slivers against the dimmed content
+    // in light mode.
     return Scaffold(
-      body: Column(
+      body: Stack(
         children: [
-          SubpageHeader(
-            title: 'Chapter',
-            actions: [
-              _LanguagePill(
-                ne: _ne,
-                onToggle: () => setState(() => _ne = !_ne),
+          Column(
+            children: [
+              SubpageHeader(
+                title: 'Chapter',
+                actions: [
+                  _LanguagePill(
+                    ne: _ne,
+                    onToggle: () => setState(() => _ne = !_ne),
+                  ),
+                ],
               ),
-            ],
-          ),
-          Expanded(
-            child: FutureBuilder<_ChapterPage>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snap.hasError) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('Failed to load chapters.'),
-                        const SizedBox(height: 8),
-                        ElevatedButton(
-                          onPressed: () =>
-                              setState(() => _future = _load()),
-                          child: const Text('Retry'),
+              Expanded(
+                child: FutureBuilder<_ChapterPage>(
+                  future: _future,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const Center(
+                          child: CircularProgressIndicator());
+                    }
+                    if (snap.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Failed to load chapters.'),
+                            const SizedBox(height: 8),
+                            ElevatedButton(
+                              onPressed: _reload,
+                              child: const Text('Retry'),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                }
-                final d = snap.data!;
-                return Stack(
-                  children: [
-                    RefreshIndicator(
-                      onRefresh: () async =>
-                          setState(() => _future = _load()),
+                      );
+                    }
+                    final d = snap.data!;
+                    return RefreshIndicator(
+                      onRefresh: () async => _reload(),
                       child: ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
@@ -194,7 +248,13 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
                               ),
                             ),
                           ),
-                          _summaryCard(context, d),
+                          StaggerEntrance(
+                            delayMs: 0,
+                            child: ChapterSummaryCard(
+                              subjectName: d.subjectName,
+                              chapters: d.chapters,
+                            ),
+                          ),
                           const SizedBox(height: 16),
                           _listHeader(context, d),
                           const SizedBox(height: 8),
@@ -202,172 +262,37 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
                             const Padding(
                               padding: EdgeInsets.all(32),
                               child: Center(
-                                  child: Text('No chapters found for this subject.',
+                                  child: Text(
+                                      'No chapters found for this subject.',
                                       style: TextStyle(
                                           color: Colors.grey))),
                             )
                           else
-                            ...d.chapters.map(
-                                (c) => _chapterCard(context, c, d)),
+                            ...d.chapters.asMap().entries.map((e) =>
+                                StaggerEntrance(
+                                  delayMs:
+                                      (e.key > 8 ? 8 : e.key) * 60,
+                                  child: _chapterCard(
+                                      context, e.value, d),
+                                )),
                           const SizedBox(height: 32),
                         ],
                       ),
-                    ),
-                    if (_premiumChapter != null)
-                      _gateDialog(context, d, _premiumChapter!),
-                    if (_sheetChapter != null)
-                      _modeSheet(context, d, _sheetChapter!),
-                  ],
-                );
-              },
-            ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
+          if (_page != null && _premiumChapter != null)
+            _gateDialog(context, _page!, _premiumChapter!),
+          if (_page != null && _sheetChapter != null)
+            _modeSheet(context, _page!, _sheetChapter!),
         ],
       ),
     );
   }
 
-  Widget _summaryCard(BuildContext context, _ChapterPage d) {
-    final total = d.chapters.length;
-    final avg = total == 0
-        ? 0
-        : (d.chapters.map(_pct).reduce((a, b) => a + b) / total).round();
-    final complete = d.chapters.where(_done).length;
-    final inProgress =
-        d.chapters.where((c) => _pct(c) > 0 && !_done(c)).length;
-    final premium = d.chapters.where((c) => c['pro'] == true).length;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-      ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -100,
-            right: -40,
-            child: Container(
-              width: 160,
-              height: 160,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
-              ),
-            ),
-          ),
-          Positioned(
-            bottom: -125,
-            left: -70,
-            child: Container(
-              width: 170,
-              height: 170,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF00002D).withValues(alpha: 0.16),
-              ),
-            ),
-          ),
-          Column(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          d.subjectName,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Total Added Topics',
-                          style: TextStyle(
-                            color: Colors.white.withValues(alpha: 0.78),
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  _ProgressRing(progress: avg),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _SummaryStat(
-                      icon: Icons.layers,
-                      label: 'Total Added Topics',
-                      value: total,
-                      accent: const Color(0xFFC7D9FF)),
-                  _SummaryStat(
-                      icon: Icons.check_circle,
-                      label: 'Complete',
-                      value: complete,
-                      accent: const Color(0xFFB8E1FF)),
-                  _SummaryStat(
-                      icon: Icons.show_chart,
-                      label: 'In Progress',
-                      value: inProgress,
-                      accent: const Color(0xFFC8F2DC)),
-                  _SummaryStat(
-                      icon: Icons.diamond,
-                      label: 'Premium',
-                      value: premium,
-                      accent: const Color(0xFFFFD2A6)),
-                ],
-              ),
-              const SizedBox(height: 14),
-              SizedBox(
-                width: double.infinity,
-                child: Material(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(19),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(19),
-                    onTap: () => showToast(
-                        context,
-                        'This feature will be available in the next update.',
-                        ToastVariant.info),
-                    child: Container(
-                      constraints: const BoxConstraints(minHeight: 38),
-                      padding: const EdgeInsets.symmetric(horizontal: 13),
-                      alignment: Alignment.center,
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.analytics,
-                              size: 17, color: Color(0xFF0C2D91)),
-                          SizedBox(width: 6),
-                          Text('View Practice Analytics',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF0C2D91))),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
 
   Widget _listHeader(BuildContext context, _ChapterPage d) {
     final total = d.chapters.length;
@@ -600,78 +525,271 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen> {
 
   Widget _modeSheet(
       BuildContext context, _ChapterPage d, Map<String, dynamic> c) {
-    return GestureDetector(
-      onTap: () => setState(() => _sheetChapter = null),
-      child: Container(
-        color: const Color(0x6B0F172A),
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          child: GestureDetector(
-            onTap: () {},
-            child: Container(
-              padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(28),
-                  topRight: Radius.circular(28),
-                ),
-              ),
-              child: SafeArea(
-                top: false,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 44,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(3),
-                          color: const Color(0xFFCBD5E1),
-                        ),
+    // 0x6B == 107, so fading the alpha 0 -> 0.42 reproduces the old constant
+    // barrier Color(0x6B0F172A) at full entry.
+    return AnimatedBuilder(
+      animation: _sheetController,
+      builder: (context, _) => GestureDetector(
+        onTap: _dismissSheet,
+        child: Container(
+          color: const Color(0xFF0F172A)
+              .withValues(alpha: 0.42 * _sheetFade.value),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionalTranslation(
+              translation: _sheetSlide.value,
+              child: Opacity(
+                opacity: _sheetFade.value,
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    padding: const EdgeInsets.all(22),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(28),
+                        topRight: Radius.circular(28),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    Text(_chapterName(c),
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 4),
-                    Text('Free',
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurface
-                                .withValues(alpha: 0.6))),
-                    const SizedBox(height: 18),
-                    _ModeButton(
-                      icon: Icons.play_circle_outline,
-                      label: 'Practice Mode',
-                      color: const Color(0xFF1D4ED8),
-                      primary: true,
-                      onTap: () => _goMode('/subjects/practice', c, d),
+                    child: SafeArea(
+                      top: false,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Center(
+                            child: Container(
+                              width: 44,
+                              height: 5,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(3),
+                                color: const Color(0xFFCBD5E1),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(_chapterName(c),
+                              style: const TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.bold)),
+                          const SizedBox(height: 4),
+                          Text('Free',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6))),
+                          const SizedBox(height: 18),
+                          _ModeButton(
+                            icon: Icons.play_circle_outline,
+                            label: 'Practice Mode',
+                            color: const Color(0xFF1D4ED8),
+                            primary: true,
+                            onTap: () =>
+                                _goMode('/subjects/practice', c, d),
+                          ),
+                          const SizedBox(height: 10),
+                          _ModeButton(
+                            icon: Icons.book_outlined,
+                            label: 'Read Mode',
+                            color: const Color(0xFF1D4ED8),
+                            onTap: () => _goMode('/subjects/read', c, d),
+                          ),
+                          const SizedBox(height: 10),
+                          _ModeButton(
+                            icon: Icons.school_outlined,
+                            label: 'Theory Mode',
+                            color: const Color(0xFF1D4ED8),
+                            onTap: () =>
+                                _goMode('/subjects/theory', c, d),
+                          ),
+                        ],
+                      ),
                     ),
-                    const SizedBox(height: 10),
-                    _ModeButton(
-                      icon: Icons.book_outlined,
-                      label: 'Read Mode',
-                      color: const Color(0xFF1D4ED8),
-                      onTap: () => _goMode('/subjects/read', c, d),
-                    ),
-                    const SizedBox(height: 10),
-                    _ModeButton(
-                      icon: Icons.school_outlined,
-                      label: 'Theory Mode',
-                      color: const Color(0xFF1D4ED8),
-                      onTap: () => _goMode('/subjects/theory', c, d),
-                    ),
-                  ],
+                  ),
                 ),
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Chapter progress attached by fetchSubjectChaptersWithProgress.
+int _pct(Map<String, dynamic> c) =>
+    (((c['progress'] as Map?)?['percentage']) as num?)?.toInt() ?? 0;
+
+/// React: completed = progress.completed === true || percentage >= 100.
+bool _done(Map<String, dynamic> c) =>
+    ((c['progress'] as Map?)?['completed']) == true || _pct(c) >= 100;
+
+/// Blue gradient stats card ("General Awareness / Total Added Topics / 43%")
+/// at the top of the chapter page.
+///
+/// The decorative glow bubbles intentionally bleed past the card edges and
+/// are clipped by the outer [ClipRRect] along the 28px rounded border: the
+/// inner [Stack] uses [Clip.none] so the bubbles are never cut with a hard
+/// straight edge inside the content padding (the old "D" sticker look).
+class ChapterSummaryCard extends StatelessWidget {
+  final String subjectName;
+  final List<Map<String, dynamic>> chapters;
+
+  const ChapterSummaryCard({
+    super.key,
+    required this.subjectName,
+    required this.chapters,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final total = chapters.length;
+    final avg = total == 0
+        ? 0
+        : (chapters.map(_pct).reduce((a, b) => a + b) / total).round();
+    final complete = chapters.where(_done).length;
+    final inProgress =
+        chapters.where((c) => _pct(c) > 0 && !_done(c)).length;
+    final premium = chapters.where((c) => c['pro'] == true).length;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(28),
+      child: DecoratedBox(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned(
+              top: -100,
+              right: -40,
+              child: Container(
+                width: 160,
+                height: 160,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -125,
+              left: -70,
+              child: Container(
+                width: 170,
+                height: 170,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: const Color(0xFF00002D).withValues(alpha: 0.16),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              subjectName,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Total Added Topics',
+                              style: TextStyle(
+                                color: Colors.white
+                                    .withValues(alpha: 0.78),
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _ProgressRing(progress: avg),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _SummaryStat(
+                          icon: Icons.layers,
+                          label: 'Total Added Topics',
+                          value: total,
+                          accent: const Color(0xFFC7D9FF)),
+                      _SummaryStat(
+                          icon: Icons.check_circle,
+                          label: 'Complete',
+                          value: complete,
+                          accent: const Color(0xFFB8E1FF)),
+                      _SummaryStat(
+                          icon: Icons.show_chart,
+                          label: 'In Progress',
+                          value: inProgress,
+                          accent: const Color(0xFFC8F2DC)),
+                      _SummaryStat(
+                          icon: Icons.diamond,
+                          label: 'Premium',
+                          value: premium,
+                          accent: const Color(0xFFFFD2A6)),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(19),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(19),
+                        onTap: () => showToast(
+                            context,
+                            'This feature will be available in the next update.',
+                            ToastVariant.info),
+                        child: Container(
+                          constraints:
+                              const BoxConstraints(minHeight: 38),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 13),
+                          alignment: Alignment.center,
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.analytics,
+                                  size: 17,
+                                  color: Color(0xFF0C2D91)),
+                              SizedBox(width: 6),
+                              Text('View Practice Analytics',
+                                  style: TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF0C2D91))),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

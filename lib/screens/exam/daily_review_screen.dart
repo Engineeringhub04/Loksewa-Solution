@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Daily test answer review — mirrors app/daily-test/[modelId]/review.tsx.
 ///
@@ -144,7 +145,10 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
 
   Widget _body(bool isDark) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const PreloadingWidget(
+        tinted: false,
+        label: 'Loading Review...',
+      );
     }
     if (_error != null || _model == null || _answers == null) {
       return Center(

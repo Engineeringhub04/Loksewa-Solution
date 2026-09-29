@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 
 /// Mock test attempt — mirrors app/mock-test/[id]/attempt.tsx.
 /// Timed MCQ with next/previous, per-question palette, flags, submit →
@@ -176,7 +177,10 @@ class _MockAttemptScreenState extends State<MockAttemptScreen> {
         ]),
           Expanded(
             child: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const PreloadingWidget(
+            tinted: false,
+            label: 'Loading Questions...',
+          )
           : _error != null
               ? Center(
                   child: Column(

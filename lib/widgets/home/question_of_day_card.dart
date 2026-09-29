@@ -82,9 +82,10 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
         child: InkWell(
           onTap: widget.onPress,
           borderRadius: BorderRadius.circular(ExpoRadius.lg),
-          child: Container(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(ExpoRadius.lg),
+            child: Container(
             constraints: const BoxConstraints(minHeight: 154),
-            padding: const EdgeInsets.all(17),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(ExpoRadius.lg),
               gradient: const LinearGradient(
@@ -129,7 +130,11 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
                     ),
                   ),
                 ),
-                Column(
+                // Content fills the card; React's padding applied here.
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.all(17),
+                    child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -266,13 +271,16 @@ class _QuestionOfDayCardState extends State<QuestionOfDayCard>
                         ),
                       ],
                     ),
-                  ],
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 }

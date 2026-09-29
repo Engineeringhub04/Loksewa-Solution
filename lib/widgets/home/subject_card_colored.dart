@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 /// Compact premium subject card — exact port of SubjectCardColored.tsx.
 /// Default 150x130 (Home's horizontal rail); the Subjects grid passes a
 /// measured width + height 150 so two cards fill the row.
+///
+/// The glow bubble is positioned relative to the CARD edges (like React's
+/// absolute positioning on the card itself) and clipped by the card's rounded
+/// border via ClipRRect — so it tucks under the card edge instead of showing
+/// a hard straight cut inside the card.
 class SubjectCardColored extends StatelessWidget {
   final String name;
   final IconData icon;
@@ -47,150 +52,155 @@ class SubjectCardColored extends StatelessWidget {
       child: InkWell(
         onTap: onPress,
         borderRadius: BorderRadius.circular(18),
-        child: Container(
-          width: width ?? 150,
-          height: height ?? 130,
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            gradient: LinearGradient(
-              colors: [backgroundColor, _darken(backgroundColor, 40)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            width: width ?? 150,
+            height: height ?? 130,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: LinearGradient(
+                colors: [backgroundColor, _darken(backgroundColor, 40)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              boxShadow: const [
+                BoxShadow(
+                    color: Color(0x2E000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 4)),
+              ],
             ),
-            boxShadow: const [
-              BoxShadow(
-                  color: Color(0x2E000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 4)),
-            ],
-          ),
-          child: Stack(
-            children: [
-              // Glow accent, top-right.
-              Positioned(
-                top: -20,
-                right: -20,
-                child: Container(
-                  width: 70,
-                  height: 70,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: Colors.white.withValues(alpha: 0.14),
+            child: Stack(
+              children: [
+                // Glow accent, top-right — relative to the card edges.
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 70,
+                    height: 70,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.14),
+                    ),
                   ),
                 ),
-              ),
-              // Premium / purchased tag (top:8 right:8).
-              if (premium)
-                Positioned(
-                  top: 8,
-                  right: 8,
-                  child: Container(
-                    constraints: const BoxConstraints(maxWidth: 76),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 4, vertical: 3),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(7),
-                      color: purchased
-                          ? const Color(0xFF047857)
-                          : const Color(0xFF9A3412),
-                      border: Border.all(
+                // Premium / purchased tag (React: absolute top:8 right:8 of the card).
+                if (premium)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      constraints: const BoxConstraints(maxWidth: 76),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 3),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(7),
                         color: purchased
-                            ? const Color(0xC7D1FAE5)
-                            : const Color(0x9EFFD5A6),
+                            ? const Color(0xFF047857)
+                            : const Color(0xFF9A3412),
+                        border: Border.all(
+                          color: purchased
+                              ? const Color(0xC7D1FAE5)
+                              : const Color(0x9EFFD5A6),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            purchased ? Icons.check_circle : Icons.lock,
+                            size: 9,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 2),
+                          Flexible(
+                            child: Text(
+                              purchased ? purchasedLabel : premiumLabel,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 8,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
+                  ),
+                // Content fills the card; React's padding applied here.
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          purchased
-                              ? Icons.check_circle
-                              : Icons.lock,
-                          size: 9,
-                          color: Colors.white,
+                        SizedBox(
+                          height: 40,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(12),
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                ),
+                                child:
+                                    Icon(icon, size: 24, color: Colors.white),
+                              ),
+                            ],
+                          ),
                         ),
-                        const SizedBox(width: 2),
-                        Flexible(
+                        const SizedBox(height: 12),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 2),
                           child: Text(
-                            purchased ? purchasedLabel : premiumLabel,
+                            name,
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 8,
+                              fontSize: 16,
                               fontWeight: FontWeight.bold,
                             ),
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
+                        if (footerLabel != null) ...[
+                          const Spacer(),
+                          InkWell(
+                            onTap: onFooterPress ?? onPress,
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Row(
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    footerLabel!,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const Icon(Icons.arrow_forward,
+                                      size: 14, color: Colors.white),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
                 ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    height: 40,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(12),
-                            color:
-                                Colors.white.withValues(alpha: 0.22),
-                          ),
-                          child:
-                              Icon(icon, size: 24, color: Colors.white),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.only(right: 2),
-                    child: Text(
-                      name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (footerLabel != null) ...[
-                    const Spacer(),
-                    InkWell(
-                      onTap: onFooterPress ?? onPress,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              footerLabel!,
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const Icon(Icons.arrow_forward,
-                                size: 14, color: Colors.white),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

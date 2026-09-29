@@ -64,11 +64,12 @@ class HomeHeader extends StatelessWidget {
     final radius = _lerp(30, 20, t);
 
     // Expanded layer fades out over the first 60% of the collapse.
-    final expandedOpacity = _clamp01(1 - scrollOffset / (collapseDistance * 0.6));
+    final expandedOpacity =
+        _clamp01(1 - scrollOffset / (collapseDistance * 0.6));
     final expandedShift = -14 * t;
     // Collapsed layer fades in over the last 55%.
-    final collapsedT =
-        _clamp01((scrollOffset - collapseDistance * 0.45) / (collapseDistance * 0.55));
+    final collapsedT = _clamp01(
+        (scrollOffset - collapseDistance * 0.45) / (collapseDistance * 0.55));
     final collapsedShift = 8 * (1 - collapsedT);
     final isCollapsed = scrollOffset > collapseDistance * 0.55;
 
@@ -213,7 +214,8 @@ class _Avatar extends StatelessWidget {
           shape: BoxShape.circle,
           gradient: SweepGradient(colors: _ringColors),
         ),
-        child: ClipOval(child: SizedBox(width: size, height: size, child: face)),
+        child:
+            ClipOval(child: SizedBox(width: size, height: size, child: face)),
       );
     }
 
@@ -226,8 +228,7 @@ class _Avatar extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         color: const Color(0x3822C55E),
-        border: Border.all(
-            color: const Color(0xFF22C55E), width: border),
+        border: Border.all(color: const Color(0xFF22C55E), width: border),
         boxShadow: [
           BoxShadow(
             color: const Color(0xFF22C55E).withValues(alpha: 0.9),
@@ -381,8 +382,8 @@ class _ExpandedContent extends StatelessWidget {
         ? displayName!.trim().split(RegExp(r'\s+')).first
         : 'there';
     return Padding(
-      padding: EdgeInsets.only(
-          left: 16, right: 16, top: topPad + 12, bottom: 18),
+      padding:
+          EdgeInsets.only(left: 16, right: 16, top: topPad + 12, bottom: 18),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -461,18 +462,17 @@ class _ExpandedContent extends StatelessWidget {
               onTap: () => context.push('/search'),
               borderRadius: BorderRadius.circular(14),
               child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 14, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18)),
+                  border:
+                      Border.all(color: Colors.white.withValues(alpha: 0.18)),
                 ),
                 child: Row(
                   children: [
                     Icon(Icons.search,
-                        size: 18,
-                        color: Colors.white.withValues(alpha: 0.75)),
+                        size: 18, color: Colors.white.withValues(alpha: 0.75)),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -523,115 +523,134 @@ class _CourseInfoCard extends StatelessWidget {
       child: InkWell(
         onTap: onPress,
         borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            gradient: const LinearGradient(
-              colors: [Color(0xFF0F172A), Color(0xFF1E293B), Color(0xFF334155)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            boxShadow: const [
-              BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 8,
-                  offset: Offset(0, 4)),
-            ],
-          ),
-          child: Stack(
-            children: [
-              Positioned(
-                top: -20,
-                right: -20,
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: const Color(0xFF38BDF8).withValues(alpha: 0.18),
-                  ),
-                ),
+        // Glow bubble is positioned relative to the CARD edges (like React's
+        // absolute positioning on the card) and clipped by the card's rounded
+        // border via ClipRRect — so it tucks under the card edge instead of
+        // showing a hard straight cut inside the card.
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              gradient: const LinearGradient(
+                colors: [
+                  Color(0xFF0F172A),
+                  Color(0xFF1E293B),
+                  Color(0xFF334155)
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
+              boxShadow: const [
+                BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 8,
+                    offset: Offset(0, 4)),
+              ],
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  top: -20,
+                  right: -20,
+                  child: Container(
+                    width: 80,
+                    height: 80,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: const Color(0xFF38BDF8).withValues(alpha: 0.15),
+                      color: const Color(0xFF38BDF8).withValues(alpha: 0.18),
                     ),
-                    child: const Icon(Icons.school,
-                        size: 20, color: Color(0xFF38BDF8)),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
                       children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 5,
-                              height: 5,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Color(0xFF22C55E),
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Text(
-                              'ENROLLED COURSE',
-                              style: TextStyle(
-                                color:
-                                    Colors.white.withValues(alpha: 0.6),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.5,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          hasCourse ? courseName! : 'Tap to select a course',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: ExpoType.body,
-                            fontWeight: FontWeight.bold,
+                        Container(
+                          width: 44,
+                          height: 44,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color:
+                                const Color(0xFF38BDF8).withValues(alpha: 0.15),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          child: const Icon(Icons.school,
+                              size: 20, color: Color(0xFF38BDF8)),
                         ),
-                        if (hasCourse &&
-                            subcourseName != null &&
-                            subcourseName!.isNotEmpty)
-                          Text(
-                            subcourseName!,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.7),
-                              fontSize: ExpoType.bodySmall,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 5,
+                                    height: 5,
+                                    decoration: const BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Color(0xFF22C55E),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Text(
+                                    'ENROLLED COURSE',
+                                    style: TextStyle(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.6),
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                hasCourse
+                                    ? courseName!
+                                    : 'Tap to select a course',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: ExpoType.body,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (hasCourse &&
+                                  subcourseName != null &&
+                                  subcourseName!.isNotEmpty)
+                                Text(
+                                  subcourseName!,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.7),
+                                    fontSize: ExpoType.bodySmall,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                            ],
                           ),
+                        ),
+                        Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color:
+                                const Color(0xFF38BDF8).withValues(alpha: 0.15),
+                          ),
+                          child: const Icon(Icons.chevron_right,
+                              size: 16, color: Color(0xFF38BDF8)),
+                        ),
                       ],
                     ),
                   ),
-                  Container(
-                    width: 26,
-                    height: 26,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: const Color(0xFF38BDF8).withValues(alpha: 0.15),
-                    ),
-                    child: const Icon(Icons.chevron_right,
-                        size: 16, color: Color(0xFF38BDF8)),
-                  ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

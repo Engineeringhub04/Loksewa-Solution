@@ -33,13 +33,14 @@ _Verdict _verdictFor(int percent, bool passed) {
   if (percent >= 85) {
     return const _Verdict('Outstanding!', 'A near-perfect warm-up. Come back tomorrow for the next one.', Color(0xFF16A34A), Icons.emoji_events);
   }
+  // A11: React's exact verdict messages.
   if (percent >= 60) {
-    return const _Verdict('Well done!', 'Strong performance. Keep the streak going.', Color(0xFF2563EB), Icons.workspace_premium);
+    return const _Verdict('Well done!', 'A solid run. Review your answers to lock in the few you missed.', Color(0xFF2563EB), Icons.workspace_premium);
   }
   if (passed) {
-    return const _Verdict('Passed — just', 'You cleared the pass mark — push a little higher next time.', Color(0xFFD97706), Icons.check_circle);
+    return const _Verdict('Passed — just', 'You cleared the pass mark. Review the explanations and tomorrow gets easier.', Color(0xFFD97706), Icons.check_circle);
   }
-  return const _Verdict('Keep going', 'Every attempt makes you sharper. Try again tomorrow.', Color(0xFFDC2626), Icons.refresh);
+  return const _Verdict('Keep going', 'Every daily test teaches something. Review your answers and you will climb fast.', Color(0xFFDC2626), Icons.refresh);
 }
 
 String _fmtNum(double v) {
@@ -88,15 +89,22 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
       timeTaken = int.tryParse(qp['timeTaken'] ?? '') ?? 0;
 
       // Fall back to the saved result when params are absent (deep links).
-      if (answers == null) {
-        final saved = await fetchDailyTestResultForModel(uid, widget.modelId);
-        if (saved != null) {
-          answers = saved.answers;
-          timeTaken = saved.timeTakenSeconds;
-        }
+      // C2/C3: the saved-result fetch and the profile fetch are independent —
+      // run them together. (The model-list fetch still depends on the
+      // profile's subcourseId, so it stays sequential.)
+      final loaded = await Future.wait([
+        answers == null
+            ? fetchDailyTestResultForModel(uid, widget.modelId)
+            : Future<DailyTestResult?>.value(null),
+        fetchUserProfile(uid),
+      ]);
+      final saved = loaded[0] as DailyTestResult?;
+      final profile = loaded[1] as UserProfile?;
+      if (saved != null) {
+        answers = saved.answers;
+        timeTaken = saved.timeTakenSeconds;
       }
 
-      final profile = await fetchUserProfile(uid);
       final subcourseId = profile?.subcourseId ?? '';
       DailyTestModel? model;
       if (subcourseId.isNotEmpty) {
@@ -247,7 +255,10 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
                 ),
                 const SizedBox(height: 16),
                 _ProgressRing(
-                    percent: score.percent, color: verdict.color),
+                    percent: score.percent,
+                    color: verdict.color,
+                    correct: score.correct,
+                    total: model.questions.length),
                 const SizedBox(height: 12),
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -256,12 +267,26 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
                     color: verdict.color.withValues(alpha: 0.09),
                     borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Text(
-                    '${score.passed ? 'PASSED' : 'FAILED'} · pass mark $passPercent%',
-                    style: TextStyle(
-                        color: verdict.color,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800),
+                  // B16: React's verdict pill carries a trophy when passed,
+                  // a refresh icon when failed.
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                          score.passed
+                              ? Icons.emoji_events
+                              : Icons.refresh,
+                          size: 15,
+                          color: verdict.color),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${score.passed ? 'PASSED' : 'FAILED'} · pass mark $passPercent%',
+                        style: TextStyle(
+                            color: verdict.color,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -377,19 +402,22 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
           const SizedBox(height: 10),
           SizedBox(
             height: 52,
-            child: OutlinedButton(
+            // B17: React's "Back to Daily Test" carries the home icon.
+            child: OutlinedButton.icon(
               onPressed: _goBack,
+              icon: const Icon(Icons.home_outlined,
+                  size: 18, color: Color(0xFF2563EB)),
+              label: const Text('Back to Daily Test',
+                  style: TextStyle(
+                      color: Color(0xFF2563EB),
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700)),
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(
                     color: Color(0xFF2563EB), width: 1.5),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14)),
               ),
-              child: const Text('Back to Daily Test',
-                  style: TextStyle(
-                      color: Color(0xFF2563EB),
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700)),
             ),
           ),
         ],
@@ -450,12 +478,20 @@ class _DailySummaryScreenState extends State<DailySummaryScreen> {
 class _ProgressRing extends StatelessWidget {
   final int percent;
   final Color color;
+  final int correct;
+  final int total;
 
-  const _ProgressRing({required this.percent, required this.color});
+  const _ProgressRing(
+      {required this.percent,
+      required this.color,
+      required this.correct,
+      required this.total});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final secondary =
+        isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
     return SizedBox(
       width: 150,
       height: 150,
@@ -475,11 +511,22 @@ class _ProgressRing extends StatelessWidget {
               strokeCap: StrokeCap.round,
             ),
           ),
-          Text('$percent%',
-              style: TextStyle(
-                  fontSize: 32,
-                  fontWeight: FontWeight.w800,
-                  color: color)),
+          // B15: the "{correct} / {total}" caption under the percent.
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$percent%',
+                  style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.w800,
+                      color: color)),
+              Text('$correct / $total',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: secondary)),
+            ],
+          ),
         ],
       ),
     );

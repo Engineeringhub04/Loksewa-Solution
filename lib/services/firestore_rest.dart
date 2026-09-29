@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
+import 'server_clock.dart';
 
 /// A single document write for [FirestoreRest.commitWrites] — mirrors the
 /// WriteSpec built by setWrite() in firestoreRest.ts.
@@ -78,6 +79,7 @@ class FirestoreRest {  static String get _base =>
     String idToken = '',
   }) async {
     final res = await http.get(Uri.parse('$_base/$path'), headers: _headers(idToken));
+    ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode == 404) return null;
     if (res.statusCode != 200) throw Exception('getDocument $path: ${res.statusCode}');
     return _decodeFields(json.decode(res.body) as Map<String, dynamic>);
@@ -92,6 +94,7 @@ class FirestoreRest {  static String get _base =>
       Uri.parse('$_base/$collectionPath?pageSize=$pageSize'),
       headers: _headers(idToken),
     );
+    ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode != 200) throw Exception('listDocuments $collectionPath: ${res.statusCode}');
     final body = json.decode(res.body) as Map<String, dynamic>;
     final docs = body['documents'] as List? ?? [];
@@ -125,11 +128,13 @@ class FirestoreRest {  static String get _base =>
       uri = Uri.parse('$_base/$path');
     }
     final res = await http.patch(uri, headers: _headers(idToken), body: json.encode(fields));
+    ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode != 200) throw Exception('setDocument $path: ${res.statusCode} ${res.body}');
   }
 
   static Future<void> deleteDocument(String path, {String idToken = ''}) async {
     final res = await http.delete(Uri.parse('$_base/$path'), headers: _headers(idToken));
+    ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode != 200 && res.statusCode != 404) {
       throw Exception('deleteDocument $path: ${res.statusCode}');
     }
@@ -165,6 +170,7 @@ class FirestoreRest {  static String get _base =>
       };
       final res = await http.post(Uri.parse('$_base:commit'),
           headers: _headers(idToken), body: json.encode(body));
+      ServerClock.updateFromHttpDate(res.headers['date']);
       if (res.statusCode != 200) {
         throw Exception('commitWrites: ${res.statusCode} ${res.body}');
       }

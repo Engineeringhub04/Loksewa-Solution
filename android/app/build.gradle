@@ -19,13 +19,28 @@ android {
         applicationId = "com.loksewasolutionnp.hub"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 9
+        versionCode = 10
         versionName = "1.0.8"
     }
 
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            // Persistent keystore under ~/workspace (survives VM replacements).
+            // signingConfigs.debug auto-generates into /root/.android which is
+            // ephemeral — when the VM was replaced the key changed silently and
+            // Google Sign-In broke (Firebase SHA-1 mismatch). This key is the
+            // same one v1.0.6+ shipped with, so updates install cleanly.
+            // Passwords are the universal Android debug-keystore defaults.
+            signingConfig = signingConfigs.loksewa
+        }
+    }
+
+    signingConfigs {
+        loksewa {
+            storeFile = file("../../flutter-build/keystore/loksewa-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 }

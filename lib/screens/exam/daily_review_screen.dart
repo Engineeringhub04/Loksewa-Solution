@@ -63,14 +63,21 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
         } catch (_) {}
       }
       timeTaken = int.tryParse(qp['timeTaken'] ?? '') ?? 0;
-      if (answers == null) {
-        final saved = await fetchDailyTestResultForModel(uid, widget.modelId);
-        if (saved != null) {
-          answers = saved.answers;
-          timeTaken = saved.timeTakenSeconds;
-        }
+      // C2/C3: the saved-result fetch and the profile fetch are independent —
+      // run them together. (The model-list fetch still depends on the
+      // profile's subcourseId, so it stays sequential.)
+      final loaded = await Future.wait([
+        answers == null
+            ? fetchDailyTestResultForModel(uid, widget.modelId)
+            : Future<DailyTestResult?>.value(null),
+        fetchUserProfile(uid),
+      ]);
+      final saved = loaded[0] as DailyTestResult?;
+      final profile = loaded[1] as UserProfile?;
+      if (saved != null) {
+        answers = saved.answers;
+        timeTaken = saved.timeTakenSeconds;
       }
-      final profile = await fetchUserProfile(uid);
       final subcourseId = profile?.subcourseId ?? '';
       DailyTestModel? model;
       if (subcourseId.isNotEmpty) {
@@ -293,15 +300,19 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
     final correct = !skipped && chosen == q.correctIndex;
     final Color verdictColor;
     final String verdictLabel;
+    final IconData verdictIcon;
     if (skipped) {
       verdictColor = const Color(0xFFD97706);
       verdictLabel = 'Skipped';
+      verdictIcon = Icons.remove_circle;
     } else if (correct) {
       verdictColor = const Color(0xFF16A34A);
       verdictLabel = 'Correct';
+      verdictIcon = Icons.check_circle;
     } else {
       verdictColor = const Color(0xFFDC2626);
       verdictLabel = 'Wrong';
+      verdictIcon = Icons.cancel;
     }
     const green = Color(0xFF16A34A);
     const red = Color(0xFFDC2626);
@@ -322,13 +333,14 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 9, vertical: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF2563EB)
-                      .withValues(alpha: 0.1),
+                  // B10: the Q badge takes the verdict tone (`${tone}16`),
+                  // not the hardcoded blue.
+                  color: verdictColor.withValues(alpha: 0x16 / 0xFF),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text('Q${qi + 1}',
-                    style: const TextStyle(
-                        color: Color(0xFF2563EB),
+                    style: TextStyle(
+                        color: verdictColor,
                         fontSize: 12,
                         fontWeight: FontWeight.w800)),
               ),
@@ -340,11 +352,20 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                   color: verdictColor.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(999),
                 ),
-                child: Text(verdictLabel,
-                    style: TextStyle(
-                        color: verdictColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700)),
+                // B11: the verdict tag carries its own icon (13px).
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(verdictIcon,
+                        size: 13, color: verdictColor),
+                    const SizedBox(width: 4),
+                    Text(verdictLabel,
+                        style: TextStyle(
+                            color: verdictColor,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700)),
+                  ],
+                ),
               ),
               const Spacer(),
               if (q.category.isNotEmpty)
@@ -431,10 +452,22 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
                     .withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Text(
-                'You did not answer this question, so it scored zero.',
-                style: TextStyle(
-                    fontSize: 12, color: Color(0xFFD97706)),
+              // B12: the skipped note carries the alert icon.
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.error_outline,
+                      size: 15, color: Color(0xFFD97706)),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You did not answer this question, so it scored zero.',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: Color(0xFFD97706)),
+                    ),
+                  ),
+                ],
               ),
             ),
           if (q.explanation.isNotEmpty)
@@ -442,8 +475,9 @@ class _DailyReviewScreenState extends State<DailyReviewScreen> {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
+                // B13: info tint (`${colors.info}10`).
                 color: const Color(0xFF2563EB)
-                    .withValues(alpha: 0.07),
+                    .withValues(alpha: 0x10 / 0xFF),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(

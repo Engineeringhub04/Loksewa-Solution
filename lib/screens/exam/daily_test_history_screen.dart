@@ -24,11 +24,27 @@ class DailyTestHistoryScreen extends StatefulWidget {
 class _DailyTestHistoryScreenState extends State<DailyTestHistoryScreen> {
   bool _loading = true;
   List<DailyTestActivity> _activities = const [];
+  bool _wasCurrent = true;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Refetch when the screen regains focus (e.g. popped back from a quiz
+    // summary): a just-finished attempt must appear in the log immediately.
+    // ModalRoute.isCurrent flips through the inherited _ModalScopeStatus, so
+    // this fires on push/pop. Guarded so the initial mount (initState already
+    // loaded) does not double-load.
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? true;
+    if (isCurrent && !_wasCurrent) {
+      _load();
+    }
+    _wasCurrent = isCurrent;
   }
 
   Future<void> _load() async {

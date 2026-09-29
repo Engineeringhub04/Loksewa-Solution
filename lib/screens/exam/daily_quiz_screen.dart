@@ -2,13 +2,14 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../services/firestore_rest.dart';
+import '../../services/theme_service.dart';
 import '../../widgets/app_toast.dart';
-import '../../widgets/daily_test_card.dart';
-import '../../widgets/subpage_header.dart';
 
 /// Daily test quiz — mirrors app/daily-test/[modelId]/quiz.tsx.
 ///
@@ -42,10 +43,17 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
   bool _allowPop = false;
   DateTime? _startedAt;
   String? _uid;
+  // Stashed from the boot profile read (used by the header subtitle and the
+  // bookmark free-tier cap). The quiz itself has no premium gate — React's
+  // quiz.tsx doesn't gate either; gating lives on the landing card.
+  bool _isPro = false;
 
   @override
   void initState() {
     super.initState();
+    // A10: the clock starts at mount — timeTakenSeconds includes load latency,
+    // exactly like React's `Date.now()` in a ref at component mount.
+    _startedAt = DateTime.now();
     _boot();
   }
 
@@ -54,6 +62,43 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     _timer?.cancel();
     _blinkTimer?.cancel();
     super.dispose();
+  }
+
+  /// The schedule rule, enforced where the questions live — the landing card
+  /// already refuses unplayable models, but this screen is also reachable by
+  /// deep link, notification, or Back-then-forward after midnight. Returns the
+  /// block (title + message), or null when the model is playable.
+  /// Mirrors the scheduleBlock memo in React quiz.tsx.
+  ({String title, String message})? _scheduleBlock(DailyTestModel model) {
+    final today = todayDateKey();
+    if (isDailyTestDemo(model)) {
+      return (
+        title: 'Not a real test',
+        message:
+            'That card is only a preview — the real test will appear here once it is scheduled.',
+      );
+    }
+    if (model.testDate.isEmpty) {
+      return (
+        title: 'Test not scheduled',
+        message: 'This test does not have a release date yet.',
+      );
+    }
+    if (model.testDate.compareTo(today) > 0) {
+      return (
+        title: 'Not unlocked yet',
+        message:
+            'This test unlocks on ${formatDateKeyShort(model.testDate)} at 12:00 AM. Come back then.',
+      );
+    }
+    if (model.testDate.compareTo(today) < 0) {
+      return (
+        title: 'Test missed',
+        message:
+            'This test was only available on ${formatDateKeyShort(model.testDate)} and can no longer be attempted.',
+      );
+    }
+    return null;
   }
 
   // -- boot ---------------------------------------------------------------
@@ -106,48 +151,34 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
         context.replace(uri.toString());
         return;
       }
-      // Schedule re-check (deep links can't bypass the cards).
-      final today = todayDateKey();
-      if (isDailyTestDemo(model)) {
-        _block('Not a real test',
-            'That card is only a preview — the real test will appear here once it is scheduled.');
+      // Schedule check (deep links can't bypass the cards).
+      final block = _scheduleBlock(model);
+      if (block != null) {
+        _block(block.title, block.message);
         return;
       }
-      if (model.testDate.isEmpty) {
-        _block('Test not scheduled',
-            'This test does not have a release date yet.');
-        return;
-      }
-      if (model.testDate.compareTo(today) > 0) {
-        _block('Not unlocked yet',
-            'This test unlocks on ${formatDateKeyShort(model.testDate)} at 12:00 AM. Come back then.');
-        return;
-      }
-      if (model.testDate.compareTo(today) < 0) {
-        _block('Test missed',
-            'This test was only available on ${formatDateKeyShort(model.testDate)} and can no longer be attempted.');
-        return;
-      }
-      if (model.isPro && !(profile?.isPro ?? false)) {
-        showToast(context,
-            'This is a premium test. An active subscription is required.',
-            ToastVariant.warning);
-        _allowPop = true;
-        context.replace('/subscription');
-        return;
-      }
+      // A8: no premium gate here — React's quiz.tsx has none; gating lives on
+      // the landing card. This also drops the forced per-open profile read.
+      _isPro = profile?.isPro ?? false;
       if (!mounted) return;
       setState(() {
         _model = model;
         _answers = List<int?>.filled(model!.questions.length, null);
         _loading = false;
-        _startedAt = DateTime.now();
       });
       _startQuestionTimer(0);
     } catch (e) {
       if (!mounted) return;
       _block('Not available', 'Couldn\'t load the test. ${_cleanErr('$e')}');
     }
+  }
+
+  /// A9: React's formatClock — m:ss ("0:30", "1:05"), never "30s".
+  String _formatClock(int seconds) {
+    final safe = seconds < 0 ? 0 : seconds;
+    final m = safe ~/ 60;
+    final s = (safe % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   /// Strips raw JSON/API dumps from an error so the UI never shows them.
@@ -180,6 +211,20 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
       _qRemaining = questionTimeSeconds(model, index);
       _blinkOn = false;
     });
+    _armTicker();
+  }
+
+  /// A6: resume the countdown from the preserved remaining time — a failed
+  /// submit must NOT restart the full question timer.
+  void _resumeQuestionTimer() {
+    _timer?.cancel();
+    _blinkTimer?.cancel();
+    _timerQuestion = _index;
+    // NOTE: _qRemaining is intentionally left untouched here.
+    _armTicker();
+  }
+
+  void _armTicker() {
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_dialogOpen || _submitting) return;
       // The clock carries its question index so expiry can't double-fire.
@@ -227,7 +272,7 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
             RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Leave the Daily Test?'),
         content: Text(
-            'Your progress will not be saved. $_answeredCount answered question${_answeredCount == 1 ? '' : 's'} will be lost.'),
+            'Your progress will not be saved. $_answeredCount answered question(s) will be lost and this attempt will not appear in your history.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -269,23 +314,24 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('$answered of $total answered.'),
-            if (unanswered > 0)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  model.negativeMarking
-                      ? 'Unanswered questions score zero (but carry no penalty).'
-                      : 'Unanswered questions score zero.',
-                  style: const TextStyle(
-                      fontSize: 13, color: Color(0xFF6B7280)),
-                ),
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                unanswered > 0
+                    ? (model.negativeMarking
+                        ? 'Unanswered questions score zero (but carry no penalty).'
+                        : 'Unanswered questions score zero.')
+                    : 'You have answered every question. Ready to see your result?',
+                style: const TextStyle(
+                    fontSize: 13, color: Color(0xFF6B7280)),
               ),
+            ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Keep answering'),
+            child: const Text('Not yet'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.of(ctx).pop(true),
@@ -306,6 +352,22 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     final model = _model;
     final uid = _uid;
     if (model == null || uid == null || _submitting) return;
+    // A5: schedule re-check at submit — a blocked model never renders the quiz
+    // and its clock is paused, so nothing should reach here; but scoring and
+    // saving an attempt at a test the user was not allowed to take would be
+    // written to the database permanently. Never write a result for an
+    // unplayable model.
+    final block = _scheduleBlock(model);
+    if (block != null) {
+      _timer?.cancel();
+      _blinkTimer?.cancel();
+      if (!mounted) return;
+      showToast(context, '${block.title}. This attempt was not saved.',
+          ToastVariant.warning);
+      setState(() => _allowPop = true);
+      if (mounted) context.pop();
+      return;
+    }
     setState(() => _submitting = true);
     _timer?.cancel();
     _blinkTimer?.cancel();
@@ -313,8 +375,11 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     final score = scoreDailyTest(model, model.questions, _answers);
     final timeTaken =
         _startedAt == null ? 0 : DateTime.now().difference(_startedAt!).inSeconds;
+    // A4: the real doc id comes back from saveDailyTestResult — it identifies
+    // the completion marker and the activity-feed entry (no fabricated ids).
+    final String resultId;
     try {
-      await saveDailyTestResult(
+      resultId = await saveDailyTestResult(
         uid: uid,
         model: model,
         score: score,
@@ -327,14 +392,15 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
       showToast(context,
           'Could not save your result. Please try again.',
           ToastVariant.error);
-      _startQuestionTimer(_index);
+      // A6: resume from the remaining time — never restart the full clock.
+      _resumeQuestionTimer();
       return;
     }
     // In-memory flip so the landing card updates with no refetch.
     markDailyTestCompleted(
         uid,
         DailyTestResult(
-          id: '${model.id}__$uid',
+          id: resultId,
           modelId: model.id,
           modelName: model.displayName,
           courseId: model.courseId,
@@ -353,7 +419,7 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
       await addDailyTestActivity(
         uid,
         DailyTestActivity(
-          id: '${model.id}__${DateTime.now().millisecondsSinceEpoch}',
+          id: resultId,
           modelId: model.id,
           modelName: model.displayName,
           score: score.percent,
@@ -406,6 +472,116 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     }
   }
 
+  /// B1: React's quiz.tsx uses its own gradient header (model name +
+  /// subcourse subtitle), not the generic SubpageHeader. Full-bleed like
+  /// SubpageHeader: transparent status bar + its own top inset inside the
+  /// gradient, so it is the first body child with no outer top padding.
+  ///
+  /// The subtitle falls back to 'Daily Test' (React's own fallback) — the
+  /// Flutter profile carries only course ids, and no extra read is spent
+  /// resolving names for a subtitle.
+  Widget _quizHeader(bool isDark) {
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF2563EB),
+              Color(0xFF1D4ED8),
+              Color(0xFF0B1F5B),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(26),
+            bottomRight: Radius.circular(26),
+          ),
+        ),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Padding(
+            padding:
+                const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: _confirmLeave,
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Icon(Icons.arrow_back,
+                        size: 20, color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _model?.displayName ?? 'Daily Test',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        'Daily Test',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: Colors.white
+                                .withValues(alpha: 0.85),
+                            fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                GestureDetector(
+                  onTap: () => ThemeService.toggle(context),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    alignment: Alignment.center,
+                    child: Icon(
+                        isDark
+                            ? Icons.light_mode_outlined
+                            : Icons.dark_mode_outlined,
+                        size: 20,
+                        color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   // -- build -----------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
@@ -419,15 +595,12 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
         backgroundColor:
             isDark ? const Color(0xFF0B1120) : const Color(0xFFF5F6FA),
         body: SafeArea(
-          // SubpageHeader paints behind the status bar itself
-          // (React parity) — no top inset here or the header gets pushed down.
+          // The header paints behind the status bar itself (React parity) —
+          // no top inset here or the header gets pushed down.
           top: false,
           child: Column(
             children: [
-              SubpageHeader(
-                title: _model?.displayName ?? 'Daily Test',
-                onBackPress: _confirmLeave,
-              ),
+              _quizHeader(isDark),
               Expanded(child: _body(isDark)),
             ],
           ),
@@ -483,10 +656,12 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     final q = model.questions[_index];
     final total = model.questions.length;
     final isLast = _index == total - 1;
-    final category = dailyTestCategoryMeta(q.category.isNotEmpty
-        ? q.category
-        : model.category);
+    // B9: the category row shows only the question's own category — when it is
+    // empty the row is hidden (no fallback to the model category, like React).
+    final hasCategory = q.category.isNotEmpty;
     final warning = _qRemaining <= 5;
+    final timerColor =
+        warning ? const Color(0xFFDC2626) : const Color(0xFF2563EB);
 
     return Column(
       children: [
@@ -551,10 +726,12 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
-                            color: (warning
-                                    ? const Color(0xFFDC2626)
-                                    : const Color(0xFF2563EB))
+                            color: timerColor
                                 .withValues(alpha: 0.1),
+                            // B8: `${timerColor}55`-equivalent border (~33% alpha).
+                            border: Border.all(
+                                color: timerColor
+                                    .withValues(alpha: 0.33)),
                             borderRadius:
                                 BorderRadius.circular(999),
                           ),
@@ -563,17 +740,12 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.timer_outlined,
-                                  size: 13,
-                                  color: warning
-                                      ? const Color(0xFFDC2626)
-                                      : const Color(0xFF2563EB)),
+                                  size: 13, color: timerColor),
                               const SizedBox(width: 5),
                               Text(
-                                '${_qRemaining}s',
+                                _formatClock(_qRemaining),
                                 style: TextStyle(
-                                  color: warning
-                                      ? const Color(0xFFDC2626)
-                                      : const Color(0xFF2563EB),
+                                  color: timerColor,
                                   fontSize: 12,
                                   fontWeight: FontWeight.w800,
                                   fontFeatures: const [
@@ -585,25 +757,55 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
                           ),
                         ),
                       ),
+                      const Spacer(),
+                      // A7: per-question bookmark + report, mirroring React
+                      // quiz.tsx (BookmarkButton context "daily-test",
+                      // refId "${model.id}:$currentIndex"; ReportButton).
+                      _QuestionBookmarkButton(
+                        key: ValueKey('${model.id}:$_index'),
+                        uid: _uid ?? '',
+                        model: model,
+                        index: _index,
+                        isPro: _isPro,
+                      ),
+                      IconButton(
+                        onPressed: () =>
+                            context.push('/settings/report-problem'),
+                        icon: const Icon(Icons.flag_outlined,
+                            size: 20),
+                        color: isDark
+                            ? const Color(0xFF94A3B8)
+                            : const Color(0xFF6B7280),
+                        tooltip: 'Report',
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                            minWidth: 36, minHeight: 36),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Icon(Icons.sell_outlined,
-                          size: 13,
-                          color: isDark
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF6B7280)),
-                      const SizedBox(width: 6),
-                      Text(category.label,
-                          style: TextStyle(
-                              fontSize: 12,
-                              color: isDark
-                                  ? const Color(0xFF94A3B8)
-                                  : const Color(0xFF6B7280))),
-                    ],
-                  ),
+                  if (hasCategory) ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Icon(Icons.sell_outlined,
+                            size: 13,
+                            color: isDark
+                                ? const Color(0xFF94A3B8)
+                                : const Color(0xFF6B7280)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(q.category,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: isDark
+                                      ? const Color(0xFF94A3B8)
+                                      : const Color(0xFF6B7280))),
+                        ),
+                      ],
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Text(q.question,
                       style: const TextStyle(
@@ -742,6 +944,144 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Per-question bookmark toggle for the daily-test quiz — the Flutter
+/// equivalent of React's BookmarkButton (context "daily-test",
+/// refId "${model.id}:${index}"). Bookmarks live at users/{uid}/bookmarks
+/// with the same doc-id scheme as the Expo app (`daily-test__<ref>`), so the
+/// Bookmarks screen lists them without changes.
+class _QuestionBookmarkButton extends StatefulWidget {
+  final String uid;
+  final DailyTestModel model;
+  final int index;
+  final bool isPro;
+
+  const _QuestionBookmarkButton({
+    super.key,
+    required this.uid,
+    required this.model,
+    required this.index,
+    required this.isPro,
+  });
+
+  @override
+  State<_QuestionBookmarkButton> createState() =>
+      _QuestionBookmarkButtonState();
+}
+
+class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
+  static const _freeLimit = 15;
+  bool _saved = false;
+  bool _busy = false;
+
+  /// Mirrors React's bookmarkDocId(): `daily-test__<safeSegment(refId)>`.
+  String get _docId {
+    var ref = '${widget.model.id}:${widget.index}'
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    return 'daily-test__${ref.isEmpty ? 'item' : ref}';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  Future<void> _toggle() async {
+    if (_busy || widget.uid.isEmpty) return;
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final path = 'users/${widget.uid}/bookmarks/$_docId';
+      if (_saved) {
+        await FirestoreRest.deleteDocument(path, idToken: idToken);
+        if (!mounted) return;
+        setState(() {
+          _saved = false;
+          _busy = false;
+        });
+        showToast(context, 'Bookmark removed.', ToastVariant.info);
+        return;
+      }
+      final rows = await FirestoreRest.listDocuments(
+          'users/${widget.uid}/bookmarks',
+          idToken: idToken);
+      if (rows.length >= _freeLimit && !widget.isPro) {
+        if (!mounted) return;
+        setState(() => _busy = false);
+        showToast(context, 'Bookmark slots are full', ToastVariant.warning);
+        return;
+      }
+      final q = widget.model.questions[widget.index];
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'context': 'daily-test',
+          'kind': 'question',
+          'refId': '${widget.model.id}:${widget.index}',
+          'title': q.question,
+          'preview': q.explanation,
+          'sourceLabel': 'Daily Test',
+          'courseId': widget.model.courseId,
+          'subcourseId': widget.model.subcourseId,
+          'payload': {
+            'question': q.question,
+            'options': q.options,
+            'answerIndex': q.correctIndex,
+            'explanation': q.explanation,
+          },
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: idToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _busy = false;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return IconButton(
+      onPressed: _busy ? null : _toggle,
+      icon: Icon(_saved ? Icons.bookmark : Icons.bookmark_border,
+          size: 20),
+      color: _saved
+          ? const Color(0xFF2563EB)
+          : (isDark
+              ? const Color(0xFF94A3B8)
+              : const Color(0xFF6B7280)),
+      tooltip: _saved ? 'Remove bookmark' : 'Bookmark',
+      padding: EdgeInsets.zero,
+      constraints:
+          const BoxConstraints(minWidth: 36, minHeight: 36),
     );
   }
 }

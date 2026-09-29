@@ -11,13 +11,13 @@ enum DailyTestSlot { upcoming, today, missed, completed }
 String dailyTestSlotLabel(DailyTestSlot slot) {
   switch (slot) {
     case DailyTestSlot.upcoming:
-      return "UPCOMING";
+      return "UPCOMING TEST";
     case DailyTestSlot.today:
       return "TODAY'S TEST";
     case DailyTestSlot.missed:
-      return "MISSED";
+      return "MISSED TEST";
     case DailyTestSlot.completed:
-      return "COMPLETED";
+      return "COMPLETED TEST";
   }
 }
 
@@ -164,7 +164,7 @@ class DailyTestCard extends StatelessWidget {
                     : 'No neg. marking'),
           ];
 
-    final cta = _cta();
+    final cta = _cta(dateLabel);
     final ctaInk = cta.muted
         ? const Color.fromRGBO(255, 255, 255, 0.9)
         : cta.green
@@ -440,7 +440,7 @@ class DailyTestCard extends StatelessWidget {
         soft: true);
   }
 
-  _CtaData _cta() {
+  _CtaData _cta(String dateLabel) {
     if (_isMissed) {
       return const _CtaData(
           label: 'Missed - Locked',
@@ -454,6 +454,17 @@ class DailyTestCard extends StatelessWidget {
           icon: Icons.credit_card_outlined,
           onPress: onSubscribePress,
           muted: false);
+    }
+    // UPCOMING / DEMO — released but not yet open. The CTA shows the real
+    // release date and is deliberately not pressable (onPress: null), exactly
+    // like the React card. Placed BEFORE "completed" so a future-dated model
+    // never renders "View Result".
+    if (slot == DailyTestSlot.upcoming || demo) {
+      return _CtaData(
+          label: dateLabel.isNotEmpty ? 'Unlocks $dateLabel' : 'Unlocks soon',
+          icon: Icons.lock_outline,
+          onPress: null,
+          muted: true);
     }
     if (completed) {
       return _CtaData(
@@ -825,7 +836,7 @@ class DailyTestMiniCard extends StatelessWidget {
                               style: TextStyle(
                                   color: hasPremiumAccess
                                       ? const Color(0xFF16A34A)
-                                      : const Color(0xFFD97706),
+                                      : const Color(0xFFC2410C),
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700),
                             ),
@@ -875,7 +886,7 @@ class DailyTestMiniCard extends StatelessWidget {
     }
     if (locked) {
       return const Icon(Icons.diamond,
-          size: 16, color: Color(0xFFD97706));
+          size: 16, color: Color(0xFFC2410C));
     }
     if (slot == DailyTestSlot.missed) {
       return Icon(Icons.lock, size: 15, color: secondary);
@@ -888,8 +899,8 @@ class DailyTestMiniCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Rules dialog — "Check the rules before you begin", chips row, numbered rules,
-// "I understood (Start)" / "Not now". Returns true when the user confirms.
+// Rules dialog — "Test Rules" + model name, chips row, numbered rules,
+// "I understood (Start)" / "Cancel". Returns true when the user confirms.
 // ---------------------------------------------------------------------------
 
 Future<bool> showDailyTestRulesDialog(
@@ -906,14 +917,16 @@ Future<bool> showDailyTestRulesDialog(
   final chips = [
     _RuleChip(Icons.help_outline, '${model.questions.length} questions'),
     _RuleChip(Icons.timer_outlined,
-        '${model.perQuestionTimeSeconds}s/question'),
+        '${model.perQuestionTimeSeconds}s / question'),
     _RuleChip(Icons.hourglass_empty,
         formatDailyTestDuration(totalTestSeconds(model))),
     _RuleChip(
         model.negativeMarking
             ? Icons.remove_circle_outline
             : Icons.check_circle_outline,
-        model.negativeMarking ? 'Negative marking' : 'No negative marking'),
+        model.negativeMarking
+            ? '−${(model.negativeMarkPercent * 100).round()}% wrong'
+            : 'No negative marking'),
   ];
 
   return showDialog<bool>(
@@ -946,12 +959,29 @@ Future<bool> showDailyTestRulesDialog(
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      'Check the rules before you begin',
-                      style: TextStyle(
-                          color: text,
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Test Rules',
+                          style: TextStyle(
+                              color: text,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          model.modelName.isNotEmpty
+                              ? model.modelName
+                              : model.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: secondary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -1043,7 +1073,7 @@ Future<bool> showDailyTestRulesDialog(
                             borderRadius:
                                 BorderRadius.circular(12)),
                       ),
-                      child: const Text('Not now'),
+                      child: const Text('Cancel'),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -1083,15 +1113,93 @@ class _RuleChip {
   const _RuleChip(this.icon, this.label);
 }
 
-/// Shared "no test today" slim strip with a live countdown to midnight.
-class DailyTestNoTestStrip extends StatelessWidget {
-  final String countdown;
+/// Local midnight of a "YYYY-MM-DD" schedule key — the exact instant the
+/// daily-test schedule flips. Same as `new Date(y, m - 1, d)` in
+/// DailyTestNoTestCard.tsx.
+DateTime dailyTestDateFromKey(String key) {
+  final parts = key.split('-');
+  if (parts.length != 3) return DateTime.now();
+  final y = int.tryParse(parts[0]) ?? 0;
+  final m = int.tryParse(parts[1]) ?? 0;
+  final d = int.tryParse(parts[2]) ?? 0;
+  if (y == 0 || m == 0 || d == 0) return DateTime.now();
+  return DateTime(y, m, d);
+}
 
-  const DailyTestNoTestStrip({super.key, required this.countdown});
+/// "08h 42m 15s" / "2d 5h 30m" — port of formatCountdown in
+/// DailyTestNoTestCard.tsx.
+String formatDailyTestCountdown(int ms) {
+  final total = ms <= 0 ? 0 : ms ~/ 1000;
+  final d = total ~/ 86400;
+  final h = (total % 86400) ~/ 3600;
+  final m = (total % 3600) ~/ 60;
+  final s = total % 60;
+  String two(int v) => v.toString().padLeft(2, '0');
+  if (d > 0) return '${d}d ${h}h ${m}m';
+  return '${two(h)}h ${two(m)}m ${two(s)}s';
+}
+
+/// Shared "no test today" slim strip with a live countdown to the next
+/// scheduled test's local midnight. Owns its own 1s timer so only the strip
+/// rebuilds; the timer cancels itself at zero. Not rendered at all when
+/// nothing is queued — the caller hides it when nextDateKey is null.
+class DailyTestNoTestStrip extends StatefulWidget {
+  final String nextDateKey;
+  final String todayKey;
+
+  const DailyTestNoTestStrip(
+      {super.key, required this.nextDateKey, required this.todayKey});
+
+  @override
+  State<DailyTestNoTestStrip> createState() => _DailyTestNoTestStripState();
+}
+
+class _DailyTestNoTestStripState extends State<DailyTestNoTestStrip> {
+  Timer? _timer;
+  late int _targetMs;
+
+  @override
+  void initState() {
+    super.initState();
+    _targetMs =
+        dailyTestDateFromKey(widget.nextDateKey).millisecondsSinceEpoch;
+    _arm();
+  }
+
+  @override
+  void didUpdateWidget(DailyTestNoTestStrip oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.nextDateKey != widget.nextDateKey) {
+      _targetMs =
+          dailyTestDateFromKey(widget.nextDateKey).millisecondsSinceEpoch;
+      _arm();
+    }
+  }
+
+  void _arm() {
+    _timer?.cancel();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      // Cancel at zero: the countdown must not run forever on an old key.
+      if (_targetMs - DateTime.now().millisecondsSinceEpoch <= 0) {
+        _timer?.cancel();
+      }
+      setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final remaining = _targetMs - DateTime.now().millisecondsSinceEpoch;
+    final relative =
+        relativeDayLabel(widget.nextDateKey, widget.todayKey).toLowerCase();
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
@@ -1115,10 +1223,27 @@ class DailyTestNoTestStrip extends StatelessWidget {
                 size: 17, color: Color(0xFF2563EB)),
           ),
           const SizedBox(width: 10),
-          const Expanded(
-            child: Text(
-              'No test today — Next test unlocks tomorrow',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'No test today',
+                  style:
+                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  'Next test unlocks $relative · ${formatDateKeyShort(widget.nextDateKey)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: isDark
+                          ? const Color(0xFF94A3B8)
+                          : const Color(0xFF64748B)),
+                ),
+              ],
             ),
           ),
           Container(
@@ -1130,7 +1255,9 @@ class DailyTestNoTestStrip extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
-              countdown,
+              remaining > 0
+                  ? formatDailyTestCountdown(remaining)
+                  : 'Any moment now',
               style: const TextStyle(
                   color: Color(0xFF2563EB),
                   fontSize: 12,
@@ -1163,10 +1290,10 @@ class DailyTestHistoryCard extends StatelessWidget {
         isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
-
-    final d = DateTime.fromMillisecondsSinceEpoch(activity.completedAt);
-    final dateStr =
-        '${d.day} ${_monthName(d.month)} ${d.year}';
+    final pillBg =
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
+    const correctGreen = Color(0xFF16A34A);
+    const wrongRed = Color(0xFFDC2626);
 
     return InkWell(
       onTap: onTap,
@@ -1198,67 +1325,92 @@ class DailyTestHistoryCard extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Head: title + relative date under it, score ring at the end.
                 Row(
                   children: [
-                    Expanded(
-                      child: Text(
-                        activity.modelName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 15, fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                    Text(dateStr,
-                        style: TextStyle(
-                            color: secondary, fontSize: 12)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    _Ring(percent: activity.score, accent: accent),
-                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: accent.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              passed ? 'PASSED' : 'FAILED',
+                          Text(
+                            activity.modelName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(_formatWhen(activity.completedAt),
                               style: TextStyle(
-                                  color: accent,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 4,
-                            children: [
-                              _tag('${activity.totalQuestions} Qs',
-                                  secondary),
-                              _tag(
-                                  '${activity.correct} correct',
-                                  secondary),
-                              _tag(
-                                  formatDailyTestDuration(
-                                      activity.timeTakenSeconds),
-                                  secondary),
-                            ],
-                          ),
+                                  color: secondary, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                    _Ring(percent: activity.score, accent: accent),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                // Pills: verdict + question count + pass mark.
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    _pill(
+                      icon: passed
+                          ? Icons.emoji_events
+                          : Icons.refresh,
+                      label: passed ? 'PASSED' : 'FAILED',
+                      color: accent,
+                      bg: accent.withValues(alpha: 0.09),
+                    ),
+                    _pill(
+                      icon: Icons.layers_outlined,
+                      label: '${activity.totalQuestions} questions',
+                      color: secondary,
+                      bg: pillBg,
+                    ),
+                    if (activity.passPercent != null)
+                      _pill(
+                        icon: Icons.flag_outlined,
+                        label: 'Pass ${activity.passPercent}%',
+                        color: secondary,
+                        bg: pillBg,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: 1,
+                  color: isDark
+                      ? const Color(0xFF26314B)
+                      : const Color(0xFFF1F5F9),
+                ),
+                const SizedBox(height: 10),
+                // Detail tags with colored icons, chevron at the end.
+                Row(
+                  children: [
+                    Expanded(
+                      child: Wrap(
+                        spacing: 12,
+                        runSpacing: 6,
+                        children: [
+                          _tag(Icons.check_circle,
+                              '${activity.correct} correct', correctGreen),
+                          _tag(Icons.cancel,
+                              '${activity.incorrect} wrong', wrongRed),
+                          _tag(Icons.help,
+                              '${activity.skipped} skipped', secondary),
+                          _tag(
+                              Icons.access_time,
+                              formatDailyTestDuration(
+                                  activity.timeTakenSeconds),
+                              secondary),
                         ],
                       ),
                     ),
                     Icon(Icons.chevron_right,
-                        size: 18, color: secondary),
+                        size: 16, color: secondary),
                   ],
                 ),
               ],
@@ -1269,10 +1421,57 @@ class DailyTestHistoryCard extends StatelessWidget {
     );
   }
 
-  Widget _tag(String label, Color color) => Row(
+  /// "Today, 4:30 PM" / "Yesterday, 4:30 PM" / "15 Sep 2026" — port of
+  /// formatWhen in DailyTestHistoryCard.tsx.
+  String _formatWhen(int millis) {
+    if (millis <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(millis);
+    final now = DateTime.now();
+    final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final mm = d.minute.toString().padLeft(2, '0');
+    final time = '$h12:$mm ${d.hour < 12 ? 'AM' : 'PM'}';
+    final sameDay = d.year == now.year &&
+        d.month == now.month &&
+        d.day == now.day;
+    if (sameDay) return 'Today, $time';
+    final y = now.subtract(const Duration(days: 1));
+    final yesterday =
+        d.year == y.year && d.month == y.month && d.day == y.day;
+    if (yesterday) return 'Yesterday, $time';
+    return '${d.day} ${_monthName(d.month)} ${d.year}';
+  }
+
+  Widget _pill(
+          {required IconData icon,
+          required String label,
+          required Color color,
+          required Color bg}) =>
+      Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 5),
+            Text(label,
+                style: TextStyle(
+                    color: color,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+
+  Widget _tag(IconData icon, String label, Color color) => Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const SizedBox(width: 0),
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 4),
           Text(label, style: TextStyle(color: color, fontSize: 12)),
         ],
       );
@@ -1320,9 +1519,21 @@ class _Ring extends StatelessWidget {
               valueColor: AlwaysStoppedAnimation(accent),
             ),
           ),
-          Text('$percent%',
-              style:
-                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('$percent',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                      color: accent)),
+              Text('%',
+                  style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: accent)),
+            ],
+          ),
         ],
       ),
     );

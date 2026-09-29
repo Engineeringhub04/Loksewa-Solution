@@ -7,10 +7,12 @@
 library;
 
 import 'dart:convert';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
 import 'prefs_service.dart';
+import 'server_clock.dart';
 
 // ---------------------------------------------------------------------------
 // Firestore REST plumbing (returns doc IDs alongside fields)
@@ -173,21 +175,71 @@ class ExamRest {
       };
 
   /// Create a document with an auto-generated ID; returns the new doc ID.
+  ///
+  /// [serverTimestampFields] lists field paths that must be set to the real
+  /// Firestore server time (REQUEST_TIME), e.g. `createdAt`. The plain
+  /// createDocument endpoint cannot do server timestamps, so when the list is
+  /// non-empty the write goes through `:commit` with `updateTransforms` and a
+  /// client-generated ID (same 20-char alphabet Firestore uses).
   static Future<String> createDoc(
     String collectionPath,
-    Map<String, dynamic> data,
-  ) async {
+    Map<String, dynamic> data, {
+    List<String> serverTimestampFields = const [],
+  }) async {
     final token = await _token();
+    if (serverTimestampFields.isEmpty) {
+      final res = await http.post(
+        Uri.parse('$_base/$collectionPath'),
+        headers: _headers(token),
+        body:
+            json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
+      );
+      if (res.statusCode != 200) {
+        throw Exception(
+            'createDoc $collectionPath: ${res.statusCode} ${res.body}');
+      }
+      final body = json.decode(res.body) as Map<String, dynamic>;
+      return _docId('${body['name'] ?? ''}');
+    }
+    final id = _newDocId();
+    final fields =
+        Map<String, dynamic>.fromEntries(data.entries.map((e) => MapEntry(e.key, encode(e.value))));
+    for (final f in serverTimestampFields) {
+      fields.remove(f);
+    }
+    final body = {
+      'writes': [
+        {
+          'update': {
+            'name':
+                'projects/${AppConfig.firebaseProjectId}/databases/(default)/documents/$collectionPath/$id',
+            'fields': fields,
+          },
+          'updateTransforms': [
+            for (final f in serverTimestampFields)
+              {'fieldPath': f, 'setToServerValue': 'REQUEST_TIME'},
+          ],
+        },
+      ],
+    };
     final res = await http.post(
-      Uri.parse('$_base/$collectionPath'),
+      Uri.parse('$_base:commit'),
       headers: _headers(token),
-      body: json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
+      body: json.encode(body),
     );
     if (res.statusCode != 200) {
       throw Exception('createDoc $collectionPath: ${res.statusCode} ${res.body}');
     }
-    final body = json.decode(res.body) as Map<String, dynamic>;
-    return _docId('${body['name'] ?? ''}');
+    return id;
+  }
+
+  static final _rand = Random();
+
+  /// Client-side Firestore-style document ID (20 chars, same alphabet).
+  static String _newDocId() {
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    return List.generate(20, (_) => chars[_rand.nextInt(chars.length)]).join();
   }
 
   /// Full-document PATCH write (no update mask).
@@ -268,17 +320,27 @@ class UserProfile {
   final String name;
   final String? photoURL;
   final bool isPro;
+  final bool isPremium;
+  final DateTime? premiumExpiryDate;
   final String courseId;
   final String subcourseId;
+
+  /// Whether the raw `premiumExpiryDate` key was present and non-empty.
+  /// Needed to mirror React exactly: absent => active, present-but-unparseable
+  /// => expired.
+  final bool _hasPremiumExpiry;
 
   UserProfile({
     required this.uid,
     required this.name,
     required this.photoURL,
     required this.isPro,
+    required this.isPremium,
+    required this.premiumExpiryDate,
     required this.courseId,
     required this.subcourseId,
-  });
+    bool hasPremiumExpiry = false,
+  }) : _hasPremiumExpiry = hasPremiumExpiry;
 
   factory UserProfile.fromMap(String uid, Map<String, dynamic> m) {
     var isPro = _bool(m['isPro']);
@@ -288,15 +350,54 @@ class UserProfile {
     }
     final status = _str(m['subscriptionStatus']);
     if (status == 'active' || status == 'premium') isPro = true;
+    final expiryRaw = m['premiumExpiryDate'];
+    final hasExpiryValue =
+        expiryRaw != null && !(expiryRaw is String && expiryRaw.isEmpty);
     return UserProfile(
       uid: uid,
       name: _str(m['name'], _str(m['displayName'], 'Anonymous')),
       photoURL: m['photoURL'] is String ? m['photoURL'] as String : null,
       isPro: isPro,
+      isPremium: _bool(m['isPremium']),
+      premiumExpiryDate: _parseFlexibleDateTime(expiryRaw),
       courseId: _str(m['courseId']),
       subcourseId: _str(m['subcourseId']),
+      hasPremiumExpiry: hasExpiryValue,
     );
   }
+
+  /// Mirrors hasActivePremium() in profile.ts exactly:
+  /// `isPremium` must be true; an absent (or empty) expiry means active;
+  /// a present-but-unparseable expiry means expired; otherwise the expiry
+  /// must be in the future (server-corrected clock, so the device clock
+  /// cannot extend premium).
+  bool get hasActivePremium {
+    if (!isPremium) return false;
+    if (!_hasPremiumExpiry) return true;
+    final expiry = premiumExpiryDate;
+    if (expiry == null) return false;
+    return expiry.isAfter(ServerClock.nowUtc());
+  }
+}
+
+/// Parses a Firestore-decoded date that may be a DateTime (timestampValue),
+/// an ISO-8601 string, or epoch millis. Null when absent or unparseable.
+DateTime? _parseFlexibleDateTime(dynamic v) {
+  if (v == null) return null;
+  if (v is DateTime) return v;
+  if (v is num) {
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(v.toInt(), isUtc: true);
+    } catch (_) {
+      return null;
+    }
+  }
+  if (v is String) {
+    final s = v.trim();
+    if (s.isEmpty) return null;
+    return DateTime.tryParse(s);
+  }
+  return null;
 }
 
 Future<UserProfile?> fetchUserProfile(String uid) async {
@@ -1003,7 +1104,8 @@ class DailyTestModel {
         order: _num(m['order']),
       );
 
-  String get displayName => name.isNotEmpty ? name : modelName;
+  /// React parity: `model.modelName || model.name` — modelName wins.
+  String get displayName => modelName.isNotEmpty ? modelName : name;
 }
 
 class DailyTestResult {
@@ -1131,8 +1233,10 @@ DailyScore scoreDailyTest(
 }
 
 /// Kathmandu date key YYYY-MM-DD (NPT = UTC+5:45).
+/// Uses the server-corrected clock so winding the device clock cannot unlock
+/// future tests — mirrors todayDateKey()/serverNow() in dailyTest.ts.
 String todayDateKey() {
-  final kathmandu = DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 45));
+  final kathmandu = ServerClock.nowUtc().add(const Duration(hours: 5, minutes: 45));
   return '${kathmandu.year.toString().padLeft(4, '0')}-'
       '${kathmandu.month.toString().padLeft(2, '0')}-'
       '${kathmandu.day.toString().padLeft(2, '0')}';
@@ -1167,7 +1271,7 @@ Future<DailyTestResult?> fetchDailyTestResultForModel(
     'daily_test_results',
     parent: 'users/$uid',
     where: ExamRest.fieldFilter('modelId', 'EQUAL', modelId),
-    limit: 5,
+    limit: 1,
   );
   return docs.isEmpty ? null : DailyTestResult.fromMap(docs.first);
 }
@@ -1182,27 +1286,34 @@ Future<List<DailyTestResult>> fetchDailyTestResults(String uid) async {
   return docs.map(DailyTestResult.fromMap).toList();
 }
 
-Future<void> saveDailyTestResult({
+/// Saves a daily-test attempt. Returns the new result document's ID (React
+/// parity: saveDailyTestResult resolves the id). `createdAt` is a real
+/// Firestore server timestamp, never the device clock.
+Future<String> saveDailyTestResult({
   required String uid,
   required DailyTestModel model,
   required DailyScore score,
   required List<int> answers,
   required int timeTakenSeconds,
 }) async {
-  await ExamRest.createDoc('users/$uid/daily_test_results', {
-    'modelId': model.id,
-    'modelName': model.displayName,
-    'courseId': model.courseId,
-    'subcourseId': model.subcourseId,
-    'score': score.percent,
-    'totalQuestions': model.questions.length,
-    'correct': score.correct,
-    'incorrect': score.incorrect,
-    'skipped': score.skipped,
-    'timeTakenSeconds': timeTakenSeconds,
-    'answers': answers,
-    'createdAt': DateTime.now().toUtc(),
-  });
+  final id = await ExamRest.createDoc(
+    'users/$uid/daily_test_results',
+    {
+      'modelId': model.id,
+      'modelName': model.displayName,
+      'courseId': model.courseId,
+      'subcourseId': model.subcourseId,
+      'score': score.percent,
+      'totalQuestions': model.questions.length,
+      'correct': score.correct,
+      'incorrect': score.incorrect,
+      'skipped': score.skipped,
+      'timeTakenSeconds': timeTakenSeconds,
+      'answers': answers,
+    },
+    serverTimestampFields: const ['createdAt'],
+  );
+  return id;
 }
 
 // ---------------------------------------------------------------------------

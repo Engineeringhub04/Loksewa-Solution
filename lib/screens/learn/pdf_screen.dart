@@ -42,7 +42,11 @@ class PdfScreen extends StatefulWidget {
 class _PdfScreenState extends State<PdfScreen> {
   bool _fullscreen = false;
   bool _loading = true;
-  String? _error;
+  String? _error; // non-null => error state; the value is the hint message
+  bool _downloading = false;
+  int _dlReceived = 0;
+  int? _dlTotal;
+  int _lastProgressUi = 0;
   PdfControllerPinch? _pdfController;
   int _page = 1;
   int _totalPages = 0;
@@ -65,14 +69,47 @@ class _PdfScreenState extends State<PdfScreen> {
     return '${safe.isEmpty ? 'doc' : safe}.pdf';
   }
 
-  static Future<Uint8List> _download(String url) async {
-    final res =
-        await http.get(Uri.parse(url)).timeout(const Duration(seconds: 60));
-    if (res.statusCode != 200) {
-      throw Exception('download failed (${res.statusCode})');
+  /// Streams the PDF with live progress. Only the *connection* has a hard
+  /// timeout (30 s); the body itself may take as long as a slow network
+  /// needs — a stream stalled with no data for 90 s aborts as a timeout.
+  /// (The old pdf.js viewer rendered page 1 progressively; the native
+  /// renderer needs the whole file first, so on slow mobile data the user
+  /// must see progress instead of a blind spinner + 60 s cutoff.)
+  static Future<Uint8List> _downloadWithProgress(
+    String url,
+    void Function(int received, int? total) onProgress,
+  ) async {
+    final client = http.Client();
+    try {
+      final req = http.Request('GET', Uri.parse(url));
+      final res = await client.send(req).timeout(const Duration(seconds: 30));
+      if (res.statusCode != 200) {
+        throw Exception('download failed (${res.statusCode})');
+      }
+      final declared = res.contentLength;
+      final total = (declared != null && declared > 0) ? declared : null;
+      final chunks = <List<int>>[];
+      var received = 0;
+      await for (final chunk
+          in res.stream.timeout(const Duration(seconds: 90))) {
+        chunks.add(chunk);
+        received += chunk.length;
+        onProgress(received, total);
+      }
+      final out = Uint8List(received);
+      var offset = 0;
+      for (final c in chunks) {
+        out.setRange(offset, offset + c.length, c);
+        offset += c.length;
+      }
+      if (out.isEmpty) throw Exception('empty pdf');
+      return out;
+    } finally {
+      client.close();
     }
-    return res.bodyBytes;
   }
+
+  static String _mb(int bytes) => (bytes / 1048576).toStringAsFixed(1);
 
   @override
   void initState() {
@@ -85,6 +122,9 @@ class _PdfScreenState extends State<PdfScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _downloading = false;
+      _dlReceived = 0;
+      _dlTotal = null;
     });
     try {
       final tmp = await getTemporaryDirectory();
@@ -96,10 +136,21 @@ class _PdfScreenState extends State<PdfScreen> {
 
       // Download once; reuse the cached file afterwards.
       if (!file.existsSync() || file.lengthSync() == 0) {
+        setState(() => _downloading = true);
         final bytes = await (widget.downloadBytes != null
             ? widget.downloadBytes!(_uri)
-            : _download(_uri));
-        if (bytes.isEmpty) throw Exception('empty pdf');
+            : _downloadWithProgress(_uri, (received, total) {
+                if (!mounted) return;
+                // Throttle UI updates: chunks can arrive hundreds per
+                // second on fast networks.
+                final now = DateTime.now().millisecondsSinceEpoch;
+                _dlReceived = received;
+                _dlTotal = total;
+                if (now - _lastProgressUi < 150) return;
+                _lastProgressUi = now;
+                setState(() {});
+              }));
+        if (mounted) setState(() => _downloading = false);
         await file.writeAsBytes(bytes, flush: true);
       }
 
@@ -115,19 +166,28 @@ class _PdfScreenState extends State<PdfScreen> {
         _page = 1;
         _loading = false;
       });
+    } on TimeoutException {
+      await _failDownload('The download is taking too long on this '
+          'connection.\nPlease try again on a faster network.');
     } catch (_) {
-      // Drop a partial/corrupt download so retry starts clean.
-      try {
-        final tmp = await getTemporaryDirectory();
-        final f = File('${tmp.path}/pdf_cache/$_cacheName');
-        if (f.existsSync()) f.deleteSync();
-      } catch (_) {}
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = 'load';
-      });
+      await _failDownload('Please check your connection and try again.');
     }
+  }
+
+  /// Drops a partial/corrupt download so retry starts clean, then shows the
+  /// error state with the given hint.
+  Future<void> _failDownload(String hint) async {
+    try {
+      final tmp = await getTemporaryDirectory();
+      final f = File('${tmp.path}/pdf_cache/$_cacheName');
+      if (f.existsSync()) f.deleteSync();
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _downloading = false;
+      _error = hint;
+    });
   }
 
   @override
@@ -284,17 +344,64 @@ class _PdfScreenState extends State<PdfScreen> {
     );
   }
 
+  /// Download progress UI — shown instead of the blind spinner while the
+  /// PDF streams in. Matters on slow mobile data: the old pdf.js viewer
+  /// rendered page 1 progressively, the native renderer needs the whole
+  /// file first, so the user must see % + MB instead of nothing.
+  Widget _downloadProgress() {
+    final total = _dlTotal;
+    final progress = (total != null && total > 0)
+        ? (_dlReceived / total).clamp(0.0, 1.0)
+        : null;
+    final sizeLabel = total != null && total > 0
+        ? '${_mb(_dlReceived)} / ${_mb(total)} MB'
+        : '${_mb(_dlReceived)} MB downloaded';
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const PreloadingWidget(
+            tinted: false,
+            label: 'Downloading paper...',
+            hint: 'One-time download, then it opens instantly',
+          ),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              value: progress,
+              minHeight: 8,
+              backgroundColor: const Color(0xFFE2E8F0),
+              valueColor:
+                  const AlwaysStoppedAnimation<Color>(Color(0xFF2563EB)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            progress != null
+                ? '$sizeLabel  •  ${(progress * 100).toStringAsFixed(0)}%'
+                : sizeLabel,
+            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// In-app PDF body — native renderer (pdfx), no web viewer involved.
   Widget _body() {
     if (_loading) {
-      return const ColoredBox(
+      return ColoredBox(
         color: Colors.white,
         child: Center(
-          child: PreloadingWidget(
-            tinted: false,
-            label: 'Loading paper...',
-            hint: 'Preparing your pages',
-          ),
+          child: _downloading
+              ? _downloadProgress()
+              : const PreloadingWidget(
+                  tinted: false,
+                  label: 'Loading paper...',
+                  hint: 'Preparing your pages',
+                ),
         ),
       );
     }
@@ -316,11 +423,11 @@ class _PdfScreenState extends State<PdfScreen> {
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF0F172A))),
                 const SizedBox(height: 8),
-                const Text(
-                    'Please check your connection and try again.',
+                Text(
+                    _error!,
                     textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontSize: 13, color: Color(0xFF6B7280))),
+                    style: const TextStyle(
+                        fontSize: 13, color: Color(0xFF6B7280))),
                 const SizedBox(height: 16),
                 ElevatedButton(
                   onPressed: _openDocument,
@@ -355,7 +462,7 @@ class _PdfScreenState extends State<PdfScreen> {
       onDocumentError: (_) {
         if (mounted) {
           setState(() {
-            _error = 'load';
+            _error = 'Please check your connection and try again.';
             _loading = false;
           });
         }

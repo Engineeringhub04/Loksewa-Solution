@@ -4,12 +4,17 @@ import 'package:flutter/material.dart';
 
 /// Mirrors `src/components/Preloading.tsx` — the app-wide loading state.
 ///
-/// A soft breathing disc with two thin counter-rotating arcs (26% of each
-/// ring drawn, round caps), sitting IN the background rather than on a card,
-/// plus a semibold label and an optional dimmer hint line.
+/// iPhone-style loading indicator: a small 12-spoke activity spinner
+/// (spokes fade in sequence, ~1s per revolution) with the contextual label
+/// underneath in a subtle weight. The spinner is intentionally neutral grey
+/// like iOS — the "premium" feel comes from its minimalism, while the label
+/// keeps telling the user *what* is loading.
 ///
-/// Pass `tinted: false` on theme-coloured pages (accent becomes the theme
-/// primary); the default `true` uses the fixed dark leaderboard palette.
+/// Pass `tinted: false` on theme-coloured pages (spokes become theme grey);
+/// the default `true` uses white spokes for dark leaderboard-style surfaces.
+///
+/// The public API (label / hint / tinted) is unchanged, so every call site
+/// keeps working as before.
 class PreloadingWidget extends StatefulWidget {
   final String label;
   final String? hint;
@@ -27,62 +32,39 @@ class PreloadingWidget extends StatefulWidget {
 }
 
 class _PreloadingWidgetState extends State<PreloadingWidget>
-    with TickerProviderStateMixin {
-  late final AnimationController _outer;
-  late final AnimationController _inner;
-  late final AnimationController _breathe;
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
 
   @override
   void initState() {
     super.initState();
-    // Linear easing: the loops restart at 0 every lap, so any ease would
-    // stutter once per revolution.
-    _outer = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1150))
+    // One revolution per second, like the iOS activity indicator.
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1000))
       ..repeat();
-    // Own clock: slower and counter-rotating.
-    _inner = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1750))
-      ..repeat();
-    _breathe = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 2800))
-      ..repeat(reverse: true);
   }
 
   @override
   void dispose() {
-    _outer.dispose();
-    _inner.dispose();
-    _breathe.dispose();
+    _c.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final primary =
-        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
 
-    // tinted=false → theme primary + themed text on the app background.
-    final Color accent = widget.tinted
-        ? const Color(0xFF22C55E)
-        : primary;
-    final Color text = widget.tinted
+    // Neutral iOS-grey spokes; white on the dark tinted surfaces.
+    final Color spokeBase = widget.tinted
         ? Colors.white
         : (isDark
-            ? const Color(0xFFF1F5F9)
-            : const Color(0xFF0F172A));
+            ? const Color(0xFF94A3B8)
+            : const Color(0xFF64748B));
     final Color textDim = widget.tinted
         ? Colors.white70
         : (isDark
             ? const Color(0xFF94A3B8)
             : const Color(0xFF64748B));
-    final Color haloBg = widget.tinted
-        ? Colors.white.withValues(alpha: 0.07)
-        : primary.withValues(alpha: 0.06);
-    final Color haloBorder = widget.tinted
-        ? Colors.white.withValues(alpha: 0.16)
-        : primary.withValues(alpha: 0.16);
 
     return Center(
       child: Padding(
@@ -91,37 +73,26 @@ class _PreloadingWidgetState extends State<PreloadingWidget>
           mainAxisSize: MainAxisSize.min,
           children: [
             AnimatedBuilder(
-              animation:
-                  Listenable.merge([_outer, _inner, _breathe]),
-              builder: (context, _) {
-                final b = _breathe.value; // 0..1..0
-                return SizedBox(
-                  width: 108,
-                  height: 108,
-                  child: CustomPaint(
-                    painter: _RingsPainter(
-                      accent: accent,
-                      haloBg: haloBg,
-                      haloBorder: haloBorder,
-                      haloOpacity: 0.5 + b * 0.5,
-                      haloScale: 0.96 + b * 0.06,
-                      outerTurns: _outer.value,
-                      innerTurns: _inner.value,
-                    ),
-                  ),
-                );
-              },
+              animation: _c,
+              builder: (context, _) => SizedBox(
+                width: 32,
+                height: 32,
+                child: CustomPaint(
+                  painter:
+                      _SpokesPainter(progress: _c.value, color: spokeBase),
+                ),
+              ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             Text(
               widget.label,
               textAlign: TextAlign.center,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: text),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: textDim),
             ),
             if (widget.hint != null) ...[
               const SizedBox(height: 6),
@@ -140,75 +111,41 @@ class _PreloadingWidgetState extends State<PreloadingWidget>
   }
 }
 
-class _RingsPainter extends CustomPainter {
-  final Color accent;
-  final Color haloBg;
-  final Color haloBorder;
-  final double haloOpacity;
-  final double haloScale;
-  final double outerTurns;
-  final double innerTurns;
+/// iOS-style activity indicator: 12 rounded spokes; the head spoke is fully
+/// opaque and the trail fades behind it, rotating once per second.
+class _SpokesPainter extends CustomPainter {
+  final double progress; // 0..1, one revolution
+  final Color color;
 
-  static const _stroke = 3.5;
-  static const _arcFraction = 0.26;
+  static const int _spokes = 12;
 
-  const _RingsPainter({
-    required this.accent,
-    required this.haloBg,
-    required this.haloBorder,
-    required this.haloOpacity,
-    required this.haloScale,
-    required this.outerTurns,
-    required this.innerTurns,
-  });
+  const _SpokesPainter({required this.progress, required this.color});
 
   @override
   void paint(Canvas canvas, Size size) {
     final c = Offset(size.width / 2, size.height / 2);
+    final outer = size.width / 2;
+    final inner = outer * 0.55;
+    final head = (progress * _spokes) % _spokes;
 
-    // Breathing halo disc.
-    canvas.drawCircle(
-      c,
-      54 * haloScale,
-      Paint()
-        ..color = haloBg.withValues(
-            alpha: haloBg.a * haloOpacity / 1.0),
-    );
-    canvas.drawCircle(
-      c,
-      54 * haloScale,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = haloBorder.withValues(
-            alpha: haloBorder.a * haloOpacity),
-    );
-
-    void ring(double diameter, double turns, double opacity) {
-      final r = (diameter - _stroke) / 2;
-      final rect = Rect.fromCircle(center: c, radius: r);
-      // Start at the top (-90°) like the SVG circle.
-      final start = -math.pi / 2 + turns * 2 * math.pi;
-      canvas.drawArc(
-        rect,
-        start,
-        2 * math.pi * _arcFraction,
-        false,
+    for (var i = 0; i < _spokes; i++) {
+      // 0 = head (newest), growing older around the dial.
+      final age = (head - i) % _spokes;
+      final alpha = 0.18 + 0.82 * (1 - age / _spokes);
+      final a = -math.pi / 2 + i * 2 * math.pi / _spokes;
+      final dir = Offset(math.cos(a), math.sin(a));
+      canvas.drawLine(
+        c + dir * inner,
+        c + dir * outer,
         Paint()
-          ..color = accent.withValues(alpha: opacity)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = _stroke
+          ..color = color.withValues(alpha: alpha)
+          ..strokeWidth = 3
           ..strokeCap = StrokeCap.round,
       );
     }
-
-    ring(66, outerTurns, 1.0);
-    ring(44, -innerTurns, 0.45);
   }
 
   @override
-  bool shouldRepaint(_RingsPainter old) =>
-      old.outerTurns != outerTurns ||
-      old.innerTurns != innerTurns ||
-      old.haloOpacity != haloOpacity;
+  bool shouldRepaint(_SpokesPainter old) =>
+      old.progress != progress || old.color != color;
 }

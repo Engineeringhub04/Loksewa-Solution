@@ -61,6 +61,10 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   bool _showLimit = false;
   bool _showWaiting = false;
   bool _showLeaveConfirm = false;
+
+  /// True while any popup modal is open — the system back button then
+  /// dismisses the popup instead of leaving the page.
+  bool get _dialogOpen => _showLimit || _showWaiting || _showLeaveConfirm;
   bool _hasSpecificAccess = false;
   bool _profilePremium = false;
   // +1 when moving to the next question, -1 for previous — drives the
@@ -363,8 +367,21 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     // barrier dims the header and the bottom bar too — a Stack overlay inside
     // the body would leave the header bright and leak background slivers at
     // its curved corners in light mode.
-    return Stack(
-      children: [
+    return PopScope(
+      canPop: !_dialogOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          if (_showLeaveConfirm) {
+            setState(() => _showLeaveConfirm = false);
+          } else if (_showWaiting) {
+            setState(() => _showWaiting = false);
+          } else if (_showLimit) {
+            setState(() => _showLimit = false);
+          }
+        }
+      },
+      child: Stack(
+        children: [
         Scaffold(
           backgroundColor: palette.background,
           body: Column(
@@ -397,7 +414,8 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           Positioned.fill(child: _waitingDialog(palette)),
         if (_showLeaveConfirm)
           Positioned.fill(child: _leaveDialog(palette)),
-      ],
+        ],
+      ),
     );
   }
 
@@ -987,6 +1005,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     required ExpoPalette palette,
     required Color accent,
     required IconData icon,
+    required String tagline,
     required String title,
     required String message,
     Widget? bodyExtra,
@@ -1010,7 +1029,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
               constraints: const BoxConstraints(maxWidth: 340),
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(30),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.3),
@@ -1020,7 +1039,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                   ],
                 ),
                 child: ClipRRect(
-                  borderRadius: BorderRadius.circular(26),
+                  borderRadius: BorderRadius.circular(30),
                   child: Container(
                     color: palette.surface,
                     child: Column(
@@ -1028,10 +1047,8 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                       crossAxisAlignment:
                           CrossAxisAlignment.stretch,
                       children: [
-                        // Gradient cap.
+                        // Gradient header — FeedSpring onboarding style.
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 18),
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [accent, darker],
@@ -1041,12 +1058,13 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                           ),
                           child: Stack(
                             children: [
+                              // Decorative white circles.
                               Positioned(
-                                top: -34,
-                                right: -18,
+                                top: -50,
+                                right: -40,
                                 child: Container(
-                                  width: 110,
-                                  height: 110,
+                                  width: 120,
+                                  height: 120,
                                   decoration: BoxDecoration(
                                     shape: BoxShape.circle,
                                     color: Colors.white
@@ -1054,88 +1072,288 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                                   ),
                                 ),
                               ),
-                              Row(
-                                children: [
-                                  Container(
-                                    width: 46,
-                                    height: 46,
-                                    decoration: BoxDecoration(
-                                      borderRadius:
-                                          BorderRadius.circular(15),
-                                      color: Colors.white
-                                          .withValues(alpha: 0.2),
-                                    ),
-                                    child: Icon(icon,
-                                        size: 24,
-                                        color: Colors.white),
+                              Positioned(
+                                bottom: -46,
+                                left: -38,
+                                child: Container(
+                                  width: 100,
+                                  height: 100,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.white
+                                        .withValues(alpha: 0.14),
                                   ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Text(
+                                ),
+                              ),
+                              // Close X, top-right.
+                              Positioned(
+                                top: 12,
+                                right: 12,
+                                child: Material(
+                                  color: Colors.white
+                                      .withValues(alpha: 0.22),
+                                  borderRadius:
+                                      BorderRadius.circular(16),
+                                  child: InkWell(
+                                    borderRadius:
+                                        BorderRadius.circular(16),
+                                    onTap: onCancel,
+                                    child: const SizedBox(
+                                      width: 32,
+                                      height: 32,
+                                      child: Icon(Icons.close,
+                                          size: 16,
+                                          color: Colors.white),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              // Centered column: icon tile, tagline pill, title.
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    28, 30, 28, 26),
+                                child: Column(
+                                  children: [
+                                    Container(
+                                      width: 56,
+                                      height: 56,
+                                      decoration: BoxDecoration(
+                                        borderRadius:
+                                            BorderRadius.circular(
+                                                18),
+                                        color: Colors.white
+                                            .withValues(
+                                                alpha: 0.22),
+                                      ),
+                                      child: Icon(icon,
+                                          size: 28,
+                                          color: Colors.white),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Container(
+                                      padding: const EdgeInsets
+                                          .symmetric(
+                                          horizontal: 12,
+                                          vertical: 6),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius:
+                                            BorderRadius.circular(
+                                                999),
+                                      ),
+                                      child: Text(
+                                        tagline,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight:
+                                              FontWeight.bold,
+                                          letterSpacing: 0.8,
+                                          color: darker,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Text(
                                       title,
-                                      maxLines: 2,
-                                      overflow:
-                                          TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
                                       style: const TextStyle(
-                                        fontSize: 16,
+                                        fontSize: 19,
                                         fontWeight: FontWeight.bold,
                                         color: Colors.white,
                                         height: 1.3,
                                       ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ],
                           ),
                         ),
                         // Body.
-                        Padding(
-                          padding: const EdgeInsets.all(16),
+                        Container(
+                          color: palette.surface,
+                          padding: const EdgeInsets.fromLTRB(
+                              20, 18, 20, 8),
                           child: Column(
                             crossAxisAlignment:
                                 CrossAxisAlignment.stretch,
                             children: [
                               Text(
                                 message,
+                                textAlign: TextAlign.center,
                                 style: TextStyle(
-                                  fontSize: 13,
-                                  height: 1.5,
+                                  fontSize: 13.5,
+                                  height: 1.55,
                                   color: palette.textSecondary,
                                 ),
                               ),
                               if (bodyExtra != null) ...[
-                                const SizedBox(height: 8),
+                                const SizedBox(height: 10),
                                 bodyExtra,
                               ],
                             ],
                           ),
                         ),
-                        // Footer.
+                        // Buttons — stacked full-width.
                         Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            border: Border(
-                              top: BorderSide(
-                                color: palette.divider,
-                                width: 0.5,
-                              ),
-                            ),
-                          ),
-                          child: Row(
+                          color: palette.surface,
+                          padding: const EdgeInsets.fromLTRB(
+                              20, 10, 20, 20),
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.stretch,
                             children: [
+                              // Cancel.
                               if (cancelLabel != null) ...[
-                                Expanded(
-                                  flex: 10,
-                                  child: _ghostButton(palette,
-                                      cancelLabel, onCancel),
+                                Material(
+                                  color: Colors.transparent,
+                                  borderRadius:
+                                      BorderRadius.circular(16),
+                                  child: InkWell(
+                                    borderRadius:
+                                        BorderRadius.circular(
+                                            16),
+                                    onTap: onCancel,
+                                    child: Container(
+                                      padding: const EdgeInsets
+                                          .symmetric(
+                                          vertical: 14),
+                                      decoration: BoxDecoration(
+                                        color: isDark
+                                            ? Colors.white.withValues(
+                                                alpha: 0.06)
+                                            : Colors.white,
+                                        border: Border.all(
+                                            color:
+                                                palette.border,
+                                            width: 1.5),
+                                        borderRadius:
+                                            BorderRadius.circular(
+                                                16),
+                                        boxShadow: isDark
+                                            ? null
+                                            : [
+                                                BoxShadow(
+                                                  color: Colors
+                                                      .black
+                                                      .withValues(
+                                                          alpha:
+                                                              0.06),
+                                                  blurRadius: 8,
+                                                  offset:
+                                                      const Offset(
+                                                          0, 3),
+                                                ),
+                                              ],
+                                      ),
+                                      child: Text(
+                                        cancelLabel,
+                                        textAlign:
+                                            TextAlign.center,
+                                        style: TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight:
+                                                FontWeight.bold,
+                                            color: palette
+                                                .textPrimary),
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                                const SizedBox(width: 8),
                               ],
-                              Expanded(
-                                flex: 14,
-                                child: _confirmButton(accent, darker,
-                                    confirmLabel, confirmIcon, onConfirm),
+                                const SizedBox(height: 10),
+                              // Confirm.
+                              Material(
+                                color: Colors.transparent,
+                                borderRadius:
+                                    BorderRadius.circular(16),
+                                child: InkWell(
+                                  borderRadius:
+                                      BorderRadius.circular(16),
+                                  onTap: onConfirm,
+                                  child: Container(
+                                    padding:
+                                        const EdgeInsets.symmetric(
+                                            vertical: 15),
+                                    decoration: BoxDecoration(
+                                      borderRadius:
+                                          BorderRadius.circular(
+                                              16),
+                                      gradient: LinearGradient(
+                                        colors: [
+                                          accent,
+                                          darker
+                                        ],
+                                        begin:
+                                            Alignment.centerLeft,
+                                        end:
+                                            Alignment.centerRight,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: accent.withValues(
+                                              alpha: 0.4),
+                                          blurRadius: 12,
+                                          offset: const Offset(
+                                              0, 6),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      alignment:
+                                          Alignment.center,
+                                      children: [
+                                        Row(
+                                          mainAxisSize:
+                                              MainAxisSize.min,
+                                          children: [
+                                            if (confirmIcon !=
+                                                null) ...[
+                                              Icon(confirmIcon,
+                                                  size: 18,
+                                                  color: Colors
+                                                      .white),
+                                              const SizedBox(
+                                                  width: 8),
+                                            ],
+                                            Flexible(
+                                              child: Text(
+                                                confirmLabel,
+                                                textAlign: TextAlign
+                                                    .center,
+                                                style: const TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight:
+                                                        FontWeight
+                                                            .bold,
+                                                    color: Colors
+                                                        .white),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Positioned(
+                                          right: 12,
+                                          child: Container(
+                                            width: 28,
+                                            height: 28,
+                                            decoration:
+                                                const BoxDecoration(
+                                              shape:
+                                                  BoxShape.circle,
+                                              color: Colors.white,
+                                            ),
+                                            child: Icon(
+                                              Icons.arrow_forward,
+                                              size: 16,
+                                              color: darker,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                             ],
                           ),
@@ -1152,81 +1370,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     );
   }
 
-  Widget _ghostButton(
-      ExpoPalette palette, String label, VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 13),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            border: Border.all(color: palette.border, width: 1.5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: palette.textSecondary),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _confirmButton(Color accent, Color darker, String label,
-      IconData? icon, VoidCallback onTap) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(
-              vertical: 14, horizontal: 8),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            gradient: LinearGradient(
-              colors: [accent, darker],
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 16, color: Colors.white),
-                const SizedBox(width: 7),
-              ],
-              Flexible(
-                child: Text(
-                  label,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _limitDialog(ExpoPalette palette) => _appDialog(
         palette: palette,
         accent: const Color(0xFFD97706),
         icon: Icons.diamond,
+        tagline: 'Daily Limit',
         title: 'Your Daily Practice limit is reached',
         message:
             'You have completed today\u2019s practice limit for this chapter.',
@@ -1250,6 +1398,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         palette: palette,
         accent: const Color(0xFF2563EB),
         icon: Icons.done_all,
+        tagline: 'All Complete',
         title: 'All Available Questions Completed',
         message:
             'You have practiced all currently available questions for this premium chapter. New questions will appear when they are uploaded.',
@@ -1263,6 +1412,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         palette: palette,
         accent: const Color(0xFF2563EB),
         icon: Icons.pause_circle_outline,
+        tagline: 'Pause Practice',
         title: 'Pause Your Progress?',
         message:
             'Your completed answers are safely stored. You can return whenever you are ready.',

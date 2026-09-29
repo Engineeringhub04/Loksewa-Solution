@@ -184,111 +184,127 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     context.push('$route?$qs');
   }
 
+  /// True while the premium gate or the mode bottom-sheet is on screen.
+  /// The phone back button closes those instead of leaving the page.
+  bool get _overlayOpen => _premiumChapter != null || _sheetChapter != null;
+
   @override
   Widget build(BuildContext context) {
     // The overlays sit ABOVE the whole page (header included) so the dim
     // barrier covers the full screen — otherwise the header's 26px bottom
     // curve would reveal bright white slivers against the dimmed content
     // in light mode.
-    return Scaffold(
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              SubpageHeader(
-                title: 'Chapter',
-                actions: [
-                  _LanguagePill(
-                    ne: _ne,
-                    onToggle: () => setState(() => _ne = !_ne),
-                  ),
-                ],
-              ),
-              Expanded(
-                child: FutureBuilder<_ChapterPage>(
-                  future: _future,
-                  builder: (context, snap) {
-                    if (snap.connectionState == ConnectionState.waiting) {
-                      return const Center(
-                          child: CircularProgressIndicator());
-                    }
-                    if (snap.hasError) {
-                      return Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
+    return PopScope(
+      canPop: !_overlayOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          if (_sheetChapter != null) {
+            _dismissSheet();
+          } else if (_premiumChapter != null) {
+            setState(() => _premiumChapter = null);
+          }
+        }
+      },
+      child: Scaffold(
+          body: Stack(
+          children: [
+            Column(
+              children: [
+                SubpageHeader(
+                  title: 'Chapter',
+                  actions: [
+                    _LanguagePill(
+                      ne: _ne,
+                      onToggle: () => setState(() => _ne = !_ne),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: FutureBuilder<_ChapterPage>(
+                    future: _future,
+                    builder: (context, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                            child: CircularProgressIndicator());
+                      }
+                      if (snap.hasError) {
+                        return Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('Failed to load chapters.'),
+                              const SizedBox(height: 8),
+                              ElevatedButton(
+                                onPressed: _reload,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final d = snap.data!;
+                      return RefreshIndicator(
+                        onRefresh: () async => _reload(),
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
                           children: [
-                            const Text('Failed to load chapters.'),
-                            const SizedBox(height: 8),
-                            ElevatedButton(
-                              onPressed: _reload,
-                              child: const Text('Retry'),
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                  left: 4, bottom: 8),
+                              child: Text(
+                                d.subjectName,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurface
+                                      .withValues(alpha: 0.6),
+                                ),
+                              ),
                             ),
+                            StaggerEntrance(
+                              delayMs: 0,
+                              child: ChapterSummaryCard(
+                                subjectName: d.subjectName,
+                                chapters: d.chapters,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            _listHeader(context, d),
+                            const SizedBox(height: 8),
+                            if (d.chapters.isEmpty)
+                              const Padding(
+                                padding: EdgeInsets.all(32),
+                                child: Center(
+                                    child: Text(
+                                        'No chapters found for this subject.',
+                                        style: TextStyle(
+                                            color: Colors.grey))),
+                              )
+                            else
+                              ...d.chapters.asMap().entries.map((e) =>
+                                  StaggerEntrance(
+                                    delayMs:
+                                        (e.key > 8 ? 8 : e.key) * 60,
+                                    child: _chapterCard(
+                                        context, e.value, d),
+                                  )),
+                            const SizedBox(height: 32),
                           ],
                         ),
                       );
-                    }
-                    final d = snap.data!;
-                    return RefreshIndicator(
-                      onRefresh: () async => _reload(),
-                      child: ListView(
-                        padding: const EdgeInsets.all(16),
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(
-                                left: 4, bottom: 8),
-                            child: Text(
-                              d.subjectName,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurface
-                                    .withValues(alpha: 0.6),
-                              ),
-                            ),
-                          ),
-                          StaggerEntrance(
-                            delayMs: 0,
-                            child: ChapterSummaryCard(
-                              subjectName: d.subjectName,
-                              chapters: d.chapters,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _listHeader(context, d),
-                          const SizedBox(height: 8),
-                          if (d.chapters.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.all(32),
-                              child: Center(
-                                  child: Text(
-                                      'No chapters found for this subject.',
-                                      style: TextStyle(
-                                          color: Colors.grey))),
-                            )
-                          else
-                            ...d.chapters.asMap().entries.map((e) =>
-                                StaggerEntrance(
-                                  delayMs:
-                                      (e.key > 8 ? 8 : e.key) * 60,
-                                  child: _chapterCard(
-                                      context, e.value, d),
-                                )),
-                          const SizedBox(height: 32),
-                        ],
-                      ),
-                    );
-                  },
+                    },
+                  ),
                 ),
-              ),
-            ],
-          ),
-          if (_page != null && _premiumChapter != null)
-            _gateDialog(context, _page!, _premiumChapter!),
-          if (_page != null && _sheetChapter != null)
-            _modeSheet(context, _page!, _sheetChapter!),
-        ],
+              ],
+            ),
+            if (_page != null && _premiumChapter != null)
+              _gateDialog(context, _page!, _premiumChapter!),
+            if (_page != null && _sheetChapter != null)
+              _modeSheet(context, _page!, _sheetChapter!),
+          ],
+        ),
       ),
     );
   }

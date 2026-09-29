@@ -224,147 +224,170 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
   List<Map<String, dynamic>> _allChapters(_UnitPage d) =>
       d.tracks.expand((t) => t.chapters).toList();
 
+  /// True while the premium gate or the mode bottom-sheet is on screen.
+  /// The phone back button closes those instead of leaving the page.
+  bool get _overlayOpen => _premiumChapter != null || _sheetChapter != null;
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              const SubpageHeader(title: 'Units'),
-              Expanded(
-                child: FutureBuilder<_UnitPage>(
-                  future: _future,
-                  builder: (context, snap) {
-                    if (snap.connectionState == ConnectionState.waiting) {
-                      return const PreloadingWidget(
-                        tinted: false,
-                        label: 'Loading Units...',
-                      );
-                    }
-                    if (snap.hasError) {
-                      return Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text('Failed to load units.'),
-                            const SizedBox(height: 8),
-                            ElevatedButton(
-                              onPressed: _reload,
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      );
-                    }
-                    final d = snap.data!;
-                    final all = _allChapters(d);
-                    if (all.isEmpty) {
+    return PopScope(
+      canPop: !_overlayOpen,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) {
+          if (_sheetChapter != null) {
+            _dismissSheet();
+          } else if (_premiumChapter != null) {
+            setState(() => _premiumChapter = null);
+          }
+        }
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            Column(
+              children: [
+                const SubpageHeader(title: 'Units'),
+                Expanded(
+                  child: FutureBuilder<_UnitPage>(
+                    future: _future,
+                    builder: (context, snap) {
+                      if (snap.connectionState == ConnectionState.waiting) {
+                        return const PreloadingWidget(
+                          tinted: false,
+                          label: 'Loading Units...',
+                        );
+                      }
+                      if (snap.hasError) {
+                        return Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Text('Failed to load units.'),
+                              const SizedBox(height: 8),
+                              ElevatedButton(
+                                onPressed: _reload,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final d = snap.data!;
+                      final all = _allChapters(d);
+                      if (all.isEmpty) {
+                        return RefreshIndicator(
+                          onRefresh: () async => _reload(),
+                          child: ListView(
+                            padding: const EdgeInsets.all(16),
+                            children: const [
+                              Padding(
+                                padding: EdgeInsets.all(32),
+                                child: Center(
+                                    child: Text(
+                                        'No units or chapters found for this subject.',
+                                        style: TextStyle(color: Colors.grey))),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
                       return RefreshIndicator(
                         onRefresh: () async => _reload(),
-                        child: ListView(
-                          padding: const EdgeInsets.all(16),
-                          children: const [
-                            Padding(
-                              padding: EdgeInsets.all(32),
-                              child: Center(
-                                  child: Text(
-                                      'No units or chapters found for this subject.',
-                                      style: TextStyle(color: Colors.grey))),
+                        child: CustomScrollView(
+                          controller: _scrollController,
+                          slivers: [
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 4, bottom: 8),
+                                      child: Text(
+                                        d.subjectName,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withValues(alpha: 0.6),
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    _summaryCard(context, d, all),
+                                    const SizedBox(height: 16),
+                                  ],
+                                ),
+                              ),
+                            ),
+                            SliverPersistentHeader(
+                              pinned: true,
+                              delegate: _ChipsHeaderDelegate(
+                                child: _trackChips(context, d, all),
+                              ),
+                            ),
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                                child: _listHeader(context, d, all),
+                              ),
+                            ),
+                            SliverToBoxAdapter(
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                    16, 8, 16, 48),
+                                child: _selectedTrack == 'all'
+                                    ? Column(
+                                        children: d.tracks
+                                            .asMap()
+                                            .entries
+                                            .map((e) => _StaggeredReveal(
+                                                  index: e.key,
+                                                  animationKey:
+                                                      'all-${d.tracks.length}',
+                                                  child: _unitCard(
+                                                      context, e.value, d),
+                                                ))
+                                            .toList(),
+                                      )
+                                    : Column(
+                                        children: _selectedTrackChapters(d)
+                                            .asMap()
+                                            .entries
+                                            .map((e) => _StaggeredReveal(
+                                                  index: e.key,
+                                                  animationKey: _selectedTrack,
+                                                  child: _chapterCard(
+                                                      context, e.value, d),
+                                                ))
+                                            .toList(),
+                                      ),
+                              ),
                             ),
                           ],
                         ),
                       );
-                    }
-                    return RefreshIndicator(
-                      onRefresh: () async => _reload(),
-                      child: CustomScrollView(
-                        controller: _scrollController,
-                        slivers: [
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                        left: 4, bottom: 8),
-                                    child: Text(
-                                      d.subjectName,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w700,
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurface
-                                            .withValues(alpha: 0.6),
-                                      ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  _summaryCard(context, d, all),
-                                  const SizedBox(height: 16),
-                                ],
-                              ),
-                            ),
-                          ),
-                          SliverPersistentHeader(
-                            pinned: true,
-                            delegate: _ChipsHeaderDelegate(
-                              child: _trackChips(context, d, all),
-                            ),
-                          ),
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding:
-                                  const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                              child: _listHeader(context, d, all),
-                            ),
-                          ),
-                          SliverToBoxAdapter(
-                            child: Padding(
-                              padding: const EdgeInsets.fromLTRB(
-                                  16, 8, 16, 48),
-                              child: _selectedTrack == 'all'
-                                  ? Column(
-                                      children: d.tracks
-                                          .map((t) =>
-                                              _unitCard(context, t, d))
-                                          .toList(),
-                                    )
-                                  : Column(
-                                      children: _selectedTrackChapters(d)
-                                          .asMap()
-                                          .entries
-                                          .map((e) => _StaggeredReveal(
-                                                index: e.key,
-                                                animationKey: _selectedTrack,
-                                                child: _chapterCard(
-                                                    context, e.value, d),
-                                              ))
-                                          .toList(),
-                                    ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
+                    },
+                  ),
                 ),
-              ),
-            ],
-          ),
-          // Full-screen overlays above everything (including the header),
-          // so the dim barrier never leaves white slivers at the
-          // header's curved corners — same as the chapter page.
-          if (_page != null && _premiumChapter != null)
-            _gateDialog(context, _premiumChapter!),
-          if (_page != null && _sheetChapter != null)
-            _modeSheet(context, _page!, _sheetChapter!),
-        ],
+              ],
+            ),
+            // Full-screen overlays above everything (including the header),
+            // so the dim barrier never leaves white slivers at the
+            // header's curved corners — same as the chapter page.
+            if (_page != null && _premiumChapter != null)
+              _gateDialog(context, _premiumChapter!),
+            if (_page != null && _sheetChapter != null)
+              _modeSheet(context, _page!, _sheetChapter!),
+          ],
+        ),
       ),
     );
   }
@@ -594,7 +617,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
       BuildContext context, _UnitPage d, List<Map<String, dynamic>> all) {
     final chips = <Widget>[
       _trackChip(context, 'all', 'All', all.length),
+      // The direct-chapters track's chapters still show in the 'all' list —
+      // only its chip is hidden so the row is 'All' + unit chips.
       ...d.tracks
+          .where((t) => !t.direct)
           .map((t) => _trackChip(context, t.id, t.label, t.chapters.length)),
     ];
     return Container(
@@ -719,6 +745,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
     final palette = ExpoPalette.of(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
     final isUnitPurchased = t.unit?['pro'] == true && d.isPremium;
+    final total = t.chapters.length;
+    final avg = total == 0
+        ? 0
+        : (t.chapters.map(_pct).reduce((a, b) => a + b) / total).round();
     final headerBg = t.direct
         ? Theme.of(context).cardColor
         : dark
@@ -741,134 +771,159 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         ),
         child: Column(
           children: [
-            Material(
-              color: headerBg,
-              child: InkWell(
-                onTap: () => _toggleUnit(t.id),
-                child: Container(
-                  constraints: const BoxConstraints(minHeight: 84),
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 13),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 44,
-                        height: 44,
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(14),
-                          color: dark
-                              ? palette.primary.withValues(alpha: 0.16)
-                              : const Color(0xFFDCE7FF),
-                        ),
-                        child: Icon(
-                            t.direct
-                                ? Icons.photo_album_outlined
-                                : Icons.layers_outlined,
-                            size: 20,
-                            color: palette.primary),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(t.label,
-                                style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis),
-                            const SizedBox(height: 4),
-                            Text('${t.chapters.length} chapters',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurface
-                                        .withValues(alpha: 0.6))),
-                          ],
-                        ),
-                      ),
-                      if (t.unit?['pro'] == true)
+            // Subtle press-scale feedback on the header; the InkWell keeps
+            // its own onTap so the toggle fires exactly once.
+            _PressScale(
+              child: Material(
+                color: headerBg,
+                child: InkWell(
+                  onTap: () => _toggleUnit(t.id),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 84),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 13),
+                    child: Row(
+                      children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 5),
+                          width: 52,
+                          height: 52,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            color: isUnitPurchased
-                                ? (dark
-                                    ? palette.success.withValues(alpha: 0.19)
-                                    : const Color(0xFFD1FAE5))
-                                : (dark
-                                    ? palette.warning.withValues(alpha: 0.19)
-                                    : const Color(0xFFFFF0DE)),
+                            borderRadius: BorderRadius.circular(16),
+                            gradient: LinearGradient(
+                              colors: [
+                                palette.primary,
+                                const Color(0xFF1E40AF),
+                              ],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: palette.primary
+                                    .withValues(alpha: 0.35),
+                                blurRadius: 8,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
                           ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
+                          child: Icon(
+                              t.direct
+                                  ? Icons.photo_album_outlined
+                                  : Icons.layers_outlined,
+                              size: 22,
+                              color: Colors.white),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                  isUnitPurchased
-                                      ? Icons.check_circle
-                                      : Icons.lock,
-                                  size: 12,
-                                  color: isUnitPurchased
-                                      ? palette.success
-                                      : palette.warning),
-                              const SizedBox(width: 4),
-                              Text(
-                                  isUnitPurchased
-                                      ? 'Purchased (Active)'
-                                      : 'Premium',
+                              Text(t.label,
+                                  style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis),
+                              const SizedBox(height: 4),
+                              Text('$total chapters · $avg% avg',
                                   style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: isUnitPurchased
-                                          ? palette.success
-                                          : palette.warning)),
+                                      fontSize: 11,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onSurface
+                                          .withValues(alpha: 0.6))),
                             ],
                           ),
                         ),
-                      const SizedBox(width: 4),
-                      Icon(
-                          isExpanded
-                              ? Icons.keyboard_arrow_up
-                              : Icons.keyboard_arrow_down,
-                          size: 20,
-                          color: Theme.of(context)
-                              .colorScheme
-                              .onSurface
-                              .withValues(alpha: 0.5)),
-                    ],
+                        if (t.unit?['pro'] == true)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 5),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              color: isUnitPurchased
+                                  ? (dark
+                                      ? palette.success.withValues(alpha: 0.19)
+                                      : const Color(0xFFD1FAE5))
+                                  : (dark
+                                      ? palette.warning.withValues(alpha: 0.19)
+                                      : const Color(0xFFFFF0DE)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                    isUnitPurchased
+                                        ? Icons.check_circle
+                                        : Icons.lock,
+                                    size: 12,
+                                    color: isUnitPurchased
+                                        ? palette.success
+                                        : palette.warning),
+                                const SizedBox(width: 4),
+                                Text(
+                                    isUnitPurchased
+                                        ? 'Purchased (Active)'
+                                        : 'Premium',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: isUnitPurchased
+                                            ? palette.success
+                                            : palette.warning)),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(width: 4),
+                        AnimatedRotation(
+                            turns: isExpanded ? 0.5 : 0.0,
+                            duration: const Duration(milliseconds: 200),
+                            child: Icon(Icons.keyboard_arrow_down,
+                                size: 20,
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withValues(alpha: 0.5))),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-            if (isExpanded)
-              Container(
-                padding: const EdgeInsets.fromLTRB(11, 12, 11, 11),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).scaffoldBackgroundColor,
-                  border: Border(
-                      top: BorderSide(
-                          color: Theme.of(context).dividerColor,
-                          width: 1)),
-                ),
-                child: Column(
-                  children: t.chapters
-                      .asMap()
-                      .entries
-                      .map((e) => Padding(
-                            padding: const EdgeInsets.only(bottom: 9),
-                            child: _StaggeredReveal(
-                              index: e.key,
-                              animationKey: '${t.id}-$isExpanded',
-                              child: _chapterCard(context, e.value, d),
-                            ),
-                          ))
-                      .toList(),
-                ),
-              ),
+            AnimatedSize(
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOutCubic,
+              alignment: Alignment.topCenter,
+              child: isExpanded
+                  ? Container(
+                      padding: const EdgeInsets.fromLTRB(11, 12, 11, 11),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).scaffoldBackgroundColor,
+                        border: Border(
+                            top: BorderSide(
+                                color: Theme.of(context).dividerColor,
+                                width: 1)),
+                      ),
+                      child: Column(
+                        children: t.chapters
+                            .asMap()
+                            .entries
+                            .map((e) => Padding(
+                                  padding:
+                                      const EdgeInsets.only(bottom: 9),
+                                  child: _StaggeredReveal(
+                                    index: e.key,
+                                    animationKey: '${t.id}-$isExpanded',
+                                    child:
+                                        _chapterCard(context, e.value, d),
+                                  ),
+                                ))
+                            .toList(),
+                      ),
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
           ],
         ),
       ),
@@ -1290,6 +1345,36 @@ class _StaggeredRevealState extends State<_StaggeredReveal>
 // ---------------------------------------------------------------------------
 // Small widgets
 // ---------------------------------------------------------------------------
+
+/// Subtle press-scale feedback (0.97x, 120ms). Handles only down/up/cancel
+/// for the scale; the wrapped InkWell keeps its own onTap so taps fire
+/// exactly once.
+class _PressScale extends StatefulWidget {
+  final Widget child;
+  const _PressScale({required this.child});
+
+  @override
+  State<_PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<_PressScale> {
+  double _scale = 1.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _scale = 0.97),
+      onTapUp: (_) => setState(() => _scale = 1.0),
+      onTapCancel: () => setState(() => _scale = 1.0),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 120),
+        child: widget.child,
+      ),
+    );
+  }
+}
+
 class _ProgressRing extends StatelessWidget {
   final int progress;
   const _ProgressRing({required this.progress});

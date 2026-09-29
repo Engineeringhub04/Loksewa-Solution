@@ -18,7 +18,9 @@ import '../../widgets/preloading.dart';
 /// - Courses from `app_courses` sorted by `order` (client-side, like React).
 /// - Subcourses from `app_courses/{courseId}/subcourses`, falling back to the
 ///   legacy flat `app_subcourses` collection filtered by `courseId`.
-/// - Blue = currently-enrolled selection, red = a NEW pick that differs.
+/// - Blue = currently-enrolled selection.
+/// - Orange (AppColors.accent) = a NEW course pick that differs.
+/// - Red = a NEW subcourse pick that differs.
 /// - Save writes users/{uid} (merge): courseId, subcourseId,
 ///   courseSetupComplete — with the user's ID token (anonymous reads/writes
 ///   are rejected by the Firestore rules, which is why the course list used
@@ -46,10 +48,22 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
   bool _loadingSub = false;
   bool _subcourseError = false;
   bool _saving = false;
+  /// Full-page boot state: true once courses AND the enrolled course's
+  /// subcourses are both loaded, so the title + one centered loader can show
+  /// until then instead of two section-level spinners.
+  bool _booted = false;
 
   bool get _updateMode => widget.mode == 'update';
-  bool get _canSave =>
-      _selectedCourse != null && _selectedSubcourse != null && !_saving;
+  bool get _canSave {
+    if (_saving) return false;
+    if (_selectedCourse == null || _selectedSubcourse == null) return false;
+    if (_updateMode && _savedCourseId != null) {
+      final unchanged = _selectedCourse == _savedCourseId &&
+          _selectedSubcourse == _savedSubcourseId;
+      if (unchanged) return false;
+    }
+    return true;
+  }
 
   @override
   void initState() {
@@ -58,8 +72,14 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
   }
 
   Future<void> _boot() async {
-    await _loadSaved();
-    await _loadCourses();
+    try {
+      await _loadSaved();
+      await _loadCourses();
+    } finally {
+      // Boot must complete even on load errors, or the page stays on the
+      // full-page loader forever.
+      if (mounted) setState(() => _booted = true);
+    }
   }
 
   Future<String> _token() => AuthService.getValidIdToken();
@@ -214,6 +234,48 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     final topPad = MediaQuery.paddingOf(context).top;
     final bottomPad = MediaQuery.paddingOf(context).bottom;
 
+    // Boot state: header + title + ONE centered loader, until both courses
+    // and the enrolled course's subcourses are loaded. No bottom bar and no
+    // RefreshIndicator here; pull-to-refresh re-runs _loadCourses only and
+    // never touches _booted, so it never returns to this state.
+    if (!_booted) {
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        // Brand-blue status bar so no light band sits above the header.
+        value: const SystemUiOverlayStyle(
+          statusBarColor: Color(0xFF2563EB),
+          statusBarIconBrightness: Brightness.light,
+        ),
+        child: Scaffold(
+          backgroundColor: pal.background,
+          body: Column(
+            children: [
+              _header(topPad),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding:
+                          const EdgeInsets.fromLTRB(20, 24, 20, 0),
+                      child: _titleSection(pal),
+                    ),
+                    const Expanded(
+                      child: Center(
+                        child: PreloadingWidget(
+                          tinted: false,
+                          label: 'Loading...',
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       // Brand-blue status bar so no light band sits above the header; the
       // header gradient starts immediately below it, like React's
@@ -257,14 +319,12 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
                           child: _subcourseSection(pal),
                         ),
                       ],
-                      if (_savedCourseId != null) ...[
-                        const SizedBox(height: 24),
-                        _Entrance(
-                          delayMs: 0,
-                          slide: _Slide.none,
-                          child: _legend(pal),
-                        ),
-                      ],
+                      const SizedBox(height: 24),
+                      _Entrance(
+                        delayMs: 0,
+                        slide: _Slide.none,
+                        child: _legend(pal),
+                      ),
                     ],
                   ),
                 ),
@@ -441,14 +501,23 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
                   delayMs: 250 + i * 80,
                   durationMs: 350,
                   slide: _Slide.down,
-                  child: _chip(
-                    pal,
-                    label: _label(_courses[i]),
-                    selected: _courses[i]['id'] == _selectedCourse,
-                    color: const Color(0xFF2563EB),
-                    onTap: () =>
-                        _selectCourse('${_courses[i]['id']}'),
-                  ),
+                  child: Builder(builder: (context) {
+                    final id = '${_courses[i]['id']}';
+                    final isSelected = id == _selectedCourse;
+                    // Blue   = the course you're already enrolled in.
+                    // Orange = a NEW course pick that differs from what's
+                    //   saved (AppColors.accent, the logo's 2nd color).
+                    final isEnrolled = isSelected && id == _savedCourseId;
+                    return _chip(
+                      pal,
+                      label: _label(_courses[i]),
+                      selected: isSelected,
+                      color: isEnrolled
+                          ? const Color(0xFF2563EB)
+                          : AppColors.accent,
+                      onTap: () => _selectCourse(id),
+                    );
+                  }),
                 ),
             ],
           ),
@@ -538,23 +607,30 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     );
   }
 
+  /// Legend is always shown. Update mode: blue "Currently enrolled", orange
+  /// "New course", red "New subcourse". Initial mode (nothing saved yet):
+  /// orange "New course", red "New subcourse".
   Widget _legend(ExpoPalette pal) {
+    final items = <Widget>[];
+    if (_savedCourseId != null) {
+      items.add(_legendItem(pal,
+          color: const Color(0xFF2563EB), label: 'Currently enrolled'));
+      items.add(const SizedBox(width: 16));
+    }
+    items.add(_legendItem(pal,
+        color: AppColors.accent, label: 'New course'));
+    items.add(const SizedBox(width: 16));
+    items.add(_legendItem(pal,
+        color: const Color(0xFFDC2626), label: 'New subcourse'));
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: pal.surfaceAlt,
         borderRadius: BorderRadius.circular(12),
       ),
-      child: Row(
-        children: [
-          _legendItem(pal,
-              color: const Color(0xFF2563EB),
-              label: 'Currently enrolled'),
-          const SizedBox(width: 16),
-          _legendItem(pal,
-              color: const Color(0xFFDC2626),
-              label: 'New selection'),
-        ],
+      child: Wrap(
+        runSpacing: 8,
+        children: items,
       ),
     );
   }

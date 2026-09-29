@@ -20,7 +20,16 @@ android {
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
         versionCode = 10
-        versionName = "1.0.8"
+        versionName = "1.0.9"
+    }
+
+    signingConfigs {
+        loksewa {
+            storeFile = file("../../flutter-build/keystore/loksewa-debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
@@ -32,15 +41,6 @@ android {
             // same one v1.0.6+ shipped with, so updates install cleanly.
             // Passwords are the universal Android debug-keystore defaults.
             signingConfig = signingConfigs.loksewa
-        }
-    }
-
-    signingConfigs {
-        loksewa {
-            storeFile = file("../../flutter-build/keystore/loksewa-debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
         }
     }
 }

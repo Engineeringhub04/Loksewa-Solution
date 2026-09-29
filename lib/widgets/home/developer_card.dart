@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../disk_cached_image.dart';
 
 /// "About Developer" premium gradient card (mirrors DeveloperCard.tsx).
 class DeveloperCard extends StatelessWidget {
@@ -85,28 +86,10 @@ class DeveloperCard extends StatelessWidget {
                           ),
                           child: ClipOval(
                             child: (photoUrl != null && photoUrl!.isNotEmpty)
-                                ? Image.network(
-                                    photoUrl!,
+                                ? DiskCachedImage(
+                                    url: photoUrl!,
                                     fit: BoxFit.cover,
-                                    loadingBuilder: (context, child,
-                                            progress) =>
-                                        progress == null
-                                            ? child
-                                            : Container(
-                                                color: const Color(0xFF38BDF8)
-                                                    .withValues(alpha: 0.2),
-                                                alignment: Alignment.center,
-                                                child: const SizedBox(
-                                                  width: 24,
-                                                  height: 24,
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                    strokeWidth: 2.5,
-                                                    color: Colors.white70,
-                                                  ),
-                                                ),
-                                              ),
-                                    errorBuilder: (_, __, ___) =>
+                                    errorBuilder: (context, _, __) =>
                                         _fallbackAvatar(),
                                   )
                                 : _fallbackAvatar(),

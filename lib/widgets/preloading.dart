@@ -75,8 +75,8 @@ class _PreloadingWidgetState extends State<PreloadingWidget>
             AnimatedBuilder(
               animation: _c,
               builder: (context, _) => SizedBox(
-                width: 32,
-                height: 32,
+                width: 20,
+                height: 20,
                 child: CustomPaint(
                   painter:
                       _SpokesPainter(progress: _c.value, color: spokeBase),
@@ -139,7 +139,7 @@ class _SpokesPainter extends CustomPainter {
         c + dir * outer,
         Paint()
           ..color = color.withValues(alpha: alpha)
-          ..strokeWidth = 3
+          ..strokeWidth = 2.5
           ..strokeCap = StrokeCap.round,
       );
     }

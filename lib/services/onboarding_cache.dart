@@ -7,21 +7,22 @@ import 'package:path_provider/path_provider.dart';
 /// Preloads and caches the onboarding slide images so the onboarding screen
 /// shows instantly, like a native app.
 ///
-/// Two slides ship as bundled assets; two come from the network. Network
-/// images are downloaded once into the app support directory and reused from
-/// disk on later launches, so the second launch needs no network at all.
-/// All work is deadline-bounded and never throws — on any failure the
-/// onboarding screen simply lazy-loads, exactly like before this cache.
+/// All 4 hardcoded slides now ship as bundled assets (the two former network
+/// images were bundled after they proved unreliable on slow connections),
+/// so warm-up is a pure precache with no network at all. The disk-download
+/// machinery below is kept for REMOTE (Firestore) slides: [resolve] still
+/// checks the disk cache first and falls back to [NetworkImage].
 class OnboardingCache {
-  /// Exact image sources of the 4 hardcoded onboarding slides.
+  /// Bundled assets of the 4 hardcoded onboarding slides.
   static const localAssets = [
     'assets/images/ws-weeklytest.png',
     'assets/images/ws-leaderboard_analytics.png',
+    'assets/images/ws-dailytest.png',
+    'assets/images/ws-discussion.png',
   ];
-  static const networkUrls = [
-    'https://i.ibb.co/hN8gtSc/dailytest-wlc.png',
-    'https://i.ibb.co/9HYXh3nr/discussion-wlc.png',
-  ];
+
+  /// Kept (empty) so the download path below stays wired for remote slides.
+  static const networkUrls = <String>[];
 
   static const _perFileTimeout = Duration(seconds: 8);
   static const _totalDeadline = Duration(seconds: 10);

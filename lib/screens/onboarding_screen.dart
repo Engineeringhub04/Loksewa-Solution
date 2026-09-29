@@ -49,14 +49,14 @@ const _hardcodedSlides = [
     title: 'Daily Practice',
     description:
         'Strengthen your preparation with fresh daily questions covering all Loksewa subjects.',
-    imageUrl: 'https://i.ibb.co/hN8gtSc/dailytest-wlc.png',
+    assetPath: 'assets/images/ws-dailytest.png',
   ),
   _Slide(
     id: 'slide-4',
     title: 'Discussion Forum',
     description:
         'Connect with fellow aspirants, discuss tricky questions, and learn together as a community.',
-    imageUrl: 'https://i.ibb.co/9HYXh3nr/discussion-wlc.png',
+    assetPath: 'assets/images/ws-discussion.png',
   ),
 ];
 
@@ -64,6 +64,8 @@ const _localImageMap = {
   'assets/images/ws-weeklytest.png': 'assets/images/ws-weeklytest.png',
   'assets/images/ws-leaderboard_analytics.png':
       'assets/images/ws-leaderboard_analytics.png',
+  'assets/images/ws-dailytest.png': 'assets/images/ws-dailytest.png',
+  'assets/images/ws-discussion.png': 'assets/images/ws-discussion.png',
 };
 
 // Video palette.
@@ -223,8 +225,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 controller: _controller,
                 itemCount: _slides.length,
                 onPageChanged: (i) => setState(() => _index = i),
-                itemBuilder: (context, i) =>
-                    _SlideView(slide: _slides[i]),
+                itemBuilder: (context, i) => _SlideView(
+                      slide: _slides[i],
+                      controller: _controller,
+                      index: i,
+                    ),
               ),
             ),
             // Dots (fade out while morphing into the CTA).
@@ -324,60 +329,100 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 }
 
+/// One onboarding page. Drag-driven staggered parallax: the illustration
+/// moves MORE with the swipe (t * 110) so it visually lags behind the
+/// text block (t * 36), which appears first and sharp — like the reference
+/// video. Both fade gently while off-centre.
 class _SlideView extends StatelessWidget {
   final _Slide slide;
-  const _SlideView({required this.slide});
+  final PageController controller;
+  final int index;
+
+  const _SlideView({
+    required this.slide,
+    required this.controller,
+    required this.index,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final provider =
-        OnboardingCache.resolve(slide.assetPath, slide.imageUrl);
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        // 0 when centred, +/-1 when fully adjacent.
+        final page = controller.hasClients && controller.page != null
+            ? controller.page!
+            : index.toDouble();
+        final t = page - index;
+        final fade = (0.35 + 0.65 * (1 - t.abs())).clamp(0.0, 1.0);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            height: 260,
-            child: provider != null
-                ? Image(
-                    image: provider,
-                    fit: BoxFit.contain,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.image_outlined,
-                      size: 120,
-                      color: _dotIdle,
-                    ),
-                  )
-                : const Icon(
+        final provider =
+            OnboardingCache.resolve(slide.assetPath, slide.imageUrl);
+        final illustration = SizedBox(
+          height: 260,
+          child: provider != null
+              ? Image(
+                  image: provider,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(
                     Icons.image_outlined,
                     size: 120,
                     color: _dotIdle,
                   ),
+                )
+              : const Icon(
+                  Icons.image_outlined,
+                  size: 120,
+                  color: _dotIdle,
+                ),
+        );
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Opacity(
+                opacity: fade,
+                child: Transform.translate(
+                  offset: Offset(t * 110, 0),
+                  child: illustration,
+                ),
+              ),
+              const SizedBox(height: 36),
+              Opacity(
+                opacity: fade,
+                child: Transform.translate(
+                  offset: Offset(t * 36, 0),
+                  child: Column(
+                    children: [
+                      Text(
+                        slide.title,
+                        style: const TextStyle(
+                          color: _ink,
+                          fontSize: 24,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        slide.description,
+                        style: const TextStyle(
+                          color: _grey,
+                          fontSize: 15,
+                          height: 1.5,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 36),
-          Text(
-            slide.title,
-            style: const TextStyle(
-              color: _ink,
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 12),
-          Text(
-            slide.description,
-            style: const TextStyle(
-              color: _grey,
-              fontSize: 15,
-              height: 1.5,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

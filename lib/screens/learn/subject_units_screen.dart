@@ -731,10 +731,9 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
   }
 
   // ---------------------------------------------------------- unit card
-  /// Children for the 'all' track view: one unit card per real unit,
-  /// then the direct-chapters track's chapters as flat chapter rows (no
-  /// section header, no unit card — the direct track's own card is excluded
-  /// on purpose). Stagger indices continue across both groups.
+  /// Children for the 'all' track view: one unit card per real unit ONLY.
+  /// The direct-chapters track contributes no rows here at all — its chapters
+  /// are intentionally not reachable from the 'all' list.
   List<Widget> _allListChildren(BuildContext context, _UnitPage d) {
     final children = <Widget>[];
     final units = d.tracks.where((t) => !t.direct).toList();
@@ -743,15 +742,6 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         index: i,
         animationKey: 'all-${d.tracks.length}',
         child: _unitCard(context, units[i], d),
-      ));
-    }
-    final directChapters =
-        d.tracks.where((t) => t.direct).expand((t) => t.chapters).toList();
-    for (var j = 0; j < directChapters.length; j++) {
-      children.add(_StaggeredReveal(
-        index: units.length + j,
-        animationKey: 'all-${d.tracks.length}',
-        child: _chapterCard(context, directChapters[j], d),
       ));
     }
     return children;
@@ -776,10 +766,14 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
       child: Container(
         key: _unitKeys.putIfAbsent(t.id, () => GlobalKey()),
         // Shadow lives OUTSIDE the clip (same pattern as the stats card) so
-        // it is never cut flush at the card's bounds. No Border.all — the
-        // thin grey stroke was reading as a harsh "cut" edge on the sides.
+        // it is never cut flush at the card's bounds. In light mode a
+        // hairline border keeps the card reading as a separate card against
+        // the near-white background; dark mode stays borderless.
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
+          border: dark
+              ? null
+              : Border.all(color: const Color(0xFFE2E8F0), width: 1),
           boxShadow: const [
             BoxShadow(
                 color: Color(0x140C2D91), blurRadius: 12, offset: Offset(0, 6)),
@@ -799,17 +793,17 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                 child: InkWell(
                   onTap: () => _toggleUnit(t.id),
                   child: Container(
-                    constraints: const BoxConstraints(minHeight: 84),
+                    constraints: const BoxConstraints(minHeight: 76),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 13),
+                        horizontal: 12, vertical: 11),
                     child: Row(
                       children: [
                         Container(
-                          width: 52,
-                          height: 52,
+                          width: 46,
+                          height: 46,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(14),
                             gradient: LinearGradient(
                               colors: [
                                 palette.primary,
@@ -828,7 +822,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                             ],
                           ),
                           child: Icon(_unitIconFor(t.label),
-                              size: 22, color: Colors.white),
+                              size: 20, color: Colors.white),
                         ),
                         const SizedBox(width: 10),
                         Expanded(
@@ -837,14 +831,14 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                             children: [
                               Text(t.label,
                                   style: const TextStyle(
-                                      fontSize: 14,
+                                      fontSize: 13,
                                       fontWeight: FontWeight.bold),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis),
                               const SizedBox(height: 4),
                               Text('$total chapters · $avg% avg',
                                   style: TextStyle(
-                                      fontSize: 11,
+                                      fontSize: 10,
                                       color: Theme.of(context)
                                           .colorScheme
                                           .onSurface
@@ -973,7 +967,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         borderRadius: BorderRadius.circular(20),
         onTap: () => _onChapterTap(c, d),
         child: Container(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
@@ -1019,7 +1013,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                       children: [
                         Text(_chapterTitle(c),
                             style: const TextStyle(
-                                fontSize: 14, fontWeight: FontWeight.bold),
+                                fontSize: 13, fontWeight: FontWeight.bold),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis),
                         Text(_chapterAlt(c),

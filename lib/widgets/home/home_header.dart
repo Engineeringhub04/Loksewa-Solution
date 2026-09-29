@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
 import '../../services/theme_service.dart';
+import '../disk_cached_image.dart';
 
 /// Collapsing curved gradient header for Home.
 ///
@@ -193,12 +194,12 @@ class _Avatar extends StatelessWidget {
     Widget face;
     if (photoURL != null && photoURL!.isNotEmpty) {
       face = ClipOval(
-        child: Image.network(
-          photoURL!,
+        child: DiskCachedImage(
+          url: photoURL!,
           width: size,
           height: size,
           fit: BoxFit.cover,
-          errorBuilder: (_, __, ___) => _initialFace(palette),
+          errorBuilder: (context, _, __) => _initialFace(palette),
         ),
       );
     } else {

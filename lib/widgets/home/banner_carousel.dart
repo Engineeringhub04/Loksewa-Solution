@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../disk_cached_image.dart';
 
 /// Auto-sliding hero banner carousel (mirrors BannerCarousel.tsx).
 /// Autoplay every 3.5s, pauses 3s after a manual touch, then resumes.
@@ -126,27 +127,10 @@ class _BannerCarouselState extends State<BannerCarousel> {
                     child: Container(
                       color: _parseColor(b.backgroundColor),
                       child: (b.imageLink != null && b.imageLink!.isNotEmpty)
-                          ? Image.network(
-                              b.imageLink!,
+                          ? DiskCachedImage(
+                              url: b.imageLink!,
                               fit: BoxFit.cover,
-                              loadingBuilder: (context, child, progress) =>
-                                  progress == null
-                                      ? child
-                                      : Container(
-                                          color: Colors.white.withValues(
-                                              alpha: 0.12),
-                                          child: const Center(
-                                            child: SizedBox(
-                                              width: 28,
-                                              height: 28,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2.5,
-                                                color: Colors.white70,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                              errorBuilder: (_, __, ___) =>
+                              errorBuilder: (context, _, __) =>
                                   _textContent(b),
                             )
                           : _textContent(b),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_rest.dart';
@@ -20,17 +21,71 @@ class SubjectUnitsScreen extends StatefulWidget {
   State<SubjectUnitsScreen> createState() => _SubjectUnitsScreenState();
 }
 
-class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
+class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
+    with SingleTickerProviderStateMixin {
   late Future<_UnitPage> _future;
+
+  /// Cached page for the full-screen overlays (sheet + gate) that live
+  /// above the whole page, outside the FutureBuilder.
+  _UnitPage? _page;
+
   String _selectedTrack = 'all';
   String? _expandedUnit;
   Map<String, dynamic>? _premiumChapter;
   Map<String, dynamic>? _sheetChapter;
 
+  /// Entry/exit animation for the Practice/Read/Theory bottom sheet:
+  /// slides up from the bottom + fades in, ~280ms easeOutCubic
+  /// (same pattern as the chapter page).
+  late final AnimationController _sheetController;
+  late final Animation<double> _sheetFade;
+  late final Animation<Offset> _sheetSlide;
+
+  /// Scroll controller + per-unit keys for the accordion auto-scroll:
+  /// expanding a unit scrolls it to the top of the viewport.
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _unitKeys = {};
+
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _sheetController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    final curved = CurvedAnimation(
+      parent: _sheetController,
+      curve: Curves.easeOutCubic,
+    );
+    _sheetFade = Tween<double>(begin: 0, end: 1).animate(curved);
+    _sheetSlide = Tween<Offset>(
+      begin: const Offset(0, 1),
+      end: Offset.zero,
+    ).animate(curved);
+    _future = _trackPage(_load());
+  }
+
+  @override
+  void dispose() {
+    _sheetController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _reload() {
+    setState(() {
+      _page = null;
+      _future = _trackPage(_load());
+    });
+  }
+
+  /// Wires the loaded page into [_page] for the full-screen overlays.
+  /// Errors are swallowed here — the FutureBuilder below renders them.
+  Future<_UnitPage> _trackPage(Future<_UnitPage> future) {
+    future.then((d) {
+      if (mounted) setState(() => _page = d);
+    }, onError: (_) {});
+    return future;
   }
 
   Future<_UnitPage> _load() async {
@@ -45,7 +100,11 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
             idToken: token);
         courseId = (doc?['courseId'] as String?) ?? courseId;
         subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
-        isPremium = _hasActivePremium(doc);
+        // Canonical premium check (mirrors React's hasActivePremium):
+        // isPremium + premiumExpiryDate / isPro / premiumUntil /
+        // subscriptionStatus, not the local `pro` field heuristic.
+        isPremium =
+            UserProfile.fromMap(user.uid, doc ?? {}).hasActivePremium;
       } catch (_) {}
     }
     String subjectName = widget.subjectId;
@@ -111,21 +170,6 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
     );
   }
 
-  static bool _hasActivePremium(Map<String, dynamic>? userDoc) {
-    final pro = userDoc?['pro'];
-    if (pro is bool) return pro;
-    if (pro is Map) {
-      final active = pro['active'];
-      if (active is bool) return active;
-      final exp = pro['expiresAt'];
-      if (exp is String) {
-        final dt = DateTime.tryParse(exp);
-        if (dt != null) return dt.isAfter(DateTime.now());
-      }
-    }
-    return false;
-  }
-
   // Units screen uses the global app language (en default in React):
   // title = name || nameNe, subtitle = nameNe || name.
   String _chapterTitle(Map<String, dynamic> c) =>
@@ -144,6 +188,18 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
       return;
     }
     setState(() => _sheetChapter = c);
+    _sheetController.forward(from: 0);
+  }
+
+  /// Slides/fades the mode sheet back down, then removes it from the tree.
+  void _dismissSheet() {
+    final c = _sheetChapter;
+    if (c == null) return;
+    _sheetController.reverse().then((_) {
+      if (!mounted) return;
+      // Don't close a sheet that was re-opened while this one animated out.
+      if (identical(_sheetChapter, c)) setState(() => _sheetChapter = null);
+    });
   }
 
   void _goMode(String route, Map<String, dynamic> c, _UnitPage d) {
@@ -171,61 +227,59 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      body: Stack(
         children: [
-          const SubpageHeader(title: 'Units'),
-          Expanded(
-            child: FutureBuilder<_UnitPage>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const PreloadingWidget(
-                    tinted: false,
-                    label: 'Loading Units...',
-                  );
-                }
-                if (snap.hasError) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Text('Failed to load units.'),
-                        const SizedBox(height: 8),
-                        ElevatedButton(
-                          onPressed: () =>
-                              setState(() => _future = _load()),
-                          child: const Text('Retry'),
+          Column(
+            children: [
+              const SubpageHeader(title: 'Units'),
+              Expanded(
+                child: FutureBuilder<_UnitPage>(
+                  future: _future,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const PreloadingWidget(
+                        tinted: false,
+                        label: 'Loading Units...',
+                      );
+                    }
+                    if (snap.hasError) {
+                      return Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Failed to load units.'),
+                            const SizedBox(height: 8),
+                            ElevatedButton(
+                              onPressed: _reload,
+                              child: const Text('Retry'),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                }
-                final d = snap.data!;
-                final all = _allChapters(d);
-                if (all.isEmpty) {
-                  return RefreshIndicator(
-                    onRefresh: () async =>
-                        setState(() => _future = _load()),
-                    child: ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Center(
-                              child: Text(
-                                  'No units or chapters found for this subject.',
-                                  style: TextStyle(color: Colors.grey))),
+                      );
+                    }
+                    final d = snap.data!;
+                    final all = _allChapters(d);
+                    if (all.isEmpty) {
+                      return RefreshIndicator(
+                        onRefresh: () async => _reload(),
+                        child: ListView(
+                          padding: const EdgeInsets.all(16),
+                          children: const [
+                            Padding(
+                              padding: EdgeInsets.all(32),
+                              child: Center(
+                                  child: Text(
+                                      'No units or chapters found for this subject.',
+                                      style: TextStyle(color: Colors.grey))),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
-                  );
-                }
-                return Stack(
-                  children: [
-                    RefreshIndicator(
-                      onRefresh: () async =>
-                          setState(() => _future = _load()),
+                      );
+                    }
+                    return RefreshIndicator(
+                      onRefresh: () async => _reload(),
                       child: CustomScrollView(
+                        controller: _scrollController,
                         slivers: [
                           SliverToBoxAdapter(
                             child: Padding(
@@ -297,16 +351,19 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
                           ),
                         ],
                       ),
-                    ),
-                    if (_premiumChapter != null)
-                      _gateDialog(context, _premiumChapter!),
-                    if (_sheetChapter != null)
-                      _modeSheet(context, d, _sheetChapter!),
-                  ],
-                );
-              },
-            ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
+          // Full-screen overlays above everything (including the header),
+          // so the dim barrier never leaves white slivers at the
+          // header's curved corners — same as the chapter page.
+          if (_page != null && _premiumChapter != null)
+            _gateDialog(context, _premiumChapter!),
+          if (_page != null && _sheetChapter != null)
+            _modeSheet(context, _page!, _sheetChapter!),
         ],
       ),
     );
@@ -326,9 +383,41 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
   }
 
   void _toggleUnit(String id) {
+    final expanding = _expandedUnit != id;
     setState(() {
-      _expandedUnit = _expandedUnit == id ? null : id;
+      _expandedUnit = expanding ? id : null;
     });
+    if (expanding) {
+      // Scroll after this frame's layout settles (collapse + expand both
+      // land in the same setState), so the opened unit's header lands at
+      // the top of the viewport.
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _scrollToUnit(id));
+    }
+  }
+
+  /// Smooth-scrolls the expanded unit card so its header sits just below
+  /// the pinned 56px track-chip bar. Works for any unit.
+  void _scrollToUnit(String id) {
+    if (!mounted || !_scrollController.hasClients) return;
+    final ctx = _unitKeys[id]?.currentContext;
+    if (ctx == null) return;
+    final renderObject = ctx.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return;
+    final viewport = RenderAbstractViewport.of(renderObject);
+    final reveal = viewport.getOffsetToReveal(renderObject, 0.0);
+    final position = _scrollController.position;
+    final target = (reveal.offset - 64).clamp(
+      position.minScrollExtent,
+      position.maxScrollExtent,
+    );
+    if ((target - _scrollController.offset).abs() > 1) {
+      _scrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOut,
+      );
+    }
   }
 
   // ---------------------------------------------------------- summary card
@@ -345,49 +434,63 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
             _pct(c) > 0 && (c['progress'] as Map?)?['completed'] != true)
         .length;
     final premium = all.where((c) => c['pro'] == true).length;
+    // The glow bubbles intentionally bleed past the card edges and are
+    // clipped by the outer ClipRRect along the 28px rounded border: the
+    // inner Stack uses Clip.none so the bubbles are never cut with a hard
+    // straight edge inside the content padding (the old "D" sticker look).
+    // The shadow lives on the wrapper OUTSIDE the clip so it isn't cut away.
     return Container(
-      padding: const EdgeInsets.all(20),
       constraints: const BoxConstraints(minHeight: 242),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
         boxShadow: const [
           BoxShadow(
               color: Color(0x470C2D91), blurRadius: 16, offset: Offset(0, 8)),
         ],
       ),
-      child: Stack(
-        children: [
-          Positioned(
-            top: -100,
-            right: -40,
-            child: Container(
-              width: 170,
-              height: 170,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF5A8CFF).withValues(alpha: 0.22),
-              ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF153DB8), Color(0xFF0C2D91)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
           ),
-          Positioned(
-            bottom: -125,
-            left: -70,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF00002D).withValues(alpha: 0.16),
-              ),
-            ),
-          ),
-          Column(
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
+              Positioned(
+                top: -100,
+                right: -40,
+                child: Container(
+                  width: 170,
+                  height: 170,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        const Color(0xFF5A8CFF).withValues(alpha: 0.22),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: -125,
+                left: -70,
+                child: Container(
+                  width: 180,
+                  height: 180,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        const Color(0xFF00002D).withValues(alpha: 0.16),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -478,9 +581,12 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
               ),
             ],
           ),
-        ],
-      ),
-    );
+        ),
+      ],
+    ),
+  ),
+  ),
+);
   }
 
   // ---------------------------------------------------------- track chips
@@ -514,10 +620,11 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
       BuildContext context, String id, String label, int count) {
     final active = _selectedTrack == id;
     final scheme = Theme.of(context).colorScheme;
+    final palette = ExpoPalette.of(context);
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: Material(
-        color: active ? const Color(0xFF0C2D91) : scheme.surface,
+        color: active ? palette.primary : scheme.surface,
         borderRadius: BorderRadius.circular(20),
         child: InkWell(
           borderRadius: BorderRadius.circular(20),
@@ -530,7 +637,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
                   color: active
-                      ? const Color(0xFF0C2D91)
+                      ? palette.primary
                       : Theme.of(context).dividerColor),
             ),
             child: Row(
@@ -620,6 +727,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
+        key: _unitKeys.putIfAbsent(t.id, () => GlobalKey()),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Theme.of(context).cardColor,
@@ -739,10 +847,12 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
             if (isExpanded)
               Container(
                 padding: const EdgeInsets.fromLTRB(11, 12, 11, 11),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
+                  color: Theme.of(context).scaffoldBackgroundColor,
                   border: Border(
                       top: BorderSide(
-                          color: Color(0xFFD7E2FF), width: 1)),
+                          color: Theme.of(context).dividerColor,
+                          width: 1)),
                 ),
                 child: Column(
                   children: t.chapters
@@ -1004,25 +1114,36 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
   }
 
   // ---------------------------------------------------------- bottom sheet
+  // Same entry/exit animation as the chapter page: 280ms slide-up + fade,
+  // full-screen dim barrier above everything.
   Widget _modeSheet(
       BuildContext context, _UnitPage d, Map<String, dynamic> c) {
-    return GestureDetector(
-      onTap: () => setState(() => _sheetChapter = null),
-      child: Container(
-        color: Colors.black.withValues(alpha: 0.35),
-        child: Align(
-          alignment: Alignment.bottomCenter,
-          child: GestureDetector(
-            onTap: () {},
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).cardColor,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(26),
-                  topRight: Radius.circular(26),
-                ),
-              ),
+    // 0x6B == 107, so fading the alpha 0 -> 0.42 reproduces the old constant
+    // barrier Color(0x6B0F172A) at full entry.
+    return AnimatedBuilder(
+      animation: _sheetController,
+      builder: (context, _) => GestureDetector(
+        onTap: _dismissSheet,
+        child: Container(
+          color: const Color(0xFF0F172A)
+              .withValues(alpha: 0.42 * _sheetFade.value),
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionalTranslation(
+              translation: _sheetSlide.value,
+              child: Opacity(
+                opacity: _sheetFade.value,
+                child: GestureDetector(
+                  onTap: () {},
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).cardColor,
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(28),
+                        topRight: Radius.circular(28),
+                      ),
+                    ),
               child: SafeArea(
                 top: false,
                 child: Column(
@@ -1077,7 +1198,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen> {
           ),
         ),
       ),
-    );
+    ),
+  ),
+  ),
+);
   }
 }
 

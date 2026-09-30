@@ -418,8 +418,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                   ? const PreloadingWidget(
                       tinted: false,
                       label: 'Loading Leaderboard...',
-                      hint:
-                          'Loading the top rankings with photos first',
                     )
                   : _noCourse
                       ? _noCourseBody()

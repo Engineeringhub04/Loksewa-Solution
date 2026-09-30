@@ -1,11 +1,14 @@
 // Additional-feature topic screen — read vs practice tracks.
-// Mirrors app/additional-features/[featureId]/[topicId].tsx exactly.
+// Mirrors app/additional-features/[featureId]/[topicId].tsx.
 //
 // Data:
 // - bank doc: app_additional_feature_question_banks/{featureId}__all__all__{topicId}
-// - topic titles: looked up from the page doc
-//   app_additional_feature_pages/{featureId}__all__all (the route carries only
-//   featureId + topicId)
+// - topic titles: the route's `extra` carries topicTitleEn/topicTitleNp so the
+//   header shows the topic name immediately; the page-doc lookup
+//   (app_additional_feature_pages/{featureId}__all__all) is only a fallback.
+// - offline fallback: <appDocs>/af_offline/<fid>/banks/<topicId>.json +
+//   <appDocs>/af_offline/<fid>/page.json (written by another agent), used when
+//   the Firestore fetch fails. An "Offline" chip marks cached content.
 // - practice progress (local): af_practice_{featureId}_{topicId} = JSON of
 //   { featureId, topicId, dailyDate, attemptedQuestionIds, correctQuestionIds,
 //     selectedAnswerIndexes, selectedAnswerIds } — stale dates reset.
@@ -16,11 +19,18 @@
 //
 // Practice: shuffled question order + shuffled options per question,
 // one-at-a-time, DAILY_LIMIT = 50 -> dailyLimit = min(questionCount, 50).
-// Selected answers restore from the stored progress. Limit dialog +
-// leave-practice confirm dialog (with the "Saved to phone cache" badge).
-// Back navigates back directly on read track; on practice track it asks for
-// confirmation first.
+// Selected answers restore from the stored progress. Question changes animate
+// (fade + slight slide) and option tiles stagger in, mirroring the chapter
+// practice screen. Bookmark/report actions sit next to the question badge in
+// both tracks. Limit dialog + leave-practice confirm dialog (with the
+// "Saved to phone cache" badge). Back navigates back directly on read track;
+// on practice track it asks for confirmation first.
+//
+// Expand All / Collapse All animates each card via AnimatedSize (~250ms) —
+// finite, pumpAndSettle-safe. No infinite animations anywhere.
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -28,8 +38,10 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/widgets/limit_dialog.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/limit_dialog.dart';
+import 'package:loksewa_solution/widgets/report_dialog.dart';
+import 'package:path_provider/path_provider.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -38,8 +50,19 @@ const int _dailyLimitCap = 50;
 class AdditionalTopicScreen extends StatefulWidget {
   final String featureId;
   final String topicId;
-  const AdditionalTopicScreen(
-      {super.key, required this.featureId, required this.topicId});
+
+  /// Route `extra` titles — shown in the header immediately, before the
+  /// network fetch finishes. Empty/absent falls back to the page doc / bank.
+  final String? topicTitleEn;
+  final String? topicTitleNp;
+
+  const AdditionalTopicScreen({
+    super.key,
+    required this.featureId,
+    required this.topicId,
+    this.topicTitleEn,
+    this.topicTitleNp,
+  });
 
   @override
   State<AdditionalTopicScreen> createState() => _AdditionalTopicScreenState();
@@ -74,25 +97,54 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
   String? _error;
   String _topicTitle = '';
 
+  /// True when the bank came from the on-device offline cache.
+  bool _offline = false;
+
   String _track = 'read'; // read | practice
   final Map<String, bool> _expanded = {};
 
   // Practice state
   int _current = 0;
+
+  /// +1 when moving to the next question, -1 for previous — drives the
+  /// question transition direction in the AnimatedSwitcher.
+  int _slideDir = 0;
+  final ScrollController _practiceScroll = ScrollController();
   Set<String> _attempted = {};
   Set<String> _correctIds = {};
   Map<String, int> _selectedIndexes = {};
   Map<String, String> _selectedIds = {};
-  // Practice state
 
   @override
   void initState() {
     super.initState();
+    // The route carries the titles — show the name immediately instead of
+    // '...' while the bank loads. The fetch below only fills gaps.
+    final initial = widget.topicTitleEn?.trim() ?? '';
+    if (initial.isNotEmpty) _topicTitle = initial;
     _load();
+  }
+
+  @override
+  void dispose() {
+    _practiceScroll.dispose();
+    super.dispose();
   }
 
   String get _progressKey =>
       'af_practice_${widget.featureId}_${widget.topicId}';
+
+  String get _displayTitle =>
+      _topicTitle.isEmpty ? widget.topicId : _topicTitle;
+
+  /// Theme-aware blue accent — the established
+  /// `isDark ? 0xFF3B82F6 : 0xFF1D4ED8` pattern from the additional-features
+  /// home screen. Replaces the old hardcoded navy that was invisible in
+  /// dark mode.
+  Color get _accent {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+  }
 
   /// Resolves the correct option INDEX exactly like React's correctIndex():
   /// 1) correctOptionId matched against option ids;
@@ -112,34 +164,85 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     return 0;
   }
 
+  /// Offline cache written by the offline-sync flow:
+  /// `<appDocs>/af_offline/<fid>/banks/<topicId>.json` (raw decoded bank map)
+  /// plus `<appDocs>/af_offline/<fid>/page.json` (raw decoded page doc).
+  /// Sync fs ops — safe on test-covered paths (see AGENTS.md).
+  Future<({Map<String, dynamic> bank, Map<String, dynamic>? page})?>
+      _readOfflineCache() async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final bankFile = File(
+          '${dir.path}/af_offline/${widget.featureId}/banks/${widget.topicId}.json');
+      if (!bankFile.existsSync()) return null;
+      final bank = json.decode(bankFile.readAsStringSync());
+      if (bank is! Map<String, dynamic>) return null;
+      Map<String, dynamic>? page;
+      final pageFile =
+          File('${dir.path}/af_offline/${widget.featureId}/page.json');
+      if (pageFile.existsSync()) {
+        final decoded = json.decode(pageFile.readAsStringSync());
+        if (decoded is Map<String, dynamic>) page = decoded;
+      }
+      return (bank: bank, page: page);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
       _error = null;
+      _offline = false;
     });
     try {
       final token = await AuthService.getValidIdToken();
-      final bank = await FirestoreRest.getDocument(
-        'app_additional_feature_question_banks/${widget.featureId}__all__all__${widget.topicId}',
-        idToken: token,
-      );
+      Map<String, dynamic>? bank;
+      Map<String, dynamic>? page;
+      var offline = false;
+      try {
+        bank = await FirestoreRest.getDocument(
+          'app_additional_feature_question_banks/${widget.featureId}__all__all__${widget.topicId}',
+          idToken: token,
+        );
+        // Topic title from the page doc — only when the route didn't carry
+        // the titles already.
+        if ((widget.topicTitleEn?.trim().isNotEmpty ?? false) &&
+            (widget.topicTitleNp?.trim().isNotEmpty ?? false)) {
+          page = null;
+        } else {
+          page = await FirestoreRest.getDocument(
+            'app_additional_feature_pages/${widget.featureId}__all__all',
+            idToken: token,
+          );
+        }
+      } catch (_) {
+        // Network failed (offline) — fall back to the on-device cache.
+        final cached = await _readOfflineCache();
+        if (cached == null) rethrow;
+        bank = cached.bank;
+        page = cached.page;
+        offline = true;
+      }
       if (bank == null) throw Exception('Question bank not found.');
 
-      // Topic title from the page doc (route carries only featureId/topicId).
-      final page = await FirestoreRest.getDocument(
-        'app_additional_feature_pages/${widget.featureId}__all__all',
-        idToken: token,
-      );
-      String titleEn = '';
-      String titleNp = '';
-      final rawTopics = page?['topics'];
-      if (rawTopics is List) {
-        for (final raw in rawTopics) {
-          if (raw is! Map) continue;
-          if ((raw['topicId'] ?? '').toString() == widget.topicId) {
-            titleEn = (raw['titleEn'] ?? '').toString();
-            titleNp = (raw['titleNp'] ?? '').toString();
-            break;
+      String titleEn = widget.topicTitleEn?.trim() ?? '';
+      String titleNp = widget.topicTitleNp?.trim() ?? '';
+      if (titleEn.isEmpty || titleNp.isEmpty) {
+        final rawTopics = page?['topics'];
+        if (rawTopics is List) {
+          for (final raw in rawTopics) {
+            if (raw is! Map) continue;
+            if ((raw['topicId'] ?? '').toString() == widget.topicId) {
+              if (titleEn.isEmpty) {
+                titleEn = (raw['titleEn'] ?? '').toString();
+              }
+              if (titleNp.isEmpty) {
+                titleNp = (raw['titleNp'] ?? '').toString();
+              }
+              break;
+            }
           }
         }
       }
@@ -207,6 +310,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
       setState(() {
         _questions = questions;
         _topicTitle = titleEn;
+        _offline = offline;
         _loading = false;
       });
     } catch (e) {
@@ -266,6 +370,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     setState(() {
       _track = track;
       _current = 0;
+      _slideDir = 0;
       _expanded.clear();
     });
   }
@@ -292,9 +397,41 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
       _selectedIds[q.questionId] = q.options[optionIndex].id;
     });
     _persist();
+    // Reveal the explanation below — mirrors the chapter practice screen.
+    Future.delayed(const Duration(milliseconds: 180), () {
+      if (_practiceScroll.hasClients) {
+        _practiceScroll.animateTo(
+          _practiceScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeInOut,
+        );
+      }
+    });
     if (_attempted.length >= _dailyLimit) {
       _limitDialog();
     }
+  }
+
+  void _goToQuestion(int delta) {
+    final total = _practiceQuestions.length;
+    if (total == 0) return;
+    final next = (_current + delta).clamp(0, total - 1);
+    if (next == _current) return;
+    setState(() {
+      _slideDir = delta > 0 ? 1 : -1;
+      _current = next;
+    });
+    // Back to the top on every question change — otherwise the new question
+    // would open scrolled down at the previous question's position.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_practiceScroll.hasClients) {
+        _practiceScroll.animateTo(
+          0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _practiceNext(int total) {
@@ -307,7 +444,20 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
       }
       return;
     }
-    setState(() => _current = (_current + 1).clamp(0, total - 1));
+    _goToQuestion(1);
+  }
+
+  /// Shared report dialog wiring for both tracks.
+  void _reportQuestion(_Question q) {
+    ReportDialog.show(
+      context: context,
+      question: q.question,
+      options: q.options.map((o) => o.text).toList(),
+      questionId: q.questionId,
+      subject: widget.featureId,
+      chapter: _displayTitle,
+      mode: _track,
+    );
   }
 
   @override
@@ -324,6 +474,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
         body: Column(
           children: [
             SubpageHeader(title: _topicTitle.isEmpty ? '...' : _topicTitle),
+            if (_offline && !_loading && _error == null) _offlineChip(),
             if (!_loading && _error == null && _questions.isNotEmpty)
               _trackBar(),
             Expanded(
@@ -367,6 +518,41 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     );
   }
 
+  /// Small theme-aware chip marking on-device cached content. No emoji.
+  Widget _offlineChip() {
+    final accent = _accent;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: accent.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(999),
+            border:
+                Border.all(color: accent.withValues(alpha: 0.45)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off_outlined, size: 13, color: accent),
+              const SizedBox(width: 5),
+              Text(
+                'Offline',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: accent),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _trackBar() {
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -387,13 +573,14 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
 
   Widget _trackButton(String key, IconData icon, String label) {
     final active = _track == key;
+    final accent = _accent;
     return Expanded(
       child: GestureDetector(
         onTap: () => _changeTrack(key),
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 11),
           decoration: BoxDecoration(
-            color: active ? AppColors.navy : Colors.transparent,
+            color: active ? accent : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
           ),
           child: Row(
@@ -422,9 +609,33 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     );
   }
 
+  /// The 38x38 elevated action tile from the chapter practice screen
+  /// (bookmark / report).
+  Widget _actionBox(Widget child) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      width: 38,
+      height: 38,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(11),
+        color: pal.surface,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: child,
+    );
+  }
+
   // ============================ READ TRACK ============================
 
   Widget _readBody() {
+    final accent = _accent;
     final allOpen = _questions.every((q) => _expanded[q.questionId] == true);
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -439,11 +650,10 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                   width: 42,
                   height: 42,
                   decoration: BoxDecoration(
-                    color: AppColors.navy.withValues(alpha: 0.12),
+                    color: accent.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.menu_book_outlined,
-                      color: AppColors.navy),
+                  child: Icon(Icons.menu_book_outlined, color: accent),
                 ),
                 const SizedBox(width: 10),
                 const Expanded(
@@ -456,8 +666,8 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                       SizedBox(height: 2),
                       Text(
                         'Tap a question to expand its answer.',
-                        style: TextStyle(
-                            fontSize: 12, color: Colors.grey),
+                        style:
+                            TextStyle(fontSize: 12, color: Colors.grey),
                       ),
                     ],
                   ),
@@ -471,6 +681,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                       }
                     });
                   },
+                  style: TextButton.styleFrom(foregroundColor: accent),
                   child: Text(allOpen ? 'Collapse all' : 'Expand all'),
                 ),
               ],
@@ -486,8 +697,10 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
 
   Widget _readQuestion(_Question q, int index) {
     final open = _expanded[q.questionId] == true;
-    const success = Color(0xFF16A34A);
-    const warning = Color(0xFFD97706);
+    final accent = _accent;
+    final pal = ExpoPalette.of(context);
+    final success = pal.success;
+    final warning = pal.warning;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
@@ -501,24 +714,60 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                   padding: const EdgeInsets.symmetric(
                       horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
-                    color: AppColors.navy.withValues(alpha: 0.1),
+                    color: accent.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Text(
                     'Q${index + 1}',
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: AppColors.navy),
+                        color: accent),
                   ),
                 ),
+                if (q.difficulty.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: _difficultyColor(q.difficulty)
+                          .withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Text(
+                      q.difficulty.toUpperCase(),
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: _difficultyColor(q.difficulty)),
+                    ),
+                  ),
+                ],
                 const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.chevron_right),
-                  onPressed: () {},
+                _actionBox(_AfBookmarkButton(
+                  uid: AuthService.currentUser?.uid ?? '',
+                  featureId: widget.featureId,
+                  topicId: widget.topicId,
+                  topicTitle: _displayTitle,
+                  track: 'read',
+                  question: q,
+                )),
+                const SizedBox(width: 8),
+                _actionBox(
+                  IconButton(
+                    onPressed: () => _reportQuestion(q),
+                    icon: const Icon(Icons.flag_rounded, size: 19),
+                    color: pal.textSecondary,
+                    tooltip: 'Report',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                        minWidth: 34, minHeight: 34),
+                  ),
                 ),
               ],
             ),
+            const SizedBox(height: 8),
             Text(
               q.question,
               style: const TextStyle(
@@ -526,8 +775,8 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
             ),
             const SizedBox(height: 6),
             InkWell(
-              onTap: () => setState(
-                  () => _expanded[q.questionId] = !open),
+              onTap: () =>
+                  setState(() => _expanded[q.questionId] = !open),
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Row(
@@ -536,13 +785,13 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                       open
                           ? Icons.keyboard_arrow_up
                           : Icons.keyboard_arrow_down,
-                      color: AppColors.navy,
+                      color: accent,
                     ),
                     const SizedBox(width: 6),
                     Text(
                       open ? 'Hide answer' : 'Show answer',
-                      style: const TextStyle(
-                          color: AppColors.navy,
+                      style: TextStyle(
+                          color: accent,
                           fontWeight: FontWeight.w600,
                           fontSize: 14),
                     ),
@@ -550,46 +799,59 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                 ),
               ),
             ),
-            if (open) ...[
-              const SizedBox(height: 6),
-              for (int oi = 0; oi < q.options.length; oi++)
-                _readOption(q, oi, success),
-              const SizedBox(height: 10),
-              if (q.explanation.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: warning.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: warning.withValues(alpha: 0.4)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.lightbulb_outline,
-                              size: 20, color: warning),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Explanation',
-                            style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: warning,
-                                fontSize: 15),
+            // Smooth finite expand/collapse (~250ms) — AnimatedSize animates
+            // between the two sizes; pumpAndSettle-safe, no controllers.
+            AnimatedSize(
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              alignment: Alignment.topCenter,
+              child: open
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 6),
+                        for (int oi = 0; oi < q.options.length; oi++)
+                          _readOption(q, oi, success),
+                        const SizedBox(height: 10),
+                        if (q.explanation.isNotEmpty)
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: warning.withValues(alpha: 0.08),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                  color: warning.withValues(alpha: 0.4)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(Icons.lightbulb_outline,
+                                        size: 20, color: warning),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'Explanation',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          color: warning,
+                                          fontSize: 15),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 6),
+                                Text(q.explanation,
+                                    style: const TextStyle(
+                                        fontSize: 14, height: 1.45)),
+                              ],
+                            ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
-                      Text(q.explanation,
-                          style: const TextStyle(
-                              fontSize: 14, height: 1.45)),
-                    ],
-                  ),
-                ),
-            ],
+                      ],
+                    )
+                  : const SizedBox(width: double.infinity),
+            ),
           ],
         ),
       ),
@@ -621,9 +883,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               shape: BoxShape.circle,
               color: correct ? success : Colors.transparent,
               border: Border.all(
-                  color: correct
-                      ? success
-                      : Colors.grey.withValues(alpha: 0.4),
+                  color: correct ? success : Colors.grey.withValues(alpha: 0.4),
                   width: 1.4),
             ),
             child: Center(
@@ -643,8 +903,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
             child: Text(q.options[oi].text,
                 style: const TextStyle(fontSize: 14, height: 1.35)),
           ),
-          if (correct)
-            const Icon(Icons.check_circle, size: 20, color: Color(0xFF16A34A)),
+          if (correct) Icon(Icons.check_circle, size: 20, color: success),
         ],
       ),
     );
@@ -661,11 +920,14 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     final wasCorrect = _correctIds.contains(q.questionId);
     final used = _attempted.length;
     final limit = _dailyLimit;
-    const success = Color(0xFF16A34A);
-    const error = Color(0xFFDC2626);
+    final pal = ExpoPalette.of(context);
+    final accent = _accent;
+    final success = pal.success;
+    final error = pal.danger;
     final onSurface = Theme.of(context).colorScheme.onSurface;
 
     return ListView(
+      controller: _practiceScroll,
       padding: const EdgeInsets.all(16),
       children: [
         Card(
@@ -679,9 +941,9 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                     children: [
                       Text(
                         "Today's practice: $used/$limit",
-                        style: const TextStyle(
+                        style: TextStyle(
                             fontWeight: FontWeight.bold,
-                            color: AppColors.navy,
+                            color: accent,
                             fontSize: 13),
                       ),
                       const SizedBox(height: 2),
@@ -693,8 +955,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                     ],
                   ),
                 ),
-                Icon(Icons.timer,
-                    size: 22, color: AppColors.navy),
+                Icon(Icons.timer, size: 22, color: accent),
               ],
             ),
           ),
@@ -708,10 +969,10 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               children: [
                 Text(
                   'QUESTION ${_current + 1} OF $total',
-                  style: const TextStyle(
+                  style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: AppColors.navy),
+                      color: accent),
                 ),
                 const SizedBox(height: 8),
                 ClipRRect(
@@ -719,55 +980,95 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                   child: LinearProgressIndicator(
                     value: (_current + 1) / total,
                     minHeight: 5,
-                    backgroundColor:
-                        onSurface.withValues(alpha: 0.12),
-                    valueColor: const AlwaysStoppedAnimation<Color>(
-                        AppColors.navy),
+                    backgroundColor: onSurface.withValues(alpha: 0.12),
+                    valueColor:
+                        AlwaysStoppedAnimation<Color>(accent),
                   ),
                 ),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(15),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+        const SizedBox(height: 14),
+        // Question badge + bookmark/report actions — mirrors the chapter
+        // practice screen.
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 9),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(11),
+                color: accent.withValues(alpha: 0.08),
+              ),
+              child: Text('Question ${_current + 1}',
+                  style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: accent)),
+            ),
+            Row(
               children: [
-                Text(
-                  q.question,
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w600, height: 1.45),
-                ),
-                if (q.difficulty.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _difficultyColor(q.difficulty)
-                          .withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: Text(
-                      q.difficulty.toUpperCase(),
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: _difficultyColor(q.difficulty)),
-                    ),
+                _actionBox(_AfBookmarkButton(
+                  key: ValueKey('af-practice:${q.questionId}'),
+                  uid: AuthService.currentUser?.uid ?? '',
+                  featureId: widget.featureId,
+                  topicId: widget.topicId,
+                  topicTitle: _displayTitle,
+                  track: 'practice',
+                  question: q,
+                )),
+                const SizedBox(width: 8),
+                _actionBox(
+                  IconButton(
+                    onPressed: () => _reportQuestion(q),
+                    icon: const Icon(Icons.flag_rounded, size: 19),
+                    color: pal.textSecondary,
+                    tooltip: 'Report',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                        minWidth: 34, minHeight: 34),
                   ),
-                ],
+                ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        // Question + options + explanation, animated on question change —
+        // fade + slight slide, same as the chapter practice screen.
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 220),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          transitionBuilder: (Widget child, Animation<double> animation) {
+            final begin = Offset(0.05 * _slideDir, 0.015);
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(begin: begin, end: Offset.zero)
+                    .animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: KeyedSubtree(
+            key: ValueKey<int>(_current),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _practiceQuestionCard(q),
+                const SizedBox(height: 10),
+                for (int oi = 0; oi < q.options.length; oi++)
+                  _practiceOption(
+                      q, oi, attempted, selected, wasCorrect, success, error),
+                if (attempted)
+                  _explanationCard(q, selected, wasCorrect, success, error),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 12),
-        for (int oi = 0; oi < q.options.length; oi++)
-          _practiceOption(q, oi, attempted, selected, wasCorrect, success, error),
-        if (attempted) _explanationCard(q, selected, wasCorrect, success, error),
         const SizedBox(height: 16),
         Row(
           children: [
@@ -776,7 +1077,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               child: OutlinedButton.icon(
                 onPressed: _current == 0
                     ? null
-                    : () => setState(() => _current--),
+                    : () => _goToQuestion(-1),
                 icon: const Icon(Icons.arrow_back, size: 19),
                 label: const Text('Previous'),
               ),
@@ -786,7 +1087,7 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
               flex: 135,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.navy,
+                  backgroundColor: accent,
                   foregroundColor: Colors.white,
                 ),
                 onPressed: (!attempted && used >= limit)
@@ -803,10 +1104,48 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
     );
   }
 
+  Widget _practiceQuestionCard(_Question q) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(15),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              q.question,
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w600, height: 1.45),
+            ),
+            if (q.difficulty.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _difficultyColor(q.difficulty)
+                      .withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Text(
+                  q.difficulty.toUpperCase(),
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: _difficultyColor(q.difficulty)),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _practiceOption(_Question q, int oi, bool attempted, int? selected,
       bool wasCorrect, Color success, Color error) {
     final isSelected = selected == oi;
     final isCorrect = oi == q.correctIndex;
+    final accent = _accent;
     Color border;
     Color? bg;
     if (attempted && isCorrect) {
@@ -816,57 +1155,71 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
       border = error;
       bg = error.withValues(alpha: 0.08);
     } else if (isSelected) {
-      border = AppColors.navy;
+      border = accent;
       bg = null;
     } else {
       border = Colors.grey.withValues(alpha: 0.35);
       bg = null;
     }
     final onSurface = Theme.of(context).colorScheme.onSurface;
-    return GestureDetector(
-      onTap: attempted ? null : () => _selectPracticeOption(q, oi),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 9),
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
-        decoration: BoxDecoration(
+    final filled = isSelected || (attempted && isCorrect);
+    // Keyed on the question id so each question change builds fresh tile
+    // state and the stagger replays on every question.
+    return _OptionStagger(
+      key: ValueKey('${q.questionId}:$oi'),
+      index: oi,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 9),
+        child: Material(
           color: bg ?? Theme.of(context).cardColor,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: border, width: 1.4),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 32,
-              height: 32,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: attempted ? null : () => _selectPracticeOption(q, oi),
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 58),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 13, vertical: 12),
               decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: (isSelected || (attempted && isCorrect))
-                    ? border
-                    : Colors.transparent,
-                border: Border.all(color: border, width: 1.5),
+                border: Border.all(color: border, width: 1.4),
+                borderRadius: BorderRadius.circular(10),
               ),
-              child: Center(
-                child: Text(
-                  String.fromCharCode(65 + oi),
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: (isSelected || (attempted && isCorrect))
-                          ? Colors.white
-                          : onSurface.withValues(alpha: 0.6)),
-                ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: filled ? border : Colors.transparent,
+                      border: Border.all(color: border, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(
+                        String.fromCharCode(65 + oi),
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: filled
+                                ? Colors.white
+                                : onSurface.withValues(alpha: 0.6)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(q.options[oi].text,
+                        style:
+                            const TextStyle(fontSize: 15, height: 1.35)),
+                  ),
+                  if (attempted && isCorrect)
+                    Icon(Icons.check_circle, size: 22, color: success),
+                  if (attempted && isSelected && !isCorrect)
+                    Icon(Icons.cancel, size: 22, color: error),
+                ],
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(q.options[oi].text,
-                  style: const TextStyle(fontSize: 15, height: 1.35)),
-            ),
-            if (attempted && isCorrect)
-              const Icon(Icons.check_circle, size: 22, color: Color(0xFF16A34A)),
-            if (attempted && isSelected && !isCorrect)
-              const Icon(Icons.cancel, size: 22, color: Color(0xFFDC2626)),
-          ],
+          ),
         ),
       ),
     );
@@ -931,9 +1284,9 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
           if (!wasCorrect)
             Text(
               'Correct answer: ${String.fromCharCode(65 + q.correctIndex)}',
-              style: const TextStyle(
+              style: TextStyle(
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF16A34A),
+                  color: success,
                   fontSize: 13),
             ),
           const SizedBox(height: 6),
@@ -942,23 +1295,28 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                   TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 4),
           Text(q.explanation,
-              style: const TextStyle(
-                  fontSize: 15, height: 1.4, color: Colors.black87)),
+              style: TextStyle(
+                  fontSize: 15,
+                  height: 1.4,
+                  color: ExpoPalette.of(context).textSecondary)),
         ],
       ),
     );
   }
 
   Color _difficultyColor(String d) {
+    final pal = ExpoPalette.of(context);
     switch (d.toLowerCase()) {
       case 'easy':
-        return const Color(0xFF16A34A);
+        return pal.success;
       case 'medium':
-        return const Color(0xFFD97706);
+        return pal.warning;
       default:
-        return const Color(0xFFDC2626);
+        return pal.danger;
     }
   }
+
+  // ============================== DIALOGS ==============================
 
   Future<bool?> _leaveDialog() {
     return showDialog<bool>(
@@ -1035,6 +1393,262 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
           onCancel: () => Navigator.pop(c),
         ),
       ),
+    );
+  }
+}
+
+/// Staggered option-tile entrance — fade + 12px slide-up, tiles start
+/// ~70ms apart (index * 70). Each tile is keyed on the question id, so a
+/// question change builds fresh State objects whose controllers replay the
+/// animation from scratch on every question. Selecting an option rebuilds
+/// with the same keys, so the animation does not replay mid-question.
+/// Finite (280ms + stagger delay) — pumpAndSettle-safe.
+class _OptionStagger extends StatefulWidget {
+  final int index;
+  final Widget child;
+
+  const _OptionStagger(
+      {super.key, required this.index, required this.child});
+
+  @override
+  State<_OptionStagger> createState() => _OptionStaggerState();
+}
+
+class _OptionStaggerState extends State<_OptionStagger>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.index * 70), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(_controller.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - t)),
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+/// Per-question bookmark toggle for additional-feature topics — the Flutter
+/// equivalent of the Expo topic screen's BookmarkButton (context = the
+/// track: 'read' | 'practice', kind 'question',
+/// refId "${topicId}:${questionId}"). Bookmarks live at
+/// users/{uid}/bookmarks with the same doc-id scheme as the Expo app
+/// (`<track>__<safeSegment(refId)>`), so the Bookmarks screen lists them
+/// without changes. UX mirrors the chapter practice bookmark: tap shows a
+/// brief spinner, then a success toast; the Firestore write is
+/// fire-and-forget and reverts the icon on failure.
+class _AfBookmarkButton extends StatefulWidget {
+  final String uid;
+  final String featureId;
+  final String topicId;
+  final String topicTitle;
+  final String track; // 'read' | 'practice'
+  final _Question question;
+
+  const _AfBookmarkButton({
+    super.key,
+    required this.uid,
+    required this.featureId,
+    required this.topicId,
+    required this.topicTitle,
+    required this.track,
+    required this.question,
+  });
+
+  @override
+  State<_AfBookmarkButton> createState() => _AfBookmarkButtonState();
+}
+
+class _AfBookmarkButtonState extends State<_AfBookmarkButton> {
+  bool _saved = false;
+  bool _busy = false;
+
+  /// Pending "save confirmed" timer — cancelled if the background write
+  /// fails first, or if the tap is superseded by a newer one.
+  Timer? _saveTimer;
+
+  /// Monotonic op id: guards the fire-and-forget save against a later
+  /// remove/refresh so a stale failure can't clobber newer state.
+  int _opId = 0;
+
+  String get _refId => '${widget.topicId}:${widget.question.questionId}';
+
+  /// Mirrors React's bookmarkDocId(): `<context>__<safeSegment(refId)>`.
+  String get _docId {
+    var ref = _refId
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    if (ref.isEmpty) ref = 'item';
+    return '${widget.track}__$ref';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+        'users/${widget.uid}/bookmarks/$_docId',
+        idToken: idToken,
+      );
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _saveTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onTap() {
+    if (_busy || widget.uid.isEmpty) return;
+    if (_saved) {
+      _remove();
+      return;
+    }
+    setState(() => _busy = true);
+    _saveTimer?.cancel();
+    final op = ++_opId;
+    unawaited(_saveInBackground(op));
+    _saveTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _saved = true;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    });
+  }
+
+  Future<void> _saveInBackground(int op) async {
+    final path = 'users/${widget.uid}/bookmarks/$_docId';
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final q = widget.question;
+      final modeLabel =
+          widget.track == 'read' ? 'Read Mode' : 'Practice Mode';
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'context': widget.track,
+          'kind': 'question',
+          'refId': _refId,
+          'title': q.question,
+          'preview': q.explanation,
+          'sourceLabel': '${widget.featureId} · $modeLabel',
+          'payload': {
+            'question': q.question,
+            'options': q.options.map((o) => o.text).toList(),
+            'answerIndex': q.correctIndex,
+            'explanation': q.explanation,
+            'meta': [
+              {'label': 'Topic', 'value': widget.topicTitle},
+              {'label': 'Mode', 'value': modeLabel},
+            ],
+          },
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: idToken,
+      );
+      // Success is reported by the 2s timer — nothing more to do here.
+    } catch (_) {
+      // Superseded by a newer tap, or the button was rebuilt — leave the
+      // newer state alone.
+      if (op != _opId || !mounted) return;
+      _saveTimer?.cancel();
+      setState(() {
+        _busy = false;
+        _saved = false;
+      });
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  Future<void> _remove() async {
+    _opId++;
+    _saveTimer?.cancel();
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      await FirestoreRest.deleteDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
+      if (!mounted) return;
+      setState(() {
+        _saved = false;
+        _busy = false;
+      });
+      showToast(context, 'Bookmark removed.', ToastVariant.info);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return IconButton(
+      onPressed: _busy ? null : _onTap,
+      icon: _busy
+          ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: pal.primary,
+              ),
+            )
+          : Icon(
+              _saved
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_outline_rounded,
+              size: 20),
+      color: _saved ? pal.primary : pal.textSecondary,
+      tooltip: _saved ? 'Remove bookmark' : 'Bookmark',
+      padding: EdgeInsets.zero,
+      constraints:
+          const BoxConstraints(minWidth: 34, minHeight: 34),
     );
   }
 }

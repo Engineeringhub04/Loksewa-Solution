@@ -11,7 +11,7 @@ class AdditionalPmScreen extends StatelessWidget {
     return const AdditionalFeatureHomeScreen(
       featureId: 'pm',
       heroIcon: Icons.business,
-      reactSubtitle: 'Project Management',
+      reactSubtitle: 'Public Management',
     );
   }
 }

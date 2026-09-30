@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
@@ -16,14 +19,26 @@ import '../../widgets/preloading.dart';
 /// - per-topic practice progress: local JSON key
 ///   `af_practice_{featureId}_{topicId}` =
 ///   `{ dailyDate, attemptedQuestionIds: [...], selectedAnswerIds: {...} }`
-/// - offline flags: `af_offline_{featureId}_complete` = 'true' and
-///   `af_offline_{featureId}_date` = yyyy-MM-dd
+/// - offline snapshot:
+///   - prefs `af_offline_{featureId}_complete` = 'true' (downloaded at least
+///     once — NOT date-gated; the date rule was removed in favor of the
+///     updateTime check below)
+///   - prefs `af_offline_{featureId}_date` = yyyy-MM-dd of last download
+///   - prefs `af_offline_{featureId}_update_time` = the page doc's
+///     `__updateTime` at download time
+///   - files `<appDocs>/af_offline/{featureId}/page.json` (decoded page doc)
+///     and `<appDocs>/af_offline/{featureId}/banks/{topicId}.json`
+///     (each topic's decoded question-bank doc)
 ///
 /// Logic matches React exactly:
 /// - topics filtered to `isPublished !== false`, sorted by `order`
 /// - per-topic percent = min(100, round(attempted / questionCount * 100))
 /// - overall percent = QUESTIONCOUNT-WEIGHTED mean of topic percents
-/// - offline download fetches every topic's bank, then marks complete
+/// - the header ALWAYS shows `widget.reactSubtitle`, never the page doc title
+/// - offline button has 3 states: "Offline Access" (never downloaded) /
+///   "Saved" (downloaded, snapshot current — disabled) /
+///   "Update available" (downloaded, page doc newer — re-downloads)
+/// - topic cards show the Nepali title big, English title small
 class AdditionalFeatureHomeScreen extends StatefulWidget {
   final String featureId;
   final IconData heroIcon;
@@ -39,6 +54,26 @@ class AdditionalFeatureHomeScreen extends StatefulWidget {
   @override
   State<AdditionalFeatureHomeScreen> createState() =>
       _AdditionalFeatureHomeScreenState();
+}
+
+/// Pure updateTime comparison backing the offline "update available" state.
+///
+/// True only when both timestamps are present and the freshly-fetched page
+/// doc is strictly newer than the stored offline snapshot. Falls back to
+/// plain string comparison when either value is not a parseable date
+/// (RFC3339 timestamps sort lexicographically, so the fallback stays
+/// correct). Old installs with no stored updateTime never report an update.
+bool isAdditionalFeatureUpdateAvailable({
+  required String? storedUpdateTime,
+  required String? liveUpdateTime,
+}) {
+  if (storedUpdateTime == null || storedUpdateTime.isEmpty) return false;
+  if (liveUpdateTime == null || liveUpdateTime.isEmpty) return false;
+  if (storedUpdateTime == liveUpdateTime) return false;
+  final stored = DateTime.tryParse(storedUpdateTime);
+  final live = DateTime.tryParse(liveUpdateTime);
+  if (stored != null && live != null) return live.isAfter(stored);
+  return liveUpdateTime.compareTo(storedUpdateTime) > 0;
 }
 
 class _Topic {
@@ -66,6 +101,7 @@ class _AdditionalFeatureHomeScreenState
   bool _loading = true;
   String? _error;
   bool _offlineComplete = false;
+  bool _updateAvailable = false;
   bool _downloading = false;
 
   @override
@@ -118,15 +154,23 @@ class _AdditionalFeatureHomeScreenState
         } catch (_) {}
       }
 
+      // Downloaded = complete flag ever set (no date rule). Update is
+      // available when the freshly-fetched page doc is newer than the
+      // snapshot's stored updateTime.
       final completeFlag =
           await PrefsService.getString('af_offline_${_fid}_complete');
-      final completeDate =
-          await PrefsService.getString('af_offline_${_fid}_date');
-      final today = _dateKey(DateTime.now());
+      final storedUpdateTime =
+          await PrefsService.getString('af_offline_${_fid}_update_time');
+      final downloaded = completeFlag == 'true';
       setState(() {
         _page = page;
         _topics = topics;
-        _offlineComplete = completeFlag == 'true' && completeDate == today;
+        _offlineComplete = downloaded;
+        _updateAvailable = downloaded &&
+            isAdditionalFeatureUpdateAvailable(
+              storedUpdateTime: storedUpdateTime,
+              liveUpdateTime: page?['__updateTime']?.toString(),
+            );
         _loading = false;
       });
     } catch (e) {
@@ -191,23 +235,70 @@ class _AdditionalFeatureHomeScreenState
     return Icons.auto_awesome;
   }
 
+  /// Local file root for this feature's offline snapshot:
+  /// `<appDocs>/af_offline/<featureId>/` holding `page.json` and
+  /// `banks/<topicId>.json`. Sync fs ops (AGENTS.md: async
+  /// `Directory.create()` hangs under testWidgets).
+  Future<Directory> _offlineDir() async {
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory('${docs.path}/af_offline/$_fid');
+    dir.createSync(recursive: true);
+    return dir;
+  }
+
+  /// json.encode-safe copy of a decoded Firestore map — Firestore timestamp
+  /// fields decode to DateTime, which json.encode cannot serialize.
+  dynamic _jsonSafe(dynamic v) {
+    if (v is DateTime) return v.toUtc().toIso8601String();
+    if (v is Map) {
+      return <String, dynamic>{
+        for (final e in v.entries) e.key.toString(): _jsonSafe(e.value),
+      };
+    }
+    if (v is List) return v.map(_jsonSafe).toList();
+    return v;
+  }
+
+  /// Downloads every topic's question bank AND persists the offline snapshot
+  /// to local files (page.json + banks/<topicId>.json), then records the
+  /// complete flag, date, and page updateTime in prefs.
   Future<void> _downloadOffline() async {
     if (_downloading || _topics.isEmpty) return;
     setState(() => _downloading = true);
     try {
       final idToken = await AuthService.getValidIdToken();
+      final dir = await _offlineDir();
+      final page = _page;
+      if (page != null) {
+        File('${dir.path}/page.json')
+            .writeAsStringSync(json.encode(_jsonSafe(page)));
+      }
+      final banksDir =
+          Directory('${dir.path}/banks')..createSync(recursive: true);
       for (final t in _topics) {
         final docId = '${_fid}__all__all__${t.topicId}';
-        await FirestoreRest.getDocument(
+        final bank = await FirestoreRest.getDocument(
           'app_additional_feature_question_banks/$docId',
           idToken: idToken,
         );
+        if (bank != null) {
+          File('${banksDir.path}/${t.topicId}.json')
+              .writeAsStringSync(json.encode(_jsonSafe(bank)));
+        }
       }
+      final updateTime = page?['__updateTime']?.toString() ?? '';
       await PrefsService.setString('af_offline_${_fid}_complete', 'true');
       await PrefsService.setString(
           'af_offline_${_fid}_date', _dateKey(DateTime.now()));
+      if (updateTime.isNotEmpty) {
+        await PrefsService.setString(
+            'af_offline_${_fid}_update_time', updateTime);
+      }
       if (mounted) {
-        setState(() => _offlineComplete = true);
+        setState(() {
+          _offlineComplete = true;
+          _updateAvailable = false;
+        });
         showToast(context, 'All topics saved for offline access.',
             ToastVariant.success);
       }
@@ -231,7 +322,9 @@ class _AdditionalFeatureHomeScreenState
     return Scaffold(
       body: Column(
         children: [
-          SubpageHeader(title: titleEn),
+          // Header ALWAYS shows the React subtitle — the fetched page doc
+          // must never overwrite it (not even after loading finishes).
+          SubpageHeader(title: widget.reactSubtitle),
           Expanded(
             child: _loading
                 ? const PreloadingWidget(
@@ -294,7 +387,8 @@ class _AdditionalFeatureHomeScreenState
 
   /// Hero card — mirrors React AdditionalFeatureScreen exactly:
   /// theme-aware surface (NOT hardcoded navy), primary icon tile,
-  /// count badge, weighted progress, and the Offline Access button.
+  /// count badge, weighted progress, and the Offline Access button with its
+  /// 3 states: "Offline Access" / "Saved" (disabled) / "Update available".
   Widget _heroCard(String titleEn, String titleNp) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
@@ -310,9 +404,29 @@ class _AdditionalFeatureHomeScreenState
         isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
     final success =
         isDark ? const Color(0xFF22C55E) : const Color(0xFF16A34A);
+    final accent =
+        isDark ? const Color(0xFFF59E0B) : const Color(0xFFD97706);
     final overall = _overallPercent;
-    final disabled =
-        _downloading || _offlineComplete || _topics.isEmpty;
+
+    // (a) never downloaded -> tappable "Offline Access"
+    // (b) downloaded, snapshot current -> disabled "Saved"
+    // (c) downloaded, page doc newer -> tappable "Update available"
+    final downloaded = _offlineComplete;
+    final updateReady = downloaded && _updateAvailable;
+    final saved = downloaded && !_updateAvailable;
+    final tappable = !_downloading &&
+        _topics.isNotEmpty &&
+        (!downloaded || _updateAvailable);
+    final buttonColor = saved
+        ? success.withValues(alpha: 0.15)
+        : updateReady
+            ? accent
+            : primary;
+    final borderColor = saved
+        ? success.withValues(alpha: 0.55)
+        : updateReady
+            ? accent
+            : primary;
 
     return Container(
       padding: const EdgeInsets.all(18),
@@ -390,7 +504,7 @@ class _AdditionalFeatureHomeScreenState
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text('$_topics.length',
+                    Text('${_topics.length}',
                         style: TextStyle(
                             color: primary,
                             fontSize: 16,
@@ -439,13 +553,11 @@ class _AdditionalFeatureHomeScreenState
           SizedBox(
             width: double.infinity,
             child: Material(
-              color: _offlineComplete
-                  ? success.withValues(alpha: 0.15)
-                  : primary,
+              color: buttonColor,
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: disabled ? null : _downloadOffline,
+                onTap: tappable ? _downloadOffline : null,
                 child: Container(
                   constraints:
                       const BoxConstraints(minHeight: 47),
@@ -453,10 +565,7 @@ class _AdditionalFeatureHomeScreenState
                       horizontal: 14),
                   decoration: BoxDecoration(
                     border: Border.all(
-                        color: _offlineComplete
-                            ? success.withValues(alpha: 0.55)
-                            : primary,
-                        width: 1),
+                        color: borderColor, width: 1),
                     borderRadius: BorderRadius.circular(14),
                   ),
                   child: Row(
@@ -473,31 +582,30 @@ class _AdditionalFeatureHomeScreenState
                         )
                       else
                         Icon(
-                            _offlineComplete
+                            saved
                                 ? Icons.check_circle_outline
-                                : Icons.download_outlined,
+                                : updateReady
+                                    ? Icons.system_update_alt
+                                    : Icons.download_outlined,
                             size: 19,
-                            color: _offlineComplete
-                                ? success
-                                : Colors.white),
+                            color: saved ? success : Colors.white),
                       const SizedBox(width: 8),
                       Flexible(
                         child: Text(
-                          _offlineComplete
-                              ? 'Saved for offline access'
-                              : 'Offline Access',
+                          saved
+                              ? 'Saved'
+                              : updateReady
+                                  ? 'Update available'
+                                  : 'Offline Access',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                              color: _offlineComplete
-                                  ? success
-                                  : Colors.white,
+                              color: saved ? success : Colors.white,
                               fontSize: 13,
                               fontWeight: FontWeight.bold),
                         ),
                       ),
-                      if (!_offlineComplete &&
-                          !_downloading) ...[
+                      if (!_downloading && !saved) ...[
                         const SizedBox(width: 8),
                         const Icon(Icons.arrow_forward,
                             size: 17, color: Colors.white),
@@ -513,18 +621,24 @@ class _AdditionalFeatureHomeScreenState
     );
   }
 
+  /// Dynamic info strip: a short hint normally, an accent banner when new
+  /// questions are available for the offline snapshot.
   Widget _infoCard() {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final primary =
         isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    final accent =
+        isDark ? const Color(0xFFF59E0B) : const Color(0xFFD97706);
     final textPrimary =
         isDark ? const Color(0xFFF1F5F9) : const Color(0xFF0F172A);
+    final updateReady = _offlineComplete && _updateAvailable;
+    final tint = updateReady ? accent : primary;
     return Container(
       padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
-        color: primary.withValues(alpha: 0.047),
+        color: tint.withValues(alpha: 0.047),
         border: Border.all(
-            color: primary.withValues(alpha: 0.21), width: 1),
+            color: tint.withValues(alpha: 0.21), width: 1),
         borderRadius: BorderRadius.circular(18),
       ),
       child: Row(
@@ -534,16 +648,22 @@ class _AdditionalFeatureHomeScreenState
             width: 32,
             height: 32,
             decoration: BoxDecoration(
-              color: primary.withValues(alpha: 0.18),
+              color: tint.withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(10),
             ),
-            child: Icon(Icons.info_outline,
-                size: 22, color: primary),
+            child: Icon(
+                updateReady
+                    ? Icons.system_update_alt
+                    : Icons.info_outline,
+                size: 22,
+                color: tint),
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'New questions are added from time to time. If new questions are available, please connect to the internet after 12:00 AM and tap \u201cOffline Access\u201d to update your offline questions.',
+              updateReady
+                  ? 'New questions available \u2014 tap Update to get the latest questions.'
+                  : 'Tap Offline Access to save all questions on your phone for offline use.',
               style: TextStyle(
                   fontSize: 12,
                   height: 19 / 12,
@@ -555,6 +675,8 @@ class _AdditionalFeatureHomeScreenState
     );
   }
 
+  /// Topic card — big title is Nepali (falls back to English), small
+  /// subtitle is English. Titles render as plain strings.
   Widget _topicCard(_Topic t, Color onCard) {
     final pct = _topicPercent(t);
     final icon = _topicIcon(t);
@@ -563,11 +685,14 @@ class _AdditionalFeatureHomeScreenState
         isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+    final bigTitle = t.titleNp.isNotEmpty ? t.titleNp : t.titleEn;
+    final smallTitle =
+        (t.titleEn.isNotEmpty && t.titleEn != bigTitle) ? t.titleEn : '';
     return Card(
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onTap: () => context.push(
-          '/additional-features/${_fid}/${t.topicId}',
+          '/additional-features/$_fid/${t.topicId}',
           extra: {
             'featureId': _fid,
             'topicId': t.topicId,
@@ -605,13 +730,13 @@ class _AdditionalFeatureHomeScreenState
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      t.titleEn.isNotEmpty ? t.titleEn : t.titleNp,
+                      bigTitle,
                       style: const TextStyle(
                           fontSize: 15, fontWeight: FontWeight.w600),
                     ),
-                    if (t.titleNp.isNotEmpty)
+                    if (smallTitle.isNotEmpty)
                       Text(
-                        t.titleNp,
+                        smallTitle,
                         style: TextStyle(
                             fontSize: 12,
                             color: onCard.withValues(alpha: 0.6)),

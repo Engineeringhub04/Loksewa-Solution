@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
 import 'app_config.dart';
 import 'server_clock.dart';
 
@@ -24,6 +25,19 @@ class FirestoreRest {  static String get _base =>
       };
 
   /// Decode a Firestore document's fields into a plain map.
+  /// Part B3 contract: preserves the doc-level `updateTime` (top-level
+  /// RFC3339 string in the REST response) under the `__updateTime` key —
+  /// the double-underscore namespace keeps it clear of real field names.
+  @visibleForTesting
+  static Map<String, dynamic> decodeDocument(Map<String, dynamic> body) {
+    final result = _decodeFields(body);
+    final updateTime = body['updateTime'];
+    if (updateTime != null) {
+      result['__updateTime'] = updateTime.toString();
+    }
+    return result;
+  }
+
   static Map<String, dynamic> _decodeFields(Map<String, dynamic> doc) {
     final fields = doc['fields'] as Map<String, dynamic>? ?? {};
     return fields.map((k, v) => MapEntry(k, _decodeValue(v)));
@@ -82,7 +96,7 @@ class FirestoreRest {  static String get _base =>
     ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode == 404) return null;
     if (res.statusCode != 200) throw Exception('getDocument $path: ${res.statusCode}');
-    return _decodeFields(json.decode(res.body) as Map<String, dynamic>);
+    return decodeDocument(json.decode(res.body) as Map<String, dynamic>);
   }
 
   static Future<List<Map<String, dynamic>>> listDocuments(

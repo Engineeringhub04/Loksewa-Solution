@@ -407,10 +407,15 @@ final appRouter = GoRouter(
         builder: (_, __) => const AdditionalPmScreen()),
     GoRoute(
       path: '/additional-features/:featureId/:topicId',
-      builder: (_, s) => AdditionalTopicScreen(
-        featureId: s.pathParameters['featureId']!,
-        topicId: s.pathParameters['topicId']!,
-      ),
+      builder: (_, s) {
+        final extraMap = s.extra is Map ? s.extra as Map : const {};
+        return AdditionalTopicScreen(
+          featureId: s.pathParameters['featureId']!,
+          topicId: s.pathParameters['topicId']!,
+          topicTitleEn: extraMap['topicTitleEn']?.toString(),
+          topicTitleNp: extraMap['topicTitleNp']?.toString(),
+        );
+      },
     ),
 
     // ---- User ----

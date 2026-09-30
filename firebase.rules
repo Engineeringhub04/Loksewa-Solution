@@ -1,0 +1,977 @@
+// Loksewa Solution — Firestore security rules.
+// MIRRORED from the React app's firebase.rules (same rules live in Firebase console).
+// Workflow: edit THIS file -> push to GitHub -> copy whole file -> paste-replace in
+// Firebase console > Firestore > Rules. Keep in sync with the React app copy.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function changedOnly(keys) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys);
+    }
+
+    function validPhotoURLSource(data) {
+      return !data.keys().hasAny(['photoURLSource']) ||
+        data.photoURLSource in ['manual', 'google', 'none'];
+    }
+
+    // Public read-only configuration used before login. No client can write it.
+    match /app_onboarding-settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /meta/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // One-copy announcements: every signed-in app user reads the same document.
+    match /app_global_notification/{notificationId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // User profile. Privilege and subscription fields are never client-writable.
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) &&
+        !request.resource.data.keys().hasAny([
+          'role', 'isAdmin', 'isPremium', 'premiumPlanName',
+          'premiumBillingCycle', 'premiumExpiryDate'
+        ]) &&
+        validPhotoURLSource(request.resource.data);
+      allow update: if isAdmin() ||
+        (isOwner(userId) && changedOnly([
+          'firstName', 'lastName', 'name', 'dob', 'gender', 'photoURL', 'photoURLSource',
+          'courseId', 'subcourseId', 'courseSetupComplete', 'stats', 'updatedAt',
+          'unlockedAchievements'
+        ]) && validPhotoURLSource(request.resource.data));
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // Legacy mock/live-exam attempts and the newer Exam Hub attempts.
+      match /attempts/{attemptId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update, delete: if isAdmin();
+      }
+      match /exam_attempts/{attemptId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update, delete: if isAdmin();
+      }
+      // Saved bookmarks. `update` is required as well as `create`: the app writes
+      // bookmarks with a merge set on a deterministic document id, so re-saving
+      // an item that already exists arrives as an update, not a create.
+      // Deliberately NOT schema-locked — a bookmark carries a snapshot payload
+      // whose fields differ per content type (question/options/body/meta).
+      match /bookmarks/{bookmarkId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+      match /learning_progress/{progressId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update: if isOwner(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow update: if isOwner(userId) && changedOnly(['read']) &&
+          request.resource.data.read == true;
+        allow create, delete: if isAdmin();
+      }
+      // Expo push tokens for this signed-in user, one document per device
+      // (keyed by a stable installation id). The owner registers/refreshes
+      // their own token and can remove it on sign-out; the admin lists tokens
+      // to send targeted pushes. Schema-locked so no unexpected fields land here.
+      match /push_tokens/{deviceId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) &&
+          request.resource.data.keys().hasOnly([
+            'deviceId', 'token', 'platform', 'language', 'appVersion',
+            'createdAt', 'updatedAt'
+          ]) &&
+          request.resource.data.deviceId == deviceId &&
+          request.resource.data.token is string &&
+          request.resource.data.token.size() > 0 &&
+          request.resource.data.token.size() <= 300 &&
+          request.resource.data.platform in ['android', 'ios'] &&
+          (request.resource.data.language == null || request.resource.data.language is string);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+      // One account = one device (normal users). Exactly one document is allowed
+      // here — `active` — and its `deviceId` names the phone that currently holds
+      // the account. Logging in on a new phone overwrites it; the displaced phone
+      // reads it on its next foreground, sees an id that is not its own, and
+      // signs itself out. Nothing on the server pushes it out, because there are
+      // no Cloud Functions on this plan: this document IS the mechanism.
+      //
+      // Only the owner may read it, which is why the app has to authenticate
+      // BEFORE it can ask whether the account is already in use somewhere else —
+      // and why declining the takeover has to sign back out again.
+      //
+      // Schema-locked exactly like push_tokens above, and the document id is
+      // pinned so a client cannot scatter extra claims the app would never read.
+      // Admins are exempt in the app and simply never write here.
+      match /session/{sessionId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) &&
+          sessionId == 'active' &&
+          request.resource.data.keys().hasOnly([
+            'deviceId', 'deviceName', 'platform', 'osVersion',
+            'appVersion', 'claimedAt', 'lastActiveAt'
+          ]) &&
+          request.resource.data.deviceId is string &&
+          request.resource.data.deviceId.size() > 0 &&
+          request.resource.data.deviceId.size() <= 200 &&
+          request.resource.data.platform in ['android', 'ios'] &&
+          (!request.resource.data.keys().hasAny(['deviceName']) ||
+            request.resource.data.deviceName is string) &&
+          (!request.resource.data.keys().hasAny(['osVersion']) ||
+            request.resource.data.osVersion == null ||
+            request.resource.data.osVersion is string);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+      match /qotd/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+      // Daily Test results: private per-user history. Owner can create and read
+      // their own attempts; edits/deletes are admin-only so a saved score can't
+      // be tampered with.
+      match /daily_test_results/{resultId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update, delete: if isAdmin();
+      }
+      match /current_affairs_progress/{dateKey} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if isOwner(userId) &&
+          request.resource.data.keys().hasOnly([
+            'dateKey', 'readArticleIds', 'completedPackIds', 'attemptedQuestionIds',
+            'correctQuestionIds', 'wrongQuestionIds', 'selectedAnswerIds',
+            'lastScore', 'quizCompleted', 'updatedAt'
+          ]) &&
+          request.resource.data.dateKey == dateKey &&
+          request.resource.data.readArticleIds is list &&
+          request.resource.data.completedPackIds is list &&
+          request.resource.data.attemptedQuestionIds is list &&
+          request.resource.data.correctQuestionIds is list &&
+          request.resource.data.wrongQuestionIds is list &&
+          request.resource.data.selectedAnswerIds is map &&
+          (request.resource.data.lastScore is number || request.resource.data.lastScore == null);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // Phase 1 Subject catalog. Subject metadata is readable by signed-in users,
+    // while every create/update/delete is restricted to administrators.
+    match /app_subjects_details/{subjectId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'name', 'course', 'subcourse', 'pro', 'price', 'order'
+        ]);
+      allow delete: if isAdmin();
+    }
+
+    // Phase 2 Subject structure catalog. All records are readable by signed-in
+    // users, while only admins can seed or maintain validated catalog metadata.
+    match /app_subjects_chapter_details/{documentId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'name', 'nameNe', 'order', 'course', 'subcourse', 'subjectId',
+          'unit', 'unitId', 'pro', 'price', 'isPublished', 'isSeed',
+          'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.course is string &&
+        request.resource.data.subcourse is string &&
+        request.resource.data.subjectId is string &&
+        request.resource.data.unit == null &&
+        request.resource.data.unitId == null;
+      allow delete: if isAdmin();
+    }
+
+    match /app_subjects_units_details/{documentId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'name', 'nameNe', 'order', 'course', 'subcourse', 'subjectId',
+          'pro', 'price', 'chapterCount', 'isPublished', 'isSeed',
+          'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.course is string &&
+        request.resource.data.subcourse is string &&
+        request.resource.data.subjectId == 'technical-subject';
+      allow delete: if isAdmin();
+    }
+
+    match /app_subjects_unit-chapters_details/{documentId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'name', 'nameNe', 'order', 'course', 'subcourse', 'subjectId',
+          'unitId', 'unit', 'unitNameNe', 'pro', 'price', 'isPublished',
+          'isSeed', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.course is string &&
+        request.resource.data.subcourse is string &&
+        request.resource.data.subjectId == 'technical-subject' &&
+        request.resource.data.unitId is string;
+      allow delete: if isAdmin();
+    }
+
+    // Phase 5 question sets. One document contains all questions for one
+    // scope + subject + chapter + mode. Reads are always direct document reads.
+    match /app_subject_cucqdata_Allmode/{contentSetId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'contentSetId', 'scopeId', 'courseId', 'courseNameEn', 'courseNameNe',
+          'subcourseId', 'subcourseNameEn', 'subcourseNameNe', 'subjectId',
+          'subjectNameEn', 'subjectNameNe', 'unitId', 'unitNameEn', 'unitNameNe',
+          'chapterId', 'chapterNameEn', 'chapterNameNe', 'unitChapterId',
+          'unitChapterNameEn', 'unitChapterNameNe', 'unitOrder', 'chapterOrder',
+          'mode', 'questionCount', 'questions', 'isPublished', 'isPremium',
+          'price', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.contentSetId is string &&
+        request.resource.data.scopeId is string &&
+        request.resource.data.courseId is string &&
+        request.resource.data.subcourseId is string &&
+        request.resource.data.subjectId is string &&
+        request.resource.data.chapterId is string &&
+        request.resource.data.mode in ['practice', 'read'] &&
+        request.resource.data.questions is list &&
+        request.resource.data.questionCount is number;
+      allow delete: if isAdmin();
+    }
+
+    // Phase 5 theory resources. One document stores one chapter's PDF metadata.
+    match /app_subject_theory_resources/{resourceId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'resourceId', 'scopeId', 'courseId', 'courseNameEn', 'courseNameNe',
+          'subcourseId', 'subcourseNameEn', 'subcourseNameNe', 'subjectId',
+          'subjectNameEn', 'subjectNameNe', 'unitId', 'unitNameEn', 'unitNameNe',
+          'chapterId', 'chapterNameEn', 'chapterNameNe', 'unitChapterId',
+          'unitOrder', 'chapterOrder', 'resourceType', 'titleEn', 'titleNe',
+          'pdfUrl', 'pdfProvider', 'isPublished', 'isPremium', 'price',
+          'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.resourceId is string &&
+        request.resource.data.scopeId is string &&
+        request.resource.data.courseId is string &&
+        request.resource.data.subcourseId is string &&
+        request.resource.data.subjectId is string &&
+        request.resource.data.chapterId is string &&
+        request.resource.data.resourceType == 'pdf';
+      allow delete: if isAdmin();
+    }
+
+    // Independent Additional Features content. Users can read only published
+    // GK/PM pages and banks; only admins can create, update, or delete seeded data.
+    match /app_additional_feature_pages/{pageId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'pageId', 'featureId', 'pageKey', 'titleEn', 'titleNp', 'courseId',
+          'subcourseId', 'scopeKey', 'topicCount', 'topics', 'seedVersion',
+          'isPublished', 'isSeed', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.pageId is string &&
+        request.resource.data.featureId in ['gk', 'pm'] &&
+        request.resource.data.pageId == pageId &&
+        request.resource.data.pageKey == request.resource.data.featureId &&
+        request.resource.data.titleEn is string &&
+        request.resource.data.titleNp is string &&
+        request.resource.data.courseId is string &&
+        request.resource.data.subcourseId is string &&
+        request.resource.data.scopeKey is string &&
+        request.resource.data.topicCount is number &&
+        request.resource.data.topics is list &&
+        request.resource.data.topicCount == request.resource.data.topics.size() &&
+        request.resource.data.isPublished is bool &&
+        request.resource.data.isSeed == true;
+      allow delete: if isAdmin();
+    }
+
+    match /app_additional_feature_question_banks/{bankId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'bankId', 'featureId', 'courseId', 'subcourseId', 'scopeKey', 'topicId',
+          'topicTitleEn', 'topicTitleNp', 'questionCount', 'questions', 'seedVersion',
+          'isPublished', 'isSeed', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.bankId == bankId &&
+        request.resource.data.featureId in ['gk', 'pm'] &&
+        request.resource.data.courseId is string &&
+        request.resource.data.subcourseId is string &&
+        request.resource.data.scopeKey is string &&
+        request.resource.data.topicId is string &&
+        request.resource.data.topicTitleEn is string &&
+        request.resource.data.topicTitleNp is string &&
+        request.resource.data.questionCount is number &&
+        request.resource.data.questions is list &&
+        request.resource.data.questionCount == request.resource.data.questions.size() &&
+        request.resource.data.isPublished is bool &&
+        request.resource.data.isSeed == true;
+      allow delete: if isAdmin();
+    }
+
+    // Current Affairs is global and admin-maintained. Users can only read
+    // published, verified records; the client cannot publish or alter answers.
+    match /app_current_affairs_articles/{articleId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.status == 'published' && resource.data.verified == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'id', 'titleNp', 'summaryNp', 'contentNp', 'examRelevanceNp', 'keyFactsNp',
+          'category', 'tags', 'sourceName', 'sourceUrl', 'imageUrl', 'publishedAt',
+          'updatedAt', 'applicableCourses', 'applicableSubcourses', 'examTags',
+          'status', 'verified', 'isSeed', 'seedVersion', 'createdAt', 'packIds'
+        ]) &&
+        request.resource.data.id == articleId &&
+        request.resource.data.titleNp is string &&
+        request.resource.data.summaryNp is string &&
+        request.resource.data.contentNp is string &&
+        request.resource.data.category is string &&
+        request.resource.data.sourceName is string &&
+        request.resource.data.sourceUrl is string &&
+        request.resource.data.applicableCourses is list &&
+        request.resource.data.applicableSubcourses is list &&
+        request.resource.data.status in ['draft', 'published'] &&
+        request.resource.data.verified is bool &&
+        request.resource.data.isSeed == true;
+      allow delete: if isAdmin();
+    }
+
+    match /app_current_affairs_questions/{questionId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.status == 'published' && resource.data.verified == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'id', 'articleId', 'questionNp', 'optionsNp', 'correctOptionId', 'explanationNp',
+          'difficulty', 'category', 'applicableCourses', 'applicableSubcourses',
+          'publishedAt', 'status', 'verified', 'isSeed', 'seedVersion', 'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.id == questionId &&
+        request.resource.data.articleId is string &&
+        request.resource.data.questionNp is string &&
+        request.resource.data.optionsNp is list &&
+        request.resource.data.correctOptionId is string &&
+        request.resource.data.explanationNp is string &&
+        request.resource.data.status in ['draft', 'published'] &&
+        request.resource.data.verified is bool &&
+        request.resource.data.isSeed == true;
+      allow delete: if isAdmin();
+    }
+
+    match /app_current_affairs_packs/{packId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'id', 'packType', 'packDate', 'monthKey', 'titleNp', 'articleIds', 'questionIds',
+          'articleCount', 'questionCount', 'isPublished', 'isSeed', 'seedVersion',
+          'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.id == packId &&
+        request.resource.data.packType in ['daily', 'weekly', 'monthly'] &&
+        request.resource.data.packDate is string &&
+        request.resource.data.monthKey is string &&
+        request.resource.data.titleNp is string &&
+        request.resource.data.articleIds is list &&
+        request.resource.data.questionIds is list &&
+        request.resource.data.articleCount == request.resource.data.articleIds.size() &&
+        request.resource.data.questionCount == request.resource.data.questionIds.size() &&
+        request.resource.data.isPublished is bool &&
+        request.resource.data.isSeed == true;
+      allow delete: if isAdmin();
+    }
+
+    // Legacy question data remains available for existing non-learning flows. The
+    // Phase 1 Subject catalog deliberately has no access to the old subject tree.
+    match /questions/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /mockTests/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /liveExams/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /currentAffairs/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    // Gorkhapatra Loksewa posts. Any signed-in user may READ (the list query
+    // filters `status` client-side, so read must not depend on status or it would
+    // need a composite index). WRITES are admin-only AND schema-locked: the field
+    // set is pinned to an allowlist and every field is type/size-checked, so no
+    // client — even a signed-in non-admin, or a buggy/compromised admin path —
+    // can create unexpected, malformed, or oversized documents. Deletes are
+    // admin-only too (lets an admin pull a bad post).
+    match /gorkhapatra/{docId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'slug', 'title', 'sourceUrl', 'publishedAt', 'dateLabel', 'coverImage',
+          'excerpt', 'blocks', 'isQuestionSet', 'tag', 'category', 'status', 'source',
+          'fetchedAt', 'updatedAt'
+        ]) &&
+        request.resource.data.slug == docId &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() > 0 &&
+        request.resource.data.title.size() <= 300 &&
+        request.resource.data.sourceUrl is string &&
+        request.resource.data.sourceUrl.size() <= 500 &&
+        request.resource.data.publishedAt is timestamp &&
+        request.resource.data.dateLabel is string &&
+        request.resource.data.dateLabel.size() <= 120 &&
+        (request.resource.data.coverImage == null || request.resource.data.coverImage is string) &&
+        request.resource.data.excerpt is string &&
+        request.resource.data.excerpt.size() <= 400 &&
+        request.resource.data.blocks is list &&
+        request.resource.data.blocks.size() <= 1000 &&
+        request.resource.data.isQuestionSet is bool &&
+        (request.resource.data.tag == null || (request.resource.data.tag is string && request.resource.data.tag.size() <= 40)) &&
+        request.resource.data.category is string &&
+        request.resource.data.category.size() <= 60 &&
+        request.resource.data.status in ['published', 'hidden'] &&
+        request.resource.data.source is string;
+      allow delete: if isAdmin();
+    }
+    // Notice board. Any signed-in user may READ (targeting is filtered
+    // client-side from one shared cached blob, so read must not depend on
+    // targetSubcourseIds — that would need a composite index). WRITES are
+    // admin-only AND schema-locked, same as Gorkhapatra: the field set is
+    // pinned to an allowlist and every field is type/size-checked, so no
+    // client — even a signed-in non-admin — can create unexpected, malformed
+    // or oversized documents. Deletes stay admin-only.
+    match /app_notices/{docId} {
+      allow read: if isSignedIn();
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'title', 'kind', 'category', 'dateLabel', 'excerpt', 'blocks',
+          'downloadEnabled', 'downloadUrl', 'downloadLabel',
+          'targetSubcourseIds', 'notificationImageNumber',
+          'status', 'publishedAt', 'updatedAt'
+        ]) &&
+        request.resource.data.title is string &&
+        request.resource.data.title.size() > 0 &&
+        request.resource.data.title.size() <= 300 &&
+        (request.resource.data.kind == null || request.resource.data.kind in ['feature', 'update', 'maintenance', 'exam', 'welcome']) &&
+        (request.resource.data.category == null || (request.resource.data.category is string && request.resource.data.category.size() <= 60)) &&
+        (request.resource.data.dateLabel == null || (request.resource.data.dateLabel is string && request.resource.data.dateLabel.size() <= 60)) &&
+        request.resource.data.excerpt is string &&
+        request.resource.data.excerpt.size() <= 400 &&
+        request.resource.data.blocks is list &&
+        request.resource.data.blocks.size() <= 200 &&
+        request.resource.data.downloadEnabled is bool &&
+        (request.resource.data.downloadUrl == null || (request.resource.data.downloadUrl is string && request.resource.data.downloadUrl.size() <= 2000)) &&
+        (request.resource.data.downloadLabel == null || (request.resource.data.downloadLabel is string && request.resource.data.downloadLabel.size() <= 60)) &&
+        (request.resource.data.targetSubcourseIds == null || request.resource.data.targetSubcourseIds is list) &&
+        (request.resource.data.notificationImageNumber == null || request.resource.data.notificationImageNumber is number) &&
+        request.resource.data.status in ['published', 'hidden'] &&
+        request.resource.data.publishedAt is timestamp;
+      allow delete: if isAdmin();
+    }
+    match /achievements/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /leaderboard/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Discussion board. User-owned fields remain editable only by the owner;
+    // admin metadata and moderation fields remain admin-controlled.
+    match /discussions/{discussionId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.authorId == request.auth.uid &&
+        request.resource.data.likeCount == 0 &&
+        request.resource.data.commentCount == 0 &&
+        request.resource.data.isSeed == false &&
+        (request.resource.data.isAdmin == false || isAdmin());
+      allow update: if isAdmin() ||
+        (isSignedIn() && resource.data.authorId == request.auth.uid &&
+          changedOnly(['title', 'body', 'category', 'imageUrl', 'linkUrl', 'editedAt'])) ||
+        (isSignedIn() && (
+          (changedOnly(['likeCount']) &&
+            (request.resource.data.likeCount == resource.data.likeCount + 1 ||
+             request.resource.data.likeCount == resource.data.likeCount - 1)) ||
+          (changedOnly(['commentCount']) &&
+            (request.resource.data.commentCount == resource.data.commentCount + 1 ||
+             request.resource.data.commentCount == resource.data.commentCount - 1))
+        ));
+      allow delete: if isAdmin() ||
+        (isSignedIn() && resource.data.authorId == request.auth.uid);
+
+      match /comments/{commentId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+        allow update: if isAdmin() ||
+          (isSignedIn() && resource.data.authorId == request.auth.uid &&
+            changedOnly(['body', 'editedAt'])) ||
+          (isSignedIn() && changedOnly(['likeCount']) &&
+            (request.resource.data.likeCount == resource.data.likeCount + 1 ||
+             request.resource.data.likeCount == resource.data.likeCount - 1));
+        allow delete: if isAdmin() ||
+          (isSignedIn() && resource.data.authorId == request.auth.uid);
+        match /reactions/{userId} {
+          allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+          allow create: if isSignedIn() && request.auth.uid == userId;
+          allow delete: if isSignedIn() && request.auth.uid == userId;
+          allow update: if false;
+        }
+
+        match /replies/{replyId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && request.resource.data.authorId == request.auth.uid;
+          allow update: if isAdmin() ||
+            (isSignedIn() && resource.data.authorId == request.auth.uid &&
+              changedOnly(['body', 'editedAt'])) ||
+            (isSignedIn() && changedOnly(['likeCount']) &&
+              (request.resource.data.likeCount == resource.data.likeCount + 1 ||
+               request.resource.data.likeCount == resource.data.likeCount - 1));
+          allow delete: if isAdmin() ||
+            (isSignedIn() && resource.data.authorId == request.auth.uid);
+          match /reactions/{userId} {
+            allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+            allow create: if isSignedIn() && request.auth.uid == userId;
+            allow delete: if isSignedIn() && request.auth.uid == userId;
+            allow update: if false;
+          }
+        }
+      }
+
+      match /reactions/{userId} {
+        allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+        allow create: if isSignedIn() && request.auth.uid == userId;
+        allow delete: if isSignedIn() && request.auth.uid == userId;
+        allow update: if false;
+      }
+    }
+
+    match /app_discussion_guidelines/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Private report history. Users can create/read only their own pending reports;
+    // review status and admin messages are console/admin controlled.
+    match /app_report_history/{reportId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.reporterId == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.reporterId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.adminMessage == null;
+      allow update, delete: if isAdmin();
+    }
+
+    // Legacy flat collections retained for data already created by the app.
+    match /app_subcourses/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_courses/{courseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+      match /subcourses/{subcourseId} {
+        allow read: if isSignedIn();
+        allow write: if isAdmin();
+      }
+    }
+    match /app_categories/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_mocktest/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_syllabusdata/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Daily Test models. One document per model, readable by any signed-in user
+    // (the client filters to the enrolled subcourse); only admins can seed/edit.
+    match /app_daily_test_models/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Anonymous device push tokens. This is the ONLY collection a signed-OUT
+    // client may write, because a not-logged-in device has no user document to
+    // hang its Expo push token on, yet must still be reachable by a broadcast.
+    // The rule is deliberately strict to make this safe:
+    //   • the document id IS the stable installation id (deviceId) — a device can
+    //     only ever touch its own row, and re-registers overwrite in place instead
+    //     of piling up new rows;
+    //   • the field set is pinned to an allowlist and every field is type/size
+    //     checked, so no client can write unexpected or oversized data;
+    //   • client READS are denied outright — only the admin (server/console, or an
+    //     admin-authenticated session) can list tokens to send a broadcast, so the
+    //     token list cannot be scraped by other clients;
+    //   • no per-user data lives here (it is anonymous by construction), so an open
+    //     create/update carries no privacy risk beyond an opaque Expo token string.
+    match /app_device_push_tokens/{deviceId} {
+      allow read: if isAdmin();
+      allow create, update: if
+        request.resource.data.keys().hasOnly([
+          'deviceId', 'token', 'platform', 'language', 'appVersion',
+          'createdAt', 'updatedAt'
+        ]) &&
+        request.resource.data.deviceId == deviceId &&
+        request.resource.data.token is string &&
+        request.resource.data.token.size() > 0 &&
+        request.resource.data.token.size() <= 300 &&
+        request.resource.data.platform in ['android', 'ios'] &&
+        (request.resource.data.language == null || request.resource.data.language is string) &&
+        (request.resource.data.appVersion == null || request.resource.data.appVersion is string);
+      allow delete: if isAdmin();
+    }
+
+    match /app_quiz_results/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /app_bookmarks/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /app_notes/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_notifications/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_home_banners/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /app_developers/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Exam Hub catalog. Reads remain public to preserve the existing website/app
+    // behavior; all catalog mutations require an admin.
+    match /app_exam_provinces/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_exam_sections/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_exam_sets/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_exam_rules/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_exam_rankings/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.score is number &&
+        request.resource.data.timeTakenSeconds is number &&
+        request.resource.data.score >= 0 &&
+        request.resource.data.timeTakenSeconds >= 0;
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // Theory answer upload and admin review.
+    match /app_exam_answers/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.score == 0 &&
+        request.resource.data.passed == false &&
+        request.resource.data.reviewedAt == null;
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         resource.data.uid == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         changedOnly(['pdfUrl', 'message']));
+      allow delete: if isAdmin();
+    }
+
+    // Subscription catalog and payment configuration.
+    match /app_subscription_plans/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /app_subscription_settings/{docId} {
+      // Keep the existing `config` document. It is readable only after secretKey
+      // fields have been removed. Firestore cannot return only selected fields,
+      // so a document containing a secret must never be client-readable.
+      allow read: if isSignedIn() && docId == 'config' &&
+        (!resource.data.keys().hasAny(['esewa']) ||
+         !resource.data.esewa.keys().hasAny(['secretKey'])) &&
+        (!resource.data.keys().hasAny(['khalti']) ||
+         !resource.data.khalti.keys().hasAny(['secretKey']));
+      // Prevent future accidental reintroduction of provider secrets into the
+      // client-readable config document. Store production secrets only in a
+      // secure backend/secret manager.
+      allow create, update: if isAdmin() && docId == 'config' &&
+        (!request.resource.data.keys().hasAny(['esewa']) ||
+         !request.resource.data.esewa.keys().hasAny(['secretKey'])) &&
+        (!request.resource.data.keys().hasAny(['khalti']) ||
+         !request.resource.data.khalti.keys().hasAny(['secretKey']));
+      allow delete: if isAdmin() && docId == 'config';
+    }
+    match /app_coupon_codes/{code} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         changedOnly(['usedCount']) &&
+         request.resource.data.usedCount == resource.data.usedCount + 1);
+    }
+        match /app_subscriptions/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.adminMessage == null &&
+        request.resource.data.reviewedAt == null &&
+        request.resource.data.reviewedBy == null;
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == resource.data.uid &&
+         changedOnly(['transactionRef', 'screenshotUrl', 'customerMessage', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // Individual premium exam purchase requests. Users can only create and edit
+    // their own pending payment proof; status, amount and entitlement are admin-only.
+    match /app_exam_purchases/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount >= 0 &&
+        request.resource.data.adminMessage == null &&
+        request.resource.data.reviewedAt == null &&
+        request.resource.data.reviewedBy == null;
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         resource.data.uid == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.uid == resource.data.uid &&
+         request.resource.data.status == resource.data.status &&
+         request.resource.data.amount == resource.data.amount &&
+         changedOnly(['transactionRef', 'screenshotUrl', 'customerMessage', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // Individual Subject/Unit/Chapter purchase requests. Users can create and
+    // edit only their own pending payment proof; amount, entitlement and review
+    // status remain admin-controlled.
+    match /app_content_purchases/{docId} {
+      allow read: if isAdmin() ||
+        (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.amount is number &&
+        request.resource.data.amount >= 0 &&
+        request.resource.data.method == 'qr' &&
+        request.resource.data.adminMessage == null &&
+        request.resource.data.reviewedAt == null &&
+        request.resource.data.reviewedBy == null;
+      allow update: if isAdmin() ||
+        (isSignedIn() &&
+         resource.data.uid == request.auth.uid &&
+         resource.data.status == 'pending' &&
+         request.resource.data.uid == resource.data.uid &&
+         request.resource.data.status == resource.data.status &&
+         request.resource.data.amount == resource.data.amount &&
+         request.resource.data.contentId == resource.data.contentId &&
+         request.resource.data.contentType == resource.data.contentType &&
+         changedOnly(['transactionRef', 'screenshotUrl', 'customerMessage', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+    // Question of the Day: Admin schedules exactly one document per Kathmandu date key.
+    match /app_qotd_daily/{dateKey} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.isPublished == true);
+      allow create, update, delete: if isAdmin();
+    }
+    match /meta/qotd_metadata {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+    match /users/{userId}/questionofdata/{docId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Every content/version attempt is immutable. A replacement question on
+      // the same Kathmandu date receives a new attempt document; summary alone
+      // may be updated by its owner.
+      allow create: if isOwner(userId) &&
+        (docId == 'summary' ||
+         (request.resource.data.dateKey is string &&
+          request.resource.data.selectedOptionId in ['A', 'B', 'C', 'D'] &&
+          request.resource.data.isCorrect is bool &&
+          request.resource.data.snapshot is map));
+      allow update: if isOwner(userId) && docId == 'summary';
+      allow delete: if isAdmin();
+    }
+
+    // ===== Main Leaderboard =====
+    // Private per-user aggregate: one document per enrolled subcourse, holding
+    // the full source-by-source breakdown. Owner-only, which is exactly why the
+    // public mirror below has to exist.
+    match /users/{userId}/app_mainleaderboard/{docId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Written by the client on publish, so create and update are both needed;
+      // the score is derived from this user's own records either way.
+      allow create, update: if isOwner(userId) &&
+        request.resource.data.percent is number &&
+        request.resource.data.points is number &&
+        request.resource.data.percent >= 0 &&
+        request.resource.data.percent <= 100 &&
+        request.resource.data.points >= 0;
+      allow delete: if isAdmin();
+    }
+
+    // Foreground time and activity counters — the "app focus" signal, and the
+    // tiebreak when two users finish on the same points and percentage.
+    match /users/{userId}/app_usage/{docId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId);
+      allow delete: if isAdmin();
+    }
+
+    // Read mode, theory mode, GK, PM, Constitution and past questions all write
+    // here — one collection with a `source` field instead of six collections.
+    match /users/{userId}/app_activity_progress/{docId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) &&
+        request.resource.data.source is string &&
+        request.resource.data.refId is string;
+      allow delete: if isAdmin();
+    }
+
+    // Public ranking mirror — ONE row per user per subcourse, which is what the
+    // leaderboard screen queries. Any signed-in user may read it (that is the
+    // point of a leaderboard), but a row may only ever be written by the user it
+    // belongs to. Unlike app_exam_rankings this permits update, because the
+    // document id is stable per user+subcourse and each publish overwrites in
+    // place rather than appending a new row.
+    match /app_main_leaderboard/{docId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.percent is number &&
+        request.resource.data.points is number &&
+        request.resource.data.usageSeconds is number &&
+        request.resource.data.activityCount is number &&
+        request.resource.data.percent >= 0 &&
+        request.resource.data.percent <= 100 &&
+        request.resource.data.points >= 0 &&
+        request.resource.data.usageSeconds >= 0 &&
+        request.resource.data.activityCount >= 0;
+      // The existing row must already belong to the caller, and the uid must not
+      // change — so one user can never overwrite another's position.
+      allow update: if isSignedIn() &&
+        resource.data.uid == request.auth.uid &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.percent is number &&
+        request.resource.data.points is number &&
+        request.resource.data.usageSeconds is number &&
+        request.resource.data.activityCount is number &&
+        request.resource.data.percent >= 0 &&
+        request.resource.data.percent <= 100 &&
+        request.resource.data.points >= 0 &&
+        request.resource.data.usageSeconds >= 0 &&
+        request.resource.data.activityCount >= 0;
+      allow delete: if isAdmin();
+    }
+
+    // ===== Analytics =====
+    // Private per-user trend history, one document per subcourse. There is NO
+    // public mirror here, unlike the leaderboard above: this screen only ever
+    // shows a user their own data, so nothing is queried across users and
+    // owner-only read is the whole access model.
+    //
+    // The `days` map is validated by size rather than by shape. Its keys are
+    // dates, so they cannot be enumerated in a rule, and the service prunes to
+    // 180 entries — the ceiling here is a backstop against a runaway client
+    // inflating the document, not a schema check.
+    match /users/{userId}/app_analytics/{docId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create, update: if isOwner(userId) &&
+        request.resource.data.subcourseId is string &&
+        request.resource.data.percent is number &&
+        request.resource.data.points is number &&
+        request.resource.data.percent >= 0 &&
+        request.resource.data.percent <= 100 &&
+        request.resource.data.points >= 0 &&
+        request.resource.data.days is map &&
+        request.resource.data.days.size() <= 200;
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+
+    // ===== Content totals (coverage denominator) =====
+    // ONE document per subcourse counting how much content the app contains:
+    // practice questions, theory items, exam sets, GK/PM questions, read-mode
+    // questions and daily-test models. The profile progress ring divides a
+    // user's covered items by these numbers, which is why every signed-in user
+    // must be able to read them.
+    //
+    // Writes are admin-only and happen from the admin site, which ships the
+    // counter update as an atomic increment transform inside the same commit as
+    // the content write itself. Nothing here is user data — a client that could
+    // write it could only distort its own percentage, but admin-only keeps the
+    // number trustworthy across the leaderboard too.
+    match /app_content_totals/{subcourseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Default deny-all: any collection not explicitly listed above is closed.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

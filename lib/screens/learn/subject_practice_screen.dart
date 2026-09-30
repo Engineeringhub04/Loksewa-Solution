@@ -61,6 +61,9 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   int _current = 0;
   Map<String, int> _selectedAnswers = {};
   bool _showLimit = false;
+  /// True while the daily-limit popup is fading out (it stays mounted so
+  /// the fade-out animation is visible; _showLimit turns false after it).
+  bool _limitClosing = false;
   bool _showWaiting = false;
   bool _showLeaveConfirm = false;
 
@@ -389,7 +392,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           } else if (_showWaiting) {
             setState(() => _showWaiting = false);
           } else if (_showLimit) {
-            setState(() => _showLimit = false);
+            _closeLimitDialog();
           }
         }
       },
@@ -1033,9 +1036,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     String? cancelLabel,
     required VoidCallback onConfirm,
     required VoidCallback onCancel,
+    bool dismissing = false,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return _FadeIn(
+      dismissing: dismissing,
       child: Container(
         color: isDark
             ? Colors.black.withValues(alpha: 0.6)
@@ -1061,8 +1066,25 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     );
   }
 
+  /// Closes the daily-limit popup with a 200ms fade-out instead of an
+  /// instant vanish. All close paths (back button, Subscription confirm,
+  /// Close cancel) route through here.
+  void _closeLimitDialog({bool thenOpenSubscription = false}) {
+    if (!_showLimit || _limitClosing) return;
+    setState(() => _limitClosing = true);
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (!mounted) return;
+      setState(() {
+        _showLimit = false;
+        _limitClosing = false;
+      });
+      if (thenOpenSubscription) context.push('/subscription');
+    });
+  }
+
   Widget _limitDialog(ExpoPalette palette) => _appDialog(
         palette: palette,
+        dismissing: _limitClosing,
         icon: Icons.diamond,
         tagline: 'Daily Limit',
         title: 'Your Daily Practice limit is reached',
@@ -1081,11 +1103,8 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         confirmLabel: 'Subscription',
         confirmIcon: Icons.diamond_outlined,
         cancelLabel: 'Close',
-        onConfirm: () {
-          setState(() => _showLimit = false);
-          context.push('/subscription');
-        },
-        onCancel: () => setState(() => _showLimit = false),
+        onConfirm: () => _closeLimitDialog(thenOpenSubscription: true),
+        onCancel: _closeLimitDialog,
       );
 
   Widget _waitingDialog(ExpoPalette palette) => _appDialog(
@@ -1208,7 +1227,12 @@ class _OptionStaggerState extends State<_OptionStagger>
 /// FadeIn.duration(200) entrance.
 class _FadeIn extends StatefulWidget {
   final Widget child;
-  const _FadeIn({required this.child});
+
+  /// When flipped true, the controller reverses (fade-out) instead of
+  /// being unmounted instantly — used by the daily-limit popup close.
+  final bool dismissing;
+
+  const _FadeIn({required this.child, this.dismissing = false});
 
   @override
   State<_FadeIn> createState() => _FadeInState();
@@ -1220,6 +1244,14 @@ class _FadeInState extends State<_FadeIn>
     vsync: this,
     duration: const Duration(milliseconds: 200),
   )..forward();
+
+  @override
+  void didUpdateWidget(covariant _FadeIn oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.dismissing && !oldWidget.dismissing) {
+      _controller.reverse();
+    }
+  }
 
   @override
   void dispose() {

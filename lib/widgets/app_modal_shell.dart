@@ -62,8 +62,9 @@ class AppModalShell extends StatelessWidget {
     this.borderRadius = 28,
   });
 
-  /// Shows [builder]'s card as a modal: fade + scale in (220ms, easeOutCubic),
-  /// fade + scale out on pop (180ms, easeIn). Barrier tap dismisses.
+  /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
+  /// fade + scale out on pop (200ms) — same duration and same curve in
+  /// both directions so open/close feel identical. Barrier tap dismisses.
   static Future<T?> show<T>({
     required BuildContext context,
     required WidgetBuilder builder,
@@ -73,7 +74,7 @@ class AppModalShell extends StatelessWidget {
       barrierDismissible: true,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.black54,
-      transitionDuration: const Duration(milliseconds: 220),
+      transitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (pageContext, _, __) {
         return SafeArea(
           child: AnimatedPadding(
@@ -89,10 +90,14 @@ class AppModalShell extends StatelessWidget {
         );
       },
       transitionBuilder: (context, animation, _, child) {
+        // One shared curve for both directions: the open fade-in and the
+        // pop fade-out run the identical 200ms easing (this SDK's
+        // showGeneralDialog has no reverseTransitionDuration, so both use
+        // transitionDuration).
         final curved = CurvedAnimation(
           parent: animation,
           curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeIn,
+          reverseCurve: Curves.easeOutCubic,
         );
         return FadeTransition(
           opacity: curved,
@@ -185,6 +190,7 @@ class AppModalShell extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.fromLTRB(28, 34, 28, 14),
                         child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             icon,
                             const SizedBox(height: 12),

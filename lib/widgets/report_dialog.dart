@@ -1,6 +1,9 @@
 // ReportDialog — "report a question" dialog built on AppModalShell.
 // Orange theme, compact iPhone-minimal. Contents:
-// (1) compact faded card of the reported question + its options
+// (1) fixed compact faded preview of the reported question — question
+//     start only (~90 chars), first option only (~60 chars), then a
+//     grey "......" line, so the card uses the same small space no
+//     matter how long the question is
 // (2) single-select issue-type chips
 // (3) Details Message field (100-char cap, no counter shown)
 // (4) Cancel + Submit.
@@ -119,6 +122,13 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
     }
   }
 
+  /// Fixed compact preview: at most [maxChars] characters, then "......".
+  String _preview(String text, int maxChars) {
+    final t = text.trim();
+    if (t.length <= maxChars) return t;
+    return '${t.substring(0, maxChars)}......';
+  }
+
   String _buildDescription(String details) {
     final buffer = StringBuffer()
       ..writeln('Question report')
@@ -199,7 +209,7 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
           ],
         ),
         child:
-            const Icon(Icons.flag_outlined, size: 28, color: Colors.white),
+            const Icon(Icons.flag_rounded, size: 28, color: Colors.white),
       ),
       title: const Text(
         'Report a problem',
@@ -215,7 +225,8 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // (1) Compact faded card of the reported question + options.
+          // (1) Fixed compact faded preview — question start + first
+          //     option + grey "......" line; same small space always.
           Opacity(
             opacity: 0.85,
             child: Transform.scale(
@@ -232,7 +243,9 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      widget.question,
+                      _preview(widget.question, 90),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
@@ -243,36 +256,28 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
                     ),
                     if (widget.options.isNotEmpty) ...[
                       const SizedBox(height: 8),
-                      for (var i = 0; i < widget.options.length; i++)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '${String.fromCharCode(65 + i)}. ',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.bold,
-                                  color: ReportDialog._grey,
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                              Expanded(
-                                child: Text(
-                                  widget.options[i],
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    height: 1.45,
-                                    color: ReportDialog._grey,
-                                    decoration: TextDecoration.none,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
+                      Text(
+                        'A. ${_preview(widget.options.first, 60)}',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          height: 1.45,
+                          color: ReportDialog._grey,
+                          decoration: TextDecoration.none,
                         ),
+                      ),
                     ],
+                    const SizedBox(height: 4),
+                    const Text(
+                      '......',
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.45,
+                        color: ReportDialog._grey,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
                   ],
                 ),
               ),

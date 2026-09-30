@@ -40,6 +40,39 @@ class DiskCachedImage extends StatefulWidget {
     return h.toRadixString(16).padLeft(8, '0');
   }
 
+  /// Ensures [url] is in the disk cache, downloading it if missing.
+  /// Use before revealing a screen so its photos paint instantly instead of
+  /// popping in one by one. Never throws. [timeout] bounds the whole wait.
+  static Future<void> warm(String url,
+      {Duration timeout = const Duration(seconds: 8)}) async {
+    if (url.isEmpty) return;
+    try {
+      await (() async {
+        final support = await getApplicationSupportDirectory();
+        final file = File('${support.path}/imgcache/${fnv1aHex(url)}');
+        if (await file.exists()) return;
+        await _download(url, file).timeout(const Duration(seconds: 30));
+      })()
+          .timeout(timeout);
+    } catch (_) {
+      // Best-effort: the widget falls back to its placeholder/error UI.
+    }
+  }
+
+  static Future<void> _download(String url, File file) async {
+    final client = HttpClient();
+    try {
+      await file.parent.create(recursive: true);
+      final request = await client.getUrl(Uri.parse(url));
+      final response = await request.close();
+      if (response.statusCode != 200) return;
+      final bytes = await consolidateHttpClientResponseBytes(response);
+      await file.writeAsBytes(bytes, flush: true);
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   @override
   State<DiskCachedImage> createState() => _DiskCachedImageState();
 }
@@ -76,26 +109,13 @@ class _DiskCachedImageState extends State<DiskCachedImage> {
         if (mounted) setState(() => _file = file);
         return;
       }
-      await _download(widget.url, file).timeout(_downloadTimeout);
+      await DiskCachedImage._download(widget.url, file)
+          .timeout(_downloadTimeout);
       if (await file.exists() && mounted) setState(() => _file = file);
     } catch (_) {
       // Falls through to _failed below.
     }
     if (_file == null && mounted) setState(() => _failed = true);
-  }
-
-  static Future<void> _download(String url, File file) async {
-    final client = HttpClient();
-    try {
-      await file.parent.create(recursive: true);
-      final request = await client.getUrl(Uri.parse(url));
-      final response = await request.close();
-      if (response.statusCode != 200) return;
-      final bytes = await consolidateHttpClientResponseBytes(response);
-      await file.writeAsBytes(bytes, flush: true);
-    } finally {
-      client.close(force: true);
-    }
   }
 
   @override

@@ -15,6 +15,17 @@ import 'prefs_service.dart';
 import 'server_clock.dart';
 
 // ---------------------------------------------------------------------------
+/// Thrown when Firestore refuses a query because the composite index backing
+/// it has not been created in the Firebase console yet. Callers fall back to
+/// a cheaper/legacy behavior and (optionally) tell the user the one-time
+/// console step that unlocks the fast path.
+class MissingIndexException implements Exception {
+  final String message;
+  MissingIndexException(this.message);
+  @override
+  String toString() => 'MissingIndexException: $message';
+}
+
 // Firestore REST plumbing (returns doc IDs alongside fields)
 // ---------------------------------------------------------------------------
 
@@ -32,8 +43,10 @@ class ExamRest {
   static dynamic decode(dynamic v) {
     if (v is! Map<String, dynamic>) return v;
     if (v.containsKey('stringValue')) return v['stringValue'];
-    if (v.containsKey('integerValue')) return int.tryParse('${v['integerValue']}');
-    if (v.containsKey('doubleValue')) return (v['doubleValue'] as num).toDouble();
+    if (v.containsKey('integerValue'))
+      return int.tryParse('${v['integerValue']}');
+    if (v.containsKey('doubleValue'))
+      return (v['doubleValue'] as num).toDouble();
     if (v.containsKey('booleanValue')) return v['booleanValue'];
     if (v.containsKey('nullValue')) return null;
     if (v.containsKey('timestampValue')) {
@@ -59,13 +72,13 @@ class ExamRest {
     if (v is String) return {'stringValue': v};
     if (v is DateTime) return {'timestampValue': v.toUtc().toIso8601String()};
     if (v is List) {
-      return {'arrayValue': {'values': v.map(encode).toList()}};
+      return {
+        'arrayValue': {'values': v.map(encode).toList()}
+      };
     }
     if (v is Map) {
       return {
-        'mapValue': {
-          'fields': v.map((k, val) => MapEntry('$k', encode(val)))
-        }
+        'mapValue': {'fields': v.map((k, val) => MapEntry('$k', encode(val)))}
       };
     }
     return {'stringValue': '$v'};
@@ -84,9 +97,11 @@ class ExamRest {
   /// Get a single document by full path (e.g. 'app_exam_sets/abc'). Null on 404.
   static Future<Map<String, dynamic>?> getDoc(String path) async {
     final token = await _token();
-    final res = await http.get(Uri.parse('$_base/$path'), headers: _headers(token));
+    final res =
+        await http.get(Uri.parse('$_base/$path'), headers: _headers(token));
     if (res.statusCode == 404) return null;
-    if (res.statusCode != 200) throw Exception('getDoc $path: ${res.statusCode}');
+    if (res.statusCode != 200)
+      throw Exception('getDoc $path: ${res.statusCode}');
     return _docToMap(json.decode(res.body) as Map<String, dynamic>);
   }
 
@@ -111,23 +126,31 @@ class ExamRest {
 
   /// Structured query. [parent] scopes a collection-group style query under a
   /// document path (e.g. 'users/{uid}' for subcollection 'attempts').
+  /// [startAfter] holds already-encoded cursor values matching [orderBy]
+  /// (a `startAt` cursor with `before: false`).
   static Future<List<Map<String, dynamic>>> runQuery(
     String collectionId, {
     String? parent,
     Map<String, dynamic>? where,
     List<Map<String, dynamic>>? orderBy,
     int limit = 100,
+    List<Map<String, dynamic>>? startAfter,
   }) async {
     final token = await _token();
     final from = {
       'collectionId': collectionId,
     };
-    final structured = <String, dynamic>{'from': [from]};
+    final structured = <String, dynamic>{
+      'from': [from]
+    };
     // NOTE: `parent` is NOT a valid StructuredQuery field (Firestore returns
     // 400 "Unknown name parent"). Like React's runQuery, the parent document
     // path goes in the URL: .../documents/{parent}:runQuery.
     if (where != null) structured['where'] = where;
     if (orderBy != null) structured['orderBy'] = orderBy;
+    if (startAfter != null) {
+      structured['startAt'] = {'values': startAfter, 'before': false};
+    }
     structured['limit'] = limit;
     final url = parent != null ? '$_base/$parent:runQuery' : '$_base:runQuery';
     final res = await http.post(
@@ -136,6 +159,9 @@ class ExamRest {
       body: json.encode({'structuredQuery': structured}),
     );
     if (res.statusCode != 200) {
+      if (_isMissingIndex(res.statusCode, res.body)) {
+        throw MissingIndexException('runQuery $collectionId: ${res.body}');
+      }
       throw Exception('runQuery $collectionId: ${res.statusCode} ${res.body}');
     }
     final list = json.decode(res.body) as List? ?? [];
@@ -146,11 +172,61 @@ class ExamRest {
         .toList();
   }
 
+  /// True when Firestore refused a query because the composite index does not
+  /// exist yet (HTTP 400 + FAILED_PRECONDITION / "requires an index").
+  static bool _isMissingIndex(int statusCode, String body) {
+    if (statusCode != 400) return false;
+    return body.contains('FAILED_PRECONDITION') ||
+        body.contains('requires an index');
+  }
+
+  /// Count aggregation over a structured query — used for rank computation
+  /// without reading every document. Billed ~1 read per 1000 index entries
+  /// matched. Throws [MissingIndexException] when the composite index
+  /// backing the query does not exist yet.
+  static Future<int> runCount(
+    String collectionId, {
+    Map<String, dynamic>? where,
+  }) async {
+    final token = await _token();
+    final structured = <String, dynamic>{
+      'from': [
+        {'collectionId': collectionId}
+      ],
+    };
+    if (where != null) structured['where'] = where;
+    final res = await http.post(
+      Uri.parse('$_base:runAggregationQuery'),
+      headers: _headers(token),
+      body: json.encode({
+        'structuredQuery': structured,
+        'aggregations': [
+          {
+            'alias': 'cnt',
+            'count': <String, dynamic>{},
+          }
+        ],
+      }),
+    );
+    if (res.statusCode != 200) {
+      if (_isMissingIndex(res.statusCode, res.body)) {
+        throw MissingIndexException('runCount $collectionId: ${res.body}');
+      }
+      throw Exception('runCount $collectionId: ${res.statusCode} ${res.body}');
+    }
+    final list = json.decode(res.body) as List? ?? [];
+    if (list.isEmpty) return 0;
+    final agg =
+        ((list.first as Map)['result'] as Map?)?['aggregateFields']?['cnt'];
+    return int.tryParse('${agg?['integerValue'] ?? 0}') ?? 0;
+  }
+
   /// Operator aliases are normalized: '==' → 'EQUAL', '!=' → 'NOT_EQUAL',
   /// '<' → 'LESS_THAN', '<=' → 'LESS_THAN_OR_EQUAL', '>' → 'GREATER_THAN',
   /// '>=' → 'GREATER_THAN_OR_EQUAL'. Raw Firestore REST enum values pass
   /// through unchanged.
-  static Map<String, dynamic> fieldFilter(String field, String op, dynamic value) {
+  static Map<String, dynamic> fieldFilter(
+      String field, String op, dynamic value) {
     const aliases = {
       '==': 'EQUAL',
       '!=': 'NOT_EQUAL',
@@ -202,8 +278,8 @@ class ExamRest {
       return _docId('${body['name'] ?? ''}');
     }
     final id = _newDocId();
-    final fields =
-        Map<String, dynamic>.fromEntries(data.entries.map((e) => MapEntry(e.key, encode(e.value))));
+    final fields = Map<String, dynamic>.fromEntries(
+        data.entries.map((e) => MapEntry(e.key, encode(e.value))));
     for (final f in serverTimestampFields) {
       fields.remove(f);
     }
@@ -228,7 +304,8 @@ class ExamRest {
       body: json.encode(body),
     );
     if (res.statusCode != 200) {
-      throw Exception('createDoc $collectionPath: ${res.statusCode} ${res.body}');
+      throw Exception(
+          'createDoc $collectionPath: ${res.statusCode} ${res.body}');
     }
     return id;
   }
@@ -243,12 +320,48 @@ class ExamRest {
   }
 
   /// Full-document PATCH write (no update mask).
-  static Future<void> setDoc(String path, Map<String, dynamic> data) async {
+  ///
+  /// [serverTimestampFields] lists field paths set to the real Firestore
+  /// server time (REQUEST_TIME) via a `:commit` update transform — mirrors
+  /// `serverTimestamp()` in the React code.
+  static Future<void> setDoc(String path, Map<String, dynamic> data,
+      {List<String> serverTimestampFields = const []}) async {
     final token = await _token();
-    final res = await http.patch(
-      Uri.parse('$_base/$path'),
+    if (serverTimestampFields.isEmpty) {
+      final res = await http.patch(
+        Uri.parse('$_base/$path'),
+        headers: _headers(token),
+        body:
+            json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
+      );
+      if (res.statusCode != 200) {
+        throw Exception('setDoc $path: ${res.statusCode} ${res.body}');
+      }
+      return;
+    }
+    final fields = Map<String, dynamic>.fromEntries(
+        data.entries.map((e) => MapEntry(e.key, encode(e.value))));
+    for (final f in serverTimestampFields) {
+      fields.remove(f);
+    }
+    final res = await http.post(
+      Uri.parse('$_base:commit'),
       headers: _headers(token),
-      body: json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
+      body: json.encode({
+        'writes': [
+          {
+            'update': {
+              'name':
+                  'projects/${AppConfig.firebaseProjectId}/databases/(default)/documents/$path',
+              'fields': fields,
+            },
+            'updateTransforms': [
+              for (final f in serverTimestampFields)
+                {'fieldPath': f, 'setToServerValue': 'REQUEST_TIME'},
+            ],
+          },
+        ],
+      }),
     );
     if (res.statusCode != 200) {
       throw Exception('setDoc $path: ${res.statusCode} ${res.body}');
@@ -497,7 +610,8 @@ class ExamSet {
         contentType: _str(m['contentType'], 'mcq'),
         pdfUrl: m['pdfUrl'] is String ? m['pdfUrl'] as String : null,
         questions: ((m['questions'] as List?) ?? [])
-            .map((q) => ExamQuestion.fromMap((q as Map).cast<String, dynamic>()))
+            .map(
+                (q) => ExamQuestion.fromMap((q as Map).cast<String, dynamic>()))
             .toList(),
       );
 
@@ -550,7 +664,8 @@ class ExamAttempt {
         skipped: _num(m['skipped']),
         passed: _num(m['passed']) == 1,
         timeTakenSeconds: _num(m['timeTakenSeconds']),
-        answers: ((m['answers'] as List?) ?? []).map((a) => _num(a, -1)).toList(),
+        answers:
+            ((m['answers'] as List?) ?? []).map((a) => _num(a, -1)).toList(),
         createdAt: _dt(m['createdAt']),
       );
 }
@@ -593,7 +708,8 @@ class ExamRule {
   final String title;
   final String description;
 
-  ExamRule({required this.icon, required this.title, required this.description});
+  ExamRule(
+      {required this.icon, required this.title, required this.description});
 
   factory ExamRule.fromMap(Map<String, dynamic> m) => ExamRule(
         icon: _str(m['icon']),
@@ -657,8 +773,7 @@ ScoreBreakdown scoreExamAttempt(
 /// Review/ranking unlock once the exam window has closed (start + duration).
 bool areResultsUnlocked(ExamSet set, DateTime now) {
   if (set.startTime == null) return true;
-  final unlockAt =
-      set.startTime!.add(Duration(minutes: set.durationMinutes));
+  final unlockAt = set.startTime!.add(Duration(minutes: set.durationMinutes));
   return !now.isBefore(unlockAt);
 }
 
@@ -870,7 +985,8 @@ class AttemptResult {
           final am = (a as Map).cast<String, dynamic>();
           return AttemptAnswer(
             questionId: _str(am['questionId']),
-            selectedIndex: am['selectedIndex'] == null ? null : _num(am['selectedIndex']),
+            selectedIndex:
+                am['selectedIndex'] == null ? null : _num(am['selectedIndex']),
             flagged: _bool(am['flagged']),
           );
         }).toList(),
@@ -1087,8 +1203,8 @@ class DailyTestModel {
         testDate: _dailyTestDateKey(m),
         questions: ((m['questions'] as List?) ?? [])
             .whereType<Map>()
-            .map((q) => DailyTestQuestion.fromMap(
-                q.map((k, v) => MapEntry('$k', v))))
+            .map((q) =>
+                DailyTestQuestion.fromMap(q.map((k, v) => MapEntry('$k', v))))
             .toList(),
         category: _str(m['category'], 'medium'),
         perQuestionTimeSeconds: _num(m['perQuestionTimeSeconds'], 30),
@@ -1151,7 +1267,8 @@ class DailyTestResult {
         incorrect: _num(m['incorrect']),
         skipped: _num(m['skipped']),
         timeTakenSeconds: _num(m['timeTakenSeconds']),
-        answers: ((m['answers'] as List?) ?? []).map((a) => _num(a, -1)).toList(),
+        answers:
+            ((m['answers'] as List?) ?? []).map((a) => _num(a, -1)).toList(),
         createdAt: _dt(m['createdAt']),
       );
 }
@@ -1189,8 +1306,8 @@ class DailyScore {
 /// netMarks = max(0, round((earned - lost) * 100) / 100);
 /// percent = round(netMarks / totalMarks * 100); accuracy = round(correct / Q * 100);
 /// passed = percent >= (passPercent || 40).
-DailyScore scoreDailyTest(
-    DailyTestModel model, List<DailyTestQuestion> questions, List<int?> answers) {
+DailyScore scoreDailyTest(DailyTestModel model,
+    List<DailyTestQuestion> questions, List<int?> answers) {
   var correct = 0;
   var incorrect = 0;
   var skipped = 0;
@@ -1210,9 +1327,10 @@ DailyScore scoreDailyTest(
           .clamp(0.0, double.infinity))
       : 0.0;
   final marksEarned = correct * perQuestion;
-  final marksLost = ((incorrect * perQuestion * penaltyRate * 100).round()) / 100;
-  final netMarks =
-      (((marksEarned - marksLost) * 100).round() / 100).clamp(0.0, double.infinity);
+  final marksLost =
+      ((incorrect * perQuestion * penaltyRate * 100).round()) / 100;
+  final netMarks = (((marksEarned - marksLost) * 100).round() / 100)
+      .clamp(0.0, double.infinity);
   final totalMarks = questions.length * perQuestion;
   final percent = totalMarks > 0 ? ((netMarks / totalMarks) * 100).round() : 0;
   final accuracy =
@@ -1236,7 +1354,8 @@ DailyScore scoreDailyTest(
 /// Uses the server-corrected clock so winding the device clock cannot unlock
 /// future tests — mirrors todayDateKey()/serverNow() in dailyTest.ts.
 String todayDateKey() {
-  final kathmandu = ServerClock.nowUtc().add(const Duration(hours: 5, minutes: 45));
+  final kathmandu =
+      ServerClock.nowUtc().add(const Duration(hours: 5, minutes: 45));
   return '${kathmandu.year.toString().padLeft(4, '0')}-'
       '${kathmandu.month.toString().padLeft(2, '0')}-'
       '${kathmandu.day.toString().padLeft(2, '0')}';
@@ -1380,7 +1499,8 @@ class SubjectLearningStats {
   final int complete;
   final int inProgress;
 
-  const SubjectLearningStats({required this.complete, required this.inProgress});
+  const SubjectLearningStats(
+      {required this.complete, required this.inProgress});
 }
 
 Future<SubjectLearningStats> fetchSubjectLearningStats({
@@ -1394,7 +1514,8 @@ Future<SubjectLearningStats> fetchSubjectLearningStats({
       .where((e) => e.isNotEmpty)
       .toSet()
       .toList();
-  if (ids.isEmpty) return const SubjectLearningStats(complete: 0, inProgress: 0);
+  if (ids.isEmpty)
+    return const SubjectLearningStats(complete: 0, inProgress: 0);
   final docs = await ExamRest.runQuery(
     'learning_progress',
     parent: 'users/$uid',
@@ -1485,20 +1606,19 @@ Future<List<Map<String, dynamic>>> fetchSubjectDetails(
       final slug = subjectSeedSlugs[i];
       out.add({...doc, 'id': '${courseId}__${subcourseId}__$slug'});
     }
-    out.sort((a, b) =>
-        (_num(a['order'], 0)).compareTo(_num(b['order'], 0)));
+    out.sort((a, b) => (_num(a['order'], 0)).compareTo(_num(b['order'], 0)));
     return out;
   });
 }
 
 Map<String, dynamic> _subjectChapterFromDoc(Map<String, dynamic> doc) {
   final unitRaw = doc['unitId'];
-  final unitId = unitRaw is String && unitRaw.trim().isNotEmpty
-      ? doc['unitId']
-      : null;
+  final unitId =
+      unitRaw is String && unitRaw.trim().isNotEmpty ? doc['unitId'] : null;
   return {
     'id': '${doc['id'] ?? ''}',
-    'name': (doc['name'] as String?)?.isNotEmpty == true ? doc['name'] : 'Chapter',
+    'name':
+        (doc['name'] as String?)?.isNotEmpty == true ? doc['name'] : 'Chapter',
     'nameNe': doc['nameNe'] ?? doc['name'] ?? 'Chapter',
     'order': _num(doc['order'], 0),
     'course': doc['course'] ?? '',
@@ -1530,7 +1650,8 @@ Future<List<Map<String, dynamic>>> fetchSubjectChapters(
             '${d['subcourse'] ?? ''}' == subcourse &&
             canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
             _bool(d['isPublished']) == true &&
-            !(d['unitId'] is String && (d['unitId'] as String).trim().isNotEmpty))
+            !(d['unitId'] is String &&
+                (d['unitId'] as String).trim().isNotEmpty))
         .map(_subjectChapterFromDoc)
         .toList();
     out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
@@ -1620,8 +1741,8 @@ Future<List<Map<String, dynamic>>> fetchUnitChapters(
     String course, String subcourse, String subjectId, String unitId) {
   final logical = canonicalCatalogSlug(subjectId);
   final targetUnit = canonicalCatalogSlug(unitId);
-  return _cachedOrInFlight(
-      '${course}__${subcourse}__${logical}__$targetUnit', () async {
+  return _cachedOrInFlight('${course}__${subcourse}__${logical}__$targetUnit',
+      () async {
     final docs = await ExamRest.runQuery(
       'app_subjects_unit-chapters_details',
       where: ExamRest.fieldFilter('course', 'EQUAL', course),
@@ -1666,8 +1787,9 @@ Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
       }
       final total = (p?['totalQuestions'] as int?) ?? 0;
       final attempted = (p?['attempted'] as int?) ?? 0;
-      final correct =
-          ((p?['correctQuestionIds'] as List?) ?? []).whereType<String>().length;
+      final correct = ((p?['correctQuestionIds'] as List?) ?? [])
+          .whereType<String>()
+          .length;
       final completed = _bool(p?['completed']);
       final pct = total > 0
           ? ((attempted / total * 100).round().clamp(0, 100))
@@ -1768,8 +1890,7 @@ Future<void> saveLearningProgress(
 /// Activity progress record (activityProgress.ts recordActivityProgress —
 /// used by read/theory modes). Doc: `users/{uid}/app_activity_progress/{source}__{refId}`.
 String activityProgressDocId(String source, String refId) {
-  final raw = '${source}__$refId'.replaceAll(
-      RegExp(r'[^A-Za-z0-9_-]'), '_');
+  final raw = '${source}__$refId'.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
   return raw.length > 128 ? raw.substring(0, 128) : raw;
 }
 
@@ -1844,8 +1965,7 @@ Future<void> recordAppActivity(String uid, [int count = 1]) async {
 /// My content purchases: `app_content_purchases` where uid == (contentPurchases.ts
 /// fetchMyContentPurchases — newest first). Fields: status, contentType
 /// ('chapter'|'subject'), contentId.
-Future<List<Map<String, dynamic>>> fetchMyContentPurchases(
-    String uid) async {
+Future<List<Map<String, dynamic>>> fetchMyContentPurchases(String uid) async {
   final docs = await ExamRest.runQuery(
     'app_content_purchases',
     where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
@@ -1864,13 +1984,8 @@ Future<List<Map<String, dynamic>>> fetchMyContentPurchases(
 /// One question-set doc:
 /// `app_subject_cucqdata_Allmode/{course}__{subcourse}__{subject}__{unit|no-unit}__{chapter}__{mode}`
 /// (learningContent.ts learningQuestionSetId).
-String learningQuestionSetDocId(
-    String courseId,
-    String subcourseId,
-    String subjectId,
-    String? unitId,
-    String chapterId,
-    String mode) {
+String learningQuestionSetDocId(String courseId, String subcourseId,
+    String subjectId, String? unitId, String chapterId, String mode) {
   final subject = appSubjectSlug(subjectId);
   final unit = unitId == null || unitId.isEmpty
       ? 'no-unit'
@@ -1945,17 +2060,15 @@ List<SubjectQuestion> parseQuestionItems(
         if (o is String) {
           opts.add(o);
         } else if (o is Map<String, dynamic>) {
-          opts.add(
-              (o['textEn'] as String?) ?? (o['text'] as String?) ?? '');
+          opts.add((o['textEn'] as String?) ?? (o['text'] as String?) ?? '');
         }
       }
     }
     final correctId = (item['correctOptionId'] as String?) ?? '';
     var correctIndex = _num(item['correctIndex'], 0);
     if (correctId.isNotEmpty && rawOpts is List) {
-      final found = rawOpts.indexWhere((o) =>
-          o is Map<String, dynamic> &&
-          '${o['id'] ?? ''}' == correctId);
+      final found = rawOpts.indexWhere(
+          (o) => o is Map<String, dynamic> && '${o['id'] ?? ''}' == correctId);
       if (found >= 0) correctIndex = found;
     }
     if (correctIndex < 0) correctIndex = 0;
@@ -2012,8 +2125,9 @@ Future<List<SubjectQuestion>> fetchPracticeQuestionSet({
       courseId, subcourseId, subjectId, unitId, chapterId, 'practice');
   if (doc == null) return [];
   return parseQuestionItems(
-      doc, learningQuestionSetDocId(courseId, subcourseId, subjectId, unitId,
-          chapterId, 'practice'),
+      doc,
+      learningQuestionSetDocId(
+          courseId, subcourseId, subjectId, unitId, chapterId, 'practice'),
       'practice');
 }
 
@@ -2028,8 +2142,9 @@ Future<List<SubjectQuestion>> fetchReadQuestionSet({
       courseId, subcourseId, subjectId, unitId, chapterId, 'read');
   if (doc == null) return [];
   return parseQuestionItems(
-      doc, learningQuestionSetDocId(courseId, subcourseId, subjectId, unitId,
-          chapterId, 'read'),
+      doc,
+      learningQuestionSetDocId(
+          courseId, subcourseId, subjectId, unitId, chapterId, 'read'),
       'read');
 }
 
@@ -2049,6 +2164,7 @@ List<T> shuffleList<T>(List<T> items) {
     seed = (seed * 1103515245 + 12345) & 0x7fffffff;
     return seed % max;
   }
+
   for (var i = out.length - 1; i > 0; i--) {
     final j = nextInt(i + 1);
     final t = out[i];
@@ -2135,6 +2251,10 @@ class MainLeaderboardRow {
   final int usageSeconds;
   final int activityCount;
 
+  /// One-time signup bonus baked into [points] (see ensureMainLeaderboardRow).
+  /// Absent on rows published before the bonus existed - defaults to 0.
+  final int signupBonus;
+
   MainLeaderboardRow({
     required this.id,
     required this.uid,
@@ -2145,6 +2265,7 @@ class MainLeaderboardRow {
     required this.points,
     required this.usageSeconds,
     this.activityCount = 0,
+    this.signupBonus = 0,
   });
 
   factory MainLeaderboardRow.fromMap(Map<String, dynamic> m) =>
@@ -2158,6 +2279,7 @@ class MainLeaderboardRow {
         points: _num(m['points']),
         usageSeconds: _num(m['usageSeconds']),
         activityCount: _num(m['activityCount']),
+        signupBonus: _num(m['signupBonus']),
       );
 }
 
@@ -2182,7 +2304,8 @@ int compareMainLeaderboardRows(MainLeaderboardRow a, MainLeaderboardRow b) {
 /// the project (the REST API fails the whole query instead of returning
 /// results). One row per uid: a stale duplicate from an older id scheme must
 /// not let the same person occupy two positions.
-Future<List<MainLeaderboardRow>> fetchMainLeaderboard(String subcourseId) async {
+Future<List<MainLeaderboardRow>> fetchMainLeaderboard(
+    String subcourseId) async {
   if (subcourseId.isEmpty) return [];
   try {
     final docs = await ExamRest.runQuery(
@@ -2195,8 +2318,7 @@ Future<List<MainLeaderboardRow>> fetchMainLeaderboard(String subcourseId) async 
       final row = MainLeaderboardRow.fromMap(d);
       if (row.uid.isEmpty) continue;
       final existing = bestByUid[row.uid];
-      if (existing == null ||
-          compareMainLeaderboardRows(row, existing) < 0) {
+      if (existing == null || compareMainLeaderboardRows(row, existing) < 0) {
         bestByUid[row.uid] = row;
       }
     }
@@ -2205,6 +2327,76 @@ Future<List<MainLeaderboardRow>> fetchMainLeaderboard(String subcourseId) async 
   } catch (_) {
     return [];
   }
+}
+
+/// Page size for the paged leaderboard: the podium (3) plus roughly one
+/// screen of ranking rows. The board reveals only after this page — data and
+/// photos — is fully loaded, so the first paint never pops in half-ready.
+const mainLeaderboardPageSize = 15;
+
+/// One page of the main leaderboard, ordered server-side by points desc
+/// (document name asc as the stable tiebreak).
+///
+/// Requires the composite index
+/// `app_main_leaderboard (subcourseId ASC, points DESC, __name__ ASC)`.
+/// Throws [MissingIndexException] when that index does not exist yet — the
+/// caller falls back to [fetchMainLeaderboard] (full fetch + client sort).
+/// [startAfter] continues from the last row of the previous page.
+/// One row per uid: a stale duplicate id scheme must not let the same person
+/// occupy two positions, so callers drop uids they have already seen
+/// (the better duplicate always sorts first under points DESC).
+Future<List<MainLeaderboardRow>> fetchMainLeaderboardPage(
+  String subcourseId, {
+  int limit = mainLeaderboardPageSize,
+  MainLeaderboardRow? startAfter,
+}) async {
+  if (subcourseId.isEmpty) return [];
+  List<Map<String, dynamic>>? cursor;
+  if (startAfter != null) {
+    cursor = [
+      ExamRest.encode(startAfter.points),
+      {
+        'referenceValue':
+            '${ExamRest._base}/app_main_leaderboard/${startAfter.id}',
+      },
+    ];
+  }
+  final docs = await ExamRest.runQuery(
+    'app_main_leaderboard',
+    where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
+    orderBy: [
+      ExamRest.orderField('points', 'DESCENDING'),
+      ExamRest.orderField('__name__', 'ASCENDING'),
+    ],
+    limit: limit,
+    startAfter: cursor,
+  );
+  final rows = <MainLeaderboardRow>[];
+  for (final d in docs) {
+    final row = MainLeaderboardRow.fromMap(d);
+    if (row.uid.isEmpty) continue;
+    rows.add(row);
+  }
+  return rows;
+}
+
+/// Exact 1-based rank of a points value without reading every document:
+/// count of rows in the same subcourse with strictly more points, + 1
+/// (standard competition ranking — ties share the rank).
+/// Needs the same composite index as [fetchMainLeaderboardPage];
+/// throws [MissingIndexException] when it is missing.
+Future<int> countMainLeaderboardRank(String subcourseId, int points) async {
+  final where = {
+    'compositeFilter': {
+      'op': 'AND',
+      'filters': [
+        ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
+        ExamRest.fieldFilter('points', 'GREATER_THAN', points),
+      ],
+    },
+  };
+  final ahead = await ExamRest.runCount('app_main_leaderboard', where: where);
+  return ahead + 1;
 }
 
 // ---------------------------------------------------------------------------
@@ -2294,8 +2486,8 @@ class QotdQuestion {
 
   /// Mirrors normalizeQuestion(): defaults + caps, greetings overlaid from
   /// `meta/qotd_greetings`.
-  factory QotdQuestion.normalized(
-      Map<String, dynamic> raw, String fallbackId, Map<String, dynamic>? greetings) {
+  factory QotdQuestion.normalized(Map<String, dynamic> raw, String fallbackId,
+      Map<String, dynamic>? greetings) {
     const abcd = 'ABCD';
     final rawOpts = (raw['options'] as List?) ?? [];
     final options = <QotdOption>[];
@@ -2311,18 +2503,26 @@ class QotdQuestion {
       }
     }
     final snapshots = (raw['categorySnapshots'] as List?) ?? [];
-    final names = ((raw['categoryNames'] as List?) ?? []).map((e) => '$e').toList();
+    final names =
+        ((raw['categoryNames'] as List?) ?? []).map((e) => '$e').toList();
     final ids = ((raw['categoryIds'] as List?) ?? []).map((e) => '$e').toList();
     final cats = <QotdCategory>[];
     final source = snapshots.isNotEmpty
         ? snapshots
-        : List.generate(names.length,
-            (i) => {'id': i < ids.length ? ids[i] : names[i], 'name': names[i], 'color': '#2563EB'});
+        : List.generate(
+            names.length,
+            (i) => {
+                  'id': i < ids.length ? ids[i] : names[i],
+                  'name': names[i],
+                  'color': '#2563EB'
+                });
     for (var i = 0; i < source.length; i++) {
       final c = source[i];
       if (c is Map) {
         cats.add(QotdCategory(
-          id: _str(c['id']).isEmpty ? (i < ids.length ? ids[i] : 'category-$i') : _str(c['id']),
+          id: _str(c['id']).isEmpty
+              ? (i < ids.length ? ids[i] : 'category-$i')
+              : _str(c['id']),
           name: _str(c['name'], i < names.length ? names[i] : ''),
           color: _str(c['color'], '#2563EB'),
         ));
@@ -2341,9 +2541,13 @@ class QotdQuestion {
       options: options,
       correctOptionId: _str(raw['correctOptionId'], 'A'),
       explanation: _str(raw['explanation']),
-      correctGreeting: _str(greetings?['correctGreeting'], _str(raw['correctGreeting'])),
-      wrongGreeting: _str(greetings?['wrongGreeting'], _str(raw['wrongGreeting'])),
-      difficulty: (diff == 'easy' || diff == 'medium' || diff == 'hard') ? diff : 'medium',
+      correctGreeting:
+          _str(greetings?['correctGreeting'], _str(raw['correctGreeting'])),
+      wrongGreeting:
+          _str(greetings?['wrongGreeting'], _str(raw['wrongGreeting'])),
+      difficulty: (diff == 'easy' || diff == 'medium' || diff == 'hard')
+          ? diff
+          : 'medium',
       categories: cats,
       version: _num(raw['version'], 1),
       isPublished: raw['isPublished'] != false,
@@ -2399,7 +2603,8 @@ class QotdResult {
       isCorrect: _bool(m['isCorrect']),
       answeredAt: _dt(m['answeredAt']),
       snapshot: snap is Map
-          ? QotdQuestion.normalized(snap.cast<String, dynamic>(), _str(snap['id']), null)
+          ? QotdQuestion.normalized(
+              snap.cast<String, dynamic>(), _str(snap['id']), null)
           : null,
     );
   }
@@ -2479,7 +2684,8 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
   final docId = qotdDocumentId(k, courseId, subcourseId);
   final results = await Future.wait([
     ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null),
-    ExamRest.getDoc('users/$uid/questionofdata/summary').catchError((_) => null),
+    ExamRest.getDoc('users/$uid/questionofdata/summary')
+        .catchError((_) => null),
     ExamRest.getDoc('meta/qotd_greetings').catchError((_) => null),
   ]);
   final qRaw = results[0];
@@ -2497,14 +2703,15 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
   final question = QotdQuestion.normalized(qRaw, docId, greetings);
 
   QotdResult? result;
-  final attemptDoc = await ExamRest.getDoc('users/$uid/questionofdata/${qotdAttemptId(question)}')
+  final attemptDoc = await ExamRest.getDoc(
+          'users/$uid/questionofdata/${qotdAttemptId(question)}')
       .catchError((_) => null);
   Map<String, dynamic>? rRaw = attemptDoc;
   if (rRaw == null) {
     // Legacy lookup: result stored under the bare date key; valid only if the
     // snapshot still matches today's question id + version.
-    final legacy =
-        await ExamRest.getDoc('users/$uid/questionofdata/$k').catchError((_) => null);
+    final legacy = await ExamRest.getDoc('users/$uid/questionofdata/$k')
+        .catchError((_) => null);
     final snap = legacy?['snapshot'];
     if (legacy != null &&
         snap is Map &&
@@ -2534,11 +2741,12 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
 /// Mirrors submitQotdAnswer(): expiry guard, idempotent (returns existing
 /// result), stores the full question snapshot, updates the summary with
 /// Math.round(correct*10000/total)/100.
-Future<({QotdResult result, QotdSummary summary})> submitQotdAnswer(
-    String uid, QotdQuestion question, String selectedOptionId, QotdSummary prior) async {
+Future<({QotdResult result, QotdSummary summary})> submitQotdAnswer(String uid,
+    QotdQuestion question, String selectedOptionId, QotdSummary prior) async {
   final key = todayDateKey();
   if (question.dateKey != key) {
-    throw Exception('This daily question has expired. Please load today\u2019s question.');
+    throw Exception(
+        'This daily question has expired. Please load today\u2019s question.');
   }
   final path = 'users/$uid/questionofdata/${qotdAttemptId(question)}';
   final existing = await ExamRest.getDoc(path).catchError((_) => null);
@@ -2592,9 +2800,11 @@ String qotdEn(String v) {
 }
 
 /// Legacy helpers kept for existing callers.
-Future<QotdQuestion?> fetchTodayQuestion(String courseId, String subcourseId) async {
+Future<QotdQuestion?> fetchTodayQuestion(
+    String courseId, String subcourseId) async {
   final docId = '${todayDateKey()}__${courseId}__${subcourseId}';
-  final doc = await ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null);
+  final doc =
+      await ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null);
   if (doc == null || doc['isPublished'] == false) return null;
   return QotdQuestion.normalized(doc, docId, null);
 }
@@ -2622,7 +2832,6 @@ Future<QotdSummary> answerQotd({
   final saved = await submitQotdAnswer(uid, question, selectedOptionId, prior);
   return saved.summary;
 }
-
 
 // ---------------------------------------------------------------------------
 // Daily Test scheduling + formatting helpers.
@@ -2707,7 +2916,8 @@ String formatDailyTestDuration(int seconds) {
 }
 
 /// Every model scheduled for exactly this date, in `order`.
-List<DailyTestModel> modelsForDate(List<DailyTestModel> models, String dateKey) {
+List<DailyTestModel> modelsForDate(
+    List<DailyTestModel> models, String dateKey) {
   if (dateKey.isEmpty) return [];
   final out = models.where((m) => m.testDate == dateKey).toList()
     ..sort((a, b) => a.order.compareTo(b.order));
@@ -2720,7 +2930,9 @@ List<DailyTestModel> missedDailyTestModels(
     List<DailyTestModel> models, Set<String> doneIds, String today) {
   final out = models
       .where((m) =>
-          m.testDate.isNotEmpty && m.testDate.compareTo(today) < 0 && !doneIds.contains(m.id))
+          m.testDate.isNotEmpty &&
+          m.testDate.compareTo(today) < 0 &&
+          !doneIds.contains(m.id))
       .toList()
     ..sort((a, b) => a.testDate == b.testDate
         ? b.order.compareTo(a.order)
@@ -2878,28 +3090,27 @@ List<String> buildDailyTestRules(DailyTestModel model) {
   if (model.rules.isNotEmpty) return model.rules;
   final count = model.questions.length;
   final perQ = model.marksPerQuestion > 0 ? model.marksPerQuestion : 1.0;
-  final perQLabel =
-      perQ == perQ.roundToDouble() ? '${perQ.toInt()}' : '$perQ';
-  final negPct = (model.negativeMarkPercent > 0
-          ? model.negativeMarkPercent
-          : 0.2)
-      .toStringAsFixed(2)
-      .replaceFirst(RegExp(r'0$'), '');
+  final perQLabel = perQ == perQ.roundToDouble() ? '${perQ.toInt()}' : '$perQ';
+  final negPct =
+      (model.negativeMarkPercent > 0 ? model.negativeMarkPercent : 0.2)
+          .toStringAsFixed(2)
+          .replaceFirst(RegExp(r'0$'), '');
   final penaltyMarks = (perQ *
-          (model.negativeMarkPercent > 0 ? model.negativeMarkPercent : 0.2) *
-          100)
+              (model.negativeMarkPercent > 0
+                  ? model.negativeMarkPercent
+                  : 0.2) *
+              100)
           .round() /
       100;
   final penaltyLabel = penaltyMarks == penaltyMarks.roundToDouble()
       ? '${penaltyMarks.toInt()}'
       : '$penaltyMarks';
   final passPct = model.passPercent > 0 ? model.passPercent : 40;
-  final perQTime = model.perQuestionTimeSeconds > 0
-      ? model.perQuestionTimeSeconds
-      : 30;
-  final categoryLabel =
-      model.category.isEmpty ? 'Medium' : model.category[0].toUpperCase() +
-          model.category.substring(1);
+  final perQTime =
+      model.perQuestionTimeSeconds > 0 ? model.perQuestionTimeSeconds : 30;
+  final categoryLabel = model.category.isEmpty
+      ? 'Medium'
+      : model.category[0].toUpperCase() + model.category.substring(1);
 
   return [
     'This test has $count question${count == 1 ? '' : 's'} and must be finished in one sitting.',
@@ -3021,8 +3232,9 @@ class DailyTestActivity {
   }
 }
 
-String? _dailyTestActivityKey(String? uid) =>
-    uid == null || uid.isEmpty ? null : '@loksewa/daily-test/recent-activities/$uid';
+String? _dailyTestActivityKey(String? uid) => uid == null || uid.isEmpty
+    ? null
+    : '@loksewa/daily-test/recent-activities/$uid';
 
 /// Reads one account's feed, newest first. Never throws.
 Future<List<DailyTestActivity>> getRecentDailyTestActivities(
@@ -3036,8 +3248,8 @@ Future<List<DailyTestActivity>> getRecentDailyTestActivities(
     if (parsed is! List) return [];
     final list = parsed
         .whereType<Map>()
-        .map((e) => DailyTestActivity.fromJson(
-            e.map((k, v) => MapEntry('$k', v))))
+        .map((e) =>
+            DailyTestActivity.fromJson(e.map((k, v) => MapEntry('$k', v))))
         .where((a) => a.modelId.isNotEmpty)
         .toList()
       ..sort((a, b) => b.completedAt.compareTo(a.completedAt));
@@ -3082,10 +3294,7 @@ class GorkhapatraBlock {
   final String caption;
 
   const GorkhapatraBlock(
-      {this.type = 'text',
-      this.text = '',
-      this.url = '',
-      this.caption = ''});
+      {this.type = 'text', this.text = '', this.url = '', this.caption = ''});
 
   factory GorkhapatraBlock.fromMap(Map m) => GorkhapatraBlock(
         type: '${m['type'] ?? 'text'}',
@@ -3133,16 +3342,12 @@ class GorkhapatraPost {
     } else if (raw is Map) {
       final s = raw['seconds'] ?? raw['_seconds'];
       if (s is num) {
-        published =
-            DateTime.fromMillisecondsSinceEpoch((s * 1000).toInt());
+        published = DateTime.fromMillisecondsSinceEpoch((s * 1000).toInt());
       }
     }
     final rawBlocks = m['blocks'];
     final blocks = rawBlocks is List
-        ? rawBlocks
-            .whereType<Map>()
-            .map(GorkhapatraBlock.fromMap)
-            .toList()
+        ? rawBlocks.whereType<Map>().map(GorkhapatraBlock.fromMap).toList()
         : const <GorkhapatraBlock>[];
     String slug = '${m['id'] ?? m['slug'] ?? ''}';
     return GorkhapatraPost(

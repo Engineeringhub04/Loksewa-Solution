@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/exam_service.dart';
 import '../../services/firestore_rest.dart';
+import '../../services/main_leaderboard.dart';
 import '../../services/theme_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
@@ -212,6 +214,23 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
         idToken: await _token(),
         merge: true,
       );
+      // Grant the 50pt signup-bonus leaderboard row for this subcourse.
+      // Idempotent — only created when the row is missing (existing users
+      // get it lazily on their next leaderboard visit instead). Never
+      // blocks the save flow.
+      try {
+        final prof =
+            await fetchUserProfile(user.uid).catchError((_) => null);
+        final nm = (prof?.name ?? user.displayName ?? '').trim();
+        await ensureMainLeaderboardRow(
+          uid: user.uid,
+          courseId: _selectedCourse!,
+          subcourseId: _selectedSubcourse!,
+          name: nm.isEmpty ? 'Anonymous' : nm,
+          photoURL: prof?.photoURL ?? user.photoURL,
+          isPro: prof?.isPro ?? false,
+        );
+      } catch (_) {}
       if (!mounted) return;
       setState(() => _saving = false);
       if (_updateMode) {

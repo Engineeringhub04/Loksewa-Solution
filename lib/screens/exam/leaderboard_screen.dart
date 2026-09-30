@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 import '../../widgets/disk_cached_image.dart';
 import '../../widgets/preloading.dart';
 
@@ -94,6 +95,15 @@ const _placeThemes = <int, _PlaceTheme>{
   ),
 };
 
+/// Cached page-1 snapshot for one subcourse (10-minute TTL).
+class _BoardPage {
+  final List<MainLeaderboardRow> rows;
+  final bool hasMore;
+  final MainLeaderboardRow? lastRow;
+  final DateTime fetchedAt;
+  _BoardPage(this.rows, this.hasMore, this.lastRow, this.fetchedAt);
+}
+
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   List<MainLeaderboardRow> _rows = const [];
   bool _loading = true;
@@ -101,15 +111,64 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   bool _noCourse = false;
   String? _error;
   String _courseSubtitle = '';
+  String _uid = '';
+  String _subcourseId = '';
+
+  // --- Pagination state -------------------------------------------------
+  // Page 1 loads up-front (with every photo precached before the reveal so
+  // the first paint is complete); further pages load as the user scrolls.
+  // When the composite index is missing we fall back to the legacy
+  // full-fetch path and pagination is disabled.
+  final ScrollController _scroll = ScrollController();
+  static const int _pageSize = mainLeaderboardPageSize;
+  bool _paginated = true;
+  bool _loadingMore = false;
+  bool _hasMore = true;
+  MainLeaderboardRow? _lastRow;
+  final Set<String> _seenUids = {};
+  int? _myRank;
+  MainLeaderboardRow? _myRow;
+
+  // 10-minute in-memory board cache (page 1), mirroring React's boardCache.
+  // Empty results are never cached. Cleared on publish / manual refresh.
+  static final Map<String, _BoardPage> _boardCache = {};
 
   @override
   void initState() {
     super.initState();
+    _scroll.addListener(_onScrollNearBottom);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  void _onScrollNearBottom() {
+    if (!_paginated || _loadingMore || !_hasMore || _loading) return;
+    final pos = _scroll.position;
+    if (pos.pixels >= pos.maxScrollExtent - 400) _loadMore();
+  }
+
+  static void invalidateBoardCache(String subcourseId) {
+    _boardCache.remove(subcourseId);
   }
 
   /// [hard] = header refresh button: the body steps aside for the preloader.
   /// [pull] = pull-to-refresh: the list stays put under the native spinner.
+  ///
+  /// Load sequence (mirrors app/leaderboard.tsx):
+  /// 1. ensure my public row exists (brand-new users get the 50pt signup
+  ///    bonus doc here — must run BEFORE publish so the bonus survives);
+  /// 2. publish-before-read (throttled to once per 5 min) so my own row is
+  ///    current before the board is read;
+  /// 3. fetch page 1 (15 rows, server-ordered) — or the legacy full fetch
+  ///    when the composite index is missing;
+  /// 4. precache every visible photo BEFORE the reveal (no blank-then-pop);
+  /// 5. compute my exact rank (page index, else a count query) and mirror it
+  ///    into users/{uid}.stats.rank.
   Future<void> _load({bool hard = false, bool pull = false}) async {
     if (!pull) {
       setState(() {
@@ -126,6 +185,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       final uid = AuthService.currentUser?.uid ?? '';
       final profile = uid.isEmpty ? null : await fetchUserProfile(uid);
       final subcourseId = profile?.subcourseId ?? '';
+      final courseId = profile?.courseId ?? '';
       if (uid.isEmpty || subcourseId.isEmpty) {
         if (!mounted) return;
         setState(() {
@@ -135,10 +195,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         });
         return;
       }
+      _uid = uid;
+      _subcourseId = subcourseId;
+      final p = profile!;
+      final displayName =
+          p.name.trim().isEmpty ? 'Anonymous' : p.name.trim();
       // Header subtitle: subcourseName ?? courseName (best-effort).
       var subtitle = '';
       try {
-        final courseId = profile!.courseId;
         if (courseId.isNotEmpty) {
           final c =
               await ExamRest.getDoc('app_courses/$courseId').catchError((_) => null);
@@ -151,10 +215,111 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           subtitle = scName.isNotEmpty ? scName : cName;
         }
       } catch (_) {}
-      final rows = await fetchMainLeaderboard(subcourseId);
+
+      // 10-minute page-1 cache (never caches empty); skipped on hard/pull.
+      _BoardPage? cached;
+      if (!hard && !pull) {
+        cached = _boardCache[subcourseId];
+        if (cached != null &&
+            DateTime.now().difference(cached.fetchedAt).inMinutes >= 10) {
+          cached = null;
+          _boardCache.remove(subcourseId);
+        }
+      }
+
+      // 1. Ensure my row (creates the 50pt bonus doc for new users).
+      var myRow = await ensureMainLeaderboardRow(
+        uid: uid,
+        courseId: courseId,
+        subcourseId: subcourseId,
+        name: displayName,
+        photoURL: p.photoURL,
+        isPro: p.isPro,
+      );
+
+      // 2. Publish-before-read (throttled); a fresh publish busts the cache.
+      if (shouldPublishMainLeaderboardScore(uid, subcourseId)) {
+        final publishedRow = await publishMainLeaderboardScore(
+          uid: uid,
+          courseId: courseId,
+          subcourseId: subcourseId,
+          name: displayName,
+          photoURL: p.photoURL,
+          isPro: p.isPro,
+        );
+        if (publishedRow != null) {
+          myRow = publishedRow;
+          invalidateBoardCache(subcourseId);
+          cached = null;
+        }
+      }
+
+      // 3. Page 1.
+      List<MainLeaderboardRow> page;
+      bool hasMore;
+      MainLeaderboardRow? lastRow;
+      bool paginated;
+      if (cached != null && cached.rows.isNotEmpty) {
+        page = cached.rows;
+        hasMore = cached.hasMore;
+        lastRow = cached.lastRow;
+        paginated = true;
+      } else {
+        try {
+          final fetched =
+              await fetchMainLeaderboardPage(subcourseId, limit: _pageSize);
+          paginated = true;
+          // One row per uid; the better duplicate sorts first server-side.
+          final seen = <String>{};
+          page = fetched.where((r) => seen.add(r.uid)).toList();
+          hasMore = page.length == _pageSize;
+          lastRow = page.isEmpty ? null : page.last;
+          if (page.isNotEmpty) {
+            _boardCache[subcourseId] =
+                _BoardPage(page, hasMore, lastRow, DateTime.now());
+          }
+        } on MissingIndexException {
+          // Composite index not created yet — legacy full fetch, no pages.
+          page = await fetchMainLeaderboard(subcourseId);
+          paginated = false;
+          hasMore = false;
+          lastRow = null;
+        }
+      }
+
+      // 4. Every visible photo fully loaded before the board reveals.
+      await Future.wait(
+        page.map((r) => DiskCachedImage.warm(r.photoURL ?? '')),
+      ).timeout(const Duration(seconds: 6), onTimeout: () => <void>[]);
+
+      // 5. Exact rank: page index when visible, else a count query (~1 read).
+      int? myRank;
+      final idx = page.indexWhere((r) => r.uid == uid);
+      if (idx >= 0) {
+        myRank = idx + 1;
+        myRow = page[idx];
+      } else if (myRow != null) {
+        try {
+          myRank = await countMainLeaderboardRank(subcourseId, myRow.points);
+        } catch (_) {
+          myRank = null;
+        }
+      }
+      if (myRank != null && myRank > 0) {
+        await writeUserStatsRank(uid, myRank);
+      }
+
       if (!mounted) return;
       setState(() {
-        _rows = rows;
+        _rows = page;
+        _paginated = paginated;
+        _hasMore = hasMore;
+        _lastRow = lastRow;
+        _seenUids
+          ..clear()
+          ..addAll(page.map((r) => r.uid));
+        _myRank = myRank;
+        _myRow = myRow;
         _courseSubtitle = subtitle;
         _loading = false;
         _hardRefreshing = false;
@@ -165,6 +330,44 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         _error = 'Couldn\'t load the leaderboard right now. Please try again.';
         _loading = false;
         _hardRefreshing = false;
+      });
+    }
+  }
+
+  /// Infinite scroll: append the next page (uid-deduped). Stops silently on
+  /// any error — the board stays usable with what it has.
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore || _lastRow == null || _subcourseId.isEmpty) {
+      return;
+    }
+    setState(() => _loadingMore = true);
+    try {
+      final uid = AuthService.currentUser?.uid ?? '';
+      final fetched = await fetchMainLeaderboardPage(_subcourseId,
+          limit: _pageSize, startAfter: _lastRow);
+      final fresh = fetched.where((r) => !_seenUids.contains(r.uid)).toList();
+      // Re-sort the seam defensively (server already orders points DESC).
+      if (!mounted) return;
+      setState(() {
+        _rows = [..._rows, ...fresh];
+        _seenUids.addAll(fresh.map((r) => r.uid));
+        _lastRow = _rows.isEmpty ? null : _rows.last;
+        _hasMore = fetched.length == _pageSize;
+        _loadingMore = false;
+      });
+      // My row may have scrolled into view — refresh the exact rank.
+      final idx = _rows.indexWhere((r) => r.uid == uid);
+      if (idx >= 0 && _myRank != idx + 1 && uid.isNotEmpty) {
+        _myRank = idx + 1;
+        _myRow = _rows[idx];
+        await writeUserStatsRank(uid, _myRank!);
+        if (mounted) setState(() {});
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _hasMore = false;
+        _loadingMore = false;
       });
     }
   }
@@ -191,7 +394,6 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Widget build(BuildContext context) {
     final uid = AuthService.currentUser?.uid ?? '';
     final myIndex = uid.isEmpty ? -1 : _rows.indexWhere((r) => r.uid == uid);
-    final myRow = myIndex >= 0 ? _rows[myIndex] : null;
     final pointsToNext = myIndex > 0
         ? (_rows[myIndex - 1].points - _rows[myIndex].points)
             .clamp(0, 1 << 30)
@@ -217,13 +419,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       tinted: false,
                       label: 'Loading Leaderboard...',
                       hint:
-                          'Fetching every ranking so the board appears complete',
+                          'Loading the top rankings with photos first',
                     )
                   : _noCourse
                       ? _noCourseBody()
                       : _error != null
                           ? _errorBody()
-                          : _boardBody(uid, myRow, myIndex, pointsToNext),
+                          : _boardBody(uid, _myRow, _myRank, pointsToNext),
             ),
           ],
         ),
@@ -348,7 +550,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     );
   }
 
-  Widget _boardBody(String uid, MainLeaderboardRow? myRow, int myIndex,
+  Widget _boardBody(String uid, MainLeaderboardRow? myRow, int? myRank,
       int? pointsToNext) {
     final rest = _rows.length > 3 ? _rows.sublist(3) : <MainLeaderboardRow>[];
     return Column(
@@ -374,12 +576,20 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
             ),
             child: RefreshIndicator(
-              onRefresh: () => _load(pull: true),
+              onRefresh: () {
+                // Pull-to-refresh = explicit ask for fresh numbers: force the
+                // next publish through instead of waiting out the throttle.
+                if (_uid.isNotEmpty && _subcourseId.isNotEmpty) {
+                  resetMainLeaderboardThrottle(_uid, _subcourseId);
+                }
+                return _load(pull: true);
+              },
               child: ListView(
+                controller: _scroll,
                 padding: EdgeInsets.fromLTRB(
                     16, 16, 16, MediaQuery.of(context).padding.bottom + 40),
                 children: [
-                  _myCard(myRow, myIndex, pointsToNext),
+                  _myCard(myRow, myRank, pointsToNext),
                   const SizedBox(height: 14),
                   const Text('Rankings',
                       style: TextStyle(
@@ -417,6 +627,18 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                       final isMe = row.uid == uid;
                       return _rankRow(row, i + 4, isMe);
                     }),
+                  if (_loadingMore)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 18),
+                      child: Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: _textDim),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -428,8 +650,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
 
   /// Your standing card — deliberately richer than the exam version: a green
   /// rail, a circular rank, three stats, and the gap to the next rank.
+  /// [myRank] is the exact rank (page index or count query); null = unranked.
   Widget _myCard(
-      MainLeaderboardRow? myRow, int myIndex, int? pointsToNext) {
+      MainLeaderboardRow? myRow, int? myRank, int? pointsToNext) {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
@@ -502,7 +725,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                                 color: const Color(0x1FFFFFFF),
                               ),
                               alignment: Alignment.center,
-                              child: Text('${myIndex + 1}',
+                              child: Text('${myRank ?? '–'}',
                                   style: const TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.bold,
@@ -550,7 +773,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                             ],
                           ),
                         ),
-                        if (pointsToNext != null) ...[
+                        if (pointsToNext != null && myRank != null) ...[
                           const SizedBox(height: 12),
                           Row(
                             children: [
@@ -559,7 +782,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
-                                  '$pointsToNext pts → #$myIndex',
+                                  '$pointsToNext pts → #${myRank - 1}',
                                   style: const TextStyle(
                                       fontSize: 12, color: _textDim),
                                 ),
@@ -945,7 +1168,7 @@ class _PodiumSlotState extends State<_PodiumSlot>
           )
         else
           const SizedBox(height: 3),
-        // The block itself — gradient with a bright cap, lit from above.
+        // The block itself — gradient block, no bright cap on top.
         Container(
           margin: const EdgeInsets.only(top: 9),
           height: theme.height,
@@ -966,17 +1189,6 @@ class _PodiumSlotState extends State<_PodiumSlot>
           ),
           child: Stack(
             children: [
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: Container(
-                  height: 3,
-                  color: filled
-                      ? const Color(0x8CFFFFFF) // white 0.55
-                      : const Color(0x2EFFFFFF), // white 0.18
-                ),
-              ),
               Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,

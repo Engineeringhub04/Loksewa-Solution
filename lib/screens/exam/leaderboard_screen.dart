@@ -1,11 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import '../../widgets/subpage_header.dart';
+import '../../widgets/disk_cached_image.dart';
 import '../../widgets/preloading.dart';
 
-/// Main leaderboard — mirrors app/leaderboard.tsx.
-/// Podium top 3 (pinned), "your standing" card, then the scrolling ranks.
+/// Main leaderboard — mirrors app/leaderboard.tsx + components/leaderboard/Podium.tsx.
+///
+/// The screen is FIXED to its own dark palette (like React) and does NOT follow
+/// the app theme: the podium is a designed surface and re-tinting the medals
+/// per theme would wreck their contrast. Everything below the podium is glass
+/// on the same dark gradient.
+///
+/// Layout: pinned podium (top 3, display order 2nd/1st/3rd), "your standing"
+/// card, then the scrolling ranks inside a rounded darker sheet.
+/// The iOS-style [PreloadingWidget] is kept as the loader (per user request).
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
 
@@ -13,10 +21,86 @@ class LeaderboardScreen extends StatefulWidget {
   State<LeaderboardScreen> createState() => _LeaderboardScreenState();
 }
 
+// ---------- fixed dark palette (Podium.tsx) ----------
+const _bgTop = Color(0xFF12275C);
+const _bgBottom = Color(0xFF1D4ED8);
+const _text = Color(0xFFFFFFFF);
+const _textDim = Color(0xB8FFFFFF); // rgba(255,255,255,0.72)
+const _meAccent = Color(0xFF34D399); // PLACE_THEMES[1].ring
+
+class _PlaceTheme {
+  final int place;
+  final Color ring;
+  final Color glow;
+  final List<Color> block;
+  final Color onRing;
+  final Color pill;
+  final IconData icon;
+  final double iconSize;
+  final double height;
+  final double avatar;
+
+  const _PlaceTheme({
+    required this.place,
+    required this.ring,
+    required this.glow,
+    required this.block,
+    required this.onRing,
+    required this.pill,
+    required this.icon,
+    required this.iconSize,
+    required this.height,
+    required this.avatar,
+  });
+}
+
+/// First place is GREEN, not gold — a deliberate product choice (see Podium.tsx).
+const _placeThemes = <int, _PlaceTheme>{
+  1: _PlaceTheme(
+    place: 1,
+    ring: Color(0xFF34D399),
+    glow: Color(0xD934D399),
+    block: [Color(0xFF34D399), Color(0xFF047857)],
+    onRing: Color(0xFF052E1A),
+    pill: Color(0x5910B981),
+    icon: Icons.emoji_events,
+    iconSize: 24,
+    height: 112,
+    avatar: 78,
+  ),
+  2: _PlaceTheme(
+    place: 2,
+    ring: Color(0xFF7DD3FC),
+    glow: Color(0xB37DD3FC),
+    block: [Color(0xFF7DD3FC), Color(0xFF0369A1)],
+    onRing: Color(0xFF052E45),
+    pill: Color(0x4D38BDF8),
+    icon: Icons.military_tech,
+    iconSize: 17,
+    height: 82,
+    avatar: 64,
+  ),
+  3: _PlaceTheme(
+    place: 3,
+    ring: Color(0xFFFBBF24),
+    glow: Color(0xB3FBBF24),
+    block: [Color(0xFFFBBF24), Color(0xFFB45309)],
+    onRing: Color(0xFF3D2103),
+    pill: Color(0x4DF59E0B),
+    icon: Icons.military_tech,
+    iconSize: 17,
+    height: 64,
+    avatar: 64,
+  ),
+};
+
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   List<MainLeaderboardRow> _rows = const [];
   bool _loading = true;
+  bool _hardRefreshing = false;
+  bool _noCourse = false;
   String? _error;
+  String _courseSubtitle = '';
 
   @override
   void initState() {
@@ -24,47 +108,78 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  /// [hard] = header refresh button: the body steps aside for the preloader.
+  /// [pull] = pull-to-refresh: the list stays put under the native spinner.
+  Future<void> _load({bool hard = false, bool pull = false}) async {
+    if (!pull) {
+      setState(() {
+        if (hard) {
+          _hardRefreshing = true;
+        } else {
+          _loading = true;
+        }
+        _error = null;
+        _noCourse = false;
+      });
+    }
     try {
       final uid = AuthService.currentUser?.uid ?? '';
       final profile = uid.isEmpty ? null : await fetchUserProfile(uid);
       final subcourseId = profile?.subcourseId ?? '';
       if (uid.isEmpty || subcourseId.isEmpty) {
-        throw Exception('Set up your course to see the leaderboard.');
+        if (!mounted) return;
+        setState(() {
+          _noCourse = true;
+          _loading = false;
+          _hardRefreshing = false;
+        });
+        return;
       }
+      // Header subtitle: subcourseName ?? courseName (best-effort).
+      var subtitle = '';
+      try {
+        final courseId = profile!.courseId;
+        if (courseId.isNotEmpty) {
+          final c =
+              await ExamRest.getDoc('app_courses/$courseId').catchError((_) => null);
+          final sc = await ExamRest.getDoc(
+                  'app_courses/$courseId/subcourses/$subcourseId')
+              .catchError((_) => null);
+          final scName =
+              ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim() ?? '';
+          final cName = ((c?['name'] ?? c?['nameNe']) as String?)?.trim() ?? '';
+          subtitle = scName.isNotEmpty ? scName : cName;
+        }
+      } catch (_) {}
       final rows = await fetchMainLeaderboard(subcourseId);
       if (!mounted) return;
       setState(() {
         _rows = rows;
+        _courseSubtitle = subtitle;
         _loading = false;
+        _hardRefreshing = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      // Never leak raw Firestore/API errors to the user. The only expected
-      // throw here is the missing-course setup message; anything else gets a
-      // generic friendly message.
-      final msg = '$e'.replaceFirst('Exception: ', '');
       setState(() {
-        _error = msg == 'Set up your course to see the leaderboard.'
-            ? msg
-            : 'Couldn\'t load the leaderboard right now. Please try again.';
+        _error = 'Couldn\'t load the leaderboard right now. Please try again.';
         _loading = false;
+        _hardRefreshing = false;
       });
     }
   }
 
+  /// "2h 15m" / "45m" / "0m" — mirrors formatStudyTime in leaderboard.tsx.
   String _formatTime(int totalSeconds) {
-    final h = totalSeconds ~/ 3600;
-    final m = (totalSeconds % 3600) ~/ 60;
+    final safe = totalSeconds < 0 ? 0 : totalSeconds;
+    final h = safe ~/ 3600;
+    final m = (safe % 3600) ~/ 60;
     if (h > 0) return '${h}h ${m}m';
     if (m > 0) return '${m}m';
     return '0m';
   }
 
+  /// Trims a trailing ".0" — mirrors formatPercent in leaderboard.tsx.
   String _formatPercent(double value) {
     final rounded = (value * 10).round() / 10;
     return rounded == rounded.roundToDouble()
@@ -81,249 +196,859 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ? (_rows[myIndex - 1].points - _rows[myIndex].points)
             .clamp(0, 1 << 30)
         : null;
+    final showLoader = _loading || _hardRefreshing;
 
     return Scaffold(
-      body: Column(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [_bgTop, _bgBottom],
+          ),
+        ),
+        child: Column(
+          children: [
+            SizedBox(height: MediaQuery.of(context).padding.top + 10),
+            _header(),
+            Expanded(
+              child: showLoader
+                  ? const PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading Leaderboard...',
+                      hint:
+                          'Fetching every ranking so the board appears complete',
+                    )
+                  : _noCourse
+                      ? _noCourseBody()
+                      : _error != null
+                          ? _errorBody()
+                          : _boardBody(uid, myRow, myIndex, pointsToNext),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _header() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+      child: Row(
         children: [
-          SubpageHeader(title: 'Leaderboard', actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _load),
-        ]),
+          _glassIconButton(
+            icon: Icons.arrow_back,
+            size: 20,
+            onPressed: () => Navigator.of(context).maybePop(),
+          ),
+          const SizedBox(width: 12),
           Expanded(
-            child: _loading
-          ? const PreloadingWidget(
-            tinted: false,
-            label: 'Loading Leaderboard...',
-          )
-          : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
-                            onPressed: _load, child: const Text('Retry')),
-                      ],
-                    ),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _load,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16),
-                    children: [
-                      _podium(),
-                      const SizedBox(height: 12),
-                      _myCard(myRow, myIndex, pointsToNext),
-                      const SizedBox(height: 12),
-                      const Text('Rankings',
-                          style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      if (_rows.length <= 3)
-                        const Card(
-                          child: Padding(
-                            padding: EdgeInsets.all(14),
-                            child: Text('No more rankings yet.'),
-                          ),
-                        ),
-                      ...List.generate(_rows.length > 3 ? _rows.length - 3 : 0,
-                          (i) {
-                        final row = _rows[i + 3];
-                        final isMe = row.uid == uid;
-                        return Card(
-                          color: isMe ? Colors.green.shade50 : null,
-                          child: ListTile(
-                            leading: CircleAvatar(
-                                child: Text('${i + 4}')),
-                            title: Row(
-                              children: [
-                                Expanded(child: Text(row.name)),
-                                if (row.isPro)
-                                  const Icon(Icons.verified,
-                                      size: 16, color: Colors.blue),
-                              ],
-                            ),
-                            subtitle: Text(
-                                '${row.points} pts · ${_formatTime(row.usageSeconds)}'),
-                            trailing: Text(
-                                _formatPercent(row.percent),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                        );
-                      }),
-                    ],
-                  ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Leaderboard',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: _text),
                 ),
+                if (_courseSubtitle.isNotEmpty)
+                  Text(
+                    _courseSubtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style:
+                        const TextStyle(fontSize: 12, color: _textDim),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          _glassIconButton(
+            icon: Icons.refresh,
+            size: 19,
+            onPressed: () {
+              if (!_hardRefreshing && !_loading) _load(hard: true);
+            },
           ),
         ],
       ),
     );
   }
 
-  Widget _podium() {
-    // Display order 2nd, 1st, 3rd.
-    final order = [_rows.length > 1 ? _rows[1] : null,
-        _rows.isNotEmpty ? _rows[0] : null,
-        _rows.length > 2 ? _rows[2] : null];
-    // Medal colors (no emojis in UI): gold / silver / bronze.
-    const medalColors = [
-      Color(0xFF9AA5B1), // silver — 2nd
-      Color(0xFFF5B301), // gold — 1st
-      Color(0xFFCD7F32), // bronze — 3rd
-    ];
-    const medalInk = [
-      Color(0xFF3A4552),
-      Color(0xFF5C4300),
-      Color(0xFF5A3410),
-    ];
-    final heights = [110.0, 150.0, 90.0];
-    return SizedBox(
-      height: 200,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: List.generate(3, (i) {
-          final row = order[i];
-          return Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (row != null) ...[
-                  CircleAvatar(
-                    radius: 22,
-                    child: Text(row.name.isNotEmpty
-                        ? row.name[0].toUpperCase()
-                        : '?'),
+  Widget _glassIconButton({
+    required IconData icon,
+    required double size,
+    required VoidCallback onPressed,
+  }) {
+    return Material(
+      color: const Color(0x29FFFFFF), // rgba(255,255,255,0.16)
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Icon(icon, size: size, color: _text),
+        ),
+      ),
+    );
+  }
+
+  Widget _noCourseBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.emoji_events_outlined,
+                size: 48, color: _textDim),
+            const SizedBox(height: 12),
+            const Text(
+              'Choose a course to see the leaderboard',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: _text),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _text,
+                side: const BorderSide(color: _textDim),
+              ),
+              onPressed: () => Navigator.of(context).maybePop(),
+              child: const Text('Back'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _errorBody() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(_error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 14, color: _text)),
+            const SizedBox(height: 12),
+            ElevatedButton(
+                onPressed: () => _load(), child: const Text('Retry')),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _boardBody(String uid, MainLeaderboardRow? myRow, int myIndex,
+      int? pointsToNext) {
+    final rest = _rows.length > 3 ? _rows.sublist(3) : <MainLeaderboardRow>[];
+    return Column(
+      children: [
+        // FIXED podium — pinned above the list so the top three stay visible
+        // while the rankings scroll underneath.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+          child: _Podium(
+            entries: [
+              _rows.length > 1 ? _rows[1] : null,
+              _rows.isNotEmpty ? _rows[0] : null,
+              _rows.length > 2 ? _rows[2] : null,
+            ],
+            formatPercent: _formatPercent,
+          ),
+        ),
+        // The rounded darker sheet confines scrolling to this region.
+        Expanded(
+          child: Container(
+            decoration: const BoxDecoration(
+              color: Color(0x47081436), // rgba(8,20,54,0.28)
+              borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+            ),
+            child: RefreshIndicator(
+              onRefresh: () => _load(pull: true),
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, MediaQuery.of(context).padding.bottom + 40),
+                children: [
+                  _myCard(myRow, myIndex, pointsToNext),
+                  const SizedBox(height: 14),
+                  const Text('Rankings',
+                      style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: _text)),
+                  const SizedBox(height: 10),
+                  if (rest.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0x1AFFFFFF),
+                        border: Border.all(
+                            color: const Color(0x2EFFFFFF)),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.emoji_events_outlined,
+                              size: 20, color: _textDim),
+                          SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'No one has scored here yet — be the first',
+                              style: TextStyle(
+                                  fontSize: 13, color: _textDim),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    ...List.generate(rest.length, (i) {
+                      final row = rest[i];
+                      final isMe = row.uid == uid;
+                      return _rankRow(row, i + 4, isMe);
+                    }),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Your standing card — deliberately richer than the exam version: a green
+  /// rail, a circular rank, three stats, and the gap to the next rank.
+  Widget _myCard(
+      MainLeaderboardRow? myRow, int myIndex, int? pointsToNext) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0x7334D399)), // 0.45 green
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0x4D34D399), // rgba(52,211,153,0.30)
+                      Color(0x0D34D399), // rgba(52,211,153,0.05)
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(row.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.w600)),
-                  Text(_formatPercent(row.percent),
-                      style: const TextStyle(
-                          fontSize: 11, fontWeight: FontWeight.bold)),
-                  Text('${row.points} pts',
-                      style: const TextStyle(
-                          fontSize: 10, color: Colors.grey)),
-                ] else
-                  const Text('Open spot',
-                      style: TextStyle(fontSize: 11, color: Colors.grey)),
-                const SizedBox(height: 6),
-                Container(
-                  height: heights[i],
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade700.withValues(alpha: 0.12),
-                    borderRadius: const BorderRadius.vertical(
-                        top: Radius.circular(10)),
-                    border: Border.all(color: Colors.blue.shade200),
-                  ),
-                  alignment: Alignment.topCenter,
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: medalColors[i],
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.7),
-                          width: 2),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              child: Container(width: 4, color: _meAccent),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
+              child: myRow == null
+                  ? const Row(
+                      children: [
+                        Icon(Icons.rocket_launch_outlined,
+                            size: 22, color: _textDim),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text('Unranked',
+                                  style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: _text)),
+                              SizedBox(height: 2),
+                              Text(
+                                'Not ranked yet — your first activity puts you on the board',
+                                style: TextStyle(
+                                    fontSize: 12, color: _textDim),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Column(
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              width: 46,
+                              height: 46,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                    color: _meAccent, width: 2),
+                                color: const Color(0x1FFFFFFF),
+                              ),
+                              alignment: Alignment.center,
+                              child: Text('${myIndex + 1}',
+                                  style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.bold,
+                                      color: _text)),
+                            ),
+                            const SizedBox(width: 10),
+                            _avatar(myRow.photoURL, myRow.name, 44),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Your standing',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          color: _textDim)),
+                                  _nameWithTick(myRow.name, myRow.isPro,
+                                      fontSize: 16, color: _text),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 12),
+                          decoration: BoxDecoration(
+                            color: const Color(0x1AFFFFFF),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Row(
+                            children: [
+                              _myStat(
+                                  _formatPercent(myRow.percent),
+                                  'Percentile',
+                                  valueColor: _meAccent),
+                              _vDivider(),
+                              _myStat('${myRow.points}', 'Points'),
+                              _vDivider(),
+                              _myStat(
+                                  _formatTime(myRow.usageSeconds),
+                                  'Study time'),
+                            ],
+                          ),
+                        ),
+                        if (pointsToNext != null) ...[
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              const Icon(Icons.trending_up,
+                                  size: 14, color: _meAccent),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  '$pointsToNext pts → #$myIndex',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: _textDim),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
-                    alignment: Alignment.center,
-                    child: Text('${i == 0 ? 2 : i == 1 ? 1 : 3}',
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: medalInk[i])),
-                  ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _myStat(String value, String label, {Color valueColor = _text}) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(value,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: valueColor)),
+          const SizedBox(height: 2),
+          Text(label,
+              style:
+                  const TextStyle(fontSize: 12, color: _textDim)),
+        ],
+      ),
+    );
+  }
+
+  Widget _vDivider() {
+    return Container(width: 1, color: const Color(0x40FFFFFF));
+  }
+
+  Widget _rankRow(MainLeaderboardRow row, int position, bool isMe) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isMe
+            ? const Color(0x2E34D399) // rgba(52,211,153,0.18)
+            : const Color(0x1AFFFFFF), // rgba(255,255,255,0.10)
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: isMe ? _meAccent : const Color(0x2EFFFFFF)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: isMe
+                  ? const Color(0x4D34D399)
+                  : const Color(0x24FFFFFF),
+            ),
+            alignment: Alignment.center,
+            child: Text('$position',
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: _text)),
+          ),
+          const SizedBox(width: 10),
+          _avatar(row.photoURL, row.name, 38),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _nameWithTick(
+                    isMe ? '${row.name} (You)' : row.name, row.isPro,
+                    fontSize: 14, color: _text),
+                const SizedBox(height: 2),
+                Text(
+                  '${row.points} pts · ${_formatTime(row.usageSeconds)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style:
+                      const TextStyle(fontSize: 12, color: _textDim),
                 ),
               ],
             ),
-          );
-        }),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: isMe
+                  ? const Color(0x5934D399)
+                  : const Color(0x29FFFFFF),
+            ),
+            child: Text(_formatPercent(row.percent),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    color: _text)),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _myCard(
-      MainLeaderboardRow? myRow, int myIndex, int? pointsToNext) {
-    return Card(
-      color: Colors.green.shade50,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Colors.green),
+  Widget _avatar(String? photoURL, String name, double size) {
+    final inner = size - 12;
+    Widget face;
+    if (photoURL != null && photoURL.isNotEmpty) {
+      face = ClipOval(
+        child: DiskCachedImage(
+          url: photoURL,
+          width: inner,
+          height: inner,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _initialsFace(name, inner),
+        ),
+      );
+    } else {
+      face = _initialsFace(name, inner);
+    }
+    return SizedBox(width: size, height: size, child: face);
+  }
+
+  Widget _initialsFace(String name, double size) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: const BoxDecoration(
+        shape: BoxShape.circle,
+        color: Color(0x24FFFFFF),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: myRow == null
-            ? const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Not ranked yet',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  SizedBox(height: 4),
-                  Text('Attempt some tests to appear on the leaderboard.'),
-                ],
-              )
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        child: Text('${myIndex + 1}'),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Your standing',
-                                style: TextStyle(
-                                    fontSize: 11, color: Colors.grey)),
-                            Text(myRow.name,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                          ],
+      alignment: Alignment.center,
+      child: Text(_initials(name),
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold, color: _text)),
+    );
+  }
+
+  String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    return (parts.first[0] +
+            (parts.length > 1 ? parts.last[0] : ''))
+        .toUpperCase();
+  }
+
+  /// Name with the verified tick beside it (Facebook style), like every screen.
+  Widget _nameWithTick(String name, bool isPro,
+      {double fontSize = 14, Color color = _text}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: fontSize, color: color)),
+        ),
+        if (isPro)
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Icon(Icons.verified,
+                size: 14, color: Color(0xFF3B82F6)),
+          ),
+      ],
+    );
+  }
+}
+
+/// Shared-look podium — mirrors components/leaderboard/Podium.tsx.
+///
+/// Display order is 2nd, 1st, 3rd. Always three stands, even with a single
+/// participant — empty places show "Open spot" so the layout never collapses.
+class _Podium extends StatelessWidget {
+  final List<MainLeaderboardRow?> entries; // [2nd, 1st, 3rd]
+  final String Function(double) formatPercent;
+
+  const _Podium({required this.entries, required this.formatPercent});
+
+  @override
+  Widget build(BuildContext context) {
+    const order = [2, 1, 3];
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: List.generate(3, (i) {
+        final place = order[i];
+        return Expanded(
+          child: Padding(
+            padding: EdgeInsets.only(left: i == 0 ? 0 : 3, right: i == 2 ? 0 : 3),
+            child: _PodiumSlot(
+              entry: entries[i],
+              theme: _placeThemes[place]!,
+              formatPercent: formatPercent,
+            ),
+          ),
+        );
+      }),
+    );
+  }
+}
+
+class _PodiumSlot extends StatefulWidget {
+  final MainLeaderboardRow? entry;
+  final _PlaceTheme theme;
+  final String Function(double) formatPercent;
+
+  const _PodiumSlot(
+      {required this.entry, required this.theme, required this.formatPercent});
+
+  @override
+  State<_PodiumSlot> createState() => _PodiumSlotState();
+}
+
+class _PodiumSlotState extends State<_PodiumSlot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    // Slow breathing glow on the winner only (1.5s each way, like Podium.tsx).
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    if (widget.entry != null && widget.theme.place == 1) {
+      _pulse.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = widget.theme;
+    final entry = widget.entry;
+    final filled = entry != null;
+    final isWinner = theme.place == 1;
+    final size = theme.avatar;
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 26,
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: filled
+                  ? Icon(theme.icon, size: theme.iconSize, color: theme.ring)
+                  : SizedBox(height: theme.iconSize),
+            ),
+          ),
+        ),
+        AnimatedBuilder(
+          animation: _pulse,
+          builder: (_, __) {
+            final pulseValue =
+                (filled && isWinner) ? 0.55 + 0.45 * _pulse.value : 1.0;
+            final shadowAlpha =
+                filled ? (isWinner ? pulseValue : 0.9) : 0.0;
+            return Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: filled
+                      ? theme.ring
+                      : const Color(0x38FFFFFF), // white 0.22
+                  width: 3,
+                ),
+                color: filled
+                    ? const Color(0x24FFFFFF) // white 0.14
+                    : const Color(0x0FFFFFFF), // white 0.06
+                boxShadow: shadowAlpha > 0
+                    ? [
+                        BoxShadow(
+                          color: theme.glow.withValues(
+                              alpha: theme.glow.a * shadowAlpha),
+                          blurRadius: 16,
                         ),
+                      ]
+                    : null,
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  filled && entry.photoURL != null && entry.photoURL!.isNotEmpty
+                      ? ClipOval(
+                          child: DiskCachedImage(
+                            url: entry.photoURL!,
+                            width: size - 12,
+                            height: size - 12,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Text(
+                              _initialsOf(entry.name),
+                              style: const TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: _text),
+                            ),
+                          ),
+                        )
+                      : Text(
+                          filled ? _initialsOf(entry.name) : '—',
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: filled ? _text : _textDim),
+                        ),
+                  Positioned(
+                    bottom: -7,
+                    child: Container(
+                      width: 26,
+                      height: 26,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: filled
+                            ? theme.ring
+                            : const Color(0x40FFFFFF), // white 0.25
                       ),
-                    ],
+                      alignment: Alignment.center,
+                      child: Text('${theme.place}',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color:
+                                  filled ? theme.onRing : _text)),
+                    ),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      _miniStat(_formatPercent(myRow.percent), 'Percent'),
-                      _miniStat('${myRow.points}', 'Points'),
-                      _miniStat(_formatTime(myRow.usageSeconds),
-                          'Study time'),
-                    ],
-                  ),
-                  if (pointsToNext != null) ...[
-                    const SizedBox(height: 8),
-                    Text('$pointsToNext pts to reach #${myIndex}',
-                        style: const TextStyle(
-                            fontSize: 12, color: Colors.green)),
-                  ],
                 ],
               ),
-      ),
+            );
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 10),
+          child: Center(
+            child: _PodiumName(
+                name: filled ? entry.name : 'Open spot',
+                isPro: filled && entry.isPro == true,
+                filled: filled),
+          ),
+        ),
+        Container(
+          margin: const EdgeInsets.only(top: 5),
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            color: filled
+                ? theme.pill
+                : const Color(0x14FFFFFF), // white 0.08
+          ),
+          child: Text(
+            filled ? widget.formatPercent(entry.percent) : '--',
+            style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: filled ? _text : _textDim),
+          ),
+        ),
+        if (filled)
+          Padding(
+            padding: const EdgeInsets.only(top: 3),
+            child: Text('${entry.points} pts',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 12, color: _textDim)),
+          )
+        else
+          const SizedBox(height: 3),
+        // The block itself — gradient with a bright cap, lit from above.
+        Container(
+          margin: const EdgeInsets.only(top: 9),
+          height: theme.height,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(14)),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: filled
+                  ? theme.block
+                  : const [
+                      Color(0x24FFFFFF), // white 0.14
+                      Color(0x0DFFFFFF), // white 0.05
+                    ],
+            ),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  height: 3,
+                  color: filled
+                      ? const Color(0x8CFFFFFF) // white 0.55
+                      : const Color(0x2EFFFFFF), // white 0.18
+                ),
+              ),
+              Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('${theme.place}',
+                        style: TextStyle(
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                            color: filled
+                                ? const Color(0xEBFFFFFF) // white 0.92
+                                : const Color(0x73FFFFFF))), // white 0.45
+                    Text(
+                      theme.place == 1
+                          ? 'FIRST'
+                          : theme.place == 2
+                              ? 'SECOND'
+                              : 'THIRD',
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xA6FFFFFF)), // white 0.65
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _miniStat(String value, String label) => Column(
-        children: [
-          Text(value,
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold)),
-          Text(label, style: const TextStyle(fontSize: 11)),
-        ],
-      );
+  String _initialsOf(String name) {
+    final parts =
+        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return '?';
+    return (parts.first[0] + (parts.length > 1 ? parts.last[0] : ''))
+        .toUpperCase();
+  }
+}
+
+/// Podium name with the verified tick beside it (Facebook style).
+class _PodiumName extends StatelessWidget {
+  final String name;
+  final bool isPro;
+  final bool filled;
+
+  const _PodiumName(
+      {required this.name, required this.isPro, required this.filled});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  color: filled ? _text : _textDim)),
+        ),
+        if (isPro)
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Icon(Icons.verified,
+                size: 14, color: Color(0xFF3B82F6)),
+          ),
+      ],
+    );
+  }
 }

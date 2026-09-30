@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../services/app_config.dart';
 import '../services/auth_service.dart';
+import '../services/course_setup_gate.dart';
 import '../services/device_session.dart';
 import '../widgets/auth/auth_buttons.dart';
 import '../widgets/auth/auth_screen_layout.dart';
@@ -129,7 +130,11 @@ class _LoginScreenState extends State<LoginScreen>
   Future<void> _afterSignIn(String uid) async {
     // Claim this device for the account (one account = one device).
     await DeviceSession.claimSession(uid);
-    if (mounted) context.go('/');
+    // React parity: no course setup on this account → course-setup
+    // (initial mode), not home. Unknown (offline) → setup, like React's
+    // .catch(() => false).
+    final done = await CourseSetupGate.isComplete(uid);
+    if (mounted) context.go(done == true ? '/' : '/course-setup');
   }
 
   Future<void> _handleLogin() async {

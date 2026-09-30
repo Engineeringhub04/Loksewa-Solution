@@ -240,10 +240,12 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     // never touches _booted, so it never returns to this state.
     if (!_booted) {
       return AnnotatedRegion<SystemUiOverlayStyle>(
-        // Brand-blue status bar so no light band sits above the header.
+        // Transparent status bar like every other page: the header gradient
+        // flows behind the status bar (full-bleed), light icons on top.
         value: const SystemUiOverlayStyle(
-          statusBarColor: Color(0xFF2563EB),
+          statusBarColor: Colors.transparent,
           statusBarIconBrightness: Brightness.light,
+          statusBarBrightness: Brightness.dark,
         ),
         child: Scaffold(
           backgroundColor: pal.background,
@@ -277,12 +279,14 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     }
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
-      // Brand-blue status bar so no light band sits above the header; the
-      // header gradient starts immediately below it, like React's
-      // edge-to-edge header (paddingTop: insets.top + 12).
+      // Transparent status bar like every other page: the header gradient
+      // flows behind the status bar (full-bleed), light icons on top.
+      // The header already pads with MediaQuery top inset + 12, so nothing
+      // is hidden under the status bar.
       value: const SystemUiOverlayStyle(
-        statusBarColor: Color(0xFF2563EB),
+        statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
       ),
       child: Scaffold(
         backgroundColor: pal.background,

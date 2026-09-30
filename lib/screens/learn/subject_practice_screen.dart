@@ -6,6 +6,7 @@ import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/limit_dialog.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -990,20 +991,12 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   // gradient Confirm. The card is clipped as one rounded shape so no
   // background slivers leak at the corners in light mode.
 
-  /// Slightly darker companion for an accent, so the cap reads as a gradient.
-  Color _darken(Color color) {
-    int channel(double v) => (v * 0.72).round().clamp(0, 255);
-    return Color.fromARGB(
-      (color.a * 255).round(),
-      channel(color.r),
-      channel(color.g),
-      channel(color.b),
-    );
-  }
-
+  /// Generic app dialog — FeedSpring-style white card (both themes):
+  /// blue gradient header fading to white, white tagline pill, navy title,
+  /// stacked white Cancel + blue gradient CTA. Overlay dims per theme.
+  /// Routing/callbacks unchanged — only visuals were reworked.
   Widget _appDialog({
     required ExpoPalette palette,
-    required Color accent,
     required IconData icon,
     required String tagline,
     required String title,
@@ -1016,7 +1009,6 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     required VoidCallback onCancel,
   }) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final darker = _darken(accent);
     return _FadeIn(
       child: Container(
         color: isDark
@@ -1025,344 +1017,17 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         child: Center(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(24),
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 340),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(30),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.3),
-                      blurRadius: 24,
-                      offset: const Offset(0, 12),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(30),
-                  child: Container(
-                    color: palette.surface,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment:
-                          CrossAxisAlignment.stretch,
-                      children: [
-                        // Gradient header — FeedSpring onboarding style.
-                        Container(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              colors: [accent, darker],
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                            ),
-                          ),
-                          child: Stack(
-                            children: [
-                              // Decorative white circles.
-                              Positioned(
-                                top: -50,
-                                right: -40,
-                                child: Container(
-                                  width: 120,
-                                  height: 120,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.white
-                                        .withValues(alpha: 0.14),
-                                  ),
-                                ),
-                              ),
-                              Positioned(
-                                bottom: -46,
-                                left: -38,
-                                child: Container(
-                                  width: 100,
-                                  height: 100,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.white
-                                        .withValues(alpha: 0.14),
-                                  ),
-                                ),
-                              ),
-                              // Close X, top-right.
-                              Positioned(
-                                top: 12,
-                                right: 12,
-                                child: Material(
-                                  color: Colors.white
-                                      .withValues(alpha: 0.22),
-                                  borderRadius:
-                                      BorderRadius.circular(16),
-                                  child: InkWell(
-                                    borderRadius:
-                                        BorderRadius.circular(16),
-                                    onTap: onCancel,
-                                    child: const SizedBox(
-                                      width: 32,
-                                      height: 32,
-                                      child: Icon(Icons.close,
-                                          size: 16,
-                                          color: Colors.white),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              // Centered column: icon tile, tagline pill, title.
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(
-                                    28, 30, 28, 26),
-                                child: Column(
-                                  children: [
-                                    Container(
-                                      width: 56,
-                                      height: 56,
-                                      decoration: BoxDecoration(
-                                        borderRadius:
-                                            BorderRadius.circular(
-                                                18),
-                                        color: Colors.white
-                                            .withValues(
-                                                alpha: 0.22),
-                                      ),
-                                      child: Icon(icon,
-                                          size: 28,
-                                          color: Colors.white),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Container(
-                                      padding: const EdgeInsets
-                                          .symmetric(
-                                          horizontal: 12,
-                                          vertical: 6),
-                                      decoration: BoxDecoration(
-                                        color: Colors.white,
-                                        borderRadius:
-                                            BorderRadius.circular(
-                                                999),
-                                      ),
-                                      child: Text(
-                                        tagline,
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight:
-                                              FontWeight.bold,
-                                          letterSpacing: 0.8,
-                                          color: darker,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      title,
-                                      textAlign: TextAlign.center,
-                                      style: const TextStyle(
-                                        fontSize: 19,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                        height: 1.3,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        // Body.
-                        Container(
-                          color: palette.surface,
-                          padding: const EdgeInsets.fromLTRB(
-                              20, 18, 20, 8),
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.stretch,
-                            children: [
-                              Text(
-                                message,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 13.5,
-                                  height: 1.55,
-                                  color: palette.textSecondary,
-                                ),
-                              ),
-                              if (bodyExtra != null) ...[
-                                const SizedBox(height: 10),
-                                bodyExtra,
-                              ],
-                            ],
-                          ),
-                        ),
-                        // Buttons — stacked full-width.
-                        Container(
-                          color: palette.surface,
-                          padding: const EdgeInsets.fromLTRB(
-                              20, 10, 20, 20),
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.stretch,
-                            children: [
-                              // Cancel.
-                              if (cancelLabel != null) ...[
-                                Material(
-                                  color: Colors.transparent,
-                                  borderRadius:
-                                      BorderRadius.circular(16),
-                                  child: InkWell(
-                                    borderRadius:
-                                        BorderRadius.circular(
-                                            16),
-                                    onTap: onCancel,
-                                    child: Container(
-                                      padding: const EdgeInsets
-                                          .symmetric(
-                                          vertical: 14),
-                                      decoration: BoxDecoration(
-                                        color: isDark
-                                            ? Colors.white.withValues(
-                                                alpha: 0.06)
-                                            : Colors.white,
-                                        border: Border.all(
-                                            color:
-                                                palette.border,
-                                            width: 1.5),
-                                        borderRadius:
-                                            BorderRadius.circular(
-                                                16),
-                                        boxShadow: isDark
-                                            ? null
-                                            : [
-                                                BoxShadow(
-                                                  color: Colors
-                                                      .black
-                                                      .withValues(
-                                                          alpha:
-                                                              0.06),
-                                                  blurRadius: 8,
-                                                  offset:
-                                                      const Offset(
-                                                          0, 3),
-                                                ),
-                                              ],
-                                      ),
-                                      child: Text(
-                                        cancelLabel,
-                                        textAlign:
-                                            TextAlign.center,
-                                        style: TextStyle(
-                                            fontSize: 13.5,
-                                            fontWeight:
-                                                FontWeight.bold,
-                                            color: palette
-                                                .textPrimary),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                                const SizedBox(height: 10),
-                              // Confirm.
-                              Material(
-                                color: Colors.transparent,
-                                borderRadius:
-                                    BorderRadius.circular(16),
-                                child: InkWell(
-                                  borderRadius:
-                                      BorderRadius.circular(16),
-                                  onTap: onConfirm,
-                                  child: Container(
-                                    padding:
-                                        const EdgeInsets.symmetric(
-                                            vertical: 15),
-                                    decoration: BoxDecoration(
-                                      borderRadius:
-                                          BorderRadius.circular(
-                                              16),
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          accent,
-                                          darker
-                                        ],
-                                        begin:
-                                            Alignment.centerLeft,
-                                        end:
-                                            Alignment.centerRight,
-                                      ),
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: accent.withValues(
-                                              alpha: 0.4),
-                                          blurRadius: 12,
-                                          offset: const Offset(
-                                              0, 6),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Stack(
-                                      alignment:
-                                          Alignment.center,
-                                      children: [
-                                        Row(
-                                          mainAxisSize:
-                                              MainAxisSize.min,
-                                          children: [
-                                            if (confirmIcon !=
-                                                null) ...[
-                                              Icon(confirmIcon,
-                                                  size: 18,
-                                                  color: Colors
-                                                      .white),
-                                              const SizedBox(
-                                                  width: 8),
-                                            ],
-                                            Flexible(
-                                              child: Text(
-                                                confirmLabel,
-                                                textAlign: TextAlign
-                                                    .center,
-                                                style: const TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight:
-                                                        FontWeight
-                                                            .bold,
-                                                    color: Colors
-                                                        .white),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        Positioned(
-                                          right: 12,
-                                          child: Container(
-                                            width: 28,
-                                            height: 28,
-                                            decoration:
-                                                const BoxDecoration(
-                                              shape:
-                                                  BoxShape.circle,
-                                              color: Colors.white,
-                                            ),
-                                            child: Icon(
-                                              Icons.arrow_forward,
-                                              size: 16,
-                                              color: darker,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+            child: LimitDialogCard(
+              tagline: tagline,
+              title: title,
+              message: message,
+              bodyExtra: bodyExtra,
+              icon: icon,
+              confirmLabel: confirmLabel,
+              confirmIcon: confirmIcon,
+              cancelLabel: cancelLabel,
+              onConfirm: onConfirm,
+              onCancel: onCancel,
             ),
           ),
         ),
@@ -1372,17 +1037,20 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
 
   Widget _limitDialog(ExpoPalette palette) => _appDialog(
         palette: palette,
-        accent: const Color(0xFFD97706),
         icon: Icons.diamond,
         tagline: 'Daily Limit',
         title: 'Your Daily Practice limit is reached',
         message:
             'You have completed today\u2019s practice limit for this chapter.',
-        bodyExtra: Text(
+        bodyExtra: const Text(
           'To Crack Your Daily Limit! Subscribe to Our Pro Plan',
           textAlign: TextAlign.center,
-          style:
-              TextStyle(fontSize: 11, color: palette.textSecondary),
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            decoration: TextDecoration.none,
+          ),
         ),
         confirmLabel: 'Subscription',
         confirmIcon: Icons.diamond_outlined,
@@ -1396,7 +1064,6 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
 
   Widget _waitingDialog(ExpoPalette palette) => _appDialog(
         palette: palette,
-        accent: const Color(0xFF2563EB),
         icon: Icons.done_all,
         tagline: 'All Complete',
         title: 'All Available Questions Completed',
@@ -1410,7 +1077,6 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
 
   Widget _leaveDialog(ExpoPalette palette) => _appDialog(
         palette: palette,
-        accent: const Color(0xFF2563EB),
         icon: Icons.pause_circle_outline,
         tagline: 'Pause Practice',
         title: 'Pause Your Progress?',
@@ -1438,7 +1104,8 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.bold,
-                      color: palette.success),
+                      color: palette.success,
+                      decoration: TextDecoration.none),
                 ),
               ),
             ],

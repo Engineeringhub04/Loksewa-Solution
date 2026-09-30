@@ -3,6 +3,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
+import '../services/course_setup_gate.dart';
 import '../services/device_session.dart';
 import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
@@ -80,7 +81,14 @@ class _SplashScreenState extends State<SplashScreen> {
       return;
     }
     if (user != null) {
-      context.go('/');
+      // Logged in: gate on course setup too (user-explicit requirement —
+      // React's splash doesn't gate, but the user wants setup enforced here
+      // as well). Verified-incomplete → course-setup (initial mode);
+      // verified-complete OR unknown (offline/error) → home.
+      final setupDone =
+          await _withTimeout(CourseSetupGate.isComplete(user.uid), null);
+      if (!mounted) return;
+      context.go(setupDone == false ? '/course-setup' : '/');
       return;
     }
     // Warm the onboarding image cache (disk + memory) so the onboarding

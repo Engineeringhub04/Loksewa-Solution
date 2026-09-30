@@ -28,6 +28,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/limit_dialog.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
@@ -1018,20 +1019,21 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
   Future<void> _limitDialog() async {
     await showDialog<void>(
       context: context,
-      builder: (c) => AlertDialog(
-        icon: Icon(Icons.timer,
-            color: Color(0xFFD97706), size: 32),
-        title: const Text('Today\u2019s practice limit is complete'),
-        content: const Text(
-          'You have completed today\u2019s available practice. Please come back tomorrow and practice again.',
-          style: TextStyle(fontSize: 14, height: 1.45),
+      builder: (c) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        child: LimitDialogCard(
+          tagline: 'Daily Limit',
+          title: 'Today\u2019s practice limit is complete',
+          message:
+              'You have completed today\u2019s available practice. Please come back tomorrow and practice again.',
+          icon: Icons.diamond,
+          confirmLabel: 'Subscription',
+          confirmIcon: Icons.diamond_outlined,
+          cancelLabel: 'Close',
+          onConfirm: () => Navigator.pop(c),
+          onCancel: () => Navigator.pop(c),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c),
-            child: const Text('Keep practising'),
-          ),
-        ],
       ),
     );
   }

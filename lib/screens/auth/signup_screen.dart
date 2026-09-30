@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:loksewa_solution/services/app_config.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/course_setup_gate.dart';
 import 'package:loksewa_solution/services/device_session.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
@@ -105,7 +106,9 @@ class _SignupScreenState extends State<SignupScreen>
 
   Future<void> _afterSignIn(String uid) async {
     await DeviceSession.claimSession(uid);
-    if (mounted) context.go('/');
+    // Fresh email signup: React routes straight to course-setup
+    // (initial mode — no back button, "Save Course").
+    if (mounted) context.go('/course-setup');
   }
 
   Future<void> _handleSignup() async {
@@ -191,7 +194,12 @@ class _SignupScreenState extends State<SignupScreen>
       );
       if (!mounted) return;
       showAuthToast(context, 'Google account signed in successfully');
-      await _afterSignIn(result.user.uid);
+      // Google on the signup screen can be a new OR an existing account:
+      // route on the course-setup gate (new users land on setup).
+      await DeviceSession.claimSession(result.user.uid);
+      final done = await CourseSetupGate.isComplete(result.user.uid);
+      if (!mounted) return;
+      context.go(done == true ? '/' : '/course-setup');
     } on AuthError catch (e) {
       if (!mounted) return;
       final code = e.code;

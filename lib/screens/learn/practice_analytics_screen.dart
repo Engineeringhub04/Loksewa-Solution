@@ -62,6 +62,16 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
       .replaceAll(RegExp(r'^-+|-+$'), '');
 
+  /// Mirrors `_canonicalLearningId` in exam_service.dart: composite ids like
+  /// `course__subcourse__slug` collapse to their last `__` segment before
+  /// canonicalization. The practice save and the units/chapters reads all use
+  /// that normalization, so this filter must too — otherwise no stored doc
+  /// ever matches and the page stays blank.
+  static String _logical(String s) {
+    final parts = s.split('__').where((p) => p.isNotEmpty).toList();
+    return _canon(parts.isNotEmpty ? parts.last : s);
+  }
+
   bool _matches(Map<String, dynamic> d) {
     final id = '${d['id'] ?? ''}';
     final parts = id.split('__');
@@ -69,7 +79,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     final idChapter =
         parts.length > 1 ? parts.sublist(1).join('__') : '';
     if (widget.subjectSlug != null && widget.subjectSlug!.isNotEmpty) {
-      final want = _canon(widget.subjectSlug!);
+      final want = _logical(widget.subjectSlug!);
       final raw = '${d['subjectId'] ?? ''}';
       if (_canon(idSubject) != want &&
           _canon(raw) != want &&
@@ -81,7 +91,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       if ('${d['unitId'] ?? ''}' != widget.unitId) return false;
     }
     if (widget.chapterSlug != null && widget.chapterSlug!.isNotEmpty) {
-      final want = _canon(widget.chapterSlug!);
+      final want = _logical(widget.chapterSlug!);
       if (_canon(idChapter) != want &&
           _canon('${d['chapterId'] ?? ''}') != want) {
         return false;

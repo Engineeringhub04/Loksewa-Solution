@@ -7,6 +7,8 @@
 //
 // NOTE: every Text this shell renders carries an explicit
 // `decoration: TextDecoration.none` as a defensive guard.
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 class AppModalShell extends StatelessWidget {
@@ -52,6 +54,17 @@ class AppModalShell extends StatelessWidget {
   /// existing callers like the daily-limit popup are unaffected.
   final double? contentMaxHeight;
 
+  /// Opt-in scroll discoverability for a capped content region: a subtle
+  /// bottom fade plus a gently bouncing down-chevron on open, hinting that
+  /// more content lies below. The hint fades away once the user scrolls to
+  /// the bottom. Requires [contentMaxHeight] and [scrollController]; false
+  /// by default so existing callers are unaffected.
+  final bool scrollHint;
+
+  /// External scroll controller for the capped content region. When
+  /// [scrollHint] is true this drives the bottom-reached detection.
+  final ScrollController? scrollController;
+
   const AppModalShell({
     super.key,
     required this.icon,
@@ -67,6 +80,8 @@ class AppModalShell extends StatelessWidget {
     this.maxWidth = 420,
     this.borderRadius = 28,
     this.contentMaxHeight,
+    this.scrollHint = false,
+    this.scrollController,
   });
 
   /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
@@ -88,8 +103,10 @@ class AppModalShell extends StatelessWidget {
             duration: const Duration(milliseconds: 200),
             padding: MediaQuery.of(pageContext).viewInsets,
             child: Center(
+              // Matches the inline padding the daily-limit popup uses, so
+              // cards presented via show() render at the same width.
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(20),
                 child: builder(pageContext),
               ),
             ),
@@ -141,12 +158,26 @@ class AppModalShell extends StatelessWidget {
         ),
       ],
     );
-    final Widget contentWidget = contentMaxHeight != null
-        ? ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: contentMaxHeight!),
-            child: SingleChildScrollView(child: content),
-          )
-        : content;
+    final Widget contentWidget;
+    if (contentMaxHeight != null &&
+        scrollHint &&
+        scrollController != null) {
+      contentWidget = _HintedScroll(
+        maxHeight: contentMaxHeight!,
+        controller: scrollController!,
+        child: content,
+      );
+    } else if (contentMaxHeight != null) {
+      contentWidget = ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: contentMaxHeight!),
+        child: SingleChildScrollView(
+          controller: scrollController,
+          child: content,
+        ),
+      );
+    } else {
+      contentWidget = content;
+    }
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: DecoratedBox(
@@ -179,15 +210,21 @@ class AppModalShell extends StatelessWidget {
                       end: Alignment.bottomCenter,
                     ),
                   ),
+                  // The header column is narrower than the full-width stack
+                  // whenever the title is short, so the stack explicitly
+                  // centers it — the default topStart alignment left-shifted
+                  // short titles (the report dialog's header was ~15px off).
                   child: Stack(
+                    alignment: Alignment.topCenter,
                     children: [
-                      // Subtle decorative white circles on the accent part.
+                      // Subtle decorative white circles on the accent part
+                      // (mirrored pair, so the header feels balanced).
                       Positioned(
-                        top: -56,
-                        right: -44,
+                        top: -48,
+                        right: -40,
                         child: Container(
-                          width: 130,
-                          height: 130,
+                          width: 120,
+                          height: 120,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: Colors.white.withValues(alpha: 0.14),
@@ -195,11 +232,11 @@ class AppModalShell extends StatelessWidget {
                         ),
                       ),
                       Positioned(
-                        top: -30,
-                        left: -52,
+                        top: -48,
+                        left: -40,
                         child: Container(
-                          width: 104,
-                          height: 104,
+                          width: 120,
+                          height: 120,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: Colors.white.withValues(alpha: 0.10),
@@ -279,6 +316,137 @@ class AppModalShell extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Capped scroll region with scroll-discoverability hints: a subtle bottom
+/// fade plus a down-chevron that bounces gently a few times on open,
+/// telling the user more content lies below. Both fade away once the user
+/// scrolls to the bottom (or immediately, when nothing overflows).
+///
+/// The bounce is FINITE — one 1.5s tween that settles at rest — so widget
+/// tests using pumpAndSettle are unaffected. The overlays are
+/// pointer-transparent and sit in the footer's bottom padding, so they
+/// never cover buttons.
+class _HintedScroll extends StatefulWidget {
+  final double maxHeight;
+  final ScrollController controller;
+  final Widget child;
+
+  const _HintedScroll({
+    required this.maxHeight,
+    required this.controller,
+    required this.child,
+  });
+
+  @override
+  State<_HintedScroll> createState() => _HintedScrollState();
+}
+
+class _HintedScrollState extends State<_HintedScroll> {
+  static const _orange = Color(0xFFDE6E00);
+  bool _atBottom = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!widget.controller.hasClients || !mounted) return;
+    final pos = widget.controller.position;
+    final atBottom = pos.maxScrollExtent <= 0 ||
+        pos.pixels >= pos.maxScrollExtent - 4;
+    if (atBottom != _atBottom) setState(() => _atBottom = atBottom);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: widget.maxHeight),
+      child: Stack(
+        children: [
+          SingleChildScrollView(
+            controller: widget.controller,
+            child: widget.child,
+          ),
+          // Bottom fade — the classic "content continues" cue.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 250),
+                opacity: _atBottom ? 0 : 1,
+                child: Container(
+                  height: 32,
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.white.withValues(alpha: 0),
+                        Colors.white,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Down chevron — 3 gentle decaying bounces on open, then rests.
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 8,
+            child: IgnorePointer(
+              child: AnimatedOpacity(
+                duration: const Duration(milliseconds: 250),
+                opacity: _atBottom ? 0 : 1,
+                child: Center(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 1500),
+                    builder: (context, t, child) {
+                      // Decaying sine: 3 bounces that shrink to rest.
+                      // At t=1 the offset is exactly 0 — the tween runs
+                      // once and stops (no repeat, no loop).
+                      final dy = math.sin(t * 3 * math.pi) * 5 * (1 - t);
+                      return Transform.translate(
+                        offset: Offset(0, dy),
+                        child: child,
+                      );
+                    },
+                    child: Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _orange.withValues(alpha: 0.12),
+                      ),
+                      child: const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 20,
+                        color: _orange,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

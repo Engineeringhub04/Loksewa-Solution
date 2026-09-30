@@ -93,6 +93,10 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
   String? _issue;
   final _detailsController = TextEditingController();
 
+  /// Drives the shell's scroll-hint (bottom fade + bouncing chevron) —
+  /// the shell hides the hint once this reports scrolled-to-bottom.
+  final _scrollController = ScrollController();
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +107,7 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
   void dispose() {
     _detailsController.removeListener(_enforceDetailsLimit);
     _detailsController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -192,17 +197,23 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
   @override
   Widget build(BuildContext context) {
     return AppModalShell(
-      // Same card size as the Daily Limit popup; the taller report
-      // content (preview, chips, details, buttons) scrolls below the
-      // fixed header (icon + REPORT tag + title).
+      // Same card as the Daily Limit popup (maxWidth 340, radius 30, and
+      // the same total height — measured 560 = header 201 + content 359).
+      // The taller report content (preview, chips, details, buttons)
+      // scrolls below the fixed header (icon + REPORT tag + title), with
+      // a scroll hint (bottom fade + bouncing chevron) until the user
+      // reaches the bottom.
       maxWidth: 340,
       borderRadius: 30,
-      contentMaxHeight: 260,
+      contentMaxHeight: 359,
+      scrollHint: true,
+      scrollController: _scrollController,
       tagLabel: 'REPORT',
       onClose: () => Navigator.of(context).pop(),
       icon: Container(
         width: 56,
         height: 56,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           color: ReportDialog._orange,

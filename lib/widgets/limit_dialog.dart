@@ -55,6 +55,7 @@ class LimitDialogCard extends StatelessWidget {
       icon: Container(
         width: 56,
         height: 56,
+        alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           color: _orange,

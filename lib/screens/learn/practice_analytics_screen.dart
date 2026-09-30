@@ -120,9 +120,15 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     final docs = await ExamRest.listDocs(
         'users/${user.uid}/learning_progress',
         pageSize: 200);
+    var courseId = '';
+    var subcourseId = '';
     final rows = <_ChapterStat>[];
     for (final d in docs) {
       if (!_matches(d)) continue;
+      // The practice save writes the raw course/subcourse alongside the
+      // canonical ids — reuse them for the catalogue lookup below.
+      if (courseId.isEmpty) courseId = '${d['courseId'] ?? ''}';
+      if (subcourseId.isEmpty) subcourseId = '${d['subcourseId'] ?? ''}';
       final id = '${d['id'] ?? ''}';
       final idParts = id.split('__');
       rows.add(_ChapterStat(
@@ -145,7 +151,78 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       if (bu != null) return 1;
       return a.chapterId.compareTo(b.chapterId);
     });
+    // Resolve real chapter/unit names from the cached course catalogue
+    // (the same 3-min cached fetches the chapters screen uses — no new
+    // network layer, no read waterfall). Falls back to raw ids.
+    await _attachNames(user.uid, courseId, subcourseId, rows);
     return _AnalyticsData(rows: rows);
+  }
+
+  /// Maps canonical chapter/unit ids to their catalogue titles. Only runs
+  /// when a subject scope is known (the only way this page is opened).
+  /// Everything is best-effort: any failure leaves the raw ids in place
+  /// and never breaks the page.
+  Future<void> _attachNames(String uid, String courseId, String subcourseId,
+      List<_ChapterStat> rows) async {
+    final subject = widget.subjectSlug;
+    if (subject == null || subject.isEmpty || rows.isEmpty) return;
+    try {
+      var course = courseId;
+      var subcourse = subcourseId;
+      if (course.isEmpty || subcourse.isEmpty) {
+        final scope = await fetchCourseScope(uid);
+        if (course.isEmpty) course = scope['courseId'] ?? '';
+        if (subcourse.isEmpty) subcourse = scope['subcourseId'] ?? '';
+      }
+      if (course.isEmpty || subcourse.isEmpty) return;
+      Future<List<Map<String, dynamic>>> safe(
+          Future<List<Map<String, dynamic>>> Function() f) async {
+        try {
+          return await f();
+        } catch (_) {
+          return [];
+        }
+      }
+      final hasUnit = widget.unitId != null && widget.unitId!.isNotEmpty;
+      final results = await Future.wait([
+        safe(() => fetchSubjectChapters(course, subcourse, subject)),
+        safe(() => fetchSubjectUnits(course, subcourse, subject)),
+        if (hasUnit)
+          safe(() => fetchUnitChapters(
+              course, subcourse, subject, widget.unitId!)),
+      ]);
+      final chapterNames = <String, String>{};
+      void addChapters(List<Map<String, dynamic>> list) {
+        for (final c in list) {
+          final key = canonicalCatalogSlug('${c['id']}');
+          final name = '${c['name'] ?? ''}'.trim();
+          if (key.isNotEmpty &&
+              name.isNotEmpty &&
+              name != 'Chapter') {
+            chapterNames.putIfAbsent(key, () => name);
+          }
+        }
+      }
+      addChapters(results[0]);
+      if (results.length > 2) addChapters(results[2]);
+      final unitNames = <String, String>{};
+      for (final u in results[1]) {
+        final key = canonicalCatalogSlug('${u['id']}');
+        final name = '${u['name'] ?? ''}'.trim();
+        if (key.isNotEmpty && name.isNotEmpty && name != 'Unit') {
+          unitNames.putIfAbsent(key, () => name);
+        }
+      }
+      for (final r in rows) {
+        r.chapterName =
+            chapterNames[canonicalCatalogSlug(r.chapterId)];
+        if (r.unitId != null && r.unitId!.isNotEmpty) {
+          r.unitName = unitNames[canonicalCatalogSlug(r.unitId!)];
+        }
+      }
+    } catch (_) {
+      // Names are a nicety — the ids stay as fallback.
+    }
   }
 
   String get _scopeTitle =>
@@ -211,13 +288,52 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
                       StaggerEntrance(
                           delayMs: 60, child: _timeTabs(context)),
                       const SizedBox(height: 10),
+                      // The window summary and the chart both depend on the
+                      // selected tab: AnimatedSwitcher cross-fades/slides
+                      // them on tab change (finite one-shot, 300ms).
                       StaggerEntrance(
-                          delayMs: 90,
-                          child: _windowCard(context, data)),
+                        delayMs: 90,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0.05, 0),
+                                end: Offset.zero,
+                              ).animate(animation),
+                              child: child,
+                            ),
+                          ),
+                          child: KeyedSubtree(
+                            key: ValueKey('window$_tab'),
+                            child: _windowCard(context, data),
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       StaggerEntrance(
-                          delayMs: 120,
-                          child: _weeklyCard(context, data)),
+                        delayMs: 120,
+                        child: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 300),
+                          transitionBuilder: (child, animation) =>
+                              FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: Tween<Offset>(
+                                begin: const Offset(0.05, 0),
+                                end: Offset.zero,
+                              ).animate(animation),
+                              child: child,
+                            ),
+                          ),
+                          child: KeyedSubtree(
+                            key: ValueKey('weekly$_tab'),
+                            child: _weeklyCard(context, data),
+                          ),
+                        ),
+                      ),
                       const SizedBox(height: 18),
                       Padding(
                         padding: const EdgeInsets.only(left: 4, bottom: 8),
@@ -481,7 +597,8 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
   }
 
   /// Stats over the doc SET active in the selected window — labels stay
-  /// honest about what the window measures.
+  /// honest about what the window measures. Premium look: three stat
+  /// tiles with icons and colored numbers, plus the honest footnote.
   Widget _windowCard(BuildContext context, _AnalyticsData data) {
     final rows = _windowRows(data.rows);
     final attempted = rows.fold(0, (a, r) => a + r.attempted);
@@ -491,7 +608,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     final scheme = Theme.of(context).colorScheme;
     final subtle = scheme.onSurface.withValues(alpha: 0.6);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(18),
         color: Theme.of(context).cardColor,
@@ -504,15 +621,42 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       ),
       child: Column(
         children: [
-          _windowRow('Chapters active $_windowPhrase', '${rows.length}',
-              context),
+          Text(
+            'Active $_windowPhrase',
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: subtle,
+                letterSpacing: 0.4),
+          ),
           const SizedBox(height: 10),
-          _windowRow('Questions attempted in active chapters',
-              '$attempted', context),
-          const SizedBox(height: 10),
-          _windowRow('Accuracy across active chapters',
-              accuracy == null ? '—' : '$accuracy%', context,
-              strong: true),
+          Row(
+            children: [
+              _windowTile(
+                context,
+                icon: Icons.quiz_outlined,
+                value: '${rows.length}',
+                label: 'Chapters',
+                accent: const Color(0xFF1D4ED8),
+              ),
+              const SizedBox(width: 8),
+              _windowTile(
+                context,
+                icon: Icons.checklist_rounded,
+                value: '$attempted',
+                label: 'Questions',
+                accent: const Color(0xFF059669),
+              ),
+              const SizedBox(width: 8),
+              _windowTile(
+                context,
+                icon: Icons.track_changes_rounded,
+                value: accuracy == null ? '—' : '$accuracy%',
+                label: 'Accuracy',
+                accent: const Color(0xFFD97706),
+              ),
+            ],
+          ),
           const SizedBox(height: 10),
           Text(
             'Based on chapter activity dates — daily question counts are not tracked.',
@@ -524,46 +668,164 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     );
   }
 
-  Widget _windowRow(String label, String value, BuildContext context,
-      {bool strong = false}) {
+  Widget _windowTile(
+    BuildContext context, {
+    required IconData icon,
+    required String value,
+    required String label,
+    required Color accent,
+  }) {
     final scheme = Theme.of(context).colorScheme;
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Flexible(
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 12.5,
-                  color: scheme.onSurface.withValues(alpha: 0.75))),
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: accent.withValues(alpha: 0.16)),
         ),
-        const SizedBox(width: 12),
-        Text(value,
-            style: TextStyle(
-                fontSize: strong ? 15 : 13.5,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: accent),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 17,
                 fontWeight: FontWeight.bold,
-                color: strong
-                    ? const Color(0xFF1D4ED8)
-                    : scheme.onSurface)),
-      ],
+                color: scheme.brightness == Brightness.dark
+                    ? Colors.white
+                    : const Color(0xFF0F172A),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w500,
+                  color: scheme.onSurface.withValues(alpha: 0.6)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
-  // ------------------------------------------------------------ weekly chart
-  /// Active chapters per day over the last 7 days, bucketed by each doc's
-  /// `updatedAt` date — honestly labeled as activity, not question counts.
+  // ------------------------------------------------------------ activity chart
+  /// Chapters active per bucket, from each doc's last-activity date.
+  /// The buckets follow the selected tab so every tab switch shows real
+  /// movement (and the AnimatedSwitcher has something to flow between):
+  /// - Today: 6 buckets of 4 hours.
+  /// - Last 7 days: one bucket per day.
+  /// - All time: one bucket per week over the last 7 weeks (we only track
+  ///   each chapter's LAST activity date, so a true all-time per-day chart
+  ///   would be mostly zeros — the subtitle says what it shows).
   Widget _weeklyCard(BuildContext context, _AnalyticsData data) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final days =
-        List.generate(7, (i) => today.subtract(Duration(days: 6 - i)));
-    final counts = days
-        .map((d) => data.rows
-            .where((r) => r.updatedAt != null && _sameDay(r.updatedAt!, d))
-            .length)
-        .toList();
-    final max = counts.fold(0, (a, b) => a > b ? a : b);
     const letters = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+
+    late final List<String> labels;
+    late final List<String> sublabels;
+    late final List<int> counts;
+    late final int highlight;
+    late final String subtitle;
+    late final String title;
+
+    if (_tab == 0) {
+      title = 'Chapters active per 4 hours';
+      subtitle = 'By last activity — today';
+      labels = const ['12a', '4a', '8a', '12p', '4p', '8p'];
+      sublabels = const ['', '', '', '', '', ''];
+      counts = List.filled(6, 0);
+      for (final r in data.rows) {
+        final u = r.updatedAt;
+        if (u == null || !_sameDay(u, now)) continue;
+        counts[(u.hour ~/ 4).clamp(0, 5)]++;
+      }
+      highlight = (now.hour ~/ 4).clamp(0, 5);
+    } else if (_tab == 1) {
+      title = 'Chapters active per day';
+      subtitle = 'By last activity — last 7 days';
+      final days =
+          List.generate(7, (i) => today.subtract(Duration(days: 6 - i)));
+      labels = [for (final d in days) letters[d.weekday - 1]];
+      sublabels = [for (final d in days) '${d.day}'];
+      counts = [
+        for (final d in days)
+          data.rows
+              .where((r) =>
+                  r.updatedAt != null && _sameDay(r.updatedAt!, d))
+              .length
+      ];
+      highlight = 6;
+    } else {
+      title = 'Chapters active per week';
+      subtitle = 'By last activity — last 7 weeks';
+      final starts =
+          List.generate(7, (i) => today.subtract(Duration(days: 48 - i * 7)));
+      labels = [for (final s in starts) '${s.day}'];
+      sublabels = [for (final s in starts) months[s.month - 1]];
+      counts = [
+        for (final s in starts)
+          data.rows
+              .where((r) =>
+                  r.updatedAt != null &&
+                  !r.updatedAt!.isBefore(s) &&
+                  r.updatedAt!.isBefore(s.add(const Duration(days: 7))))
+              .length
+      ];
+      highlight = 6;
+    }
+
+    final max = counts.fold(0, (a, b) => a > b ? a : b);
     final scheme = Theme.of(context).colorScheme;
+    final gridColor = scheme.onSurface.withValues(alpha: 0.07);
+    const barH = 84.0;
+
+    Widget bar(int i) {
+      final count = counts[i];
+      final isHi = i == highlight;
+      final frac = max == 0 ? 0.0 : count / max;
+      final h = count == 0 ? 5.0 : (16 + (barH - 16) * frac);
+      return Container(
+        width: 24,
+        height: h,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          color:
+              count == 0 ? scheme.surfaceContainerHighest : null,
+          gradient: count == 0
+              ? null
+              : LinearGradient(
+                  colors: isHi
+                      ? const [Color(0xFFFBBF24), Color(0xFFD97706)]
+                      : const [Color(0xFF60A5FA), Color(0xFF1D4ED8)],
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                ),
+          boxShadow: count == 0
+              ? null
+              : [
+                  BoxShadow(
+                    color: (isHi
+                            ? const Color(0xFFD97706)
+                            : const Color(0xFF1D4ED8))
+                        .withValues(alpha: 0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+        ),
+      );
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       decoration: BoxDecoration(
@@ -579,91 +841,111 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Chapters active per day',
+          Text(title,
               style:
-                  TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
           const SizedBox(height: 2),
-          Text('By last activity — last 7 days',
+          Text(subtitle,
               style: TextStyle(
                   fontSize: 11,
                   color: scheme.onSurface.withValues(alpha: 0.6))),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
+          // Value labels.
+          Row(
+            children: labels.asMap().entries.map((e) {
+              final i = e.key;
+              final isHi = i == highlight;
+              return Expanded(
+                child: Text(
+                  '${counts[i]}',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: counts[i] == 0
+                        ? scheme.onSurface.withValues(alpha: 0.3)
+                        : isHi
+                            ? const Color(0xFFD97706)
+                            : scheme.onSurface.withValues(alpha: 0.75),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 6),
+          // Bars over faint gridlines.
           SizedBox(
-            height: 118,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: days.asMap().entries.map((e) {
-                final i = e.key;
-                final day = e.value;
-                final count = counts[i];
-                final isToday = i == 6;
-                final frac = max == 0 ? 0.0 : count / max;
-                return Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text('$count',
-                          style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.bold,
-                              color: scheme.onSurface
-                                  .withValues(alpha: 0.7))),
-                      const SizedBox(height: 4),
-                      Expanded(
-                        child: FractionallySizedBox(
-                          alignment: Alignment.bottomCenter,
-                          heightFactor:
-                              count == 0 ? 0.06 : (0.12 + 0.88 * frac),
-                          child: Container(
-                            width: 22,
-                            decoration: BoxDecoration(
-                              borderRadius: const BorderRadius.vertical(
-                                  top: Radius.circular(7)),
-                              color: count == 0
-                                  ? scheme.surfaceContainerHighest
-                                      .withValues(alpha: 0.7)
-                                  : null,
-                              gradient: count == 0
-                                  ? null
-                                  : LinearGradient(
-                                      colors: isToday
-                                          ? [
-                                              const Color(0xFFF59E0B),
-                                              const Color(0xFFD97706)
-                                            ]
-                                          : const [
-                                              Color(0xFF3B82F6),
-                                              Color(0xFF1D4ED8)
-                                            ],
-                                      begin: Alignment.topCenter,
-                                      end: Alignment.bottomCenter,
-                                    ),
-                            ),
-                          ),
-                        ),
+            height: barH,
+            child: Stack(
+              children: [
+                Positioned(
+                  top: barH / 3,
+                  left: 0,
+                  right: 0,
+                  child: Container(height: 1, color: gridColor),
+                ),
+                Positioned(
+                  top: barH * 2 / 3,
+                  left: 0,
+                  right: 0,
+                  child: Container(height: 1, color: gridColor),
+                ),
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                      height: 1,
+                      color:
+                          scheme.onSurface.withValues(alpha: 0.12)),
+                ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: labels.asMap().entries.map((e) {
+                    return Expanded(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [bar(e.key)],
                       ),
-                      const SizedBox(height: 5),
-                      Text(
-                        letters[day.weekday - 1],
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight:
-                                isToday ? FontWeight.bold : FontWeight.w500,
-                            color: isToday
-                                ? const Color(0xFF1D4ED8)
-                                : scheme.onSurface
-                                    .withValues(alpha: 0.55)),
-                      ),
-                      Text('${day.day}',
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Day labels.
+          Row(
+            children: labels.asMap().entries.map((e) {
+              final i = e.key;
+              final isHi = i == highlight;
+              return Expanded(
+                child: Column(
+                  children: [
+                    Text(
+                      labels[i],
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: isHi
+                              ? FontWeight.bold
+                              : FontWeight.w500,
+                          color: isHi
+                              ? const Color(0xFF1D4ED8)
+                              : scheme.onSurface
+                                  .withValues(alpha: 0.55)),
+                    ),
+                    if (sublabels[i].isNotEmpty)
+                      Text(sublabels[i],
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                               fontSize: 9,
                               color: scheme.onSurface
                                   .withValues(alpha: 0.45))),
-                    ],
-                  ),
-                );
-              }).toList(),
-            ),
+                  ],
+                ),
+              );
+            }).toList(),
           ),
         ],
       ),
@@ -722,14 +1004,14 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(r.chapterId,
+                        Text(r.chapterName ?? r.chapterId,
                             style: const TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.bold),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis),
                         if (r.unitId != null && r.unitId!.isNotEmpty)
-                          Text('Unit: ${r.unitId}',
+                          Text('Unit: ${r.unitName ?? r.unitId}',
                               style: TextStyle(
                                   fontSize: 10.5,
                                   color: scheme.onSurface
@@ -843,7 +1125,12 @@ class _ChapterStat {
   final bool completed;
   final DateTime? updatedAt;
 
-  const _ChapterStat({
+  /// Resolved from the cached course catalogue after load; null (or
+  /// unset) means the UI falls back to the raw ids.
+  String? chapterName;
+  String? unitName;
+
+  _ChapterStat({
     required this.chapterId,
     this.subjectId,
     this.unitId,

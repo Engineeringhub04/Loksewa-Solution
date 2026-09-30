@@ -262,12 +262,12 @@ final appRouter = GoRouter(
       path: '/course-setup',
       builder: (_, s) => CourseSetupScreen(mode: _qp(s, 'mode') ?? 'initial'),
     ),
-    GoRoute(path: '/notes', builder: (_, __) => const NotesScreen()),
+    GoRoute(path: '/keep-notes', builder: (_, __) => const NotesScreen()),
     GoRoute(
-        path: '/notes/new',
+        path: '/keep-notes/new',
         builder: (_, __) => const NoteDetailScreen(id: 'new')),
     GoRoute(
-      path: '/notes/:id',
+      path: '/keep-notes/:id',
       builder: (_, s) => NoteDetailScreen(id: s.pathParameters['id']!),
     ),
     GoRoute(

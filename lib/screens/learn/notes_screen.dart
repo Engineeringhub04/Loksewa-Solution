@@ -1,178 +1,356 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/services/prefs_service.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/preloading.dart';
 
-/// Keep Notes list — mirrors app/notes/index.tsx.
-/// Personal notes, local-first (SharedPreferences under 'loksewa:notes'),
-/// fully usable offline.
+import '../../models/keep_note.dart';
+import '../../services/keep_notes_store.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
+
+/// Keep Notes list — the Additional Features "Keep Notes" page.
+///
+/// Pinned notes on top ("Pinned"), everything else under "Others".
+/// 100% local: notes live in a JSON file on the phone, never in Firestore —
+/// the info card says so. Tap opens the editor, long-press offers pin/delete.
 class NotesScreen extends StatefulWidget {
-  const NotesScreen({super.key});
+  final KeepNotesStore? store;
+
+  const NotesScreen({super.key, this.store});
 
   @override
   State<NotesScreen> createState() => _NotesScreenState();
 }
 
 class _NotesScreenState extends State<NotesScreen> {
-  late Future<List<Map<String, dynamic>>> _future;
+  KeepNotesStore get _store => widget.store ?? KeepNotesStore.instance;
+
+  List<KeepNote> _notes = [];
+  bool _loading = true;
 
   @override
   void initState() {
     super.initState();
-    _future = _loadNotes();
+    _boot();
   }
 
-  static Future<List<Map<String, dynamic>>> _loadNotes() async {
-    final raw = await PrefsService.getString('loksewa:notes');
-    if (raw == null || raw.isEmpty) return [];
-    try {
-      final list = json.decode(raw) as List;
-      final notes = list
-          .whereType<Map<String, dynamic>>()
-          .toList();
-      notes.sort((a, b) =>
-          _num(b['updatedAt']).compareTo(_num(a['updatedAt'])));
-      return notes;
-    } catch (_) {
-      return [];
-    }
+  Future<void> _boot() async {
+    await _store.ensureInit();
+    await _store.migrateLegacyOnce();
+    if (!mounted) return;
+    setState(() {
+      _notes = KeepNote.sortedForList(_store.loadAll());
+      _loading = false;
+    });
   }
 
-  static double _num(dynamic v) =>
-      v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
-
-  static Color _parseColor(String? hex) {
-    if (hex == null || hex.isEmpty) return Colors.white;
-    try {
-      final clean = hex.replaceFirst('#', '');
-      return Color(int.parse('FF$clean', radix: 16));
-    } catch (_) {
-      return Colors.white;
-    }
+  void _reload() {
+    setState(() {
+      _notes = KeepNote.sortedForList(_store.loadAll());
+    });
   }
 
-  String _dateLabel(dynamic v) {
-    final ms = _num(v).toInt();
-    if (ms <= 0) return '';
-    return DateTime.fromMillisecondsSinceEpoch(ms)
-        .toLocal()
-        .toString()
-        .split(' ')
-        .first;
+  Future<void> _openEditor(String id) async {
+    await context.push('/keep-notes/$id');
+    if (mounted) _reload();
+  }
+
+  void _togglePin(KeepNote note) {
+    note.pinned = !note.pinned;
+    note.updatedAt = DateTime.now().millisecondsSinceEpoch;
+    _store.upsert(note);
+    _reload();
+  }
+
+  void _delete(KeepNote note) {
+    _store.delete(note.id);
+    _reload();
+  }
+
+  void _showNoteOptions(KeepNote note) {
+    final palette = ExpoPalette.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        title: Text(
+          note.title.isEmpty ? 'Note options' : note.title,
+          style: TextStyle(
+              fontWeight: FontWeight.bold, color: palette.textPrimary),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                  note.pinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin,
+                  color: palette.primary),
+              title: Text(note.pinned ? 'Unpin' : 'Pin to top',
+                  style: TextStyle(color: palette.textPrimary)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _togglePin(note);
+              },
+            ),
+            ListTile(
+              leading: Icon(Icons.delete_outline, color: palette.danger),
+              title: Text('Delete',
+                  style: TextStyle(color: palette.danger)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _confirmDelete(note);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(KeepNote note) {
+    final palette = ExpoPalette.of(context);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: palette.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16)),
+        title: Text('Delete note?',
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: palette.textPrimary)),
+        content: Text('This note will be permanently deleted.',
+            style: TextStyle(color: palette.textSecondary)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child:
+                Text('Cancel', style: TextStyle(color: palette.primary)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(ctx).pop();
+              _delete(note);
+            },
+            child:
+                Text('Delete', style: TextStyle(color: palette.danger)),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: palette.background,
       body: Column(
         children: [
           const SubpageHeader(title: 'Keep Notes'),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Notes...',
-            );
-          }
-          final notes = snap.data ?? [];
-          if (notes.isEmpty) {
-            return RefreshIndicator(
-              onRefresh: () async =>
-                  setState(() => _future = _loadNotes()),
-              child: ListView(
-                children: const [
-                  SizedBox(height: 120),
-                  Center(
-                    child: Column(
+            child: _loading
+                ? const Center(
+                    child: PreloadingWidget(label: 'Loading notes...'))
+                : RefreshIndicator(
+                    onRefresh: () async => _reload(),
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
                       children: [
-                        Icon(Icons.note_alt_outlined,
-                            size: 64, color: Colors.grey),
-                        SizedBox(height: 12),
-                        Text('No notes yet. Tap + to create one.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey)),
+                        _securityCard(palette),
+                        const SizedBox(height: 16),
+                        ..._sections(palette),
                       ],
                     ),
                   ),
-                ],
-              ),
-            );
-          }
-          return RefreshIndicator(
-            onRefresh: () async =>
-                setState(() => _future = _loadNotes()),
-            child: GridView.builder(
-              padding: const EdgeInsets.all(16),
-              gridDelegate:
-                  const SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
-                mainAxisSpacing: 10,
-                crossAxisSpacing: 10,
-                childAspectRatio: 1.05,
-              ),
-              itemCount: notes.length,
-              itemBuilder: (context, i) {
-                final n = notes[i];
-                return InkWell(
-                  onTap: () => context
-                      .push('/notes/${n['id']}')
-                      .then((_) =>
-                          setState(() => _future = _loadNotes())),
-                  borderRadius: BorderRadius.circular(12),
-                  child: Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: _parseColor(n['color'] as String?),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          ((n['title'] as String?)?.isNotEmpty == true)
-                              ? n['title'] as String
-                              : 'Title',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold),
-                        ),
-                        const SizedBox(height: 4),
-                        Expanded(
-                          child: Text((n['body'] as String?) ?? '',
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13)),
-                        ),
-                        Text(_dateLabel(n['updatedAt']),
-                            style: const TextStyle(
-                                fontSize: 11, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          );
-        },
-      ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.navy,
-        onPressed: () => context
-            .push('/notes/new')
-            .then((_) => setState(() => _future = _loadNotes())),
-        child: const Icon(Icons.add, color: Colors.white),
+        backgroundColor: palette.primary,
+        foregroundColor: Colors.white,
+        onPressed: () => _openEditor('new'),
+        tooltip: 'New note',
+        child: const Icon(Icons.add),
       ),
     );
   }
+
+  /// Security notice: Keep Notes data never leaves the phone.
+  Widget _securityCard(ExpoPalette palette) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: palette.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: palette.primary.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline,
+              size: 20, color: palette.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Keep Notes ko data database ma save hudaina — '
+              'tapai ko phone ma matra surakshit save hunxa.',
+              style: TextStyle(
+                  fontSize: 13,
+                  height: 1.45,
+                  color: palette.textPrimary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _sections(ExpoPalette palette) {
+    if (_notes.isEmpty) {
+      return [
+        const SizedBox(height: 48),
+        Icon(Icons.note_alt_outlined,
+            size: 56, color: palette.textDisabled),
+        const SizedBox(height: 12),
+        Center(
+          child: Text('No notes yet',
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: palette.textPrimary)),
+        ),
+        const SizedBox(height: 6),
+        Center(
+          child: Text('Tap + to create your first note.',
+              style: TextStyle(
+                  fontSize: 13, color: palette.textSecondary)),
+        ),
+      ];
+    }
+    final pinned = _notes.where((n) => n.pinned).toList();
+    final others = _notes.where((n) => !n.pinned).toList();
+    final widgets = <Widget>[];
+    if (pinned.isNotEmpty) {
+      widgets.add(_sectionLabel('Pinned', palette));
+      widgets.addAll(pinned.map((n) => _noteCard(n, palette)));
+      widgets.add(const SizedBox(height: 8));
+    }
+    if (others.isNotEmpty) {
+      widgets.add(_sectionLabel(
+          pinned.isNotEmpty ? 'Others' : 'Notes', palette));
+      widgets.addAll(others.map((n) => _noteCard(n, palette)));
+    }
+    return widgets;
+  }
+
+  Widget _sectionLabel(String label, ExpoPalette palette) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+      child: Text(
+        label.toUpperCase(),
+        style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2,
+            color: palette.textSecondary),
+      ),
+    );
+  }
+
+  Widget _noteCard(KeepNote note, ExpoPalette palette) {
+    final title = note.title.trim();
+    final body = note.plainBody.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Material(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(14),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openEditor(note.id),
+          onLongPress: () => _showNoteOptions(note),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: palette.border),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title.isEmpty ? _previewHeadline(body) : title,
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                            color: palette.textPrimary),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (note.pinned)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Icon(Icons.push_pin,
+                            size: 16, color: palette.textSecondary),
+                      ),
+                  ],
+                ),
+                if (title.isNotEmpty && body.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    body,
+                    style: TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: palette.textSecondary),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Text(
+                  _dateLabel(note.updatedAt),
+                  style: TextStyle(
+                      fontSize: 11, color: palette.textDisabled),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _previewHeadline(String body) {
+    if (body.isEmpty) return 'Empty note';
+    final firstLine = body.split('\n').first.trim();
+    return firstLine.isEmpty ? 'Empty note' : firstLine;
+  }
+
+  static String _dateLabel(int ms) {
+    if (ms <= 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final day = DateTime(d.year, d.month, d.day);
+    final diff = today.difference(day).inDays;
+    if (diff == 0) {
+      return 'Today ${_two(d.hour)}:${_two(d.minute)}';
+    }
+    if (diff == 1) return 'Yesterday';
+    return '${_two(d.day)}/${_two(d.month)}/${d.year}';
+  }
+
+  static String _two(int v) => v.toString().padLeft(2, '0');
 }

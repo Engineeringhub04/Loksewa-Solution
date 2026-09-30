@@ -762,9 +762,9 @@ const _additionalFeatures = [
       route: '/under-construction?page=Nepal%20Details'),
   _LinkItem(
       key: 'notes',
-      label: 'Notes',
+      label: 'Keep Notes',
       icon: Icons.description_outlined,
-      route: '/notes'),
+      route: '/keep-notes'),
   _LinkItem(
       key: 'upcoming-exam',
       label: 'Upcoming Exam',

@@ -32,6 +32,7 @@ void main() {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: ChapterSummaryCard(
+                subjectId: 'test-subject',
                 subjectName: 'General Awareness (सामान्य ज्ञान)',
                 chapters: chapters(10),
               ),
@@ -80,6 +81,7 @@ void main() {
       const MaterialApp(
         home: Scaffold(
           body: ChapterSummaryCard(
+            subjectId: 'test-subject',
             subjectName: 'Subject',
             chapters: [],
           ),

@@ -28,6 +28,7 @@ import '../screens/learn/subjects_screen.dart';
 import '../screens/learn/profile_tab.dart';
 import '../screens/learn/subject_chapters_screen.dart';
 import '../screens/learn/subject_units_screen.dart';
+import '../screens/learn/practice_analytics_screen.dart';
 import '../screens/learn/subject_practice_screen.dart';
 import '../screens/learn/subject_read_screen.dart';
 import '../screens/learn/subject_theory_screen.dart';
@@ -198,6 +199,21 @@ final appRouter = GoRouter(
       path: '/subjects/units/:subjectId',
       builder: (_, s) =>
           SubjectUnitsScreen(subjectId: s.pathParameters['subjectId']!),
+    ),
+    GoRoute(
+      path: '/practice-analytics',
+      builder: (_, s) {
+        final extra =
+            (s.extra as Map?)?.map((k, v) => MapEntry('$k', '$v'));
+        return PracticeAnalyticsScreen(
+          subjectSlug: extra?['subjectSlug'],
+          subjectTitle: extra?['subjectTitle'],
+          unitId: extra?['unitId'],
+          unitTitle: extra?['unitTitle'],
+          chapterSlug: extra?['chapterSlug'],
+          chapterTitle: extra?['chapterTitle'],
+        );
+      },
     ),
     GoRoute(
       path: '/subjects/practice',

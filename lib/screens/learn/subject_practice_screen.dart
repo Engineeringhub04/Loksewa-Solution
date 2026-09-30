@@ -9,6 +9,7 @@ import '../../widgets/app_toast.dart';
 import '../../widgets/limit_dialog.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import 'package:loksewa_solution/widgets/report_dialog.dart';
 
 /// Subject practice mode — React parity port of app/subjects/practice.tsx.
 ///
@@ -346,6 +347,17 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       _slideDir = delta > 0 ? 1 : -1;
       _current = next;
     });
+    // Back to the top on every question change — otherwise the new question
+    // would open scrolled down at the previous question's position.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          0,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
   }
 
   void _onNext() {
@@ -424,30 +436,30 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   Widget _errorState(ExpoPalette palette) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.cloud_off_outlined,
-                size: 64, color: palette.textDisabled),
-            const SizedBox(height: 12),
+                size: 56, color: palette.textDisabled),
+            const SizedBox(height: 11),
             Text('Something went wrong',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             Text('Please try again.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: palette.textSecondary, fontSize: 13)),
-            const SizedBox(height: 20),
+                    color: palette.textSecondary, fontSize: 12)),
+            const SizedBox(height: 18),
             GestureDetector(
               onTap: _load,
               child: Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 18, vertical: 9),
+                    horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
                   color: palette.primary,
                   borderRadius: BorderRadius.circular(999),
@@ -455,12 +467,12 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.refresh, size: 15, color: Colors.white),
-                    SizedBox(width: 6),
+                    Icon(Icons.refresh, size: 14, color: Colors.white),
+                    SizedBox(width: 5),
                     Text('Retry',
                         style: TextStyle(
                             color: Colors.white,
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold)),
                   ],
                 ),
@@ -477,25 +489,25 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   Widget _emptyState(ExpoPalette palette) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.cloud_off_outlined,
-                size: 64, color: palette.textDisabled),
-            const SizedBox(height: 12),
+                size: 56, color: palette.textDisabled),
+            const SizedBox(height: 11),
             Text('No questions are available for this chapter yet.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                     color: palette.textPrimary,
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
             Text(
                 'Practice questions are not available for this chapter yet. Content is being prepared and will be added soon.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                    color: palette.textSecondary, fontSize: 13)),
+                    color: palette.textSecondary, fontSize: 12)),
           ],
         ),
       ),
@@ -507,11 +519,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     final premium = _premium;
     return ListView(
       controller: _scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       children: [
         // Daily-limit row.
         Container(
-          padding: const EdgeInsets.all(13),
+          padding: const EdgeInsets.all(11),
           decoration: BoxDecoration(
             color: palette.surface,
             border: Border.all(
@@ -529,7 +541,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                           ? 'Pro access active'
                           : 'Daily limit reached: $_dailyUsed/$_dailyLimit',
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.bold,
                           color: premium
                               ? palette.success
@@ -539,35 +551,35 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                       Text(
                         'New questions are selected after midnight.',
                         style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9,
                             color: palette.textSecondary),
                       ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Icon(
                   premium ? Icons.check_circle : Icons.speed,
-                  size: 22,
+                  size: 19,
                   color: premium ? palette.success : palette.primary),
             ],
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         // Question badge + bookmark/report actions.
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Container(
               padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 10),
+                  horizontal: 12, vertical: 9),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(11),
                 color: palette.primary.withValues(alpha: 0.08),
               ),
               child: Text('Question ${_current + 1}',
                   style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
                       color: palette.primary)),
             ),
@@ -587,25 +599,33 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                     isPro: premium,
                   ),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 _actionBox(
                   palette,
                   IconButton(
-                    onPressed: () =>
-                        context.push('/settings/report-problem'),
-                    icon: const Icon(Icons.flag_outlined, size: 22),
+                    onPressed: () => ReportDialog.show(
+                      context: context,
+                      question: bilingual(q.text, q.textNe),
+                      options: q.options,
+                      questionId: q.id,
+                      subject: widget.subjectName,
+                      chapter: widget.chapterName,
+                      unit: widget.unitName,
+                      mode: 'practice',
+                    ),
+                    icon: const Icon(Icons.flag_rounded, size: 19),
                     color: palette.textSecondary,
                     tooltip: 'Report',
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(
-                        minWidth: 36, minHeight: 36),
+                        minWidth: 34, minHeight: 34),
                   ),
                 ),
               ],
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         // Question + options + explanation, animated on question change.
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 220),
@@ -629,26 +649,26 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _questionCard(palette, q),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 ..._optionTiles(palette, q),
                 if (_currentAttempted) _explanationCard(palette, q),
               ],
             ),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
       ],
     );
   }
 
-  /// The 42x42 elevated action tile from practice.tsx (bookmark / report).
+  /// The 38x38 elevated action tile from practice.tsx (bookmark / report).
   Widget _actionBox(ExpoPalette palette, Widget child) {
     return Container(
-      width: 42,
-      height: 42,
+      width: 38,
+      height: 38,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(11),
         color: palette.surface,
         boxShadow: [
           BoxShadow(
@@ -669,11 +689,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
             ? palette.warning
             : palette.danger;
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: palette.surface,
         border: Border.all(color: palette.border),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.06),
@@ -687,21 +707,21 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         children: [
           Text(bilingual(q.text, q.textNe),
               style: const TextStyle(
-                  fontSize: 18,
+                  fontSize: 16,
                   fontWeight: FontWeight.w600,
                   height: 1.35)),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.symmetric(
-                horizontal: 10, vertical: 6),
+                horizontal: 9, vertical: 5),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(9),
+              borderRadius: BorderRadius.circular(8),
               color: diffColor.withValues(
                   alpha: q.difficulty == 'medium' ? 0.12 : 0.09),
             ),
             child: Text(q.difficulty.toUpperCase(),
                 style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 9,
                     fontWeight: FontWeight.bold,
                     color: diffColor)),
           ),
@@ -728,56 +748,62 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
               ? palette.danger.withValues(alpha: 0.08)
               : palette.surface;
       final filled = isSelected || (showResult && isCorrect);
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Material(
-          color: background,
-          borderRadius: BorderRadius.circular(12),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => _selectOption(index),
-            child: Container(
-              constraints: const BoxConstraints(minHeight: 66),
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 13, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border.all(color: border, width: 1.4),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border:
-                          Border.all(color: border, width: 1.5),
-                      color: filled ? border : Colors.transparent,
+      // Keyed on the question id so each question change builds fresh tile
+      // state and the stagger replays on every question.
+      return _OptionStagger(
+        key: ValueKey('${q.id}:$index'),
+        index: index,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 7),
+          child: Material(
+            color: background,
+            borderRadius: BorderRadius.circular(11),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(11),
+              onTap: () => _selectOption(index),
+              child: Container(
+                constraints: const BoxConstraints(minHeight: 58),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  border: Border.all(color: border, width: 1.4),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 29,
+                      height: 29,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border:
+                            Border.all(color: border, width: 1.5),
+                        color: filled ? border : Colors.transparent,
+                      ),
+                      child: Text(
+                          String.fromCharCode(65 + index),
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: filled
+                                  ? Colors.white
+                                  : palette.textSecondary)),
                     ),
-                    child: Text(
-                        String.fromCharCode(65 + index),
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                            color: filled
-                                ? Colors.white
-                                : palette.textSecondary)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(q.options[index],
-                        style: const TextStyle(
-                            fontSize: 14, height: 1.33)),
-                  ),
-                  if (showResult && isCorrect)
-                    Icon(Icons.check_circle,
-                        size: 22, color: palette.success)
-                  else if (showResult && isSelected)
-                    Icon(Icons.cancel,
-                        size: 22, color: palette.danger),
-                ],
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(q.options[index],
+                          style: const TextStyle(
+                              fontSize: 13, height: 1.33)),
+                    ),
+                    if (showResult && isCorrect)
+                      Icon(Icons.check_circle,
+                          size: 19, color: palette.success)
+                    else if (showResult && isSelected)
+                      Icon(Icons.cancel,
+                          size: 19, color: palette.danger),
+                  ],
+                ),
               ),
             ),
           ),
@@ -790,10 +816,10 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
     final ok = _currentCorrect;
     final tone = ok ? palette.success : palette.danger;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         border: Border.all(color: tone.withValues(alpha: 0.4)),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         color: tone.withValues(alpha: ok ? 0.06 : 0.035),
       ),
       child: Column(
@@ -802,25 +828,25 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           Row(
             children: [
               Container(
-                width: 42,
-                height: 42,
+                width: 38,
+                height: 38,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: tone,
                 ),
                 child: Icon(
                     ok ? Icons.check : Icons.close,
-                    size: 22,
+                    size: 19,
                     color: Colors.white),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(ok ? 'Correct Answer' : 'Incorrect Answer',
                         style: TextStyle(
-                            fontSize: 16,
+                            fontSize: 14,
                             fontWeight: FontWeight.w600,
                             color: tone)),
                     Text(
@@ -828,7 +854,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                             ? 'Your answer is correct.'
                             : 'The selected option is incorrect.',
                         style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9,
                             color: palette.textSecondary)),
                   ],
                 ),
@@ -837,31 +863,31 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           ),
           Container(
               height: 1,
-              margin: const EdgeInsets.symmetric(vertical: 10),
+              margin: const EdgeInsets.symmetric(vertical: 8),
               color: tone.withValues(alpha: 0.2)),
           if (_currentSelected != null) ...[
             Text('Selected option: ${q.options[_currentSelected!]}',
                 style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: FontWeight.w600,
                     color: tone)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
           ],
           if (!ok) ...[
             Text('Correct option: ${q.options[q.correctIndex]}',
                 style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: FontWeight.w600,
                     color: palette.success)),
-            const SizedBox(height: 8),
+            const SizedBox(height: 7),
           ],
           const Text('Explanation',
               style:
-                  TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 4),
+                  TextStyle(fontSize: 10, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 3),
           Text(bilingual(q.explanation, q.explanationNe),
               style: TextStyle(
-                  fontSize: 14,
+                  fontSize: 13,
                   height: 1.4,
                   color: palette.textSecondary)),
         ],
@@ -879,7 +905,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       decoration: BoxDecoration(
         color: palette.surface,
         borderRadius:
-            const BorderRadius.vertical(top: Radius.circular(18)),
+            const BorderRadius.vertical(top: Radius.circular(16)),
         border: Border(top: BorderSide(color: palette.divider)),
         boxShadow: [
           BoxShadow(
@@ -891,7 +917,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       ),
       child: SafeArea(
         top: false,
-        minimum: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+        minimum: const EdgeInsets.fromLTRB(12, 9, 12, 9),
         child: Row(
           children: [
             Expanded(
@@ -907,11 +933,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(Icons.arrow_back,
-                          size: 19, color: palette.primary),
-                      const SizedBox(width: 7),
+                          size: 17, color: palette.primary),
+                      const SizedBox(width: 6),
                       Text('Previous',
                           style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: FontWeight.w600,
                               color: palette.primary)),
                     ],
@@ -919,7 +945,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 8),
             Expanded(
               flex: 135,
               child: _barButton(
@@ -938,15 +964,15 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
                             : 'Next Question',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: Colors.white,
                             height: 1.35),
                       ),
                     ),
-                    const SizedBox(width: 7),
+                    const SizedBox(width: 6),
                     const Icon(Icons.arrow_forward,
-                        size: 19, color: Colors.white),
+                        size: 17, color: Colors.white),
                   ],
                 ),
               ),
@@ -965,17 +991,17 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   }) {
     return Material(
       color: filled ? palette.primary : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(13),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(13),
         onTap: onTap,
         child: Container(
-          constraints: const BoxConstraints(minHeight: 50),
+          constraints: const BoxConstraints(minHeight: 46),
           padding: const EdgeInsets.symmetric(
-              horizontal: 12, vertical: 10),
+              horizontal: 11, vertical: 9),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(13),
             border: filled ? null : Border.all(color: palette.border),
           ),
           child: child,
@@ -1016,7 +1042,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
             : const Color(0x800F172A),
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             child: LimitDialogCard(
               tagline: tagline,
               title: title,
@@ -1046,7 +1072,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
           'To Crack Your Daily Limit! Subscribe to Our Pro Plan',
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: 11.5,
             fontWeight: FontWeight.bold,
             color: Color(0xFF0F172A),
             decoration: TextDecoration.none,
@@ -1084,9 +1110,9 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
             'Your completed answers are safely stored. You can return whenever you are ready.',
         bodyExtra: Container(
           padding: const EdgeInsets.symmetric(
-              horizontal: 14, vertical: 11),
+              horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(13),
             border: Border.all(
                 color: palette.success.withValues(alpha: 0.33)),
             color: palette.success.withValues(alpha: 0.08),
@@ -1095,14 +1121,14 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(Icons.cloud_done_outlined,
-                  size: 19, color: palette.success),
-              const SizedBox(width: 8),
+                  size: 17, color: palette.success),
+              const SizedBox(width: 7),
               Flexible(
                 child: Text(
                   'Progress synced in the background',
                   textAlign: TextAlign.center,
                   style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
                       color: palette.success,
                       decoration: TextDecoration.none),
@@ -1119,6 +1145,63 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
         },
         onCancel: () => setState(() => _showLeaveConfirm = false),
       );
+}
+
+/// Staggered option-tile entrance — fade + 12px slide-up, tiles start
+/// ~70ms apart (index * 70). Each tile is keyed on the question id, so a
+/// question change builds fresh State objects whose controllers replay the
+/// animation from scratch on every question — same feel as the
+/// units/chapters list stagger. Selecting an option rebuilds with the same
+/// keys, so the animation does not replay mid-question.
+class _OptionStagger extends StatefulWidget {
+  final int index;
+  final Widget child;
+
+  const _OptionStagger(
+      {super.key, required this.index, required this.child});
+
+  @override
+  State<_OptionStagger> createState() => _OptionStaggerState();
+}
+
+class _OptionStaggerState extends State<_OptionStagger>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.index * 70), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(_controller.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - t)),
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
+    );
+  }
 }
 
 /// Fade-in wrapper for the dialog overlay — mirrors AppDialog's
@@ -1191,6 +1274,14 @@ class _PracticeBookmarkButtonState
   bool _saved = false;
   bool _busy = false;
 
+  /// Pending "save confirmed" timer — cancelled if the background write
+  /// fails first, or if the tap is superseded by a newer one.
+  Timer? _saveTimer;
+
+  /// Monotonic op id: guards the fire-and-forget save against a later
+  /// remove/refresh so a stale failure can't clobber newer state.
+  int _opId = 0;
+
   String get _refId => '${widget.chapterId}:${widget.question.id}';
 
   /// Mirrors React's bookmarkDocId(): `practice__<safeSegment(refId)>`.
@@ -1221,22 +1312,40 @@ class _PracticeBookmarkButtonState
     } catch (_) {}
   }
 
-  Future<void> _toggle() async {
+  @override
+  void dispose() {
+    _saveTimer?.cancel();
+    super.dispose();
+  }
+
+  /// Tap UX: a small spinner replaces the icon for 2s, then the success
+  /// toast fires. The Firestore write starts immediately, fire-and-forget —
+  /// the toast never waits for the network. If the write later fails, the
+  /// icon reverts to unbookmarked and an error toast shows.
+  void _onTap() {
     if (_busy || widget.uid.isEmpty) return;
+    if (_saved) {
+      _remove();
+      return;
+    }
     setState(() => _busy = true);
+    _saveTimer?.cancel();
+    final op = ++_opId;
+    unawaited(_saveInBackground(op));
+    _saveTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _saved = true;
+      });
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    });
+  }
+
+  Future<void> _saveInBackground(int op) async {
+    final path = 'users/${widget.uid}/bookmarks/$_docId';
     try {
       final idToken = await AuthService.getValidIdToken();
-      final path = 'users/${widget.uid}/bookmarks/$_docId';
-      if (_saved) {
-        await FirestoreRest.deleteDocument(path, idToken: idToken);
-        if (!mounted) return;
-        setState(() {
-          _saved = false;
-          _busy = false;
-        });
-        showToast(context, 'Bookmark removed.', ToastVariant.info);
-        return;
-      }
       final rows = await FirestoreRest.listDocuments(
         'users/${widget.uid}/bookmarks',
         idToken: idToken,
@@ -1249,7 +1358,8 @@ class _PracticeBookmarkButtonState
                   (r['subcourseId'] ?? '') == widget.subcourseId)
               .length;
       if (scoped >= _freeLimit && !widget.isPro) {
-        if (!mounted) return;
+        if (op != _opId || !mounted) return;
+        _saveTimer?.cancel();
         setState(() => _busy = false);
         showToast(context, 'Bookmark limit reached for this sub-course',
             ToastVariant.warning);
@@ -1293,12 +1403,38 @@ class _PracticeBookmarkButtonState
         },
         idToken: idToken,
       );
+      // Success is reported by the 2s timer — nothing more to do here.
+    } catch (_) {
+      // Superseded by a newer tap, or the button was rebuilt — leave the
+      // newer state alone.
+      if (op != _opId || !mounted) return;
+      _saveTimer?.cancel();
+      setState(() {
+        _busy = false;
+        _saved = false;
+      });
+      showToast(
+          context,
+          'Could not update the bookmark. Please try again.',
+          ToastVariant.error);
+    }
+  }
+
+  Future<void> _remove() async {
+    _opId++;
+    _saveTimer?.cancel();
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      await FirestoreRest.deleteDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
       if (!mounted) return;
       setState(() {
-        _saved = true;
+        _saved = false;
         _busy = false;
       });
-      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+      showToast(context, 'Bookmark removed.', ToastVariant.info);
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -1313,15 +1449,26 @@ class _PracticeBookmarkButtonState
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     return IconButton(
-      onPressed: _busy ? null : _toggle,
-      icon: Icon(
-          _saved ? Icons.bookmark : Icons.bookmark_border,
-          size: 22),
+      onPressed: _busy ? null : _onTap,
+      icon: _busy
+          ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.2,
+                color: palette.primary,
+              ),
+            )
+          : Icon(
+              _saved
+                  ? Icons.bookmark_rounded
+                  : Icons.bookmark_outline_rounded,
+              size: 20),
       color: _saved ? palette.primary : palette.textSecondary,
       tooltip: _saved ? 'Remove bookmark' : 'Bookmark',
       padding: EdgeInsets.zero,
       constraints:
-          const BoxConstraints(minWidth: 36, minHeight: 36),
+          const BoxConstraints(minWidth: 34, minHeight: 34),
     );
   }
 }

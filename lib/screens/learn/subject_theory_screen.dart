@@ -1,11 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../services/firestore_rest.dart';
-import '../../services/report_service.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/report_dialog.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Subject theory mode — exact port of app/subjects/theory.tsx.
@@ -164,7 +166,8 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
                   : _loadError
                       ? _DataNotFound(
                           title: 'Something went wrong',
-                          description: 'Retry',
+                          description:
+                              'Please check your connection and try again.',
                           onRetry: _load,
                         )
                       : (!isPublished)
@@ -191,10 +194,10 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
       padding: EdgeInsets.fromLTRB(16, 16, 16, bottomPad),
       children: [
         _heroCard(theme),
-        const SizedBox(height: 16),
+        const SizedBox(height: 14),
         _pdfCard(theme, pdfUrl),
         if (pdfUrl.isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           _openButton(theme),
         ],
       ],
@@ -207,44 +210,44 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
     final primary = theme.colorScheme.primary;
     return Material(
       color: theme.cardColor,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(16),
       elevation: 1,
       shadowColor: Colors.black.withValues(alpha: 0.05),
       child: Container(
-        padding: const EdgeInsets.all(22),
+        padding: const EdgeInsets.all(19),
         decoration: BoxDecoration(
           border: Border.all(color: theme.dividerColor),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Column(
           children: [
             Container(
-              width: 64,
-              height: 64,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: primary.withValues(alpha: 0.08),
               ),
               child:
-                  Icon(Icons.school_outlined, size: 30, color: primary),
+                  Icon(Icons.school_outlined, size: 26, color: primary),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               _bilingualTitle,
               style: const TextStyle(
-                  fontSize: 20, fontWeight: FontWeight.bold),
+                  fontSize: 18, fontWeight: FontWeight.bold),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               '$_chapterName · $_subjectName',
               style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   color: theme.colorScheme.onSurface
                       .withValues(alpha: 0.6)),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -258,12 +261,13 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
                   subcourseId: widget.subcourseId,
                   subjectName: _subjectName,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 5),
                 _TheoryReportButton(
                   title: _bilingualTitle,
-                  contextLabel: 'Theory Mode · $_subjectName',
+                  chapterId: widget.chapterId,
                   chapterName: _chapterName,
                   subjectName: _subjectName,
+                  unitName: widget.unitName,
                 ),
               ],
             ),
@@ -281,14 +285,14 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
     final hasPdf = pdfUrl.isNotEmpty;
     return Material(
       color: theme.cardColor,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(16),
       elevation: 1,
       shadowColor: Colors.black.withValues(alpha: 0.05),
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           border: Border.all(color: theme.dividerColor),
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
           children: [
@@ -298,25 +302,25 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
                 children: [
                   const Text('Theory Resource',
                       style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 3),
                   Text(
                     hasPdf
                         ? 'Theory resource is ready for this chapter.'
                         : 'Theory resource is not available for this chapter yet.',
                     style:
-                        TextStyle(fontSize: 13, color: secondary),
+                        TextStyle(fontSize: 12, color: secondary),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             Icon(
               hasPdf
                   ? Icons.attach_file_outlined
                   : Icons.description_outlined,
-              size: 28,
+              size: 25,
               color: hasPdf ? primary : secondary,
             ),
           ],
@@ -332,14 +336,14 @@ class _SubjectTheoryScreenState extends State<SubjectTheoryScreen> {
         style: ElevatedButton.styleFrom(
           backgroundColor: theme.colorScheme.primary,
           foregroundColor: Colors.white,
-          padding: const EdgeInsets.symmetric(vertical: 14),
+          padding: const EdgeInsets.symmetric(vertical: 12),
           shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14)),
+              borderRadius: BorderRadius.circular(12)),
         ),
-        icon: const Icon(Icons.open_in_new, size: 18),
+        icon: const Icon(Icons.open_in_new, size: 16),
         label: const Text('Open Theory PDF',
             style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w600)),
+                fontSize: 13, fontWeight: FontWeight.w600)),
         onPressed: _openPdf,
       ),
     );
@@ -366,41 +370,41 @@ class _DataNotFound extends StatelessWidget {
         theme.colorScheme.onSurface.withValues(alpha: 0.6);
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.all(21),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_outlined, size: 64, color: secondary),
-            const SizedBox(height: 12),
+            Icon(Icons.cloud_off_outlined, size: 56, color: secondary),
+            const SizedBox(height: 10),
             Text(
               title,
               style: const TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.w600),
+                  fontSize: 16, fontWeight: FontWeight.w600),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
             Text(
               description,
-              style: TextStyle(fontSize: 14, color: secondary),
+              style: TextStyle(fontSize: 13, color: secondary),
               textAlign: TextAlign.center,
             ),
             if (onRetry != null) ...[
-              const SizedBox(height: 18),
+              const SizedBox(height: 15),
               ElevatedButton.icon(
                 onPressed: onRetry,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: theme.colorScheme.primary,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 18, vertical: 9),
+                      horizontal: 18, vertical: 8),
                   shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(999)),
                 ),
                 icon:
-                    const Icon(Icons.refresh, size: 15, color: Colors.white),
+                    const Icon(Icons.refresh, size: 14, color: Colors.white),
                 label: const Text('Try Again',
                     style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.bold)),
+                        fontSize: 12, fontWeight: FontWeight.bold)),
               ),
             ],
           ],
@@ -442,6 +446,7 @@ class _TheoryBookmarkButton extends StatefulWidget {
 class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
   bool _saved = false;
   bool _busy = false;
+  bool _spinning = false;
 
   /// Mirrors React's bookmarkDocId(): `chapter__<safeSegment(refId)>`.
   String get _docId {
@@ -469,52 +474,88 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
     } catch (_) {}
   }
 
+  /// Save tap UX (mirrors the read/practice screens): the icon flips to
+  /// bookmarked immediately, a spinner sits on the icon for 2 seconds, then
+  /// the success toast appears. The real Firestore write runs fire-and-forget;
+  /// a later failure reverts the icon and shows an error toast.
   Future<void> _toggle() async {
     if (_busy || widget.uid.isEmpty) return;
+    if (_saved) {
+      await _remove();
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _spinning = true;
+      _saved = true; // optimistic
+    });
+    var settled = false;
+    unawaited(_save().catchError((Object _) {
+      if (!mounted) return;
+      settled = true;
+      setState(() {
+        _saved = false; // revert icon on failure
+        _busy = false;
+        _spinning = false;
+      });
+      showToast(context, 'Could not save the bookmark.',
+          ToastVariant.error);
+    }));
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted || settled) return;
+    setState(() {
+      _busy = false;
+      _spinning = false;
+    });
+    if (_saved) {
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    }
+  }
+
+  /// Fire-and-forget Firestore write for the optimistic save above.
+  /// Same doc-id scheme and payload as before — UX layer only.
+  Future<void> _save() async {
+    final idToken = await AuthService.getValidIdToken();
+    final path = 'users/${widget.uid}/bookmarks/$_docId';
+    final refId = '${widget.chapterId}:theory';
+    await FirestoreRest.setDocument(
+      path,
+      {
+        'kind': 'read',
+        'context': 'chapter',
+        'type': 'chapter',
+        'refId': refId,
+        'title': widget.title,
+        'preview': widget.preview,
+        'sourceLabel': widget.sourceLabel,
+        'courseId': widget.courseId,
+        'subcourseId': widget.subcourseId,
+        'payload': {
+          'body': widget.preview,
+          'meta': [
+            {'label': 'Subject', 'value': widget.subjectName},
+            {'label': 'Chapter', 'value': widget.chapterId},
+          ],
+        },
+      },
+      idToken: idToken,
+      merge: true,
+    );
+  }
+
+  Future<void> _remove() async {
     setState(() => _busy = true);
     try {
       final idToken = await AuthService.getValidIdToken();
-      final path = 'users/${widget.uid}/bookmarks/$_docId';
-      if (_saved) {
-        await FirestoreRest.deleteDocument(path, idToken: idToken);
-        if (!mounted) return;
-        setState(() {
-          _saved = false;
-          _busy = false;
-        });
-        showToast(context, 'Bookmark removed.', ToastVariant.info);
-        return;
-      }
-      final refId = '${widget.chapterId}:theory';
-      await FirestoreRest.setDocument(
-        path,
-        {
-          'kind': 'read',
-          'context': 'chapter',
-          'type': 'chapter',
-          'refId': refId,
-          'title': widget.title,
-          'preview': widget.preview,
-          'sourceLabel': widget.sourceLabel,
-          'courseId': widget.courseId,
-          'subcourseId': widget.subcourseId,
-          'payload': {
-            'body': widget.preview,
-            'meta': [
-              {'label': 'Subject', 'value': widget.subjectName},
-              {'label': 'Chapter', 'value': widget.chapterId},
-            ],
-          },
-        },
-        idToken: idToken,
-        merge: true,
-      );
+      await FirestoreRest.deleteDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
       if (!mounted) return;
       setState(() {
-        _saved = true;
+        _saved = false;
         _busy = false;
       });
-      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+      showToast(context, 'Bookmark removed.', ToastVariant.info);
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -526,22 +567,25 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    final showSpinner = _spinning || (_busy && _saved);
     return GestureDetector(
-      onTap: _toggle,
+      onTap: _busy ? null : _toggle,
       child: Container(
-        width: 30,
-        height: 30,
+        width: 28,
+        height: 28,
         alignment: Alignment.center,
-        child: _busy
+        child: showSpinner
             ? SizedBox(
-                width: 21,
-                height: 21,
+                width: 17,
+                height: 17,
                 child: CircularProgressIndicator(
                     strokeWidth: 2, color: primary),
               )
             : Icon(
-                _saved ? Icons.bookmark : Icons.bookmark_outline,
-                size: 21,
+                _saved
+                    ? Icons.bookmark_rounded
+                    : Icons.bookmark_outline_rounded,
+                size: 19,
                 color: primary,
               ),
       ),
@@ -549,128 +593,42 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
   }
 }
 
-/// Port of React's ReportButton on the theory screen — opens a small
-/// bottom sheet and files the report through ReportService.
-class _TheoryReportButton extends StatefulWidget {
+/// Report action on the theory screen — opens the shared ReportDialog
+/// (mode 'theory') instead of the old bottom sheet.
+class _TheoryReportButton extends StatelessWidget {
   final String title;
-  final String contextLabel;
+  final String chapterId;
   final String chapterName;
   final String subjectName;
+  final String? unitName;
 
   const _TheoryReportButton({
     required this.title,
-    required this.contextLabel,
+    required this.chapterId,
     required this.chapterName,
     required this.subjectName,
+    this.unitName,
   });
-
-  @override
-  State<_TheoryReportButton> createState() => _TheoryReportButtonState();
-}
-
-class _TheoryReportButtonState extends State<_TheoryReportButton> {
-  Future<void> _openSheet() async {
-    final controller = TextEditingController();
-    final theme = Theme.of(context);
-    final sent = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: theme.cardColor,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (sheetContext) => Padding(
-        padding: EdgeInsets.only(
-          left: 20,
-          right: 20,
-          top: 12,
-          bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: theme.dividerColor,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            const Text('Report content',
-                style:
-                    TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text(widget.title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                    fontSize: 13,
-                    color: theme.colorScheme.onSurface
-                        .withValues(alpha: 0.6))),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              maxLines: 4,
-              minLines: 3,
-              decoration: InputDecoration(
-                hintText: 'Describe the problem...',
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: theme.colorScheme.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                ),
-                onPressed: () =>
-                    Navigator.of(sheetContext).pop(true),
-                child: const Text('Send report'),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    final text = controller.text.trim();
-    controller.dispose();
-    if (sent != true || text.isEmpty || !mounted) return;
-    try {
-      await ReportService.submitProblemReport(
-        category: 'content',
-        description:
-            'Theory content report\n${widget.contextLabel}\n${widget.title}\n${widget.chapterName} · ${widget.subjectName}\n\n$text',
-      );
-      if (!mounted) return;
-      showToast(context, 'Report sent. Thank you.', ToastVariant.success);
-    } catch (_) {
-      if (!mounted) return;
-      showToast(
-          context, 'Could not send the report.', ToastVariant.error);
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
     return GestureDetector(
-      onTap: _openSheet,
+      onTap: () => ReportDialog.show(
+        context: context,
+        question: title,
+        options: const [],
+        questionId: chapterId,
+        subject: subjectName,
+        chapter: chapterName,
+        unit: unitName,
+        mode: 'theory',
+      ),
       child: Container(
-        width: 30,
-        height: 30,
+        width: 28,
+        height: 28,
         alignment: Alignment.center,
-        child: Icon(Icons.flag_outlined, size: 21, color: primary),
+        child: Icon(Icons.flag_rounded, size: 19, color: primary),
       ),
     );
   }

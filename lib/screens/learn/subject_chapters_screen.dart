@@ -4,7 +4,7 @@ import '../../services/auth_service.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
-import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/stagger_entrance.dart';
 
 /// Subject chapters — exact port of app/subjects/chapters/[subjectId].tsx.
@@ -224,8 +224,10 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                     future: _future,
                     builder: (context, snap) {
                       if (snap.connectionState == ConnectionState.waiting) {
-                        return const Center(
-                            child: CircularProgressIndicator());
+                        return const PreloadingWidget(
+                          tinted: false,
+                          label: 'Loading Chapters...',
+                        );
                       }
                       if (snap.hasError) {
                         return Center(
@@ -266,6 +268,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                             StaggerEntrance(
                               delayMs: 0,
                               child: ChapterSummaryCard(
+                                subjectId: widget.subjectId,
                                 subjectName: d.subjectName,
                                 chapters: d.chapters,
                               ),
@@ -319,7 +322,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         const Text('Chapter',
-            style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         Text('$avg% Progress',
             style: TextStyle(
                 fontSize: 11,
@@ -347,7 +350,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
           borderRadius: BorderRadius.circular(20),
           onTap: () => _onChapterTap(c, d),
           child: Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(
@@ -366,11 +369,11 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                 Row(
                   children: [
                     Container(
-                      width: 38,
-                      height: 38,
+                      width: 34,
+                      height: 34,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(13),
+                        borderRadius: BorderRadius.circular(12),
                         color: isLocked
                             ? const Color(0xFFFFF0DE)
                             : isPurchased
@@ -379,7 +382,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                       ),
                       child: Text(order,
                           style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: isLocked
                                   ? const Color(0xFFB45309)
@@ -387,20 +390,20 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                                       ? const Color(0xFF047857)
                                       : const Color(0xFF0C2D91))),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 9),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(_chapterName(c),
                               style: const TextStyle(
-                                  fontSize: 14,
+                                  fontSize: 13,
                                   fontWeight: FontWeight.bold),
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis),
                           Text(_chapterNameAlt(c),
                               style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   color: Theme.of(context)
                                       .colorScheme
                                       .onSurface
@@ -413,7 +416,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                     if (c['pro'] == true)
                       Container(
                         padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 5),
+                            horizontal: 6, vertical: 4),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(10),
                           color: isPurchased
@@ -427,7 +430,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                                 isPurchased
                                     ? Icons.check_circle
                                     : Icons.lock,
-                                size: 12,
+                                size: 11,
                                 color: isPurchased
                                     ? const Color(0xFF047857)
                                     : const Color(0xFFB45309)),
@@ -437,7 +440,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                                     ? 'Purchased (Active)'
                                     : 'Premium',
                                 style: TextStyle(
-                                    fontSize: 10,
+                                    fontSize: 9,
                                     fontWeight: FontWeight.bold,
                                     color: isPurchased
                                         ? const Color(0xFF047857)
@@ -447,31 +450,31 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                       ),
                   ],
                 ),
-                const SizedBox(height: 13),
+                const SizedBox(height: 12),
                 Row(
                   children: [
                     const _ModeTag(
                         label: 'P',
                         bg: Color(0xFFE7EEFF),
                         fg: Color(0xFF0C2D91)),
-                    const SizedBox(width: 9),
+                    const SizedBox(width: 8),
                     const _ModeTag(
                         label: 'R',
                         bg: Color(0xFFE7F7F0),
                         fg: Color(0xFF047857)),
-                    const SizedBox(width: 9),
+                    const SizedBox(width: 8),
                     const _ModeTag(
                         label: 'T',
                         bg: Color(0xFFFFF0DE),
                         fg: Color(0xFFB45309)),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text('$progress% Progress',
                               style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 10,
                                   color: Theme.of(context)
                                       .colorScheme
                                       .onSurface
@@ -507,7 +510,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                         isLocked
                             ? Icons.lock_outline
                             : Icons.chevron_right,
-                        size: 18,
+                        size: 16,
                         color: isLocked
                             ? const Color(0xFFB45309)
                             : Theme.of(context)
@@ -650,11 +653,13 @@ bool _done(Map<String, dynamic> c) =>
 /// inner [Stack] uses [Clip.none] so the bubbles are never cut with a hard
 /// straight edge inside the content padding (the old "D" sticker look).
 class ChapterSummaryCard extends StatelessWidget {
+  final String subjectId;
   final String subjectName;
   final List<Map<String, dynamic>> chapters;
 
   const ChapterSummaryCard({
     super.key,
+    required this.subjectId,
     required this.subjectName,
     required this.chapters,
   });
@@ -707,7 +712,7 @@ class ChapterSummaryCard extends StatelessWidget {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(18),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 children: [
                   Row(
@@ -721,7 +726,7 @@ class ChapterSummaryCard extends StatelessWidget {
                               subjectName,
                               style: const TextStyle(
                                 color: Colors.white,
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
@@ -774,13 +779,15 @@ class ChapterSummaryCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(19),
                       child: InkWell(
                         borderRadius: BorderRadius.circular(19),
-                        onTap: () => showToast(
-                            context,
-                            'This feature will be available in the next update.',
-                            ToastVariant.info),
+                        onTap: () => context.push(
+                            '/practice-analytics',
+                            extra: {
+                              'subjectSlug': subjectId,
+                              'subjectTitle': subjectName,
+                            }),
                         child: Container(
                           constraints:
-                              const BoxConstraints(minHeight: 38),
+                              const BoxConstraints(minHeight: 36),
                           padding: const EdgeInsets.symmetric(
                               horizontal: 13),
                           alignment: Alignment.center,
@@ -788,12 +795,12 @@ class ChapterSummaryCard extends StatelessWidget {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.analytics,
-                                  size: 17,
+                                  size: 15,
                                   color: Color(0xFF0C2D91)),
                               SizedBox(width: 6),
                               Text('View Practice Analytics',
                                   style: TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 11,
                                       fontWeight: FontWeight.bold,
                                       color: Color(0xFF0C2D91))),
                             ],
@@ -860,8 +867,8 @@ class _ModeTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 25,
-      height: 25,
+      width: 23,
+      height: 23,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
@@ -869,7 +876,7 @@ class _ModeTag extends StatelessWidget {
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.bold, color: fg)),
+              fontSize: 10, fontWeight: FontWeight.bold, color: fg)),
     );
   }
 }
@@ -1005,15 +1012,15 @@ class _ProgressRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 78,
-      height: 78,
+      width: 70,
+      height: 70,
       child: CustomPaint(
         painter: _RingPainter(progress / 100, const Color(0xFFFFD2A6)),
         child: Center(
           child: Text('$progress%',
               style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.bold)),
         ),
       ),
@@ -1030,13 +1037,13 @@ class _RingPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
+      ..strokeWidth = 7
       ..strokeCap = StrokeCap.round
       ..color = Colors.white.withValues(alpha: 0.2);
-    canvas.drawCircle(size.center(Offset.zero), 35, paint);
+    canvas.drawCircle(size.center(Offset.zero), 31, paint);
     paint.color = color;
     canvas.drawArc(
-        Rect.fromCircle(center: size.center(Offset.zero), radius: 35),
+        Rect.fromCircle(center: size.center(Offset.zero), radius: 31),
         -3.14159265 / 2,
         2 * 3.14159265 * value.clamp(0.0, 1.0),
         false,
@@ -1065,19 +1072,19 @@ class _SummaryStat extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 28,
-          height: 28,
+          width: 26,
+          height: 26,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(13),
             color: accent,
           ),
-          child: Icon(icon, size: 15, color: const Color(0xFF0C2D91)),
+          child: Icon(icon, size: 14, color: const Color(0xFF0C2D91)),
         ),
         const SizedBox(height: 4),
         Text('$value',
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 17,
+                fontSize: 15,
                 fontWeight: FontWeight.bold)),
         Text(label,
             style: TextStyle(

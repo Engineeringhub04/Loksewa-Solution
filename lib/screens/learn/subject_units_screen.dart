@@ -6,7 +6,6 @@ import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
-import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 
 /// Subject units — exact port of app/subjects/units/[subjectId].tsx.
@@ -516,7 +515,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                           d.subjectName,
                           style: const TextStyle(
                             color: Colors.white,
-                            fontSize: 20,
+                            fontSize: 18,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
@@ -569,22 +568,35 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                   borderRadius: BorderRadius.circular(14),
                   child: InkWell(
                     borderRadius: BorderRadius.circular(14),
-                    onTap: () => showToast(
-                        context,
-                        'This feature will be available in the next update.',
-                        ToastVariant.info),
+                    onTap: () {
+                      final extra = <String, String>{
+                        'subjectSlug': widget.subjectId,
+                        'subjectTitle': d.subjectName,
+                      };
+                      // When a unit track is selected, scope analytics to it.
+                      if (_selectedTrack != 'all') {
+                        final match = d.tracks
+                            .where((t) => t.id == _selectedTrack);
+                        if (match.isNotEmpty &&
+                            match.first.unit != null) {
+                          extra['unitId'] = match.first.id;
+                          extra['unitTitle'] = match.first.label;
+                        }
+                      }
+                      context.push('/practice-analytics', extra: extra);
+                    },
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 13, vertical: 9),
+                          horizontal: 12, vertical: 8),
                       child: const Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(Icons.analytics,
-                              size: 17, color: Color(0xFF0C2D91)),
+                              size: 15, color: Color(0xFF0C2D91)),
                           SizedBox(width: 8),
                           Text('View Practice Analytics',
                               style: TextStyle(
-                                  fontSize: 12,
+                                  fontSize: 11,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF0C2D91))),
                         ],
@@ -648,7 +660,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
           onTap: () => _selectTrack(id),
           child: Container(
             constraints:
-                const BoxConstraints(minHeight: 40, maxWidth: 180),
+                const BoxConstraints(minHeight: 36, maxWidth: 180),
             padding: const EdgeInsets.symmetric(horizontal: 13),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
@@ -663,7 +675,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                 Flexible(
                   child: Text(label,
                       style: TextStyle(
-                          fontSize: 11,
+                          fontSize: 10,
                           fontWeight: FontWeight.bold,
                           color: active
                               ? Colors.white
@@ -674,7 +686,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                 const SizedBox(width: 7),
                 Text('$count',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: FontWeight.bold,
                         color: active
                             ? const Color(0xFFFFD2A6)
@@ -706,7 +718,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         Expanded(
           child: Text(title,
               style: const TextStyle(
-                  fontSize: 17, fontWeight: FontWeight.bold),
+                  fontSize: 16, fontWeight: FontWeight.bold),
               maxLines: 2,
               overflow: TextOverflow.ellipsis),
         ),
@@ -793,17 +805,17 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                 child: InkWell(
                   onTap: () => _toggleUnit(t.id),
                   child: Container(
-                    constraints: const BoxConstraints(minHeight: 76),
+                    constraints: const BoxConstraints(minHeight: 68),
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 11),
+                        horizontal: 11, vertical: 10),
                     child: Row(
                       children: [
                         Container(
-                          width: 46,
-                          height: 46,
+                          width: 41,
+                          height: 41,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(13),
                             gradient: LinearGradient(
                               colors: [
                                 palette.primary,
@@ -822,23 +834,23 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                             ],
                           ),
                           child: Icon(_unitIconFor(t.label),
-                              size: 20, color: Colors.white),
+                              size: 18, color: Colors.white),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 9),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(t.label,
                                   style: const TextStyle(
-                                      fontSize: 13,
+                                      fontSize: 12,
                                       fontWeight: FontWeight.bold),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis),
-                              const SizedBox(height: 4),
+                              const SizedBox(height: 3),
                               Text('$total chapters · $avg% avg',
                                   style: TextStyle(
-                                      fontSize: 10,
+                                      fontSize: 9,
                                       color: Theme.of(context)
                                           .colorScheme
                                           .onSurface
@@ -849,7 +861,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                         if (t.unit?['pro'] == true)
                           Container(
                             padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 5),
+                                horizontal: 7, vertical: 4),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(10),
                               color: isUnitPurchased
@@ -867,7 +879,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                                     isUnitPurchased
                                         ? Icons.check_circle
                                         : Icons.lock,
-                                    size: 12,
+                                    size: 11,
                                     color: isUnitPurchased
                                         ? palette.success
                                         : palette.warning),
@@ -877,7 +889,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                                         ? 'Purchased (Active)'
                                         : 'Premium',
                                     style: TextStyle(
-                                        fontSize: 10,
+                                        fontSize: 9,
                                         fontWeight: FontWeight.bold,
                                         color: isUnitPurchased
                                             ? palette.success
@@ -890,7 +902,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                             turns: isExpanded ? 0.5 : 0.0,
                             duration: const Duration(milliseconds: 200),
                             child: Icon(Icons.keyboard_arrow_down,
-                                size: 20,
+                                size: 18,
                                 color: Theme.of(context)
                                     .colorScheme
                                     .onSurface
@@ -967,7 +979,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         borderRadius: BorderRadius.circular(20),
         onTap: () => _onChapterTap(c, d),
         child: Container(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(11),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(20),
             border: Border.all(
@@ -985,11 +997,11 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
               Row(
                 children: [
                   Container(
-                    width: 38,
-                    height: 38,
+                    width: 34,
+                    height: 34,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(11),
                       color: isLocked
                           ? softWarning
                           : isPurchased
@@ -998,7 +1010,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                     ),
                     child: Text(order,
                         style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: isLocked
                                 ? palette.warning
@@ -1006,19 +1018,19 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                                     ? palette.success
                                     : palette.primary)),
                   ),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(_chapterTitle(c),
                             style: const TextStyle(
-                                fontSize: 13, fontWeight: FontWeight.bold),
+                                fontSize: 12, fontWeight: FontWeight.bold),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis),
                         Text(_chapterAlt(c),
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 10,
                                 color: Theme.of(context)
                                     .colorScheme
                                     .onSurface
@@ -1031,7 +1043,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                   if (c['pro'] == true)
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 5),
+                          horizontal: 7, vertical: 4),
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(10),
                         color: isPurchased ? softSuccess : softWarning,
@@ -1043,7 +1055,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                               isPurchased
                                   ? Icons.check_circle
                                   : Icons.lock,
-                              size: 12,
+                              size: 11,
                               color: isPurchased
                                   ? palette.success
                                   : palette.warning),
@@ -1051,7 +1063,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                           Text(
                               isPurchased ? 'Purchased (Active)' : 'Premium',
                               style: TextStyle(
-                                  fontSize: 10,
+                                  fontSize: 9,
                                   fontWeight: FontWeight.bold,
                                   color: isPurchased
                                       ? palette.success
@@ -1061,25 +1073,25 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                     ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   _ModeTag(
                       label: 'P', bg: softPrimary, fg: palette.primary),
-                  const SizedBox(width: 5),
+                  const SizedBox(width: 4),
                   _ModeTag(
                       label: 'R', bg: softSuccess, fg: palette.success),
-                  const SizedBox(width: 5),
+                  const SizedBox(width: 4),
                   _ModeTag(
                       label: 'T', bg: softWarning, fg: palette.warning),
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text('$progress% Progress',
                             style: TextStyle(
-                                fontSize: 11,
+                                fontSize: 10,
                                 color: Theme.of(context)
                                     .colorScheme
                                     .onSurface
@@ -1111,7 +1123,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                   ),
                   const SizedBox(width: 8),
                   Icon(isLocked ? Icons.lock_outline : Icons.chevron_right,
-                      size: 18,
+                      size: 16,
                       color: isLocked
                           ? palette.warning
                           : Theme.of(context)
@@ -1394,15 +1406,15 @@ class _ProgressRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 78,
-      height: 78,
+      width: 70,
+      height: 70,
       child: CustomPaint(
         painter: _RingPainter(progress / 100, const Color(0xFFFFD2A6)),
         child: Center(
           child: Text('$progress%',
               style: const TextStyle(
                   color: Colors.white,
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.bold)),
         ),
       ),
@@ -1419,13 +1431,13 @@ class _RingPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 8
+      ..strokeWidth = 7
       ..strokeCap = StrokeCap.round
       ..color = Colors.white.withValues(alpha: 0.2);
-    canvas.drawCircle(size.center(Offset.zero), 35, paint);
+    canvas.drawCircle(size.center(Offset.zero), 31, paint);
     paint.color = color;
     canvas.drawArc(
-        Rect.fromCircle(center: size.center(Offset.zero), radius: 35),
+        Rect.fromCircle(center: size.center(Offset.zero), radius: 31),
         -3.14159265 / 2,
         2 * 3.14159265 * value.clamp(0.0, 1.0),
         false,
@@ -1454,19 +1466,19 @@ class _SummaryStat extends StatelessWidget {
     return Column(
       children: [
         Container(
-          width: 30,
-          height: 30,
+          width: 27,
+          height: 27,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(15),
+            borderRadius: BorderRadius.circular(14),
             color: accent,
           ),
-          child: Icon(icon, size: 15, color: const Color(0xFF0C2D91)),
+          child: Icon(icon, size: 14, color: const Color(0xFF0C2D91)),
         ),
         const SizedBox(height: 4),
         Text('$value',
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 17,
+                fontSize: 15,
                 fontWeight: FontWeight.bold)),
         Text(label,
             style: TextStyle(
@@ -1488,16 +1500,16 @@ class _ModeTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 25,
-      height: 25,
+      width: 23,
+      height: 23,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
         color: bg,
       ),
       child: Text(label,
           style: TextStyle(
-              fontSize: 11, fontWeight: FontWeight.bold, color: fg)),
+              fontSize: 10, fontWeight: FontWeight.bold, color: fg)),
     );
   }
 }

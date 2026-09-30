@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
@@ -6,6 +8,7 @@ import '../../services/firestore_rest.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/report_dialog.dart';
 import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -179,7 +182,8 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                   : _loadError
                       ? _dataNotFound(
                           title: 'Something went wrong',
-                          description: 'Retry',
+                          description:
+                              'Please check your connection and try again.',
                           onRetry: _load,
                         )
                       : _questions.isEmpty
@@ -206,18 +210,18 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
     final palette = ExpoPalette.of(context);
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(32),
+        padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.cloud_off_outlined,
-                size: 64, color: palette.textDisabled),
-            const SizedBox(height: 8),
+                size: 56, color: palette.textDisabled),
+            const SizedBox(height: 6),
             Text(
               title,
               textAlign: TextAlign.center,
               style: TextStyle(
-                  fontSize: 16,
+                  fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: palette.textPrimary),
             ),
@@ -226,7 +230,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
               description,
               textAlign: TextAlign.center,
               style: TextStyle(
-                  fontSize: 13, color: palette.textSecondary, height: 20 / 13),
+                  fontSize: 12, color: palette.textSecondary, height: 19 / 12),
             ),
             if (onRetry != null) ...[
               const SizedBox(height: 12),
@@ -243,11 +247,11 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.refresh, size: 15, color: Colors.white),
+                      Icon(Icons.refresh, size: 14, color: Colors.white),
                       SizedBox(width: 6),
                       Text('Try Again',
                           style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
                               fontWeight: FontWeight.bold,
                               color: Colors.white)),
                     ],
@@ -273,7 +277,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
         StaggerEntrance(
           delayMs: 0,
           child: Container(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: palette.surface,
               border: Border.all(color: palette.border),
@@ -290,16 +294,16 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 38,
+                  height: 38,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(10),
                     color: palette.primary.withValues(alpha: 0.08),
                   ),
-                  child: Icon(Icons.bookmark,
-                      size: 22, color: palette.primary),
+                  child: Icon(Icons.bookmark_rounded,
+                      size: 19, color: palette.primary),
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -308,9 +312,9 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                       Text(
                         'Important Questions',
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
-                          height: 23 / 16,
+                          height: 21 / 14,
                           color: palette.textPrimary,
                         ),
                       ),
@@ -321,9 +325,9 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 9,
                           color: palette.textSecondary,
-                          height: 17 / 10,
+                          height: 16 / 9,
                         ),
                       ),
                     ],
@@ -342,7 +346,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                           allExpanded
                               ? Icons.keyboard_arrow_up_outlined
                               : Icons.keyboard_arrow_down_outlined,
-                          size: 19,
+                          size: 17,
                           color: palette.primary,
                         ),
                         const SizedBox(width: 4),
@@ -351,10 +355,10 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                             allExpanded ? 'Collapse All' : 'Expand All',
                             textAlign: TextAlign.right,
                             style: const TextStyle(
-                              fontSize: 12,
+                              fontSize: 11,
                               fontWeight: FontWeight.bold,
                               color: Color(0xFF2559C7),
-                              height: 17 / 12,
+                              height: 16 / 11,
                             ),
                           ),
                         ),
@@ -396,7 +400,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
         : q.difficulty[0].toUpperCase() + q.difficulty.substring(1);
     final title = bilingual(q.text, q.textNe);
     return Container(
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.all(13),
       decoration: BoxDecoration(
         color: palette.surface,
         border: Border.all(color: palette.border),
@@ -417,7 +421,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 11, vertical: 8),
+                    horizontal: 10, vertical: 7),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
                   color: palette.primary.withValues(alpha: 0.08),
@@ -425,15 +429,15 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                 child: Text(
                   'Qn. ${index + 1}',
                   style: TextStyle(
-                      fontSize: 11,
+                      fontSize: 10,
                       fontWeight: FontWeight.bold,
                       color: palette.primary),
                 ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               Container(
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
+                    horizontal: 9, vertical: 7),
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
                   color: difficultyColor.withValues(alpha: 0.09),
@@ -441,7 +445,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                 child: Text(
                   difficultyLabel,
                   style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 9,
                       fontWeight: FontWeight.bold,
                       color: difficultyColor),
                 ),
@@ -458,21 +462,29 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                 question: q,
               ),
               _smallActionButton(
-                icon: Icons.flag_outlined,
+                icon: Icons.flag_rounded,
                 tooltip: 'Report',
                 palette: palette,
-                onTap: () =>
-                    context.push('/settings/report-problem'),
+                onTap: () => ReportDialog.show(
+                  context: context,
+                  question: bilingual(q.text, q.textNe),
+                  options: q.options,
+                  questionId: q.id,
+                  subject: widget.subjectName,
+                  chapter: widget.chapterName,
+                  unit: widget.unitName,
+                  mode: 'read',
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
             title,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 14,
               fontWeight: FontWeight.w600,
-              height: 24 / 16,
+              height: 22 / 14,
               color: palette.textPrimary,
             ),
           ),
@@ -486,24 +498,24 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                     isOpen
                         ? Icons.arrow_circle_up_outlined
                         : Icons.arrow_circle_down_outlined,
-                    size: 24,
+                    size: 21,
                     color: palette.primary,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 6),
                   Text(
                     isOpen ? 'Collapse answer' : 'Tap to show answer',
                     style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: FontWeight.w600,
                         color: palette.primary,
-                        height: 16 / 11),
+                        height: 15 / 10),
                   ),
                 ],
               ),
             ),
           ),
           if (isOpen) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             ...q.options.asMap().entries.map((opt) {
               final correct = opt.key == q.correctIndex;
               final border = correct
@@ -512,9 +524,9 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
               return Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Container(
-                  constraints: const BoxConstraints(minHeight: 53),
+                  constraints: const BoxConstraints(minHeight: 48),
                   padding: const EdgeInsets.symmetric(
-                      horizontal: 11, vertical: 9),
+                      horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
                     border: Border.all(color: border),
                     borderRadius: BorderRadius.circular(ExpoRadius.md),
@@ -526,8 +538,8 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Container(
-                        width: 29,
-                        height: 29,
+                        width: 26,
+                        height: 26,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
@@ -540,7 +552,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                         child: Text(
                           String.fromCharCode(65 + opt.key),
                           style: TextStyle(
-                            fontSize: 10,
+                            fontSize: 9,
                             fontWeight: FontWeight.bold,
                             color: correct
                                 ? Colors.white
@@ -548,27 +560,27 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           opt.value,
                           style: TextStyle(
-                              fontSize: 13,
-                              height: 19 / 13,
+                              fontSize: 12,
+                              height: 18 / 12,
                               color: palette.textPrimary),
                         ),
                       ),
                       if (correct)
                         Icon(Icons.check_circle,
-                            size: 20, color: palette.success),
+                            size: 18, color: palette.success),
                     ],
                   ),
                 ),
               );
             }),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Container(
-              padding: const EdgeInsets.all(13),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 border: Border.all(
                     color: palette.warning.withValues(alpha: 0.33)),
@@ -582,24 +594,24 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
                   Row(
                     children: [
                       Icon(Icons.lightbulb_outline,
-                          size: 22, color: palette.warning),
-                      const SizedBox(width: 8),
+                          size: 19, color: palette.warning),
+                      const SizedBox(width: 6),
                       Text(
                         'Explanation',
                         style: TextStyle(
-                            fontSize: 15,
+                            fontSize: 13,
                             fontWeight: FontWeight.bold,
-                            height: 22 / 15,
+                            height: 20 / 13,
                             color: palette.warning),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   Text(
                     bilingual(q.explanation, q.explanationNe),
                     style: TextStyle(
-                        fontSize: 13,
-                        height: 20 / 13,
+                        fontSize: 12,
+                        height: 19 / 12,
                         color: palette.textPrimary),
                   ),
                 ],
@@ -626,7 +638,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
         borderRadius: BorderRadius.circular(15),
         child: Tooltip(
           message: tooltip,
-          child: Icon(icon, size: 20, color: palette.textSecondary),
+          child: Icon(icon, size: 18, color: palette.textSecondary),
         ),
       ),
     );
@@ -663,10 +675,15 @@ class _ReadBookmarkButton extends StatefulWidget {
   State<_ReadBookmarkButton> createState() => _ReadBookmarkButtonState();
 }
 
+/// Thrown by [_ReadBookmarkButtonState._save] when the free-tier bookmark
+/// cap is reached, so the tap handler can show the slot-full warning.
+class _BookmarkLimitException implements Exception {}
+
 class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
   static const _freeLimit = 15;
   bool _saved = false;
   bool _busy = false;
+  bool _spinning = false;
 
   /// Mirrors React's bookmarkDocId(): `read__<safeSegment(refId)>`.
   String get _docId {
@@ -695,68 +712,110 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
     } catch (_) {}
   }
 
+  /// Save tap UX (mirrors the practice screen): the icon flips to bookmarked
+  /// immediately, a spinner sits on the icon for 2 seconds, then the success
+  /// toast appears. The real Firestore write runs fire-and-forget; a later
+  /// failure reverts the icon and shows an error toast.
   Future<void> _toggle() async {
     if (_busy || widget.uid.isEmpty) return;
+    if (_saved) {
+      await _remove();
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _spinning = true;
+      _saved = true; // optimistic
+    });
+    var settled = false;
+    unawaited(_save().then((_) {
+      // Success: nothing extra — the timer below ends the spinner.
+    }).catchError((Object e) {
+      if (!mounted) return;
+      settled = true;
+      setState(() {
+        _saved = false; // revert icon on failure
+        _busy = false;
+        _spinning = false;
+      });
+      showToast(
+        context,
+        e is _BookmarkLimitException
+            ? 'Bookmark slots are full'
+            : 'Could not update the bookmark. Please try again.',
+        e is _BookmarkLimitException
+            ? ToastVariant.warning
+            : ToastVariant.error,
+      );
+    }));
+    await Future.delayed(const Duration(seconds: 2));
+    if (!mounted || settled) return;
+    setState(() {
+      _busy = false;
+      _spinning = false;
+    });
+    if (_saved) {
+      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+    }
+  }
+
+  /// Fire-and-forget Firestore write for the optimistic save above.
+  /// Same doc-id scheme and payload as before — UX layer only.
+  Future<void> _save() async {
+    final idToken = await AuthService.getValidIdToken();
+    final path = 'users/${widget.uid}/bookmarks/$_docId';
+    final rows = await FirestoreRest.listDocuments(
+        'users/${widget.uid}/bookmarks',
+        idToken: idToken);
+    if (rows.length >= _freeLimit && !widget.isPro) {
+      throw _BookmarkLimitException();
+    }
+    final q = widget.question;
+    final questionTitle = bilingual(q.text, q.textNe);
+    final explanationText = bilingual(q.explanation, q.explanationNe);
+    final chapterName =
+        (widget.chapterName ?? '').isNotEmpty ? widget.chapterName! : 'Chapter';
+    await FirestoreRest.setDocument(
+      path,
+      {
+        'context': 'read',
+        'kind': 'question',
+        'type': 'question',
+        'refId': '${widget.chapterId}:${q.id}',
+        'title': questionTitle,
+        'preview': explanationText,
+        'sourceLabel':
+            '${(widget.subjectName ?? '').isNotEmpty ? widget.subjectName : 'Read Mode'} · $chapterName',
+        'courseId': widget.courseId,
+        'subcourseId': widget.subcourseId,
+        'payload': {
+          'question': questionTitle,
+          'options': q.options,
+          'answerIndex': q.correctIndex,
+          'explanation': explanationText,
+          'meta': [
+            {'label': 'Read Mode', 'value': chapterName},
+          ],
+        },
+        'createdAt': DateTime.now().toUtc().toIso8601String(),
+      },
+      idToken: idToken,
+    );
+  }
+
+  Future<void> _remove() async {
     setState(() => _busy = true);
     try {
       final idToken = await AuthService.getValidIdToken();
-      final path = 'users/${widget.uid}/bookmarks/$_docId';
-      if (_saved) {
-        await FirestoreRest.deleteDocument(path, idToken: idToken);
-        if (!mounted) return;
-        setState(() {
-          _saved = false;
-          _busy = false;
-        });
-        showToast(context, 'Bookmark removed.', ToastVariant.info);
-        return;
-      }
-      final rows = await FirestoreRest.listDocuments(
-          'users/${widget.uid}/bookmarks',
+      await FirestoreRest.deleteDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
           idToken: idToken);
-      if (rows.length >= _freeLimit && !widget.isPro) {
-        if (!mounted) return;
-        setState(() => _busy = false);
-        showToast(context, 'Bookmark slots are full', ToastVariant.warning);
-        return;
-      }
-      final q = widget.question;
-      final questionTitle = bilingual(q.text, q.textNe);
-      final explanationText = bilingual(q.explanation, q.explanationNe);
-      final chapterName =
-          (widget.chapterName ?? '').isNotEmpty ? widget.chapterName! : 'Chapter';
-      await FirestoreRest.setDocument(
-        path,
-        {
-          'context': 'read',
-          'kind': 'question',
-          'type': 'question',
-          'refId': '${widget.chapterId}:${q.id}',
-          'title': questionTitle,
-          'preview': explanationText,
-          'sourceLabel':
-              '${(widget.subjectName ?? '').isNotEmpty ? widget.subjectName : 'Read Mode'} · $chapterName',
-          'courseId': widget.courseId,
-          'subcourseId': widget.subcourseId,
-          'payload': {
-            'question': questionTitle,
-            'options': q.options,
-            'answerIndex': q.correctIndex,
-            'explanation': explanationText,
-            'meta': [
-              {'label': 'Read Mode', 'value': chapterName},
-            ],
-          },
-          'createdAt': DateTime.now().toUtc().toIso8601String(),
-        },
-        idToken: idToken,
-      );
       if (!mounted) return;
       setState(() {
-        _saved = true;
+        _saved = false;
         _busy = false;
       });
-      showToast(context, 'Saved to bookmarks.', ToastVariant.success);
+      showToast(context, 'Bookmark removed.', ToastVariant.info);
     } catch (_) {
       if (!mounted) return;
       setState(() => _busy = false);
@@ -770,6 +829,7 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
+    final showSpinner = _spinning || (_busy && _saved);
     return SizedBox(
       width: 30,
       height: 30,
@@ -778,12 +838,24 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
         borderRadius: BorderRadius.circular(15),
         child: Tooltip(
           message: _saved ? 'Remove bookmark' : 'Bookmark',
-          child: Icon(
-            _saved ? Icons.bookmark : Icons.bookmark_border,
-            size: 20,
-            color:
-                _saved ? palette.primary : palette.textSecondary,
-          ),
+          child: showSpinner
+              ? Center(
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: palette.primary),
+                  ),
+                )
+              : Icon(
+                  _saved
+                      ? Icons.bookmark_rounded
+                      : Icons.bookmark_outline_rounded,
+                  size: 18,
+                  color: _saved
+                      ? palette.primary
+                      : palette.textSecondary,
+                ),
         ),
       ),
     );

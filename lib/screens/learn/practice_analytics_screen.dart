@@ -35,6 +35,12 @@ class PracticeAnalyticsScreen extends StatefulWidget {
     this.chapterTitle,
   });
 
+  /// Test hook for the unit-filter contract (see
+  /// `_PracticeAnalyticsScreenState._unitMatches`).
+  @visibleForTesting
+  static bool debugUnitMatches(String? storedUnitId, String? wantUnitId) =>
+      _PracticeAnalyticsScreenState._unitMatches(storedUnitId, wantUnitId);
+
   @override
   State<PracticeAnalyticsScreen> createState() =>
       _PracticeAnalyticsScreenState();
@@ -72,6 +78,16 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     return _canon(parts.isNotEmpty ? parts.last : s);
   }
 
+  /// Unit filter contract: the practice save stores `unitId` canonicalized
+  /// (`_canonicalLearningId` in exam_service.dart), while the units screen
+  /// passes the raw track id — canonicalize both sides before comparing,
+  /// like the subject/chapter filters do. Comparing raw strings here used
+  /// to filter out every doc and show "No practice data yet".
+  static bool _unitMatches(String? storedUnitId, String? wantUnitId) {
+    if (wantUnitId == null || wantUnitId.isEmpty) return true;
+    return _logical(storedUnitId ?? '') == _logical(wantUnitId);
+  }
+
   bool _matches(Map<String, dynamic> d) {
     final id = '${d['id'] ?? ''}';
     final parts = id.split('__');
@@ -87,9 +103,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
         return false;
       }
     }
-    if (widget.unitId != null && widget.unitId!.isNotEmpty) {
-      if ('${d['unitId'] ?? ''}' != widget.unitId) return false;
-    }
+    if (!_unitMatches(d['unitId'] as String?, widget.unitId)) return false;
     if (widget.chapterSlug != null && widget.chapterSlug!.isNotEmpty) {
       final want = _logical(widget.chapterSlug!);
       if (_canon(idChapter) != want &&
@@ -205,6 +219,24 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
       }
       addChapters(results[0]);
       if (results.length > 2) addChapters(results[2]);
+      // "All" view of a unit-structured subject: rows can belong to ANY
+      // unit, but fetchSubjectChapters only returns direct (unit-less)
+      // chapters and fetchUnitChapters above only ran for a selected unit.
+      // Resolve names from every unit's chapters so cards show real titles
+      // instead of raw ids like `surveying-1-2`. The per-unit fetches are
+      // the same 3-min cached calls the units screen fans out — concurrent,
+      // not a waterfall.
+      if (!hasUnit) {
+        final units = results[1];
+        if (units.isNotEmpty) {
+          final perUnit = await Future.wait(units.map((u) =>
+              safe(() => fetchUnitChapters(
+                  course, subcourse, subject, '${u['id']}'))));
+          for (final list in perUnit) {
+            addChapters(list);
+          }
+        }
+      }
       final unitNames = <String, String>{};
       for (final u in results[1]) {
         final key = canonicalCatalogSlug('${u['id']}');

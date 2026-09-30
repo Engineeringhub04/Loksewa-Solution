@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
@@ -185,22 +186,32 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      body: AuthScreenLayout(
-        title: 'Set New Password',
-        subtitle: 'Choose a strong new password for your account',
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: child,
+    // Transparent status bar with dark icons so the light background flows
+    // under the clock — same edge-to-edge treatment as home pages; kills
+    // the dark band that used to sit above this screen.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        body: AuthScreenLayout(
+          title: 'Set New Password',
+          subtitle: 'Choose a strong new password for your account',
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: child,
+            ),
+            child: switch (_status) {
+              _CodeStatus.checking => _checking(),
+              _CodeStatus.invalid => _invalid(),
+              _CodeStatus.valid => _form(),
+            },
           ),
-          child: switch (_status) {
-            _CodeStatus.checking => _checking(),
-            _CodeStatus.invalid => _invalid(),
-            _CodeStatus.valid => _form(),
-          },
         ),
       ),
     );

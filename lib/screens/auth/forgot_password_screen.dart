@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
@@ -76,9 +77,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             child: const Text(
               'Back to Login',
               style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: _purple),
+                  fontSize: 15, fontWeight: FontWeight.w600, color: _purple),
             ),
           ),
         ),
@@ -98,8 +97,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             color: const Color(0xFFF3E8FF),
             borderRadius: BorderRadius.circular(40),
           ),
-          child: const Icon(Icons.mail_outline,
-              size: 44, color: _purple),
+          child: const Icon(Icons.mail_outline, size: 44, color: _purple),
         ),
         const SizedBox(height: 16),
         const Text(
@@ -130,25 +128,35 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      body: AuthScreenLayout(
-        title: 'Reset Password',
-        subtitle: "Enter your email and we'll send you a secure reset link",
-        onBack: () => context.pop(),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 300),
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 0.08),
-                end: Offset.zero,
-              ).animate(animation),
-              child: child,
+    // Transparent status bar with dark icons so the light background flows
+    // under the clock — same edge-to-edge treatment as home pages; kills
+    // the dark band that used to sit above this screen.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        body: AuthScreenLayout(
+          title: 'Reset Password',
+          subtitle: "Enter your email and we'll send you a secure reset link",
+          onBack: () => context.pop(),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.08),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
             ),
+            child: _sent ? _buildSent() : _buildForm(),
           ),
-          child: _sent ? _buildSent() : _buildForm(),
         ),
       ),
     );

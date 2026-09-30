@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../services/app_config.dart';
@@ -48,12 +49,11 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void initState() {
     super.initState();
-    _shakeController =
-        AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    _termsShakeController =
-        AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    _googleSignIn =
-        GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
+    _shakeController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
+    _termsShakeController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
+    _googleSignIn = GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
     // Eviction notice: claimed on mount, shown after the transition settles
     // (480ms) so it lands on a finished screen, not over the entry animation.
     DeviceSession.consumeEvictionNotice().then((notice) {
@@ -253,7 +253,8 @@ class _LoginScreenState extends State<LoginScreen>
       children: [
         _googleButton(),
         const AuthDivider(),
-        AuthEmailButton(onPressed: () => setState(() => _showEmailFields = true)),
+        AuthEmailButton(
+            onPressed: () => setState(() => _showEmailFields = true)),
         _termsRow(),
         _bottomLink(),
       ],
@@ -348,27 +349,35 @@ class _LoginScreenState extends State<LoginScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      body: Stack(
-        children: [
-          AuthScreenLayout(
-            title: 'Welcome Back',
-            subtitle:
-                'Sign in to continue your Loksewa preparation journey',
-            child: Shake(
-              controller: _shakeController,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                transitionBuilder: (child, animation) =>
-                    FadeTransition(opacity: animation, child: child),
-                child:
-                    _showEmailFields ? _expanded() : _collapsed(),
+    // Transparent status bar with dark icons so the light background flows
+    // under the clock — same edge-to-edge treatment as home pages; kills
+    // the dark band that used to sit above the login screen.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        body: Stack(
+          children: [
+            AuthScreenLayout(
+              title: 'Welcome Back',
+              subtitle: 'Sign in to continue your Loksewa preparation journey',
+              child: Shake(
+                controller: _shakeController,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: _showEmailFields ? _expanded() : _collapsed(),
+                ),
               ),
             ),
-          ),
-          if (_googleLoading) const GoogleLoadingOverlay(),
-        ],
+            if (_googleLoading) const GoogleLoadingOverlay(),
+          ],
+        ),
       ),
     );
   }

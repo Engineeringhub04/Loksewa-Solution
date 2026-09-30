@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_rest.dart';
@@ -136,8 +137,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             title: d['title'] as String? ?? '',
             description: d['description'] as String? ?? '',
             assetPath: isLocal ? _localImageMap[imageLink] : null,
-            imageUrl:
-                isLocal ? null : (imageLink.isEmpty ? null : imageLink),
+            imageUrl: isLocal ? null : (imageLink.isEmpty ? null : imageLink),
           );
         }).toList();
         if (mounted) setState(() => _slides = slides);
@@ -184,145 +184,155 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     final btnR = 28 + (16 - 28) * morphT;
     final showText = morphT > 0.4;
 
-    return Scaffold(
-      backgroundColor: _cream,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Top bar: back chevron (from slide 2) + Skip (slides 1-3).
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
-              child: Row(
-                children: [
-                  Opacity(
-                    opacity: _page.clamp(0.0, 1.0),
-                    child: IconButton(
-                      onPressed: _page > 0.5 ? () => _goTo(_index - 1) : null,
-                      icon: const Icon(Icons.chevron_left,
-                          size: 28, color: _ink),
-                    ),
-                  ),
-                  const Spacer(),
-                  Opacity(
-                    opacity: 1 - morphT,
-                    child: TextButton(
-                      onPressed: morphT < 0.5 ? () => _goTo(3) : null,
-                      child: const Text(
-                        'Skip',
-                        style: TextStyle(
-                            color: _ink,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500),
+    // Transparent status bar with dark icons so the cream background flows
+    // under the clock — same edge-to-edge treatment as home pages; kills
+    // the dark band that used to sit above onboarding.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: _cream,
+        body: SafeArea(
+          child: Column(
+            children: [
+              // Top bar: back chevron (from slide 2) + Skip (slides 1-3).
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+                child: Row(
+                  children: [
+                    Opacity(
+                      opacity: _page.clamp(0.0, 1.0),
+                      child: IconButton(
+                        onPressed: _page > 0.5 ? () => _goTo(_index - 1) : null,
+                        icon: const Icon(Icons.chevron_left,
+                            size: 28, color: _ink),
                       ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            // Slides.
-            Expanded(
-              child: PageView.builder(
-                controller: _controller,
-                itemCount: _slides.length,
-                onPageChanged: (i) => setState(() => _index = i),
-                itemBuilder: (context, i) => _SlideView(
-                      slide: _slides[i],
-                      controller: _controller,
-                      index: i,
+                    const Spacer(),
+                    Opacity(
+                      opacity: 1 - morphT,
+                      child: TextButton(
+                        onPressed: morphT < 0.5 ? () => _goTo(3) : null,
+                        child: const Text(
+                          'Skip',
+                          style: TextStyle(
+                              color: _ink,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500),
+                        ),
+                      ),
                     ),
+                  ],
+                ),
               ),
-            ),
-            // Dots (fade out while morphing into the CTA).
-            Opacity(
-              opacity: 1 - morphT,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: List.generate(
-                  _slides.length,
-                  (i) => AnimatedContainer(
-                    duration: const Duration(milliseconds: 200),
-                    margin: const EdgeInsets.symmetric(horizontal: 4),
-                    width: i == _index ? 20 : 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(4),
-                      color: i == _index ? _ink : _dotIdle,
+              // Slides.
+              Expanded(
+                child: PageView.builder(
+                  controller: _controller,
+                  itemCount: _slides.length,
+                  onPageChanged: (i) => setState(() => _index = i),
+                  itemBuilder: (context, i) => _SlideView(
+                    slide: _slides[i],
+                    controller: _controller,
+                    index: i,
+                  ),
+                ),
+              ),
+              // Dots (fade out while morphing into the CTA).
+              Opacity(
+                opacity: 1 - morphT,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List.generate(
+                    _slides.length,
+                    (i) => AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      width: i == _index ? 20 : 8,
+                      height: 8,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(4),
+                        color: i == _index ? _ink : _dotIdle,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 28),
-            // Morphing CTA: circle arrow -> full-width "Sign Up" pill.
-            Center(
-              child: GestureDetector(
-                onTap: _onMorphTap,
-                child: Container(
-                  width: btnW,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: _navy,
-                    borderRadius: BorderRadius.circular(btnR),
+              const SizedBox(height: 28),
+              // Morphing CTA: circle arrow -> full-width "Sign Up" pill.
+              Center(
+                child: GestureDetector(
+                  onTap: _onMorphTap,
+                  child: Container(
+                    width: btnW,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      color: _navy,
+                      borderRadius: BorderRadius.circular(btnR),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (showText) ...[
+                          const SizedBox(width: 24),
+                          Opacity(
+                            opacity: morphT,
+                            child: const Text(
+                              'Sign Up',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          const Spacer(),
+                          const Icon(Icons.arrow_forward,
+                              size: 20, color: Colors.white),
+                          const SizedBox(width: 24),
+                        ] else
+                          const Icon(Icons.arrow_forward,
+                              size: 20, color: Colors.white),
+                      ],
+                    ),
                   ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      if (showText) ...[
-                        const SizedBox(width: 24),
-                        Opacity(
-                          opacity: morphT,
+                ),
+              ),
+              // Login row (reserved space so the button never jumps).
+              SizedBox(
+                height: 40,
+                child: Opacity(
+                  opacity: morphT,
+                  child: Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Already have an account? ',
+                          style: TextStyle(color: _grey, fontSize: 14),
+                        ),
+                        GestureDetector(
+                          onTap: morphT > 0.5 ? _finishLogin : null,
                           child: const Text(
-                            'Sign Up',
+                            'Login',
                             style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
+                              color: _ink,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
-                        const Spacer(),
-                        const Icon(Icons.arrow_forward,
-                            size: 20, color: Colors.white),
-                        const SizedBox(width: 24),
-                      ] else
-                        const Icon(Icons.arrow_forward,
-                            size: 20, color: Colors.white),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            // Login row (reserved space so the button never jumps).
-            SizedBox(
-              height: 40,
-              child: Opacity(
-                opacity: morphT,
-                child: Center(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Already have an account? ',
-                        style: TextStyle(color: _grey, fontSize: 14),
-                      ),
-                      GestureDetector(
-                        onTap: morphT > 0.5 ? _finishLogin : null,
-                        child: const Text(
-                          'Login',
-                          style: TextStyle(
-                            color: _ink,
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
+              const SizedBox(height: 12),
+            ],
+          ),
         ),
       ),
     );

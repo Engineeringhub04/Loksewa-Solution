@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:loksewa_solution/services/app_config.dart';
@@ -46,17 +47,18 @@ class _SignupScreenState extends State<SignupScreen>
 
   bool get _emailValid => _emailRegex.hasMatch(_email.text.trim());
   bool get _canSubmit =>
-      _name.text.trim().length >= 2 && _emailValid && _password.text.length >= 6;
+      _name.text.trim().length >= 2 &&
+      _emailValid &&
+      _password.text.length >= 6;
 
   @override
   void initState() {
     super.initState();
-    _shakeController =
-        AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    _termsShakeController =
-        AnimationController(vsync: this, duration: const Duration(milliseconds: 400));
-    _googleSignIn =
-        GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
+    _shakeController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
+    _termsShakeController = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 400));
+    _googleSignIn = GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
   }
 
   @override
@@ -342,27 +344,37 @@ class _SignupScreenState extends State<SignupScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF9FAFB),
-      body: Stack(
-        children: [
-          AuthScreenLayout(
-            title: 'Create Account',
-            subtitle:
-                'Join the Loksewa community and start your exam preparation today',
-            onBack: () => context.pop(),
-            child: Shake(
-              controller: _shakeController,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                transitionBuilder: (child, animation) =>
-                    FadeTransition(opacity: animation, child: child),
-                child: _showFields ? _expanded() : _collapsed(),
+    // Transparent status bar with dark icons so the light background flows
+    // under the clock — same edge-to-edge treatment as home pages; kills
+    // the dark band that used to sit above the signup screen.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.dark,
+        statusBarBrightness: Brightness.light,
+      ),
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF9FAFB),
+        body: Stack(
+          children: [
+            AuthScreenLayout(
+              title: 'Create Account',
+              subtitle:
+                  'Join the Loksewa community and start your exam preparation today',
+              onBack: () => context.pop(),
+              child: Shake(
+                controller: _shakeController,
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  transitionBuilder: (child, animation) =>
+                      FadeTransition(opacity: animation, child: child),
+                  child: _showFields ? _expanded() : _collapsed(),
+                ),
               ),
             ),
-          ),
-          if (_googleLoading) const GoogleLoadingOverlay(),
-        ],
+            if (_googleLoading) const GoogleLoadingOverlay(),
+          ],
+        ),
       ),
     );
   }

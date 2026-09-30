@@ -8,5 +8,8 @@
     </style>
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>
+        <!-- Transparent by default so no dark strip can leak through on
+             screens that don't set their own status bar style in Flutter. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
 </resources>

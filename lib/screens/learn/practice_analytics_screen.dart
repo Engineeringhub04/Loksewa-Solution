@@ -100,6 +100,18 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
     return true;
   }
 
+  /// `updatedAt` is stored as an ISO-8601 string by the practice save
+  /// (`DateTime.now().toUtc().toIso8601String()`), so `decode` returns a
+  /// String, not a DateTime. Parse leniently — handles String, DateTime,
+  /// or null — instead of `as DateTime?`, which threw on every doc and
+  /// put the page in the error state.
+  static DateTime? _parseDateTime(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is String) return DateTime.tryParse(v);
+    return null;
+  }
+
   Future<_AnalyticsData> _load() async {
     final user = AuthService.currentUser;
     // ExamRest auto-attaches the ID token (same pattern as the other
@@ -123,7 +135,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
             ((d['correctQuestionIds'] as List?) ?? []).whereType<String>().length,
         total: (d['totalQuestions'] as num?)?.toInt() ?? 0,
         completed: d['completed'] == true,
-        updatedAt: d['updatedAt'] as DateTime?,
+        updatedAt: _parseDateTime(d['updatedAt']),
       ));
     }
     rows.sort((a, b) {

@@ -192,6 +192,12 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
   @override
   Widget build(BuildContext context) {
     return AppModalShell(
+      // Same card size as the Daily Limit popup; the taller report
+      // content (preview, chips, details, buttons) scrolls below the
+      // fixed header (icon + REPORT tag + title).
+      maxWidth: 340,
+      borderRadius: 30,
+      contentMaxHeight: 260,
       tagLabel: 'REPORT',
       onClose: () => Navigator.of(context).pop(),
       icon: Container(

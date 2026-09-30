@@ -46,6 +46,12 @@ class AppModalShell extends StatelessWidget {
   /// Card corner radius.
   final double borderRadius;
 
+  /// When set, the body + footer region is capped at this height and made
+  /// internally scrollable, while the gradient header (icon, tag, title)
+  /// stays fixed. Null (default) keeps the size-to-content behavior —
+  /// existing callers like the daily-limit popup are unaffected.
+  final double? contentMaxHeight;
+
   const AppModalShell({
     super.key,
     required this.icon,
@@ -60,6 +66,7 @@ class AppModalShell extends StatelessWidget {
     this.tagColor = const Color(0xFFDE6E00),
     this.maxWidth = 420,
     this.borderRadius = 28,
+    this.contentMaxHeight,
   });
 
   /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
@@ -112,6 +119,34 @@ class AppModalShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Body + footer as one unit. When [contentMaxHeight] is set, this
+    // region is capped and scrolls internally while the gradient header
+    // (icon, tag, title) stays fixed — e.g. the report dialog, whose
+    // content is taller than the daily-limit-sized card.
+    final content = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Body on white.
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
+          child: body,
+        ),
+        // Footer on white.
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+          child: footer,
+        ),
+      ],
+    );
+    final Widget contentWidget = contentMaxHeight != null
+        ? ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: contentMaxHeight!),
+            child: SingleChildScrollView(child: content),
+          )
+        : content;
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: DecoratedBox(
@@ -238,18 +273,8 @@ class AppModalShell extends StatelessWidget {
                     ],
                   ),
                 ),
-                // Body on white.
-                Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
-                  child: body,
-                ),
-                // Footer on white.
-                Container(
-                  color: Colors.white,
-                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
-                  child: footer,
-                ),
+                // Scrollable (or sized) body + footer below the fixed header.
+                contentWidget,
               ],
             ),
           ),

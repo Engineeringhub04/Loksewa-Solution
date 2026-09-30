@@ -1,8 +1,9 @@
 name: Build APK
 
 on:
-  push:
-    branches: [main]
+  # Automatic builds on push are DISABLED (user request 2026-09-30):
+  # APKs are built manually on the VM only when the user says "build".
+  # This workflow now runs ONLY when triggered by hand from the Actions tab.
   workflow_dispatch:
 
 jobs:

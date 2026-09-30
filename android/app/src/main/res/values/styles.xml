@@ -2,6 +2,9 @@
 <resources>
     <style name="LaunchTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">@drawable/launch_background</item>
+        <!-- Transparent status bar during launch so the brand-blue
+             launch_background shows through instead of a black strip. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
     </style>
     <style name="NormalTheme" parent="@android:style/Theme.Black.NoTitleBar">
         <item name="android:windowBackground">?android:colorBackground</item>

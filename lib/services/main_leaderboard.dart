@@ -15,11 +15,13 @@
 //   app_main_leaderboard/{uid}__{subcourseId}      - public, one ranking row
 //
 // What a score is (mirrors React):
-//   percent - COVERAGE of the subcourse: how much of the content that exists
-//             has been worked through. Starts near zero, climbs only with real
-//             study. The denominator is the app_content_totals/{subcourseId}
-//             document, read live with React's per-field fallback semantics;
-//             only a missing document degrades coverage to 0.
+//   percent - PROGRESS: activity points as a percent of the total marks the
+//             subcourse's content can yield. Starts near zero and climbs
+//             slowly — no user hits 100% fast. The denominator is dynamic: it
+//             comes from app_content_totals/{subcourseId} (per-field fallbacks
+//             when fields are missing), so adding questions/models raises the
+//             total and every percent eases down automatically (user spec,
+//             2026-10-02).
 //   points  - a cumulative EFFORT total: correct answers pay more than
 //             attempts; completing something pays a small bonus. Only ever
 //             grows, so consistent daily use is visibly rewarded.
@@ -32,6 +34,8 @@
 // ported - there is no analytics pipeline in the Flutter app yet. TODO: wire a
 // daily snapshot here once one exists.
 import 'dart:math';
+
+import 'package:flutter/foundation.dart';
 
 import 'exam_service.dart';
 
@@ -512,13 +516,23 @@ Future<LeaderboardScore> computeMainLeaderboardScore(
   // stats card reads it.
   final accuracyPercent = _weightedPercent(percentParts);
 
-  // The headline: coverage of everything this subcourse contains. The totals
-  // document is resolved with React's per-field fallback semantics; a missing
-  // document yields a 0% coverage rather than a crash.
-  final coverage = _computeCoverage(covered, _resolveTotals(totalsDoc));
+  // Coverage detail is still recorded in the breakdown below. The HEADLINE
+  // percent is the progress percent: activity points ÷ the total marks the
+  // subcourse's content can yield. (2026-10-02, user spec: no fixed total —
+  // the denominator is the content totals, so adding questions/models raises
+  // it and every percent eases down automatically; growth stays slow so no
+  // user hits 100% fast. Accuracy is untouched — analytics page only.)
+  // A missing totals document degrades to the nominal constants, never to
+  // zero — otherwise every percent would collapse to 0%.
+  final resolvedTotals = _resolveTotals(totalsDoc);
+  final coverage = _computeCoverage(covered, resolvedTotals);
+  final totals =
+      resolvedTotals ?? Map<String, int>.from(_fallbackContentTotals);
+  final progressPercent =
+      computeProgressPercent(points, contentMarksForTotals(totals));
 
   return LeaderboardScore(
-    percent: _round2(coverage.percent.clamp(0.0, 100.0).toDouble()),
+    percent: _round2(progressPercent),
     accuracyPercent: _round2(accuracyPercent.clamp(0.0, 100.0).toDouble()),
     points: max(0, points.round()),
     usageSeconds: foregroundSeconds,
@@ -622,6 +636,39 @@ _CoverageResult _computeCoverage(
     totalItems: totalItems,
     details: details,
   );
+}
+
+/// Max achievable activity points per content item of each source — the
+/// denominator of the headline progress percent (points ÷ total content
+/// marks). Mirrors [LeaderboardPoints]: a fully-correct first pass over one
+/// item of the source.
+const Map<String, double> _maxPointsPerItem = {
+  'practice': 7, // attempt 2 + correct 5
+  'theory': 6, // theoryCompleted
+  'exam': 110, // attempt 10 + score 100 x 1.0
+  'gkPm': 7, // attempt 2 + correct 5
+  'read': 1, // readViewed
+  'dailyTest': 56, // attempt 6 + score 100 x 0.5
+  'constitution': 4, // constitutionRead
+};
+
+/// Total marks the subcourse's content can yield:
+/// Σ totals[source] × max-points-per-item. Pure — unit-tested.
+@visibleForTesting
+double contentMarksForTotals(Map<String, int> totals) {
+  var marks = 0.0;
+  for (final entry in _maxPointsPerItem.entries) {
+    marks += (totals[entry.key] ?? 0) * entry.value;
+  }
+  return marks;
+}
+
+/// Headline progress percent: activity [points] as a percent of the total
+/// content [marks]. Clamped 0..100. Pure — unit-tested.
+@visibleForTesting
+double computeProgressPercent(double points, double marks) {
+  if (marks <= 0) return 0;
+  return (points / marks * 100).clamp(0.0, 100.0).toDouble();
 }
 
 // ---------- publish ----------
@@ -732,7 +779,7 @@ Future<MainLeaderboardRow?> publishMainLeaderboardScore({
 
 // ---------- canonical stats (single source of truth) ----------
 //
-// THE CONSISTENCY RULE (2026-10-02): the points and coverage percent shown on
+// THE CONSISTENCY RULE (2026-10-02): the points and progress percent shown on
 // the Analytics hero, the Leaderboard board, and the Profile stats card ALL
 // derive from [computeMainLeaderboardScore] plus the 50pt signup bonus
 // ([kLeaderboardSignupBonus]). The once-a-day snapshot document
@@ -750,7 +797,7 @@ Future<MainLeaderboardRow?> publishMainLeaderboardScore({
 /// Canonical live stats for one user+subcourse: the numbers the Analytics
 /// hero, the Leaderboard board and the Profile stats card all display.
 class CanonicalStats {
-  /// Coverage percent, 0..100.
+  /// Progress percent (points ÷ total content marks), 0..100.
   final double percent;
 
   /// Effort points INCLUDING the 50pt signup bonus.

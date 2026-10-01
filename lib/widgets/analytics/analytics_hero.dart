@@ -31,7 +31,7 @@ class AnalyticsHero extends StatelessWidget {
   final String courseName;
   final String subcourseName;
 
-  /// 0..100 — the stored coverage percent, the SAME value the profile stats
+  /// 0..100 — the stored progress percent, the SAME value the profile stats
   /// card's ring shows (already through displayCoveragePercent, so sub-10%
   /// values may carry one decimal).
   final double percent;

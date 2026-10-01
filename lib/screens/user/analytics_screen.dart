@@ -113,7 +113,7 @@ class _AnalyticsPayload {
   final int fetchedAt;
 
   /// Canonical live stats (computeMainLeaderboardScore + 50pt signup bonus):
-  /// the single source of truth for the hero's points and coverage percent.
+  /// the single source of truth for the hero's points and progress percent.
   /// Null in degraded mode, when the hero falls back to the snapshot's
   /// numbers.
   final CanonicalStats? canonical;
@@ -171,7 +171,7 @@ class AnalyticsScreen extends StatefulWidget {
   final Future<AnalyticsIdentity> Function(String uid)? loadIdentity;
 
   /// Canonical-stats loader (computeMainLeaderboardScore + 50pt signup
-  /// bonus). The hero's points and coverage percent come from here, NOT the
+  /// bonus). The hero's points and progress percent come from here, NOT the
   /// once-a-day snapshot — the consistency rule documented in
   /// main_leaderboard.dart. Null selects the production default, which never
   /// throws: a null result puts the hero in degraded mode (snapshot fallback).
@@ -649,7 +649,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     // ---------- canonical hero numbers ----------
     // THE CONSISTENCY RULE (see main_leaderboard.dart): the hero's points and
-    // coverage percent come from the canonical live stats
+    // progress percent come from the canonical live stats
     // (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers
     // the Leaderboard board and the Profile stats card show. The snapshot's
     // copies (document.percent, latest.p) are frozen React-era fossils (the
@@ -747,7 +747,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     final sections = <Widget>[
       // ---------- 2. Hero ----------
-      // The ring shows the SAME coverage percent as the profile stats card
+      // The ring shows the SAME progress percent as the profile stats card
       // and the leaderboard board: the canonical live computation
       // (computeMainLeaderboardScore + 50pt signup bonus) — NOT the
       // snapshot's document.percent, which goes stale the moment any

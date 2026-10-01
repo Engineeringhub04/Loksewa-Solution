@@ -132,13 +132,30 @@ class AuthService {
   }
 
   /// Restore session from storage. Returns the user or null.
+  ///
+  /// A failed token refresh no longer wipes the session: only a truly-dead
+  /// session (HTTP 400, e.g. invalid_grant) is discarded. Transient server
+  /// errors and network failures keep the existing session — the API layer
+  /// retries the refresh via [getValidIdToken] on its next call.
   static Future<AppUser?> restoreSession() async {
     final raw = await PrefsService.getString(PrefsService.sessionKey);
     if (raw == null) return null;
     try {
       _session = _Session.fromJson(json.decode(raw) as Map<String, dynamic>);
       if (_session!.isExpired) {
-        await _refreshToken();
+        try {
+          await _refreshToken();
+        } on AuthError catch (e) {
+          if (e.code == 'auth/session-expired') {
+            await PrefsService.remove(PrefsService.sessionKey);
+            _session = null;
+            return null;
+          }
+          // 'auth/session-transient' (or any other AuthError): keep the
+          // existing session and return the user below.
+        } catch (_) {
+          // Network/transport failure: keep the existing session too.
+        }
       }
       return _session!.user;
     } catch (_) {
@@ -156,8 +173,12 @@ class AuthService {
       headers: {'Content-Type': 'application/x-www-form-urlencoded'},
       body: 'grant_type=refresh_token&refresh_token=${Uri.encodeComponent(refreshToken)}',
     );
+    // HTTP 400 (e.g. invalid_grant) means the refresh token is truly dead —
+    // the session must be wiped. Any other non-200 is treated as transient:
+    // the caller keeps the existing session and retries later.
+    if (res.statusCode == 400) throw AuthError('auth/session-expired');
+    if (res.statusCode != 200) throw AuthError('auth/session-transient');
     final data = json.decode(res.body) as Map<String, dynamic>;
-    if (res.statusCode != 200) throw AuthError('auth/session-expired');
     final expiresIn = int.tryParse('${data['expires_in'] ?? '3600'}') ?? 3600;
     _session = _Session(
       user: _session!.user,

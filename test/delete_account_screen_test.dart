@@ -124,7 +124,7 @@ void main() {
       expect(record['message'], 'Please delete my account now.');
       expect(record['status'], 'pending');
       expect(record['requestedAt'], isNotNull);
-      expect(record['appVersion'], '1.0.36');
+      expect(record['appVersion'], '1.0.37');
       expect(record.containsKey('uid'), isTrue);
 
       // One Discord post with the red deletion-request embed.
@@ -251,6 +251,18 @@ void main() {
           findsOneWidget);
       // The informational cards above the form are untouched.
       expect(find.text('What you will lose'), findsOneWidget);
+
+      // "I understand" acknowledges the card and goes back.
+      final understand =
+          find.widgetWithText(ElevatedButton, 'I understand');
+      expect(understand, findsOneWidget);
+      await tester.tap(understand);
+      // Many small pumps: lets the pop's reverse route transition finish.
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('home-marker'), findsOneWidget);
+      expect(find.text('Request received'), findsNothing);
     });
   });
 
@@ -264,7 +276,7 @@ void main() {
         reason: 'r',
         message: long,
         requestedAt: 't',
-        appVersion: '1.0.36',
+        appVersion: '1.0.37',
       );
       final fields =
           (payload['embeds'] as List).single['fields'] as List;

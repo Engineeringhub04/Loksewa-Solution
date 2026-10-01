@@ -21,10 +21,15 @@ Future<void> main() async {
 /// link must never crash the app.
 void _listenForWarmAppLinks() {
   try {
-    DeepLinkService.warmLinks.listen((uri) async {
+    DeepLinkService.warmLinks.listen((uri) {
       try {
         if (!DeepLinkService.isSignupLink(uri)) return;
-        final user = await AuthService.restoreSession().catchError((_) => null);
+        // In-memory check only: the app is already running, so the logged-in
+        // user is in memory. Never re-read disk or hit the network here —
+        // restoreSession() can wipe the saved session on a transient refresh
+        // failure, which misroutes logged-in users to /signup and can log
+        // them out.
+        final user = AuthService.currentUser;
         appRouter.go(user != null ? '/' : '/signup');
       } catch (_) {}
     }, onError: (_) {});

@@ -832,6 +832,27 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                   style: TextStyle(
                       color: palette.textSecondary, fontSize: 14, height: 1.5),
                 ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    // Acknowledges the informational card and goes back —
+                    // not a destructive action, so no confirm popup.
+                    onPressed: () => context.pop(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: success,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      textStyle: const TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.w600),
+                    ),
+                    child: Text(
+                        AppLanguage.tr('I understand', 'मैले बुझें')),
+                  ),
+                ),
               ],
             ),
           ),

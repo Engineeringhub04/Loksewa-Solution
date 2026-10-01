@@ -16,6 +16,7 @@ import 'package:loksewa_solution/screens/user/analytics_screen.dart';
 import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_hero.dart';
 import 'package:loksewa_solution/services/analytics/analytics_strings.dart';
 import 'package:loksewa_solution/services/app_language.dart';
@@ -38,7 +39,10 @@ AnalyticsDocument _fakeDocument({
   double pc = 80,
   int finalPoints = 1234,
 }) {
-  final now = DateTime.now();
+  // End on the Kathmandu "today" the production code uses
+  // (analyticsTodayKey = UTC + 5:45) — a local DateTime.now() on a UTC
+  // machine would end the fixture a day early and drop the last window day.
+  final now = DateTime.now().toUtc().add(const Duration(hours: 5, minutes: 45));
   final first = now.subtract(Duration(days: days - 1));
   final daysMap = <String, DayBucket>{};
   for (var i = 0; i < days; i++) {
@@ -129,6 +133,22 @@ Future<void> _pumpScreen(WidgetTester tester, AnalyticsScreen screen) async {
   await _settle(tester);
 }
 
+/// Default canonical-stats fake for the hero tests: percent 80, and points
+/// that track the subcourse (s2 -> 9999), so the subcourse-switch test keeps
+/// exercising the new canonical wiring instead of the old snapshot wiring.
+Future<CanonicalStats?> _fakeCanonical(
+    String uid, String courseId, String subcourseId) async {
+  return CanonicalStats(
+    percent: 80,
+    points: subcourseId == 's2' ? 9999 : 1234,
+    activityCount: 10,
+    breakdown: const <String, dynamic>{
+      'practice': {'attempted': 200, 'correct': 160},
+      'qotd': {'attempts': 40, 'correct': 32},
+    },
+  );
+}
+
 AnalyticsScreen _screen({
   String debugUid = 'test-uid',
   Future<AnalyticsIdentity> Function(String uid)? loadIdentity,
@@ -136,6 +156,8 @@ AnalyticsScreen _screen({
       fetchDocument,
   Future<List<AnalyticsSubcourseRow>> Function(String uid)? listSubcourses,
   Future<List<MainLeaderboardRow>> Function(String subcourseId)? fetchBoard,
+  Future<CanonicalStats?> Function(String uid, String courseId, String subcourseId)?
+      loadCanonical,
 }) {
   return AnalyticsScreen(
     debugUid: debugUid,
@@ -146,6 +168,7 @@ AnalyticsScreen _screen({
     listSubcourses:
         listSubcourses ?? (_) async => _rows(const ['s1']),
     fetchBoard: fetchBoard ?? (_) async => [],
+    loadCanonical: loadCanonical ?? _fakeCanonical,
   );
 }
 
@@ -169,6 +192,51 @@ void main() {
           findsOneWidget);
       expect(
           find.descendant(of: hero, matching: find.text('GK Basics')),
+          findsOneWidget);
+    });
+
+    testWidgets('hero prefers canonical stats over the stale snapshot',
+        (tester) async {
+      // The reported bug: the once-a-day snapshot said 594 while the
+      // canonical computation (same as leaderboard + profile) said 2000.
+      // The hero must show the canonical numbers.
+      await _pumpScreen(tester, _screen(
+        fetchDocument: (_, subcourseId) async =>
+            _fakeDocument(subcourseId: subcourseId, finalPoints: 594, pc: 9),
+        loadCanonical: (_, __, ___) async => const CanonicalStats(
+          percent: 42,
+          points: 2000,
+          activityCount: 50,
+          breakdown: <String, dynamic>{},
+        ),
+      ));
+
+      final hero = find.byType(AnalyticsHero);
+      expect(
+          find.descendant(of: hero, matching: find.text('42%')),
+          findsOneWidget);
+      expect(
+          find.descendant(of: hero, matching: find.text('2000')),
+          findsOneWidget);
+      expect(
+          find.descendant(of: hero, matching: find.text('594')),
+          findsNothing);
+    });
+
+    testWidgets('hero falls back to snapshot numbers when canonical is null',
+        (tester) async {
+      // Degraded mode: the aggregate was unreadable, so the hero shows the
+      // snapshot's numbers instead of zeros.
+      await _pumpScreen(tester, _screen(
+        loadCanonical: (_, __, ___) async => null,
+      ));
+
+      final hero = find.byType(AnalyticsHero);
+      expect(
+          find.descendant(of: hero, matching: find.text('80%')),
+          findsOneWidget);
+      expect(
+          find.descendant(of: hero, matching: find.text('1234')),
           findsOneWidget);
     });
 

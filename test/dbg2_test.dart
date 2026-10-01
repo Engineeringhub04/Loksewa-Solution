@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/screens/user/analytics_screen.dart';
 import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 
 String _dayKey(DateTime date) =>
     '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -54,6 +55,12 @@ void main() {
           loadIdentity: (_) async => _identity,
           fetchDocument: (_, sid) async => _fakeDocument(subcourseId: sid),
           listSubcourses: (_) async => _rows(const ['s1', 's2']),
+          loadCanonical: (_, __, ___) async => const CanonicalStats(
+            percent: 80,
+            points: 1234,
+            activityCount: 10,
+            breakdown: <String, dynamic>{},
+          ),
         ),
       ),
     ));

@@ -1,19 +1,16 @@
-// Regression tests for the profile/analytics percent mismatch (Part 4).
-//
-// Root cause: the profile stats card's ring shows the STORED coverage
-// percent (users/{uid}/app_mainleaderboard/{subcourseId}.percent), while the
-// analytics hero showed summary.accuracy — the newest app_analytics
-// day-bucket's pc, a different document written by a different pipeline
-// (coverage for fresh buckets, weighted correctness for seeded backfill
-// days). The hero now shows the analytics document's own top-level percent
-// (the same stored coverage value), through displayCoveragePercent, so both
-// rings agree.
+// Regression tests for the profile/analytics percent mismatch.
+// The hero reads ONLY the canonical leaderboard aggregate
+// (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers the
+// Profile stats card and the Leaderboard board show. The analytics
+// document's stored percent / day-bucket pc are fossils the Flutter app
+// never writes; the hero must never render them.
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:loksewa_solution/screens/user/analytics_screen.dart';
 import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_hero.dart';
 
 String _dayKey(DateTime date) =>
@@ -96,7 +93,10 @@ Future<void> _pumpScreen(WidgetTester tester, AnalyticsScreen screen) async {
   await _settle(tester);
 }
 
-AnalyticsScreen _screen({required AnalyticsDocument document}) {
+AnalyticsScreen _screen({
+  required AnalyticsDocument document,
+  required CanonicalStats canonical,
+}) {
   return AnalyticsScreen(
     debugUid: 'test-uid',
     loadIdentity: (_) async => _identity,
@@ -106,8 +106,25 @@ AnalyticsScreen _screen({required AnalyticsDocument document}) {
           subcourseId: 's1', courseId: '', percent: 0, points: 1234),
     ],
     fetchBoard: (_) async => [],
+    // The hero reads ONLY the canonical aggregate now — the document's
+    // stored percent/pc are fossils the Flutter app never writes.
+    loadCanonical: (_, __, ___) async => canonical,
   );
 }
+
+const _canonical33 = CanonicalStats(
+  percent: 33,
+  points: 777,
+  activityCount: 10,
+  breakdown: <String, dynamic>{},
+);
+
+const _canonical42 = CanonicalStats(
+  percent: 42,
+  points: 2000,
+  activityCount: 50,
+  breakdown: <String, dynamic>{},
+);
 
 Widget _hero(double percent) {
   return MaterialApp(
@@ -127,20 +144,25 @@ Widget _hero(double percent) {
 void main() {
   group('AnalyticsHero coverage percent (Part 4)', () {
     testWidgets(
-        'hero shows the stored coverage percent, not the newest bucket pc',
+        'hero shows the canonical percent, not the snapshot fossils',
         (tester) async {
       // Stored coverage 0%, newest bucket pc 1%: the old code rendered the
-      // hero as 1% while the profile card showed 0%.
+      // hero as 1% while the profile card showed 0%. The hero now reads only
+      // the canonical aggregate (33% here — distinct from both fossils).
       await _pumpScreen(
           tester,
           _screen(
-              document: _mismatchDocument(topPercent: 0, bucketPc: 1)));
+              document: _mismatchDocument(topPercent: 0, bucketPc: 1),
+              canonical: _canonical33));
 
       final hero = find.byType(AnalyticsHero);
       expect(hero, findsOneWidget);
       expect(
-          find.descendant(of: hero, matching: find.text('0%')),
+          find.descendant(of: hero, matching: find.text('33%')),
           findsOneWidget);
+      expect(
+          find.descendant(of: hero, matching: find.text('0%')),
+          findsNothing);
       expect(
           find.descendant(of: hero, matching: find.text('1%')),
           findsNothing);
@@ -152,7 +174,8 @@ void main() {
           tester,
           _screen(
               document:
-                  _mismatchDocument(topPercent: 42, bucketPc: 87)));
+                  _mismatchDocument(topPercent: 42, bucketPc: 87),
+              canonical: _canonical42));
 
       final hero = find.byType(AnalyticsHero);
       expect(

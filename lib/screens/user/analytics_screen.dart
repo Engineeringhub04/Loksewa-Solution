@@ -263,7 +263,19 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     ]);
     final document = results[0] as AnalyticsDocument?;
     final available = results[1] as List<AnalyticsSubcourseRow>;
-    final canonical = results[2] as CanonicalStats?;
+    var canonical = results[2] as CanonicalStats?;
+    if (canonical == null) {
+      // One forced retry before giving up: the hero NEVER falls back to the
+      // snapshot's fossil numbers (the "Analytics says 594" bug — the Flutter
+      // app never writes snapshots, so the snapshot is a frozen React-era
+      // value). resetMainLeaderboardThrottle makes the retry actually
+      // recompute instead of hitting the throttle.
+      try {
+        resetMainLeaderboardThrottle(uid, subcourseId);
+        canonical = await (widget.loadCanonical ?? _defaultLoadCanonical)(
+            uid, _identity?.courseId ?? '', subcourseId);
+      } catch (_) {}
+    }
     return _AnalyticsPayload(
       document: document,
       available: available,
@@ -499,6 +511,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         description: AnalyticsStrings.emptyDescription,
         onRetry: _reload,
       );
+    } else if (_payload != null && _payload!.canonical == null) {
+      // The live aggregate could not be computed or read (even after one
+      // forced retry). The hero shows an honest retry gate — NEVER the
+      // snapshot's fossil points/percent, which is the "Analytics says 594
+      // while the profile says much more" bug.
+      body = _Gate(
+        icon: Icons.error_outline,
+        title: AnalyticsStrings.errorTitle,
+        description: AnalyticsStrings.errorDescription,
+        onRetry: _reload,
+      );
     } else if (_payload?.document != null) {
       body = _content(context, colors, _payload!.document!);
     } else {
@@ -629,20 +652,18 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     // coverage percent come from the canonical live stats
     // (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers
     // the Leaderboard board and the Profile stats card show. The snapshot's
-    // copies (document.percent, latest.p) go stale the moment any intraday
-    // activity happens, which is exactly the "Analytics says 594, profile
-    // says much more" bug. A null canonical means degraded mode (the
-    // aggregate was unreadable): the hero falls back to the snapshot's
-    // numbers rather than showing zeros.
+    // copies (document.percent, latest.p) are frozen React-era fossils (the
+    // Flutter app never writes snapshots) — using them is exactly the
+    // "Analytics says 594, profile says much more" bug. A null canonical now
+    // shows the retry gate in build(); this code defensively renders zeros
+    // rather than fossils if it is ever reached without one.
     final canonical = _payload?.canonical;
-    final heroPoints = canonical?.points ?? summary.totalPoints.round();
-    final heroPercent = canonical != null
-        ? displayCoveragePercent(canonical.percent)
-        : displayCoveragePercent(document.percent);
+    final heroPoints = canonical?.points ?? 0;
+    final heroPercent = displayCoveragePercent(canonical?.percent ?? 0);
 
     // ---------- points breakdown ----------
-    final breakdown =
-        pointsBreakdown(canonical?.breakdown ?? document.breakdown, heroPoints);
+    final breakdown = pointsBreakdown(
+        canonical?.breakdown ?? const <String, dynamic>{}, heroPoints);
     final breakdownRows = breakdown.rows
         .map((row) => RankedBarRow(
               key: row.key.name,

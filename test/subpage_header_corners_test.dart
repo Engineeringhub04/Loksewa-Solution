@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/screens/admin/admin_subscription_detail_screen.dart';
-import 'package:loksewa_solution/screens/auth/delete_account_screen.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
 
@@ -240,16 +239,4 @@ void main() {
     );
   });
 
-  testWidgets('delete account keeps the deleting barrier above the header',
-      (WidgetTester tester) async {
-    await tester.pumpWidget(const MaterialApp(home: DeleteAccountScreen()));
-    await tester.pump();
-    for (int i = 0; i < 10; i++) {
-      await tester.pump(const Duration(milliseconds: 100));
-    }
-    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold));
-    expect(scaffold.body, isA<Stack>(),
-        reason: 'Scaffold body must be a Stack so the deleting barrier can '
-            'sit above the header');
-  });
 }

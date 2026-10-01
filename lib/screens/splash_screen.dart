@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
+import '../services/deep_link_service.dart';
 import '../services/device_session.dart';
 import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
@@ -13,8 +14,9 @@ import '../services/remote_config.dart';
 /// Splash — first screen on launch; initializes the app and routes correctly.
 /// Mirrors app/index.tsx: gradient + line-art decorations, logo tile, tagline,
 /// spinner, developer footer. Routing: maintenance → evicted → offline →
-/// authenticated home → onboarding. Every network call is deadline-bounded so
-/// the splash can never hang forever.
+/// authenticated home → onboarding (or /signup when cold-started via the
+/// shared signup App Link and not logged in). Every network call is
+/// deadline-bounded so the splash can never hang forever.
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -40,6 +42,13 @@ class _SplashScreenState extends State<SplashScreen> {
     final startedAt = DateTime.now();
 
     final user = await _withTimeout(AuthService.restoreSession(), null);
+
+    // App Links cold start: capture the link that opened the app (if any).
+    // Logged-in users keep the normal routing below; logged-out users opened
+    // via the shared signup link land on /signup instead of /onboarding.
+    final initialLink =
+        await _withTimeout(DeepLinkService.getInitialLink(), null);
+    final openedViaSignupLink = DeepLinkService.isSignupLink(initialLink);
 
     // One account = one device, asked FIRST — before anything is warmed.
     var evicted = false;
@@ -99,7 +108,9 @@ class _SplashScreenState extends State<SplashScreen> {
     await OnboardingCache.warmUp(context)
         .timeout(const Duration(seconds: 10), onTimeout: () {});
     if (!mounted) return;
-    context.go('/onboarding');
+    // Not logged in: the shared signup App Link goes to /signup, everything
+    // else goes through onboarding as before.
+    context.go(openedViaSignupLink ? '/signup' : '/onboarding');
   }
 
   @override

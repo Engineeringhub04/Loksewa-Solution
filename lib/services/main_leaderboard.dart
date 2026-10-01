@@ -721,6 +721,11 @@ Future<MainLeaderboardRow?> publishMainLeaderboardScore({
       signupBonus: signupBonus,
     );
   } catch (_) {
+    // A failed publish must NOT consume the throttle — otherwise every screen
+    // sits on stale/fallback numbers for 5 minutes instead of retrying on the
+    // next open. (2026-10-02: this is how the aggregate stayed missing while
+    // the profile fell back to the frozen users/{uid}.stats.points mirror.)
+    resetMainLeaderboardThrottle(uid, subcourseId);
     return null;
   }
 }

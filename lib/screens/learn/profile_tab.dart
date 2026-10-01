@@ -92,6 +92,8 @@ class _ProfileTabState extends State<ProfileTab> {
     }
     // The store may already be loaded (e.g. coming back from Edit Profile).
     _onStoreChanged();
+    // One-time share-link migration (admin only, best-effort).
+    _migrateAppLinkDoc();
   }
 
   @override
@@ -103,18 +105,6 @@ class _ProfileTabState extends State<ProfileTab> {
     super.dispose();
   }
 
-  /// Keeps the stats card's ring percent in agreement with the Analytics
-  /// hero's. The profile ring reads users/{uid}/app_mainleaderboard/{sub}
-  /// (the leaderboard aggregate, republished only when the leaderboard
-  /// screen opens), while the Analytics hero reads
-  /// users/{uid}/app_analytics/{sub} (the snapshot's copy of that same
-  /// percent). A fresh aggregate sits at the 50pt-bonus create values with
-  /// percent 0 — and the card's `hasData` is true on the bonus points alone —
-  /// so the ring read "0%" while Analytics read the snapshot's 1%.
-  ///
-  /// When the aggregate has no percent of its own but the snapshot does, the
-  /// snapshot's percent stands in for the ring. Never throws; a missing
-  /// snapshot simply leaves the card on the store's value.
   /// Rebuilds the tab the moment the profile language converter flips the
   /// language — see the note in [initState] about the const tab list.
   void _onLanguageChanged() {
@@ -151,46 +141,30 @@ class _ProfileTabState extends State<ProfileTab> {
     }
     final key = '$uid::$subcourseId';
     if (_canonicalKey == key) return;
-    // The stats card must read the same live computation as the Analytics
-    // hero and the Leaderboard board (computeMainLeaderboardScore + 50pt
-    // signup bonus). The publish is throttled to one recompute per 5 minutes
-    // per subcourse across ALL screens (shared throttle in
-    // main_leaderboard.dart), so this is free when another screen already
-    // refreshed recently. Never throws; a failed refresh simply leaves the
-    // card on the stored aggregate.
-    if (!shouldPublishMainLeaderboardScore(uid, subcourseId)) {
-      _canonicalKey = key;
-      return;
-    }
     _canonicalKey = key;
-    publishMainLeaderboardScore(
+    // Single source of truth, same as the Analytics hero and the Leaderboard
+    // board: loadCanonicalStats reads the stored aggregate, refreshing it
+    // first when the shared 5-minute throttle allows. The old publish-only
+    // path left the card on a frozen users/{uid}.stats.points mirror whenever
+    // the throttle blocked or the publish failed — the "profile says much
+    // more than analytics" fossil. Never throws; a failed load simply leaves
+    // the card in its honest loading/empty state.
+    loadCanonicalStats(
       uid: uid,
       courseId: courseInfo?.courseId ?? '',
       subcourseId: subcourseId,
       name: profile.name,
       photoURL: profile.photoURL,
       isPro: hasActivePremium(profile),
-    ).then((row) {
-      if (!mounted || row == null) return;
+    ).then((canonical) {
+      if (!mounted || canonical == null) return;
       ProfileStore.instance.setScore(MainLeaderboardScore(
-        percent: row.percent,
-        points: row.points,
-        activityCount: row.activityCount,
+        percent: canonical.percent,
+        points: canonical.points,
+        activityCount: canonical.activityCount,
+        breakdown: canonical.breakdown,
       ));
     }).catchError((_) => null);
-  }
-
-  /// The score the stats card renders: the canonical leaderboard aggregate
-  /// (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers the
-  /// Analytics hero and the Leaderboard board show. When the store has no
-  /// aggregate yet, the card falls back to the users/{uid} stats mirror for
-  /// points (percent honestly 0: nothing recorded yet).
-  MainLeaderboardScore? _effectiveScore(
-      MainLeaderboardScore? score, UserStats? stats) {
-    if (score != null) return score;
-    final mirrorPoints = stats?.points ?? 0;
-    if (mirrorPoints <= 0) return null;
-    return MainLeaderboardScore(points: mirrorPoints);
   }
 
   /// Reload when the signed-in account changes (login/logout while mounted).
@@ -207,42 +181,31 @@ class _ProfileTabState extends State<ProfileTab> {
 
   void _goToEdit() => context.push('/edit-profile');
 
-  /// Admin-only one-time seed for the App Links / share configuration.
-  /// Writes (overwrites) the Firestore document `app_applink_details/main`.
-  /// The header seed button is removed in a later update once seeded, so
-  /// this is intentionally tap → write → toast with no confirm popup.
-  Future<void> _seedAppLinkDetails() async {
+  /// One-time migration (2026-10-02, remove in a later update): the share link
+  /// moved from https://www.kbr.com.np/downloadapp to
+  /// https://www.kbr.com.np/signup. If the seeded `app_applink_details/main`
+  /// document still carries the old link, an admin opening the profile flips
+  /// it — no console work needed. Admin-only write per firebase.rules.
+  Future<void> _migrateAppLinkDoc() async {
     try {
+      final profile = ProfileStore.instance.profile;
+      if (profile == null || !profile.isAdmin) return;
+      final doc =
+          await FirestoreRest.getDocument('app_applink_details/main');
+      final link = (doc?['link'] as String?)?.trim() ?? '';
+      if (link != 'https://www.kbr.com.np/downloadapp') return;
       final idToken = await AuthService.getValidIdToken();
-      final now = DateTime.now().toUtc();
       await FirestoreRest.setDocument(
         'app_applink_details/main',
         {
-          'link': 'https://www.kbr.com.np/downloadapp',
-          'appDomainLink': 'www.kbr.com.np',
-          'discordWebhookUrl':
-              'https://discord.com/api/webhooks/1555288517297573989/10guY2tYhDOtIHX82hgluB-ADv2kwpFn3sK5S5Xb1z5-lqCCxwSAM1kjgSvQ4UxWb4G4',
-          'addedDate': now,
-          'updatedDate': now,
+          'link': 'https://www.kbr.com.np/signup',
+          'updatedDate': DateTime.now().toUtc(),
         },
         idToken: idToken,
+        merge: true,
       );
-      if (!mounted) return;
-      showToast(
-        context,
-        AppLanguage.tr(
-            'App link details saved', 'एप लिङ्क विवरण सेभ भयो'),
-        ToastVariant.success,
-      );
-    } catch (_) {
-      if (!mounted) return;
-      showToast(
-        context,
-        AppLanguage.tr('Could not save app link details',
-            'एप लिङ्क विवरण सेभ गर्न सकिएन'),
-        ToastVariant.error,
-      );
-    }
+      AppLinkService.resetForTest();
+    } catch (_) {}
   }
 
   String? _genderLabel(String? gender) {
@@ -583,8 +546,9 @@ class _ProfileTabState extends State<ProfileTab> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16),
                               child: ProfileStatsCard(
-                                score: _effectiveScore(
-                                    store.score, profile?.stats),
+                                // The aggregate is the ONLY source — no mirror
+                                // fallback (see profile_stats_card.dart).
+                                score: store.score,
                                 stats: profile?.stats,
                                 loading: store.scoreLoading,
                                 subcourseName:
@@ -656,7 +620,6 @@ class _ProfileTabState extends State<ProfileTab> {
                       planLabel: planLabel,
                       isPremiumPlan: profile?.isPremium == true,
                       isAdmin: profile?.isAdmin == true,
-                      onSeedPress: _seedAppLinkDetails,
                       // Ring-only, and stricter than the pill above:
                       // hasActivePremium also checks the expiry date, so a
                       // lapsed member loses the ring the moment it runs out.

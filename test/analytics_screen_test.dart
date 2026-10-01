@@ -223,21 +223,21 @@ void main() {
           findsNothing);
     });
 
-    testWidgets('hero falls back to snapshot numbers when canonical is null',
+    testWidgets('canonical null shows the retry gate, never snapshot fossils',
         (tester) async {
-      // Degraded mode: the aggregate was unreadable, so the hero shows the
-      // snapshot's numbers instead of zeros.
+      // The old degraded mode showed the snapshot's fossil numbers (the
+      // "Analytics says 594" bug — the Flutter app never writes snapshots).
+      // Now the hero shows an honest retry gate instead.
       await _pumpScreen(tester, _screen(
         loadCanonical: (_, __, ___) async => null,
       ));
 
-      final hero = find.byType(AnalyticsHero);
-      expect(
-          find.descendant(of: hero, matching: find.text('80%')),
-          findsOneWidget);
-      expect(
-          find.descendant(of: hero, matching: find.text('1234')),
-          findsOneWidget);
+      expect(find.byType(AnalyticsHero), findsNothing);
+      expect(find.text(AnalyticsStrings.errorTitle), findsOneWidget);
+      expect(find.text(AnalyticsStrings.errorDescription), findsOneWidget);
+      // The fossil numbers must not leak anywhere on the page.
+      expect(find.text('80%'), findsNothing);
+      expect(find.text('1234'), findsNothing);
     });
 
     testWidgets('range switch changes the recorded-days caption',

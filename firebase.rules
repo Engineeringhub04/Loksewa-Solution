@@ -613,6 +613,33 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
+    // Account deletion requests. One document per user (doc id = uid): the
+    // owner creates their own pending request; reads are owner or admin;
+    // any status change or deletion is admin-only (handled in the console).
+    // Schema: uid, name, email, reason, message, requestedAt (timestamp),
+    //         status ('pending'), appVersion.
+    match /app_deleterequest/{docId} {
+      allow read: if isOwner(docId) || isAdmin();
+      allow create: if isOwner(docId) &&
+        request.resource.data.keys().hasOnly([
+          'uid', 'name', 'email', 'reason', 'message',
+          'requestedAt', 'status', 'appVersion'
+        ]) &&
+        request.resource.data.uid == docId &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.name is string &&
+        request.resource.data.email is string &&
+        request.resource.data.reason is string &&
+        request.resource.data.reason.size() > 0 &&
+        request.resource.data.message is string &&
+        request.resource.data.message.size() > 0 &&
+        request.resource.data.requestedAt is timestamp &&
+        request.resource.data.status == 'pending' &&
+        (request.resource.data.appVersion == null ||
+          request.resource.data.appVersion is string);
+      allow update, delete: if isAdmin();
+    }
+
     // Legacy flat collections retained for data already created by the app.
     match /app_subcourses/{docId} {
       allow read: if isSignedIn();

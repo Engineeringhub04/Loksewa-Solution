@@ -16,14 +16,24 @@ Future<void> _settle(WidgetTester tester) async {
 
 class _Harness {
   final List<Map<String, dynamic>> posts = [];
+  final List<Map<String, dynamic>> savedRecords = [];
   String? webhookUrl = 'https://discord.test/webhook';
   bool throwOnPost = false;
+  bool throwOnSave = false;
+
+  /// Existing app_deleterequest/{uid} doc, or null for a first-time request.
+  Map<String, dynamic>? existingRequest;
 
   DeleteAccountScreen screen() => DeleteAccountScreen(
         fetchWebhookUrl: () async => webhookUrl,
         postToDiscord: (url, body) async {
           if (throwOnPost) throw Exception('boom');
           posts.add({'url': url, 'body': body});
+        },
+        fetchDeleteRequest: () async => existingRequest,
+        saveDeleteRequest: (fields) async {
+          if (throwOnSave) throw Exception('save failed');
+          savedRecords.add(fields);
         },
       );
 }
@@ -84,7 +94,8 @@ void main() {
       expect(tester.widget<ElevatedButton>(submit).onPressed, isNotNull);
     });
 
-    testWidgets('confirm popup posts the Discord embed and pops back',
+    testWidgets(
+        'confirm popup saves the record, posts the Discord embed, and shows the already-requested state',
         (tester) async {
       final h = _Harness();
       final router = await _pump(tester, h);
@@ -106,6 +117,16 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
 
+      // The request record was saved to app_deleterequest/{uid} first.
+      expect(h.savedRecords, hasLength(1));
+      final record = h.savedRecords.single;
+      expect(record['reason'], 'Too many notifications');
+      expect(record['message'], 'Please delete my account now.');
+      expect(record['status'], 'pending');
+      expect(record['requestedAt'], isNotNull);
+      expect(record['appVersion'], '1.0.36');
+      expect(record.containsKey('uid'), isTrue);
+
       // One Discord post with the red deletion-request embed.
       expect(h.posts, hasLength(1));
       expect(h.posts.single['url'], 'https://discord.test/webhook');
@@ -121,12 +142,17 @@ void main() {
       expect(fields['Message'], 'Please delete my account now.');
       expect(fields['Requested At'], contains('NPT'));
 
-      // Popup closed, success toast shown, back on the previous screen.
+      // Popup closed, success toast shown, and the page refreshed into the
+      // already-requested state instead of popping back.
       expect(find.text('Submit deletion request?'), findsNothing);
       expect(find.text('Your request has been submitted'), findsOneWidget);
+      expect(find.text('Request received'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+      expect(find.widgetWithText(ElevatedButton, 'Submit Request'),
+          findsNothing);
       await tester.pump(const Duration(milliseconds: 100));
-      expect(find.text('home-marker'), findsOneWidget);
-      expect(router.state.uri.path, '/');
+      expect(find.text('home-marker'), findsNothing);
+      expect(router.state.uri.path, '/delete');
     });
 
     testWidgets('missing webhook shows an error and posts nothing',
@@ -150,8 +176,8 @@ void main() {
           findsOneWidget);
     });
 
-    testWidgets('failed post keeps the page open with an error toast',
-        (tester) async {
+    testWidgets('failed Discord post still records the request and blocks '
+        'duplicates', (tester) async {
       final h = _Harness()..throwOnPost = true;
       await _pump(tester, h);
       await _fillForm(tester);
@@ -166,13 +192,65 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
 
+      // The record was saved even though Discord failed.
+      expect(h.savedRecords, hasLength(1));
+      expect(h.posts, isEmpty);
+      expect(find.text('Submit deletion request?'), findsNothing);
+      expect(
+          find.text(
+              'Request saved, but the team notification failed. We will still review it.'),
+          findsOneWidget);
+      // The page shows the already-requested state: no second submission.
+      expect(find.text('Request received'), findsOneWidget);
+      expect(find.byType(TextField), findsNothing);
+    });
+
+    testWidgets('failed save posts nothing and keeps the form open',
+        (tester) async {
+      final h = _Harness()..throwOnSave = true;
+      await _pump(tester, h);
+      await _fillForm(tester);
+
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Submit Request'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      await tester.tap(
+          find.widgetWithText(ElevatedButton, 'Submit Request').last);
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Nothing reached Discord, and the form is still there for a retry.
       expect(h.posts, isEmpty);
       expect(find.text('Submit deletion request?'), findsNothing);
       expect(find.text('Could not submit your request. Please try again.'),
           findsOneWidget);
-      // Still on the form page.
+      expect(find.byType(TextField), findsNWidgets(2));
+    });
+
+    testWidgets('existing request on load replaces the form with the '
+        'already-requested state', (tester) async {
+      final h = _Harness()
+        ..existingRequest = {
+          'uid': 'u1',
+          'status': 'pending',
+          'reason': 'old',
+          'message': 'old message',
+        };
+      await _pump(tester, h);
+
+      // No form, no submit button — just the status card.
+      expect(find.byType(TextField), findsNothing);
       expect(find.widgetWithText(ElevatedButton, 'Submit Request'),
+          findsNothing);
+      expect(find.text('Request received'), findsOneWidget);
+      expect(
+          find.text(
+              'We have received your account deletion request. You will get a response on your email within 24–48 working hours.'),
           findsOneWidget);
+      // The informational cards above the form are untouched.
+      expect(find.text('What you will lose'), findsOneWidget);
     });
   });
 
@@ -186,7 +264,7 @@ void main() {
         reason: 'r',
         message: long,
         requestedAt: 't',
-        appVersion: '1.0.35',
+        appVersion: '1.0.36',
       );
       final fields =
           (payload['embeds'] as List).single['fields'] as List;

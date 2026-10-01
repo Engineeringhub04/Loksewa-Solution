@@ -3,12 +3,12 @@ import 'firestore_rest.dart';
 /// App Links configuration — the runtime source of the share URL and the app
 /// domain. Read from Firestore (`app_applink_details/main`, public read) so the
 /// links can change without an app update; cached in memory after the first
-/// load. Falls back to the download page until the document is seeded.
+/// load. Falls back to the signup App Link until the document is seeded.
 class AppLinkService {
   static const String _docPath = 'app_applink_details/main';
 
   /// Used when the Firestore document is not seeded yet.
-  static const String fallbackShareLink = 'https://www.kbr.com.np/downloadapp';
+  static const String fallbackShareLink = 'https://www.kbr.com.np/signup';
 
   /// App domain used for App Links (host only, no scheme).
   static const String fallbackAppDomainLink = 'www.kbr.com.np';
@@ -39,7 +39,7 @@ class AppLinkService {
     return fallback;
   }
 
-  /// Canonical share URL (the `link` field). Falls back to the download page.
+  /// Canonical share URL (the `link` field). Falls back to the signup App Link.
   static String get shareLink => _field('link', fallbackShareLink);
 
   /// App domain for App Links (the `appDomainLink` field, host only).

@@ -19,12 +19,19 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// Delete Account — mirrors app/delete-account.tsx.
 ///
 /// This page no longer deletes anything itself. It collects a deletion
-/// REQUEST (reason + full message) and sends it to the team's Discord
-/// webhook for manual review — the admin deletes the account by hand.
+/// REQUEST (reason + full message), saves it to the Firestore collection
+/// `app_deleterequest` (document id = the user's uid), and sends it to the
+/// team's Discord webhook for manual review — the admin deletes the account
+/// by hand.
+///
+/// Duplicate guard: on load the page reads `app_deleterequest/{uid}`. When a
+/// request already exists the form is replaced by an "already requested"
+/// state and no second submission is possible.
 ///
 /// Flow (standing popup-action pattern): fill the form → Submit Request →
 /// [AppModalShell] confirm popup → loading state on the popup's confirm
-/// button → POST to Discord → success toast → back.
+/// button → save to Firestore + POST to Discord → success toast → refresh
+/// (the page now shows the already-requested state).
 ///
 /// The Discord webhook URL is read at runtime from the Firestore document
 /// `app_applink_details/main` (field `discordWebhookUrl`), so the URL can
@@ -35,6 +42,8 @@ class DeleteAccountScreen extends StatefulWidget {
     super.key,
     this.fetchWebhookUrl,
     this.postToDiscord,
+    this.fetchDeleteRequest,
+    this.saveDeleteRequest,
   });
 
   /// Override in tests: resolves the Discord webhook URL.
@@ -45,6 +54,15 @@ class DeleteAccountScreen extends StatefulWidget {
   @visibleForTesting
   final Future<void> Function(String url, Map<String, dynamic> body)?
       postToDiscord;
+
+  /// Override in tests: returns the existing `app_deleterequest/{uid}`
+  /// document, or null when the user has not requested before.
+  @visibleForTesting
+  final Future<Map<String, dynamic>?> Function()? fetchDeleteRequest;
+
+  /// Override in tests: saves the request record to `app_deleterequest/{uid}`.
+  @visibleForTesting
+  final Future<void> Function(Map<String, dynamic> fields)? saveDeleteRequest;
 
   /// Builds the Discord webhook payload (embed with the request details).
   @visibleForTesting
@@ -102,16 +120,60 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   final _messageText = TextEditingController();
   bool? _offline;
   bool _preloading = true;
+  // Duplicate guard: true once the app_deleterequest/{uid} existence check
+  // has finished (successfully or not). Non-null _existingRequest means the
+  // form is replaced by the already-requested state.
+  bool _requestChecked = false;
+  Map<String, dynamic>? _existingRequest;
 
   @override
   void initState() {
     super.initState();
     _checkOnline();
-    // 1s premium preloading shimmer: this page has no database fetch, so the
-    // content would pop in instantly without it.
+    _checkExistingRequest();
+    // 1s premium preloading shimmer: the page also awaits the duplicate-guard
+    // read, so the shimmer stays until BOTH the timer and the check finish.
     Future.delayed(const Duration(milliseconds: 1000), () {
       if (mounted) setState(() => _preloading = false);
     });
+  }
+
+  /// Reads `app_deleterequest/{uid}` so a second submission is blocked.
+  Future<void> _checkExistingRequest() async {
+    try {
+      final fetch = widget.fetchDeleteRequest ?? _defaultFetchDeleteRequest;
+      final doc = await fetch();
+      if (!mounted) return;
+      setState(() {
+        _existingRequest = doc;
+        _requestChecked = true;
+      });
+    } catch (_) {
+      // Unknown (probably offline): leave the form up. The offline branch
+      // hides it anyway, and a failed save surfaces an error toast on submit.
+      if (mounted) setState(() => _requestChecked = true);
+    }
+  }
+
+  Future<Map<String, dynamic>?> _defaultFetchDeleteRequest() async {
+    final uid = AuthService.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return null;
+    String token = '';
+    try {
+      token = await AuthService.getValidIdToken();
+    } catch (_) {}
+    return FirestoreRest.getDocument('app_deleterequest/$uid', idToken: token);
+  }
+
+  Future<void> _defaultSaveDeleteRequest(Map<String, dynamic> fields) async {
+    final uid = AuthService.currentUser?.uid;
+    if (uid == null || uid.isEmpty) throw Exception('not signed in');
+    String token = '';
+    try {
+      token = await AuthService.getValidIdToken();
+    } catch (_) {}
+    await FirestoreRest.setDocument('app_deleterequest/$uid', fields,
+        idToken: token);
   }
 
   Future<void> _checkOnline() async {
@@ -166,6 +228,10 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   }
 
   /// Sends the request. Returns true on success.
+  ///
+  /// The record is written to `app_deleterequest/{uid}` FIRST: the duplicate
+  /// guard reads that document, so a Discord-without-a-record state must
+  /// never happen. The Discord ping follows as the team notification.
   Future<bool> _submitRequest() async {
     final fetch = widget.fetchWebhookUrl ?? _defaultFetchWebhookUrl;
     final url = await fetch();
@@ -179,24 +245,29 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       );
       return false;
     }
+    final user = AuthService.currentUser;
+    final uid = user?.uid ?? '';
+    final profile = ProfileStore.instance.profile;
+    final profileName = profile?.name.trim() ?? '';
+    final name = profileName.isNotEmpty
+        ? profileName
+        : (user?.displayName ?? '');
+    final email = user?.email ?? '';
+    final reason = _reasonText.text.trim();
+    final message = _messageText.text.trim();
+    final record = <String, dynamic>{
+      'uid': uid,
+      'name': name,
+      'email': email,
+      'reason': reason,
+      'message': message,
+      'requestedAt': FirestoreRest.serverTimestampValue(),
+      'status': 'pending',
+      'appVersion': AppInfoScreen.appVersion,
+    };
     try {
-      final user = AuthService.currentUser;
-      final profile = ProfileStore.instance.profile;
-      final profileName = profile?.name.trim() ?? '';
-      final body = DeleteAccountScreen.buildDiscordPayload(
-        uid: user?.uid ?? '',
-        name: profileName.isNotEmpty
-            ? profileName
-            : (user?.displayName ?? ''),
-        email: user?.email ?? '',
-        reason: _reasonText.text.trim(),
-        message: _messageText.text.trim(),
-        requestedAt: DeleteAccountScreen.nptTimestamp(),
-        appVersion: AppInfoScreen.appVersion,
-      );
-      final post = widget.postToDiscord ?? _defaultPostToDiscord;
-      await post(url, body);
-      return true;
+      final save = widget.saveDeleteRequest ?? _defaultSaveDeleteRequest;
+      await save(record);
     } catch (_) {
       if (!mounted) return false;
       showToast(
@@ -207,6 +278,36 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       );
       return false;
     }
+    try {
+      final body = DeleteAccountScreen.buildDiscordPayload(
+        uid: uid,
+        name: name,
+        email: email,
+        reason: reason,
+        message: message,
+        requestedAt: DeleteAccountScreen.nptTimestamp(),
+        appVersion: AppInfoScreen.appVersion,
+      );
+      final post = widget.postToDiscord ?? _defaultPostToDiscord;
+      await post(url, body);
+    } catch (_) {
+      // The request IS recorded (the page now shows the already-requested
+      // state); only the Discord ping failed, so the team picks it up from
+      // the console instead. Report the partial failure honestly, but block
+      // duplicates — submitting again would just double-notify.
+      if (mounted) setState(() => _existingRequest = record);
+      if (!mounted) return false;
+      showToast(
+        context,
+        AppLanguage.tr(
+            'Request saved, but the team notification failed. We will still review it.',
+            'अनुरोध सेभ भयो, तर टोलीलाई सूचना पठाउन सकिएन। हामी तपाईंको अनुरोध समीक्षा गर्नेछौं।'),
+        ToastVariant.error,
+      );
+      return false;
+    }
+    if (mounted) setState(() => _existingRequest = record);
+    return true;
   }
 
   Future<void> _askConfirm() async {
@@ -323,7 +424,9 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
             'Your request has been submitted', 'तपाईंको अनुरोध पठाइयो'),
         ToastVariant.success,
       );
-      if (context.canPop()) context.pop();
+      // Refresh (standing pattern): the form is replaced by the
+      // already-requested state — _submitRequest already recorded it.
+      setState(() {});
     }
   }
 
@@ -364,6 +467,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     final offline = _offline == true;
+    final alreadyRequested = _existingRequest != null;
     // Theme-aware palette (React useTheme colors): danger red, secondary
     // text and surfaceAlt all flip correctly between light and dark.
     final palette = ExpoPalette.of(context);
@@ -376,7 +480,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           SubpageHeader(
               title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
           Expanded(
-            child: _preloading
+            child: (_preloading || !_requestChecked)
                 ? _preloadingBody()
                 : ListView(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
@@ -410,6 +514,13 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                                   color: palette.warning, fontSize: 13),
                             ),
                           ),
+                        )
+                      else if (alreadyRequested)
+                        // Duplicate guard: a request already exists for this
+                        // user — no form, no second submission.
+                        SyllabusEntrance(
+                          delayMs: 180,
+                          child: _alreadyRequestedCard(context, palette),
                         )
                       else ...[
                         SyllabusEntrance(
@@ -676,6 +787,54 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  /// Already-requested state: replaces the form when `app_deleterequest/{uid}`
+  /// exists, so the user can never submit twice.
+  Widget _alreadyRequestedCard(BuildContext context, ExpoPalette palette) {
+    final success = palette.success;
+    return _surfaceCard(
+      context,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: success.withValues(alpha: 0.12),
+            ),
+            child:
+                Icon(Icons.check_circle_rounded, size: 26, color: success),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLanguage.tr('Request received', 'अनुरोध प्राप्त भयो'),
+                  style: TextStyle(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  AppLanguage.tr(
+                    'We have received your account deletion request. You will get a response on your email within 24–48 working hours.',
+                    'तपाईंको खाता मेटाउने अनुरोध हामीले प्राप्त गर्यौं। २४–४८ कार्य घण्टाभित्र तपाईंको इमेलमा जवाफ पठाइनेछ।',
+                  ),
+                  style: TextStyle(
+                      color: palette.textSecondary, fontSize: 14, height: 1.5),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

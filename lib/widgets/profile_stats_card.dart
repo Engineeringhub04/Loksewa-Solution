@@ -62,8 +62,10 @@ class _ProfileStatsCardState extends State<ProfileStatsCard>
 
   String _computeSignature() {
     final percent = displayCoveragePercent(widget.score?.percent ?? 0);
-    final points = math.max(
-        0, ((widget.score?.points ?? widget.stats?.points ?? 0)).round());
+    // The aggregate is the ONLY source for points. users/{uid}.stats.points
+    // is a frozen React-era mirror (the Flutter app never writes it) —
+    // falling back to it is exactly the "profile says much more" bug.
+    final points = math.max(0, (widget.score?.points ?? 0).round());
     return '$percent:$points';
   }
 
@@ -93,12 +95,12 @@ class _ProfileStatsCardState extends State<ProfileStatsCard>
 
     final percent = displayCoveragePercent(widget.score?.percent ?? 0);
 
-    // Live aggregate first, mirror second. The aggregate is recomputed on every
-    // publish, while the mirror is only as fresh as the last one — but the
-    // mirror is all there is before the first score of a session lands, and
-    // showing a yesterday-accurate number beats showing a zero.
-    final points = math.max(
-        0, (widget.score?.points ?? widget.stats?.points ?? 0).round());
+    // Live aggregate first — and ONLY the aggregate. The mirror
+    // (users/{uid}.stats.points) is a frozen React-era value the Flutter app
+    // never writes; showing it is the "profile says much more than the
+    // Analytics hero" bug. Before the first aggregate of a session lands the
+    // card honestly shows its loading/empty state instead of a fossil number.
+    final points = math.max(0, (widget.score?.points ?? 0).round());
     final tests = (widget.score != null && widget.score!.breakdown.isNotEmpty)
         ? testsTakenOf(widget.score!.breakdown)
         : math.max(0, widget.stats?.testsTaken ?? 0);

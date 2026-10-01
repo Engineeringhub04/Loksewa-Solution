@@ -38,6 +38,12 @@ class ProfileHeader extends StatelessWidget {
   final String planLabel;
   final bool isPremiumPlan;
 
+  /// Admin-only one-time seed button for the App Links configuration
+  /// (app_applink_details/main). Shown only when [isAdmin] is true; removed
+  /// in a later update once seeded.
+  final bool isAdmin;
+  final VoidCallback? onSeedPress;
+
   /// Premium entitlement is active RIGHT NOW — drives the avatar ring.
   /// Stricter than [isPremiumPlan] on purpose: also respects the expiry date.
   final bool pro;
@@ -60,6 +66,8 @@ class ProfileHeader extends StatelessWidget {
     required this.subcourseName,
     required this.planLabel,
     required this.isPremiumPlan,
+    this.isAdmin = false,
+    this.onSeedPress,
     required this.pro,
     required this.languageShortLabel,
     required this.languageLabel,
@@ -129,6 +137,8 @@ class ProfileHeader extends StatelessWidget {
                     planLabel: planLabel,
                     isPremiumPlan: isPremiumPlan,
                     pro: pro,
+                    isAdmin: isAdmin,
+                    onSeedPress: onSeedPress,
                     languageLabel: languageLabel,
                     onToggleLanguage: onToggleLanguage,
                     onEditPress: onEditPress,
@@ -342,6 +352,42 @@ class _LanguagePill extends StatelessWidget {
   }
 }
 
+/// Admin-only seed button for the App Links configuration — the same 36px
+/// translucent icon box language as the theme toggle. Temporary: removed
+/// once the app_applink_details/main document has been seeded.
+class _SeedButton extends StatelessWidget {
+  final VoidCallback onTap;
+
+  const _SeedButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: AppLanguage.tr(
+          'Seed app link details', 'एप लिङ्क विवरण सिड गर्नुहोस्'),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(36 * 0.32),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(36 * 0.32),
+          child: const SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: Icon(
+                Icons.link_outlined,
+                size: 19,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ExpandedContent extends StatelessWidget {
   final double topPad;
   final String? displayName;
@@ -350,6 +396,8 @@ class _ExpandedContent extends StatelessWidget {
   final String planLabel;
   final bool isPremiumPlan;
   final bool pro;
+  final bool isAdmin;
+  final VoidCallback? onSeedPress;
   final String languageLabel;
   final VoidCallback onToggleLanguage;
   final VoidCallback onEditPress;
@@ -364,6 +412,8 @@ class _ExpandedContent extends StatelessWidget {
     required this.planLabel,
     required this.isPremiumPlan,
     required this.pro,
+    this.isAdmin = false,
+    this.onSeedPress,
     required this.languageLabel,
     required this.onToggleLanguage,
     required this.onEditPress,
@@ -394,6 +444,12 @@ class _ExpandedContent extends StatelessWidget {
                 ),
               ),
               // Theme toggle sits to the LEFT of the language switcher.
+              // The admin-only seed button (App Links config) sits left of
+              // the theme toggle; it is temporary and removed once seeded.
+              if (isAdmin && onSeedPress != null) ...[
+                _SeedButton(onTap: onSeedPress!),
+                const SizedBox(width: 8),
+              ],
               ProfileThemeToggle(
                   size: 36, isDark: isDark, onToggle: onToggleTheme),
               const SizedBox(width: 8),

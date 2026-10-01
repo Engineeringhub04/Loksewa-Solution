@@ -22,7 +22,11 @@ class AppInfoScreen extends StatefulWidget {
   const AppInfoScreen({super.key});
 
   /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
-  static const _appVersion = '1.0.34';
+  static const _appVersion = '1.0.35';
+
+  /// Public read of the app version for other screens
+  /// (e.g. the account-deletion-request Discord embed).
+  static String get appVersion => _appVersion;
 
   static String _devanagariDigits(String s) => s.replaceAllMapped(
         RegExp(r'[0-9]'),

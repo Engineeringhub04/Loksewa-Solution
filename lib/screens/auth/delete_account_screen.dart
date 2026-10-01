@@ -1,40 +1,105 @@
+import 'dart:convert';
+
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:loksewa_solution/screens/auth/app_info_screen.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
-import '../../services/app_language.dart';
-import '../../widgets/app_modal_shell.dart';
-import '../../widgets/app_toast.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/preloading.dart';
-import '../../widgets/syllabus_entrance.dart';
+import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
+import 'package:loksewa_solution/widgets/subpage_header.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 /// Delete Account — mirrors app/delete-account.tsx.
 ///
-/// Premium redesign (danger-gradient hero, loss list, account card) with the
-/// delete flow kept byte-identical: warning → "what you will lose" list →
-/// account email → type DELETE to confirm → danger button → destructive
-/// [AppModalShell] confirm → profile doc deleted first, then the Firebase
-/// Auth identity itself ([AuthService.deleteCurrentAccount]), success toast,
-/// back to /login.
+/// This page no longer deletes anything itself. It collects a deletion
+/// REQUEST (reason + full message) and sends it to the team's Discord
+/// webhook for manual review — the admin deletes the account by hand.
 ///
-/// When offline the confirm field and delete button are hidden and only a
-/// warning line + Cancel remain (same as React). The full-screen deleting
-/// overlay (dim barrier above everything, incl. the header) is unchanged.
+/// Flow (standing popup-action pattern): fill the form → Submit Request →
+/// [AppModalShell] confirm popup → loading state on the popup's confirm
+/// button → POST to Discord → success toast → back.
+///
+/// The Discord webhook URL is read at runtime from the Firestore document
+/// `app_applink_details/main` (field `discordWebhookUrl`), so the URL can
+/// change without an app update. When offline the form is hidden and only
+/// a warning line + Cancel remain (same as React).
 class DeleteAccountScreen extends StatefulWidget {
-  const DeleteAccountScreen({super.key});
+  const DeleteAccountScreen({
+    super.key,
+    this.fetchWebhookUrl,
+    this.postToDiscord,
+  });
+
+  /// Override in tests: resolves the Discord webhook URL.
+  @visibleForTesting
+  final Future<String?> Function()? fetchWebhookUrl;
+
+  /// Override in tests: posts the payload to Discord.
+  @visibleForTesting
+  final Future<void> Function(String url, Map<String, dynamic> body)?
+      postToDiscord;
+
+  /// Builds the Discord webhook payload (embed with the request details).
+  @visibleForTesting
+  static Map<String, dynamic> buildDiscordPayload({
+    required String uid,
+    required String name,
+    required String email,
+    required String reason,
+    required String message,
+    required String requestedAt,
+    required String appVersion,
+  }) {
+    // Discord embed field values cap at 1024 characters.
+    String cell(String s) {
+      final v = s.isEmpty ? '-' : s;
+      return v.length > 1024 ? '${v.substring(0, 1021)}...' : v;
+    }
+
+    return {
+      'embeds': [
+        {
+          'title': 'Account Deletion Request',
+          'color': 15158332, // red
+          'fields': [
+            {'name': 'Name', 'value': cell(name), 'inline': true},
+            {'name': 'User ID', 'value': cell(uid), 'inline': true},
+            {'name': 'Email', 'value': cell(email)},
+            {'name': 'Reason', 'value': cell(reason)},
+            {'name': 'Message', 'value': cell(message)},
+            {'name': 'Requested At', 'value': cell(requestedAt)},
+            {'name': 'App version', 'value': cell(appVersion), 'inline': true},
+          ],
+        },
+      ],
+    };
+  }
+
+  /// 'yyyy-MM-dd HH:mm NPT' stamp for the Discord request.
+  @visibleForTesting
+  static String nptTimestamp([DateTime? now]) {
+    final npt = (now ?? DateTime.now())
+        .toUtc()
+        .add(const Duration(hours: 5, minutes: 45));
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${npt.year}-${two(npt.month)}-${two(npt.day)} '
+        '${two(npt.hour)}:${two(npt.minute)} NPT';
+  }
 
   @override
   State<DeleteAccountScreen> createState() => _DeleteAccountScreenState();
 }
 
 class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
-  static const _confirmWord = 'DELETE';
-
-  final _confirmText = TextEditingController();
-  bool _deleting = false;
+  final _reasonText = TextEditingController();
+  final _messageText = TextEditingController();
   bool? _offline;
   bool _preloading = true;
 
@@ -62,126 +127,203 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
 
   @override
   void dispose() {
-    _confirmText.dispose();
+    _reasonText.dispose();
+    _messageText.dispose();
     super.dispose();
   }
 
-  bool get _matches => _confirmText.text.trim().toUpperCase() == _confirmWord;
+  bool get _canSubmit =>
+      _reasonText.text.trim().isNotEmpty &&
+      _messageText.text.trim().isNotEmpty;
+
+  /// Reads the Discord webhook URL from `app_applink_details/main`.
+  Future<String?> _defaultFetchWebhookUrl() async {
+    try {
+      String token = '';
+      try {
+        token = await AuthService.getValidIdToken();
+      } catch (_) {}
+      final doc = await FirestoreRest.getDocument('app_applink_details/main',
+          idToken: token);
+      final v = doc?['discordWebhookUrl'];
+      return (v is String && v.isNotEmpty) ? v : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// POSTs the embed payload to the Discord webhook.
+  Future<void> _defaultPostToDiscord(
+      String url, Map<String, dynamic> body) async {
+    final res = await http.post(
+      Uri.parse(url),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(body),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('discord webhook: ${res.statusCode}');
+    }
+  }
+
+  /// Sends the request. Returns true on success.
+  Future<bool> _submitRequest() async {
+    final fetch = widget.fetchWebhookUrl ?? _defaultFetchWebhookUrl;
+    final url = await fetch();
+    if (!mounted) return false;
+    if (url == null || url.isEmpty) {
+      showToast(
+        context,
+        AppLanguage.tr('Request service is unavailable right now.',
+            'अनुरोध सेवा अहिले उपलब्ध छैन।'),
+        ToastVariant.error,
+      );
+      return false;
+    }
+    try {
+      final user = AuthService.currentUser;
+      final profile = ProfileStore.instance.profile;
+      final profileName = profile?.name.trim() ?? '';
+      final body = DeleteAccountScreen.buildDiscordPayload(
+        uid: user?.uid ?? '',
+        name: profileName.isNotEmpty
+            ? profileName
+            : (user?.displayName ?? ''),
+        email: user?.email ?? '',
+        reason: _reasonText.text.trim(),
+        message: _messageText.text.trim(),
+        requestedAt: DeleteAccountScreen.nptTimestamp(),
+        appVersion: AppInfoScreen.appVersion,
+      );
+      final post = widget.postToDiscord ?? _defaultPostToDiscord;
+      await post(url, body);
+      return true;
+    } catch (_) {
+      if (!mounted) return false;
+      showToast(
+        context,
+        AppLanguage.tr('Could not submit your request. Please try again.',
+            'अनुरोध पठाउन सकिएन। पुनः प्रयास गर्नुहोस्।'),
+        ToastVariant.error,
+      );
+      return false;
+    }
+  }
 
   Future<void> _askConfirm() async {
     // Theme-aware danger red (React colors.error: #DC2626 light / #F87171 dark).
     final danger = ExpoPalette.of(context).danger;
     final ok = await AppModalShell.show<bool>(
       context: context,
-      builder: (ctx) => AppModalShell(
-        accent: danger,
-        accentMid: const Color(0xFFEF4444),
-        accentLight: const Color(0xFFFECACA),
-        tagColor: danger,
-        tagLabel: AppLanguage.tr('DELETE', 'मेट्नुहोस्'),
-        onClose: () => Navigator.of(ctx).pop(false),
-        icon: Container(
-          width: 56,
-          height: 56,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            color: danger,
-          ),
-          child: const Icon(Icons.warning_amber_rounded,
-              size: 28, color: Colors.white),
-        ),
-        title: Text(
-          AppLanguage.tr(
-              'Delete account permanently?', 'खाता सधैंको लागि मेट्ने?'),
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF0F172A),
-            height: 1.3,
-            decoration: TextDecoration.none,
-          ),
-        ),
-        body: Text(
-          AppLanguage.tr(
-            'This is your last chance to cancel. Your account and data will be deleted immediately.',
-            'रद्द गर्ने अन्तिम मौका। तपाईंको खाता र डाटा तुरुन्तै मेटिनेछ।',
-          ),
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 14,
-            height: 1.5,
-            color: Color(0xFF64748B),
-            decoration: TextDecoration.none,
-          ),
-        ),
-        footer: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(22),
-                  ),
-                ),
-                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+      builder: (_) {
+        var sending = false;
+        return StatefulBuilder(
+          builder: (modalContext, setModalState) => AppModalShell(
+            accent: danger,
+            accentMid: const Color(0xFFEF4444),
+            accentLight: const Color(0xFFFECACA),
+            tagColor: danger,
+            tagLabel: AppLanguage.tr('REQUEST', 'अनुरोध'),
+            onClose: sending ? null : () => Navigator.of(modalContext).pop(),
+            icon: Container(
+              width: 56,
+              height: 56,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                color: danger,
+              ),
+              child: const Icon(Icons.send_rounded,
+                  size: 28, color: Colors.white),
+            ),
+            title: Text(
+              AppLanguage.tr(
+                  'Submit deletion request?', 'मेटाउने अनुरोध पठाउने?'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF0F172A),
+                height: 1.3,
+                decoration: TextDecoration.none,
               ),
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: danger,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(22),
-                  ),
-                ),
-                child: Text(AppLanguage.tr(
-                    'Delete My Account', 'मेरो खाता मेट्नुहोस्')),
+            body: Text(
+              AppLanguage.tr(
+                'Our team will review your request and contact you. Your account stays active until then.',
+                'हाम्रो टोलीले तपाईंको अनुरोध समीक्षा गर्नेछ र सम्पर्क गर्नेछ। त्यतिन्जेल तपाईंको खाता सक्रिय रहन्छ।',
+              ),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.5,
+                color: Color(0xFF64748B),
+                decoration: TextDecoration.none,
               ),
             ),
-          ],
-        ),
-      ),
+            footer: Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: sending
+                        ? null
+                        : () => Navigator.of(modalContext).pop(),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                    ),
+                    child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: sending
+                        ? null
+                        : () async {
+                            setModalState(() => sending = true);
+                            final sent = await _submitRequest();
+                            if (!modalContext.mounted) return;
+                            Navigator.of(modalContext).pop(sent);
+                          },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: danger,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: danger,
+                      disabledForegroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(22),
+                      ),
+                    ),
+                    child: sending
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(AppLanguage.tr(
+                            'Submit Request', 'अनुरोध पठाउनुहोस्')),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
-    if (ok == true) _doDelete();
-  }
-
-  Future<void> _doDelete() async {
-    final user = AuthService.currentUser;
-    if (user == null) return;
-    setState(() => _deleting = true);
-    try {
-      // Remove the stored profile data first — once the auth identity is gone
-      // the request would no longer be authorised to touch the document.
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument('users/${user.uid}', idToken: idToken)
-          .catchError((_) {});
-      // Then delete the Firebase Auth identity itself.
-      await AuthService.deleteCurrentAccount();
-      if (!mounted) return;
+    if (ok == true && mounted) {
       showToast(
         context,
-        AppLanguage.tr('Your account has been deleted', 'तपाईंको खाता मेटियो'),
+        AppLanguage.tr(
+            'Your request has been submitted', 'तपाईंको अनुरोध पठाइयो'),
         ToastVariant.success,
       );
-      context.go('/login');
-    } catch (_) {
-      if (!mounted) return;
-      showToast(
-        context,
-        AppLanguage.tr('Could not delete your account. Please try again.',
-            'खाता मेट्न सकिएन। पुनः प्रयास गर्नुहोस्।'),
-        ToastVariant.error,
-      );
-    } finally {
-      if (mounted) setState(() => _deleting = false);
+      if (context.canPop()) context.pop();
     }
   }
 
@@ -196,6 +338,28 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     );
   }
 
+  InputDecoration _fieldDecoration({
+    required String label,
+    required IconData icon,
+    required Color danger,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 20, color: danger),
+      alignLabelWithHint: true,
+      filled: true,
+      fillColor: danger.withValues(alpha: 0.06),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(14),
+        borderSide: BorderSide(color: danger, width: 1.5),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
@@ -204,139 +368,146 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     // text and surfaceAlt all flip correctly between light and dark.
     final palette = ExpoPalette.of(context);
     final danger = palette.danger;
-    final enabled = _matches && !_deleting;
+    final primary = palette.primary;
+    final enabled = _canSubmit;
     return Scaffold(
-      // Stack (not Column): the deleting dim barrier sits ABOVE everything
-      // including the header — same as React's full-screen PageLoaderOverlay
-      // — so it never leaves white slivers at the header's curved corners.
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-            children: [
-              SubpageHeader(
-                  title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
-              Expanded(
-                child: _preloading
-                    ? _preloadingBody()
-                    : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  children: [
-                    SyllabusEntrance(
-                      delayMs: 0,
-                      child: _dangerHero(danger),
-                    ),
-                    const SizedBox(height: 16),
-                    SyllabusEntrance(
-                      delayMs: 60,
-                      child: _lossesCard(context, palette, danger),
-                    ),
-                    if (user?.email != null) ...[
-                      const SizedBox(height: 16),
+          SubpageHeader(
+              title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
+          Expanded(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    children: [
                       SyllabusEntrance(
-                        delayMs: 120,
-                        child: _accountCard(context, palette, user!.email!),
-                      ),
-                    ],
-                    const SizedBox(height: 16),
-                    if (offline)
-                      SyllabusEntrance(
-                        delayMs: 180,
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          child: Text(
-                            AppLanguage.tr('No internet connection',
-                                'इन्टरनेट जडान छैन'),
-                            style: TextStyle(
-                                color: palette.warning, fontSize: 13),
-                          ),
-                        ),
-                      )
-                    else ...[
-                      SyllabusEntrance(
-                        delayMs: 180,
-                        child: TextField(
-                          controller: _confirmText,
-                          textCapitalization: TextCapitalization.characters,
-                          autocorrect: false,
-                          decoration: InputDecoration(
-                            labelText: AppLanguage.tr(
-                              'Type $_confirmWord to confirm',
-                              'पुष्टि गर्न $_confirmWord टाइप गर्नुहोस्',
-                            ),
-                            prefixIcon: Icon(Icons.error_outline_rounded,
-                                size: 20, color: danger),
-                            filled: true,
-                            fillColor: danger.withValues(alpha: 0.06),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide: BorderSide.none,
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(14),
-                              borderSide:
-                                  BorderSide(color: danger, width: 1.5),
-                            ),
-                          ),
-                          onChanged: (_) => setState(() {}),
-                        ),
+                        delayMs: 0,
+                        child: _dangerHero(danger),
                       ),
                       const SizedBox(height: 16),
                       SyllabusEntrance(
-                        delayMs: 240,
-                        // React's danger Button: the red fill + white label
-                        // stay the same when disabled — only the whole button
-                        // dims to 50% opacity. Never a grey/white box.
-                        child: Opacity(
-                          opacity: enabled ? 1.0 : 0.5,
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: enabled ? _askConfirm : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: danger,
-                                foregroundColor: Colors.white,
-                                disabledBackgroundColor: danger,
-                                disabledForegroundColor: Colors.white,
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 15),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                textStyle: const TextStyle(
-                                    fontSize: 16, fontWeight: FontWeight.w600),
+                        delayMs: 60,
+                        child: _lossesCard(context, palette, danger),
+                      ),
+                      if (user?.email != null) ...[
+                        const SizedBox(height: 16),
+                        SyllabusEntrance(
+                          delayMs: 120,
+                          child: _accountCard(context, palette, user!.email!),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      if (offline)
+                        SyllabusEntrance(
+                          delayMs: 180,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Text(
+                              AppLanguage.tr('No internet connection',
+                                  'इन्टरनेट जडान छैन'),
+                              style: TextStyle(
+                                  color: palette.warning, fontSize: 13),
+                            ),
+                          ),
+                        )
+                      else ...[
+                        SyllabusEntrance(
+                          delayMs: 180,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLanguage.tr(
+                                    'Request details', 'अनुरोध विवरण'),
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: palette.textPrimary),
                               ),
-                              child: Text(AppLanguage.tr(
-                                  'Delete My Account', 'मेरो खाता मेट्नुहोस्')),
+                              const SizedBox(height: 4),
+                              Text(
+                                AppLanguage.tr(
+                                  'Tell us why you want to delete your account. Our team reviews every request.',
+                                  'तपाईं खाता किन मेट्न चाहनुहुन्छ बताउनुहोस्। हाम्रो टोलीले हरेक अनुरोध समीक्षा गर्छ।',
+                                ),
+                                style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 13,
+                                    height: 1.5),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _reasonText,
+                                textInputAction: TextInputAction.next,
+                                decoration: _fieldDecoration(
+                                  label: AppLanguage.tr(
+                                      'Reason (required)', 'कारण (आवश्यक)'),
+                                  icon: Icons.subject_rounded,
+                                  danger: danger,
+                                ),
+                                onChanged: (_) => setState(() {}),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _messageText,
+                                minLines: 4,
+                                maxLines: 6,
+                                textInputAction: TextInputAction.newline,
+                                decoration: _fieldDecoration(
+                                  label: AppLanguage.tr('Full Message (required)',
+                                      'पूर्ण सन्देश (आवश्यक)'),
+                                  icon: Icons.message_outlined,
+                                  danger: danger,
+                                ),
+                                onChanged: (_) => setState(() {}),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        SyllabusEntrance(
+                          delayMs: 240,
+                          child: Opacity(
+                            opacity: enabled ? 1.0 : 0.5,
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: enabled ? _askConfirm : null,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primary,
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor: primary,
+                                  disabledForegroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 15),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                  textStyle: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                                child: Text(AppLanguage.tr('Submit Request',
+                                    'अनुरोध पठाउनुहोस्')),
+                              ),
                             ),
                           ),
                         ),
+                      ],
+                      const SizedBox(height: 8),
+                      TextButton(
+                        onPressed: () => context.pop(),
+                        child: Text(
+                          AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                          // React's text-variant Button uses colors.primary —
+                          // theme-aware, readable on both themes.
+                          style: TextStyle(color: palette.primary),
+                        ),
                       ),
                     ],
-                    const SizedBox(height: 8),
-                    TextButton(
-                      onPressed: () => context.pop(),
-                      child: Text(
-                        AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
-                        // React's text-variant Button uses colors.primary —
-                        // theme-aware, readable on both themes.
-                        style: TextStyle(color: palette.primary),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                  ),
           ),
-          if (_deleting)
-            Container(
-              color: Colors.black54,
-              child: Center(
-                child: PreloadingWidget(
-                  label: AppLanguage.tr(
-                      'Deleting your account...', 'खाता मेटिँदै...'),
-                ),
-              ),
-            ),
         ],
       ),
     );
@@ -428,8 +599,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                             'खाता मेट्दा तपाईंको प्रोफाइल र अध्ययन डाटा सधैंको लागि हट्नेछ।',
                           ),
                           style: TextStyle(
-                              color:
-                                  Colors.white.withValues(alpha: 0.88),
+                              color: Colors.white.withValues(alpha: 0.88),
                               fontSize: 14,
                               height: 1.5),
                         ),
@@ -470,8 +640,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   }
 
   /// "What you will lose" — the same four losses as React, as divided rows.
-  Widget _lossesCard(
-      BuildContext context, ExpoPalette palette, Color danger) {
+  Widget _lossesCard(BuildContext context, ExpoPalette palette, Color danger) {
     return _surfaceCard(
       context,
       child: Column(
@@ -512,9 +681,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     );
   }
 
-  /// The signed-in account that will be deleted.
-  Widget _accountCard(
-      BuildContext context, ExpoPalette palette, String email) {
+  /// The signed-in account the request is about.
+  Widget _accountCard(BuildContext context, ExpoPalette palette, String email) {
     return _surfaceCard(
       context,
       child: Row(
@@ -535,9 +703,10 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  AppLanguage.tr('Account to be deleted', 'मेटिने खाता'),
-                  style: TextStyle(
-                      color: palette.textSecondary, fontSize: 12),
+                  AppLanguage.tr(
+                      'Account this request is about', 'अनुरोध गरिएको खाता'),
+                  style:
+                      TextStyle(color: palette.textSecondary, fontSize: 12),
                 ),
                 const SizedBox(height: 3),
                 Text(

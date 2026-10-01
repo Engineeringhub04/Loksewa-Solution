@@ -276,8 +276,8 @@ void main() {
       expect(find.text('OTHERS'), findsOneWidget);
       expect(find.text('Pinned note'), findsOneWidget);
       expect(find.text('Other note'), findsOneWidget);
-      // Security info card is visible.
-      expect(find.textContaining('database ma save hudaina'),
+      // Security info card is visible (Devanagari — no Romanized Nepali).
+      expect(find.textContaining('डाटा database मा save हुँदैन'),
           findsOneWidget);
 
       tmp.deleteSync(recursive: true);

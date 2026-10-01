@@ -19,6 +19,9 @@ dependencies:
   firebase_messaging: ^15.1.0
   pdfx: ^2.11.0
   path_provider: ^2.1.6
+  crypto: ^3.0.3
+  share_plus: ^10.1.2
+  file_picker: ^8.1.2
 
 dev_dependencies:
   flutter_test:

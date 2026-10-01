@@ -13,6 +13,7 @@ import 'package:loksewa_solution/services/analytics/analytics_types.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_hero.dart';
@@ -99,6 +100,7 @@ class _AnalyticsPayload {
     required this.available,
     required this.names,
     required this.fetchedAt,
+    required this.canonical,
   });
 
   final AnalyticsDocument? document;
@@ -109,6 +111,12 @@ class _AnalyticsPayload {
 
   /// When this payload was built — §15 has to say how old the numbers are.
   final int fetchedAt;
+
+  /// Canonical live stats (computeMainLeaderboardScore + 50pt signup bonus):
+  /// the single source of truth for the hero's points and coverage percent.
+  /// Null in degraded mode, when the hero falls back to the snapshot's
+  /// numbers.
+  final CanonicalStats? canonical;
 }
 
 /// In-memory cohort board cache: 10 minutes per subcourse, shared with the
@@ -140,9 +148,9 @@ const int _heatmapMaxDays = 182;
 /// PRIVATE BY DESIGN: everything is read from `users/{uid}/app_analytics`,
 /// which no other user can see.
 ///
-/// [debugUid], [fetchDocument], [listSubcourses], [fetchBoard] and
-/// [loadIdentity] are seams for widget tests — the production defaults hit
-/// the real services.
+/// [debugUid], [fetchDocument], [listSubcourses], [fetchBoard],
+/// [loadIdentity] and [loadCanonical] are seams for widget tests — the
+/// production defaults hit the real services.
 class AnalyticsScreen extends StatefulWidget {
   const AnalyticsScreen({
     super.key,
@@ -151,6 +159,7 @@ class AnalyticsScreen extends StatefulWidget {
     this.listSubcourses = listAnalyticsSubcourses,
     this.fetchBoard = fetchMainLeaderboard,
     this.loadIdentity,
+    this.loadCanonical,
   });
 
   final String? debugUid;
@@ -160,6 +169,14 @@ class AnalyticsScreen extends StatefulWidget {
   final Future<List<MainLeaderboardRow>> Function(String subcourseId)
       fetchBoard;
   final Future<AnalyticsIdentity> Function(String uid)? loadIdentity;
+
+  /// Canonical-stats loader (computeMainLeaderboardScore + 50pt signup
+  /// bonus). The hero's points and coverage percent come from here, NOT the
+  /// once-a-day snapshot — the consistency rule documented in
+  /// main_leaderboard.dart. Null selects the production default, which never
+  /// throws: a null result puts the hero in degraded mode (snapshot fallback).
+  final Future<CanonicalStats?> Function(
+      String uid, String courseId, String subcourseId)? loadCanonical;
 
   @override
   State<AnalyticsScreen> createState() => _AnalyticsScreenState();
@@ -218,19 +235,41 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     }
   }
 
+  /// Production canonical-stats loader: refreshes the leaderboard aggregate
+  /// when the publish throttle allows — but only with a loaded profile, so
+  /// the public row is never written as "Anonymous". Never throws; a null
+  /// result puts the hero in degraded mode (snapshot fallback).
+  Future<CanonicalStats?> _defaultLoadCanonical(
+      String uid, String courseId, String subcourseId) {
+    final profile = ProfileStore.instance.profile;
+    return loadCanonicalStats(
+      uid: uid,
+      courseId: courseId,
+      subcourseId: subcourseId,
+      name: profile?.name ?? '',
+      photoURL: profile?.photoURL,
+      isPro: profile != null && hasActivePremium(profile),
+      allowRefresh: profile != null,
+    );
+  }
+
   Future<_AnalyticsPayload> _loadPayload(
       String uid, String subcourseId) async {
     final results = await Future.wait([
       widget.fetchDocument(uid, subcourseId),
       widget.listSubcourses(uid),
+      (widget.loadCanonical ?? _defaultLoadCanonical)(
+          uid, _identity?.courseId ?? '', subcourseId),
     ]);
     final document = results[0] as AnalyticsDocument?;
     final available = results[1] as List<AnalyticsSubcourseRow>;
+    final canonical = results[2] as CanonicalStats?;
     return _AnalyticsPayload(
       document: document,
       available: available,
       names: await _resolveSubcourseNames(available),
       fetchedAt: DateTime.now().millisecondsSinceEpoch,
+      canonical: canonical,
     );
   }
 
@@ -585,8 +624,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final effortTotal =
         effortData.fold<double>(0, (sum, item) => sum + item.value);
 
+    // ---------- canonical hero numbers ----------
+    // THE CONSISTENCY RULE (see main_leaderboard.dart): the hero's points and
+    // coverage percent come from the canonical live stats
+    // (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers
+    // the Leaderboard board and the Profile stats card show. The snapshot's
+    // copies (document.percent, latest.p) go stale the moment any intraday
+    // activity happens, which is exactly the "Analytics says 594, profile
+    // says much more" bug. A null canonical means degraded mode (the
+    // aggregate was unreadable): the hero falls back to the snapshot's
+    // numbers rather than showing zeros.
+    final canonical = _payload?.canonical;
+    final heroPoints = canonical?.points ?? summary.totalPoints.round();
+    final heroPercent = canonical != null
+        ? displayCoveragePercent(canonical.percent)
+        : displayCoveragePercent(document.percent);
+
     // ---------- points breakdown ----------
-    final breakdown = pointsBreakdown(document.breakdown, summary.totalPoints);
+    final breakdown =
+        pointsBreakdown(canonical?.breakdown ?? document.breakdown, heroPoints);
     final breakdownRows = breakdown.rows
         .map((row) => RankedBarRow(
               key: row.key.name,
@@ -656,7 +712,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     // ---------- milestones ----------
     final milestones = buildMilestones(
-      summary.totalPoints,
+      heroPoints,
       streak.current,
       summary.accuracy,
       facts.totalSeconds,
@@ -670,15 +726,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     final sections = <Widget>[
       // ---------- 2. Hero ----------
-      // The ring shows the SAME stored coverage percent as the profile
-      // stats card (document.percent == the leaderboard aggregate's
-      // percent, written by recordAnalyticsSnapshot as score.percent) —
-      // NOT summary.accuracy. The old value was the newest analytics
-      // day-bucket's pc: a different document, a different pipeline, and
-      // a hybrid metric (coverage for fresh buckets, weighted correctness
-      // for seeded backfill days), so the two rings could never agree.
-      // displayCoveragePercent keeps the sub-10% one-decimal formatting
-      // the profile card uses, so tiny values match there too.
+      // The ring shows the SAME coverage percent as the profile stats card
+      // and the leaderboard board: the canonical live computation
+      // (computeMainLeaderboardScore + 50pt signup bonus) — NOT the
+      // snapshot's document.percent, which goes stale the moment any
+      // intraday activity happens. The old value was also never the
+      // aggregate: it came from a different document and a different
+      // pipeline, so the two rings could never agree. displayCoveragePercent
+      // keeps the sub-10% one-decimal formatting the profile card uses, so
+      // tiny values match there too. In degraded mode (canonical
+      // unreadable) the hero falls back to the snapshot's numbers.
       AnalyticsHero(
         courseName: _identity?.courseName.isNotEmpty == true
             ? _identity!.courseName
@@ -687,8 +744,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             (_identity?.subcourseName.isNotEmpty == true
                 ? _identity!.subcourseName
                 : AnalyticsStrings.pickerUnnamed),
-        percent: displayCoveragePercent(document.percent),
-        points: summary.totalPoints.round(),
+        percent: heroPercent,
+        points: heroPoints,
         streak: streak.current,
         activeDays: summary.activeDays,
         // Only present once §13 has been opened — the hero never pays for a

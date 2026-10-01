@@ -146,6 +146,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void initState() {
     super.initState();
+    // Header preload: the profile tab already loaded the user's name and
+    // photo into the shared ProfileStore when the app opened, so the header
+    // (photo + name) renders instantly with zero network wait — only the
+    // form fields below hydrate from the fresh read in _boot(). If the store
+    // never loaded (or holds another user's data), this is skipped and
+    // _boot() does the normal quick load. Skipped for test seams too, so
+    // widget tests keep full control of the data.
+    final storeProfile = ProfileStore.instance.profile;
+    final prefillUid = widget.debugUid ?? AuthService.currentUser?.uid;
+    if (widget.loadProfile == null &&
+        storeProfile != null &&
+        prefillUid != null &&
+        storeProfile.uid == prefillUid) {
+      _firstCtrl.text = storeProfile.firstName;
+      _lastCtrl.text = storeProfile.lastName;
+      _photoURL = storeProfile.photoURL;
+      _pro = hasActivePremium(storeProfile);
+    }
     // The loader stays up briefly so the page opens the same way Course
     // Details does — spinner with a label first, then the real values.
     _minLoaderTimer = Timer(const Duration(milliseconds: 650), () {

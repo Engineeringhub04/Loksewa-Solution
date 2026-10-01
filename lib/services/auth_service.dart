@@ -165,6 +165,25 @@ class AuthService {
     }
   }
 
+  /// Reads the saved session from disk WITHOUT any network refresh and
+  /// installs it in memory. Used by the splash when the full
+  /// [restoreSession] times out: a saved session means the user was logged
+  /// in, even if the token refresh was slower than the splash deadline.
+  /// Installing it in memory matters — [getValidIdToken] then retries the
+  /// refresh itself on its next call instead of sending API requests with an
+  /// empty token. Never wipes anything; returns null when nothing was saved
+  /// or the saved blob is corrupt.
+  static Future<AppUser?> peekSavedSession() async {
+    try {
+      final raw = await PrefsService.getString(PrefsService.sessionKey);
+      if (raw == null) return null;
+      _session = _Session.fromJson(json.decode(raw) as Map<String, dynamic>);
+      return _session!.user;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<void> _refreshToken() async {
     final refreshToken = _session?.refreshToken;
     if (refreshToken == null) throw AuthError('auth/no-session');

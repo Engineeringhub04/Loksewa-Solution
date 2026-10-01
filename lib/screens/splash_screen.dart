@@ -41,7 +41,19 @@ class _SplashScreenState extends State<SplashScreen> {
     if (splashHasRouted) return;
     final startedAt = DateTime.now();
 
-    final user = await _withTimeout(AuthService.restoreSession(), null);
+    // restoreSession is deadline-bounded, but a TIMEOUT is not a logout: it
+    // just means the token refresh was slower than the splash deadline
+    // (slow mobile network). Only a definitive null (no saved session /
+    // truly-dead refresh token) means "not logged in". On timeout, fall back
+    // to the on-disk session without a network refresh: if one was saved,
+    // the user was logged in — route home and let the API layer retry the
+    // refresh via getValidIdToken on its next call.
+    AppUser? user;
+    try {
+      user = await AuthService.restoreSession().timeout(_callTimeout);
+    } on TimeoutException {
+      user = await AuthService.peekSavedSession().catchError((_) => null);
+    }
 
     // App Links cold start: capture the link that opened the app (if any).
     // Logged-in users keep the normal routing below; logged-out users opened

@@ -7,7 +7,9 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import '../../services/app_language.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/trash_icon.dart';
 
 /// Report a Problem — mirrors `app/settings/report-problem.tsx`.
@@ -29,22 +31,52 @@ class ReportProblemScreen extends StatefulWidget {
 
 class _Category {
   final String value;
-  final String label;
-  final String desc;
+  final String labelEn;
+  final String labelNe;
+  final String descEn;
+  final String descNe;
   final IconData icon;
   final Color color;
-  const _Category(this.value, this.label, this.desc, this.icon, this.color);
+  const _Category(this.value, this.labelEn, this.labelNe, this.descEn,
+      this.descNe, this.icon, this.color);
+
+  String get label => AppLanguage.tr(labelEn, labelNe);
+  String get desc => AppLanguage.tr(descEn, descNe);
 }
 
 const _categories = [
-  _Category('bug', 'Bug or error', 'Something crashes, freezes or will not open',
-      Icons.bug_report_outlined, Color(0xFFEF4444)),
-  _Category('content', 'Content problem', 'Wrong answer, typo or outdated material',
-      Icons.description_outlined, Color(0xFF0EA5E9)),
-  _Category('payment', 'Payment or access', 'Purchase not showing, billing or refund',
-      Icons.credit_card_outlined, Color(0xFF10B981)),
-  _Category('other', 'Something else', 'Anything that does not fit the options above',
-      Icons.more_horiz, Color(0xFF8B5CF6)),
+  _Category(
+      'bug',
+      'Bug or error',
+      'बग वा त्रुटि',
+      'Something crashes, freezes or will not open',
+      'क्र्यास हुने, अड्कने वा नखुल्ने समस्या',
+      Icons.bug_report_outlined,
+      Color(0xFFEF4444)),
+  _Category(
+      'content',
+      'Content problem',
+      'सामग्री समस्या',
+      'Wrong answer, typo or outdated material',
+      'गलत उत्तर, टाइपो वा पुरानो सामग्री',
+      Icons.description_outlined,
+      Color(0xFF0EA5E9)),
+  _Category(
+      'payment',
+      'Payment or access',
+      'भुक्तानी वा पहुँच',
+      'Purchase not showing, billing or refund',
+      'किनेको नदेखिएको, बिलिङ वा रकम फिर्ता',
+      Icons.credit_card_outlined,
+      Color(0xFF10B981)),
+  _Category(
+      'other',
+      'Something else',
+      'अरू केही',
+      'Anything that does not fit the options above',
+      'माथिका विकल्पमा नपर्ने कुनै पनि कुरा',
+      Icons.more_horiz,
+      Color(0xFF8B5CF6)),
 ];
 
 class _ReportProblemScreenState extends State<ReportProblemScreen> {
@@ -94,11 +126,16 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
       if (bytes != null && mounted) setState(() => _imageBytes = bytes);
     } on ScreenshotPickerUnavailable {
       if (!mounted) return;
-      showToast(context, 'Image picker is not available in this build yet',
+      showToast(
+          context,
+          AppLanguage.tr('Image picker is not available in this build yet',
+              'इमेज पिकर यो बिल्डमा उपलब्ध छैन'),
           ToastVariant.error);
     } catch (_) {
       if (!mounted) return;
-      showToast(context, 'Could not pick the image', ToastVariant.error);
+      showToast(context,
+          AppLanguage.tr('Could not pick the image', 'इमेज छान्न सकिएन'),
+          ToastVariant.error);
     }
   }
 
@@ -121,11 +158,16 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
       );
       if (!mounted) return;
       showToast(
-          context, 'Problem reported — thank you', ToastVariant.success);
+          context,
+          AppLanguage.tr(
+              'Problem reported — thank you', 'समस्या रिपोर्ट गरियो — धन्यवाद'),
+          ToastVariant.success);
       context.pop();
     } catch (_) {
       if (!mounted) return;
-      showToast(context, 'Something went wrong', ToastVariant.error);
+      showToast(context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -138,7 +180,9 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
       backgroundColor: pal.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'Report a Problem'),
+          SubpageHeader(
+              title: AppLanguage.tr(
+                  'Report a Problem', 'समस्या रिपोर्ट गर्नुहोस्')),
           Expanded(
             child: _offline == true ? _offlineBody(pal) : _formBody(pal),
           ),
@@ -164,7 +208,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'This requires an internet connection',
+                    AppLanguage.tr('This requires an internet connection',
+                        'यसका लागि इन्टरनेट जडान आवश्यक छ'),
                     style: TextStyle(fontSize: 12, color: pal.warning),
                   ),
                 ),
@@ -177,7 +222,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
               setState(() => _offline = null);
               _checkOnline();
             },
-            child: const Text('Retry'),
+            child:
+                Text(AppLanguage.tr('Retry', 'पुन: प्रयास')),
           ),
         ],
       ),
@@ -191,7 +237,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Hero — same pattern as the Report Question screen.
-          _Entrance(
+          SyllabusEntrance(
             delayMs: 0,
             child: Container(
               padding: const EdgeInsets.all(16),
@@ -214,7 +260,10 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Send us the details and we will look into it.',
+                      AppLanguage.tr(
+                        'Send us the details and we will look into it.',
+                        'विवरण पठाउनुहोस्, हामी हेर्नेछौँ।',
+                      ),
                       style: TextStyle(
                         fontSize: 12,
                         color: pal.textSecondary,
@@ -229,7 +278,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
           const SizedBox(height: 16),
 
           // ===== Category =====
-          _Entrance(
+          SyllabusEntrance(
             delayMs: 60,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -239,12 +288,14 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text('Category',
+                      Text(AppLanguage.tr('Category', 'श्रेणी'),
                           style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: pal.textPrimary)),
-                      Text('Pick the closest match',
+                      Text(
+                          AppLanguage.tr('Pick the closest match',
+                              'सबैभन्दा नजिकको छान्नुहोस्'),
                           style: TextStyle(
                               fontSize: 11, color: pal.textSecondary)),
                     ],
@@ -285,7 +336,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
           // Manual category — only while "Other" is selected.
           if (_isOther) ...[
             const SizedBox(height: 12),
-            _Entrance(
+            SyllabusEntrance(
               delayMs: 0,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -296,7 +347,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                     autofocus: true,
                     onChanged: (_) => setState(() {}),
                     decoration: InputDecoration(
-                      labelText: 'Other',
+                      labelText:
+                          AppLanguage.tr('Other', 'अन्य'),
                       prefixIcon:
                           const Icon(Icons.sell_outlined, size: 20),
                       border: OutlineInputBorder(
@@ -306,7 +358,9 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                   ),
                   Padding(
                     padding: const EdgeInsets.only(left: 4, top: 4),
-                    child: Text('Describe it below',
+                    child: Text(
+                        AppLanguage.tr(
+                            'Describe it below', 'तल वर्णन गर्नुहोस्'),
                         style: TextStyle(
                             fontSize: 11, color: pal.textSecondary)),
                   ),
@@ -317,7 +371,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
           const SizedBox(height: 16),
 
           // ===== Description =====
-          _Entrance(
+          SyllabusEntrance(
             delayMs: 120,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -329,7 +383,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                   textAlignVertical: TextAlignVertical.top,
                   onChanged: (_) => setState(() {}),
                   decoration: InputDecoration(
-                    labelText: 'Describe the problem',
+                    labelText: AppLanguage.tr(
+                        'Describe the problem', 'समस्याको वर्णन गर्नुहोस्'),
                     alignLabelWithHint: true,
                     contentPadding: const EdgeInsets.all(16),
                     border: OutlineInputBorder(
@@ -339,7 +394,10 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.only(left: 4, top: 4),
-                  child: Text('Add any detail that helps us fix it faster',
+                  child: Text(
+                      AppLanguage.tr(
+                          'Add any detail that helps us fix it faster',
+                          'छिटो समाधानका लागि थप विवरण दिनुहोस्'),
                       style:
                           TextStyle(fontSize: 11, color: pal.textSecondary)),
                 ),
@@ -349,11 +407,11 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
           const SizedBox(height: 16),
 
           // ===== Screenshot =====
-          _Entrance(delayMs: 180, child: _screenshotSection(pal)),
+          SyllabusEntrance(delayMs: 180, child: _screenshotSection(pal)),
           const SizedBox(height: 16),
 
           // ===== Submit =====
-          _Entrance(
+          SyllabusEntrance(
             delayMs: 240,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -372,7 +430,9 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                     ),
                   ),
                   const SizedBox(height: 5),
-                  Text('Uploading screenshot... $_uploadPct%',
+                  Text(
+                      AppLanguage.tr('Uploading screenshot... $_uploadPct%',
+                          'स्क्रिनसट अपलोड हुँदैछ... $_uploadPct%'),
                       maxLines: 1,
                       style: TextStyle(
                           fontSize: 11, color: pal.textSecondary)),
@@ -400,8 +460,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                             child: CircularProgressIndicator(
                                 strokeWidth: 2, color: Colors.white),
                           )
-                        : const Text('Submit',
-                            style: TextStyle(
+                        : Text(AppLanguage.tr('Submit', 'पेश गर्नुहोस्'),
+                            style: const TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.w600)),
                   ),
@@ -441,7 +501,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Screenshot attached',
+                    AppLanguage.tr(
+                        'Screenshot attached', 'स्क्रिनसट संलग्न भयो'),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -457,7 +518,9 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                       children: [
                         TrashIcon(size: 14, color: pal.danger),
                         const SizedBox(width: 4),
-                        Text('Remove screenshot',
+                        Text(
+                            AppLanguage.tr('Remove screenshot',
+                                'स्क्रिनसट हटाउनुहोस्'),
                             style: TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
@@ -503,7 +566,8 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
               ),
               const SizedBox(width: 10),
               Text(
-                'Attach Screenshot (optional)',
+                AppLanguage.tr('Attach Screenshot (optional)',
+                    'स्क्रिनसट संलग्न गर्नुहोस् (वैकल्पिक)'),
                 style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
@@ -673,43 +737,6 @@ class _CategoryRowState extends State<_CategoryRow> {
             );
           },
         ),
-      ),
-    );
-  }
-}
-
-/// Staggered entrance: fade + slide down (mirrors `FadeInDown`).
-class _Entrance extends StatefulWidget {
-  final int delayMs;
-  final Widget child;
-  const _Entrance({required this.delayMs, required this.child});
-
-  @override
-  State<_Entrance> createState() => _EntranceState();
-}
-
-class _EntranceState extends State<_Entrance> {
-  bool _go = false;
-
-  @override
-  void initState() {
-    super.initState();
-    Future.delayed(Duration(milliseconds: widget.delayMs), () {
-      if (mounted) setState(() => _go = true);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedOpacity(
-      opacity: _go ? 1 : 0,
-      duration: const Duration(milliseconds: 360),
-      curve: Curves.easeOut,
-      child: AnimatedSlide(
-        offset: _go ? Offset.zero : const Offset(0, -0.12),
-        duration: const Duration(milliseconds: 360),
-        curve: Curves.easeOut,
-        child: widget.child,
       ),
     );
   }

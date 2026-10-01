@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/analytics/analytics_derive.dart';
+import 'package:loksewa_solution/services/analytics/analytics_strings.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/analytics/analytics_series.dart';
 import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
@@ -360,9 +362,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   }
 
   String _rangeLabel(AnalyticsRange range) {
-    if (range == AnalyticsRange.all) return 'all time';
-    return '${range.days} days';
+    if (range == AnalyticsRange.all) return AnalyticsStrings.rangeAllLabel;
+    return AnalyticsStrings.rangeDaysLabel(range.days!);
   }
+
+  /// Chart/day labels follow the app language, like the React screen's `lang`.
+  AnalyticsLanguage get _chartLang =>
+      AppLanguage.isNepali ? AnalyticsLanguage.ne : AnalyticsLanguage.en;
 
   List<SubcourseOption> _subcourseOptions() {
     final payload = _payload;
@@ -378,7 +384,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ? fallback
             : (_identity?.courseName ?? '');
       }
-      if (name.isEmpty) name = 'Unnamed sub-course';
+      if (name.isEmpty) name = AnalyticsStrings.pickerUnnamed;
       return SubcourseOption(
         subcourseId: row.subcourseId,
         courseId: row.courseId,
@@ -394,7 +400,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final colors = ExpoPalette.of(context);
 
     final header = SubpageHeader(
-      title: 'Performance Analytics',
+      title: AnalyticsStrings.title,
       actions: [
         GestureDetector(
           onTap: _reload,
@@ -418,15 +424,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     final subcourseId = _subcourseId;
 
     if (_loading && _payload == null && _identity == null) {
-      body = const PreloadingWidget(
-          tinted: false, label: 'Loading Analytics...');
+      body = PreloadingWidget(
+          tinted: false,
+          label: AnalyticsStrings.loading,
+          hint: AnalyticsStrings.loadingHint);
     } else if (_error != null && _payload == null) {
       // Checked before the course gate: a failed identity load leaves the
       // subcourse unknown, which must not masquerade as "choose a course".
       body = _Gate(
         icon: Icons.error_outline,
-        title: 'Something went wrong',
-        description: 'Could not load your analytics.',
+        title: AnalyticsStrings.errorTitle,
+        description: AnalyticsStrings.errorDescription,
         onRetry: () {
           setState(() {
             _error = null;
@@ -436,10 +444,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         },
       );
     } else if (uid.isEmpty || subcourseId.isEmpty) {
-      body = const _Gate(
+      body = _Gate(
         icon: Icons.school_outlined,
-        title: 'Performance Analytics',
-        description: 'Choose a course to see your analytics',
+        title: AnalyticsStrings.title,
+        description: AnalyticsStrings.noCourse,
         onRetry: null,
       );
     } else if (_payload != null && _payload!.document == null) {
@@ -447,16 +455,17 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       // subcourse — the state a brand-new user is in, not an error.
       body = _Gate(
         icon: Icons.analytics_outlined,
-        title: 'No data yet',
-        description:
-            'Your daily snapshot has not run for this sub-course yet. Open the app tomorrow and it will start building.',
+        title: AnalyticsStrings.emptyTitle,
+        description: AnalyticsStrings.emptyDescription,
         onRetry: _reload,
       );
     } else if (_payload?.document != null) {
       body = _content(context, colors, _payload!.document!);
     } else {
-      body = const PreloadingWidget(
-          tinted: false, label: 'Loading Analytics...');
+      body = PreloadingWidget(
+          tinted: false,
+          label: AnalyticsStrings.loading,
+          hint: AnalyticsStrings.loadingHint);
     }
 
     return Scaffold(
@@ -493,7 +502,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     // simply dropped.
     final comparisonLabel = _range == AnalyticsRange.all
         ? null
-        : 'vs previous ${_rangeLabel(_range)}';
+        : AnalyticsStrings.vsPrevious(_rangeLabel(_range));
     final trackingStarted = summary.observedDays <= 1;
 
     final subcourseOptions = _subcourseOptions();
@@ -510,7 +519,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     // ---------- trend ----------
     final trendValues =
         points.map((point) => point.cumulative.pc.toDouble()).toList();
-    final trendLabels = points.map((point) => dayLabel(point.key)).toList();
+    final trendLabels = points.map((point) => dayLabel(point.key, _chartLang)).toList();
     // Headroom above the best observed value rather than a fixed 0-100 axis: a
     // learner sitting at 14% would otherwise read as a flat line along the floor.
     final trendMax =
@@ -582,8 +591,10 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               key: row.key.name,
               label: pointsRowLabel(row.labelKey),
               value: row.points.toDouble(),
-              display:
-                  '${pointsRowLabel(row.labelKey)} · ${compactNumber(row.points.toDouble())} pts (${row.share.round()}%)',
+              display: AnalyticsStrings.pointsRow(
+                  pointsRowLabel(row.labelKey),
+                  compactNumber(row.points.toDouble()),
+                  row.share.round()),
               color: analyticsHex(row.color),
             ))
         .toList();
@@ -591,7 +602,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
     // ---------- daily effort ----------
     final effortValues =
         points.map((point) => effortOf(point).toDouble()).toList();
-    final effortLabels = points.map((point) => dayLabel(point.key)).toList();
+    final effortLabels = points.map((point) => dayLabel(point.key, _chartLang)).toList();
     final effortMax = chartMaxFor(points, (point) => effortOf(point), 4);
     // Averaged over OBSERVED days only, and over active ones at that: a mean
     // dragged down by days the app was never opened is not "your typical day".
@@ -626,7 +637,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               value: stat.touched ? stat.accuracy.toDouble() : 0,
               display: stat.touched
                   ? formatPercent(stat.accuracy)
-                  : 'Answer a few questions to unlock this',
+                  : AnalyticsStrings.accuracyUntouched,
               color: analyticsHex(stat.color),
               muted: !stat.touched,
             ))
@@ -661,11 +672,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       AnalyticsHero(
         courseName: _identity?.courseName.isNotEmpty == true
             ? _identity!.courseName
-            : 'Your course',
+            : AnalyticsStrings.heroFallbackCourse,
         subcourseName: activeOptionName ??
             (_identity?.subcourseName.isNotEmpty == true
                 ? _identity!.subcourseName
-                : 'Unnamed sub-course'),
+                : AnalyticsStrings.pickerUnnamed),
         percent: summary.accuracy,
         points: summary.totalPoints.round(),
         streak: streak.current,
@@ -682,11 +693,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           RangeSwitcher(
-            options: const [
-              RangeOption(value: AnalyticsRange.d7, label: '7 days'),
-              RangeOption(value: AnalyticsRange.d30, label: '30 days'),
-              RangeOption(value: AnalyticsRange.d90, label: '90 days'),
-              RangeOption(value: AnalyticsRange.all, label: 'All time'),
+            options: [
+              RangeOption(value: AnalyticsRange.d7, label: AnalyticsStrings.range7d),
+              RangeOption(value: AnalyticsRange.d30, label: AnalyticsStrings.range30d),
+              RangeOption(value: AnalyticsRange.d90, label: AnalyticsStrings.range90d),
+              RangeOption(value: AnalyticsRange.all, label: AnalyticsStrings.rangeAll),
             ],
             value: _range,
             onChange: (next) => setState(() => _range = next),
@@ -694,8 +705,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           const SizedBox(height: 6),
           Text(
             trackingStarted
-                ? 'Tracking started'
-                : '${summary.observedDays} recorded day(s)',
+                ? AnalyticsStrings.trackingStarted
+                : AnalyticsStrings.rangeObserved(summary.observedDays),
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: ExpoType.caption,
@@ -714,7 +725,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: StatTile(
                   icon: Icons.trending_up,
-                  label: 'Accuracy',
+                  label: AnalyticsStrings.kpiAccuracy,
                   value: formatPercent(summary.accuracy),
                   accent: colors.primary,
                   // Percentage POINTS, not a relative change: accuracy is
@@ -723,7 +734,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                   delta: summary.accuracyStart != null
                       ? summary.accuracy - summary.accuracyStart!
                       : null,
-                  deltaLabel: 'Since the day you started',
+                  deltaLabel: AnalyticsStrings.kpiSincePeriodStart,
                   trend: observedPoints
                       .map((point) => point.cumulative.pc.toDouble())
                       .toList(),
@@ -733,7 +744,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: StatTile(
                   icon: Icons.schedule_outlined,
-                  label: 'Study time',
+                  label: AnalyticsStrings.kpiStudyTime,
                   value: formatDuration(summary.studySeconds.toDouble()),
                   accent: colors.info,
                   delta: percentChange(
@@ -752,7 +763,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: StatTile(
                   icon: Icons.checklist_outlined,
-                  label: 'Activities',
+                  label: AnalyticsStrings.kpiActivities,
                   value: compactNumber(summary.activities.toDouble()),
                   accent: colors.success,
                   delta: percentChange(
@@ -767,7 +778,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               Expanded(
                 child: StatTile(
                   icon: Icons.calendar_today_outlined,
-                  label: 'Active days',
+                  label: AnalyticsStrings.kpiActiveDays,
                   value: '${summary.activeDays}',
                   accent: colors.warning,
                   delta: percentChange(
@@ -785,11 +796,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
       // ---------- 5. Score trend ----------
       ChartCard(
-        title: 'Points trend',
-        subtitle: 'How your daily effort has moved',
+        title: AnalyticsStrings.trendTitle,
+        subtitle: AnalyticsStrings.trendSubtitle,
         height: 200,
         empty: points.length < 2,
-        emptyLabel: 'Nothing recorded in this range yet',
+        emptyLabel: AnalyticsStrings.trendEmpty,
         emptyIcon: Icons.analytics_outlined,
         footer: seededCount > 0
             ? _LegendRow(
@@ -807,8 +818,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                     ),
                   ),
                 ),
-                label:
-                    'The first $seededCount day(s) of this range are estimated from your totals.',
+                label: AnalyticsStrings.estimateNote(seededCount),
               )
             : null,
         child: LineAreaChart(
@@ -819,29 +829,29 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           maxValue: trendMax,
           seededCount: seededCount,
           formatValue: (value) => '${value.round()}%',
-          emptyLabel: 'Nothing recorded in this range yet',
+          emptyLabel: AnalyticsStrings.trendEmpty,
         ),
       ),
 
       // ---------- 6. Activity heatmap ----------
       ChartCard(
-        title: 'Activity heatmap',
+        title: AnalyticsStrings.heatmapTitle,
         // The grid keeps its own full-history window regardless of the range
         // switcher: seven days of a contribution grid is one column, which
         // would say nothing at all.
-        subtitle: heatmapDays.isNotEmpty ? 'Your consistency at a glance' : null,
+        subtitle: heatmapDays.isNotEmpty ? AnalyticsStrings.heatmapSubtitle : null,
         height: 150,
         empty: heatmapDays.isEmpty,
-        emptyLabel: 'No activity recorded yet',
+        emptyLabel: AnalyticsStrings.heatmapEmpty,
         emptyIcon: Icons.grid_on_outlined,
         footer: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (selectedDay != null) ...[
               _DayPill(
-                dateLabel: fullDateLabel(selectedDay.key),
+                dateLabel: fullDateLabel(selectedDay.key, _chartLang),
                 valueLabel:
-                    '${selectedDay.value.round()} activities on this day',
+                    AnalyticsStrings.heatmapDayValue(selectedDay.value.round()),
               ),
               const SizedBox(height: ExpoSpacing.sm),
             ],
@@ -849,7 +859,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
               children: [
                 Expanded(
                   child: Text(
-                    'Tap a day to see its count',
+                    AnalyticsStrings.heatmapHint,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
@@ -860,8 +870,8 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 ),
                 HeatmapLegend(
                   color: colors.success,
-                  lessLabel: 'less',
-                  moreLabel: 'more',
+                  lessLabel: AnalyticsStrings.heatmapLess,
+                  moreLabel: AnalyticsStrings.heatmapMore,
                 ),
               ],
             ),
@@ -870,63 +880,64 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: Heatmap(
           days: heatmapDays,
           color: colors.success,
-          weekdayLabels: weekdayLabels(),
-          monthLabelFor: (key) => monthLabel(key),
+          weekdayLabels: weekdayLabels(_chartLang),
+          monthLabelFor: (key) => monthLabel(key, _chartLang),
           selectedKey: _selectedDayKey,
           onSelect: (day) => setState(() => _selectedDayKey =
               _selectedDayKey == day.key ? null : day.key),
-          emptyLabel: 'No activity recorded yet',
+          emptyLabel: AnalyticsStrings.heatmapEmpty,
         ),
       ),
 
       // ---------- 7. Skill radar ----------
       ChartCard(
-        title: 'Subject balance',
-        subtitle: 'Where your effort actually goes',
+        title: AnalyticsStrings.radarTitle,
+        subtitle: AnalyticsStrings.radarSubtitle,
         height: 250,
         empty: latest == null,
-        emptyLabel: 'Practice more subjects to see the balance',
+        emptyLabel: AnalyticsStrings.radarEmpty,
         emptyIcon: Icons.hub_outlined,
         footer: strongest != null
             ? _LegendRow(
                 leading: Icon(Icons.military_tech,
                     size: 14,
                     color: analyticsHex(strongest.color)),
-                label:
-                    'Strongest area: ${analyticsSourceLabel(strongest.key)} · ${formatPercent(strongest.accuracy)}',
+                label: AnalyticsStrings.radarStrongest(
+                    analyticsSourceLabel(strongest.key),
+                    formatPercent(strongest.accuracy)),
               )
             : null,
         child: RadarChart(
           axes: radarAxes,
           color: colors.primary,
           maxValue: 100,
-          emptyLabel: 'Practice more subjects to see the balance',
+          emptyLabel: AnalyticsStrings.radarEmpty,
         ),
       ),
 
       // ---------- 8. Where effort goes ----------
       ChartCard(
-        title: 'Study time',
+        title: AnalyticsStrings.effortTitle,
         subtitle: lifetime
-            ? 'Time tracked since you started'
-            : 'Time tracked this period',
+            ? AnalyticsStrings.effortSubtitleLifetime
+            : AnalyticsStrings.effortSubtitle,
         height: 160,
         empty: effortTotal <= 0,
-        emptyLabel: 'No sessions timed yet',
+        emptyLabel: AnalyticsStrings.effortEmpty,
         emptyIcon: Icons.pie_chart_outline,
         footer: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _FactRow(
-                label: 'Total',
+                label: AnalyticsStrings.effortTotalTime,
                 value: formatDuration(facts.totalSeconds.toDouble())),
             _FactRow(
-                label: 'tracked',
+                label: AnalyticsStrings.effortTrackedTime,
                 value: formatDuration(facts.trackedSeconds.toDouble())),
             if (facts.sessions > 0)
               _FactRow(
-                  label: 'Avg. session',
+                  label: AnalyticsStrings.effortAvgSession,
                   value: formatDuration(
                       facts.totalSeconds / facts.sessions)),
           ],
@@ -934,21 +945,21 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
         child: DonutChart(
           data: effortData,
           centerValue: compactNumber(effortTotal),
-          centerLabel: 'Total study time',
+          centerLabel: AnalyticsStrings.effortCenter,
           selectedKey: _selectedSlice,
           onSelect: (key) => setState(
               () => _selectedSlice = _selectedSlice == key ? null : key),
-          emptyLabel: 'No sessions timed yet',
+          emptyLabel: AnalyticsStrings.effortEmpty,
         ),
       ),
 
       // ---------- 9. Where the points came from ----------
       ChartCard(
-        title: 'Where your points come from',
-        subtitle: 'Every source that adds to your score',
+        title: AnalyticsStrings.pointsTitle,
+        subtitle: AnalyticsStrings.pointsSubtitle,
         height: max(120.0, breakdownRows.length * 44.0),
         empty: breakdownRows.isEmpty,
-        emptyLabel: 'No scored activity yet',
+        emptyLabel: AnalyticsStrings.pointsEmpty,
         emptyIcon: Icons.local_offer_outlined,
         right: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
@@ -957,7 +968,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             borderRadius: BorderRadius.circular(ExpoRadius.pill),
           ),
           child: Text(
-            '${compactNumber(breakdown.total.toDouble())} pts',
+            '${compactNumber(breakdown.total.toDouble())} ${AnalyticsStrings.pointsUnit}',
             style: TextStyle(
               fontSize: ExpoType.caption,
               fontWeight: FontWeight.w700,
@@ -969,34 +980,33 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             ? _LegendRow(
                 leading: Icon(Icons.info_outline,
                     size: 13, color: colors.textSecondary),
-                label:
-                    'Points marked as estimated come from days before tracking started.',
+                label: AnalyticsStrings.pointsEstimateNote,
               )
             : null,
         child: RankedBars(
           rows: breakdownRows,
           color: colors.primary,
-          emptyLabel: 'No scored activity yet',
+          emptyLabel: AnalyticsStrings.pointsEmpty,
         ),
       ),
 
       // ---------- 10. Daily effort ----------
       ChartCard(
-        title: 'Daily effort',
-        subtitle: 'Activities recorded each day',
+        title: AnalyticsStrings.dailyTitle,
+        subtitle: AnalyticsStrings.dailySubtitle,
         height: 190,
         empty: points.isEmpty,
-        emptyLabel: 'No days recorded in this range',
+        emptyLabel: AnalyticsStrings.dailyEmpty,
         emptyIcon: Icons.bar_chart_outlined,
         footer: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (selectedEffort != null) ...[
               _DayPill(
-                dateLabel: fullDateLabel(selectedEffort.key),
+                dateLabel: fullDateLabel(selectedEffort.key, _chartLang),
                 valueLabel: selectedEffort.seeded
-                    ? 'Estimated from totals'
-                    : '${effortOf(selectedEffort).round()} activities',
+                    ? AnalyticsStrings.dailySeededDay
+                    : AnalyticsStrings.dailyDayValue(effortOf(selectedEffort).round()),
               ),
               const SizedBox(height: ExpoSpacing.sm),
             ],
@@ -1013,7 +1023,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'Weekends are shaded.',
+                    AnalyticsStrings.dailyWeekendNote,
                     style: TextStyle(
                       fontSize: ExpoType.caption,
                       color: colors.textSecondary,
@@ -1031,7 +1041,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           height: 190,
           maxValue: effortMax,
           averageValue: effortAverage,
-          averageLabel: 'Average',
+          averageLabel: AnalyticsStrings.dailyAverage,
           accentIndices: weekendMarks,
           accentColor: colors.warning,
           seededCount: seededCount,
@@ -1039,23 +1049,23 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           onSelect: (index) => setState(() => _selectedEffortDay =
               _selectedEffortDay == index ? null : index),
           formatValue: (value) => '${value.round()}',
-          emptyLabel: 'No days recorded in this range',
+          emptyLabel: AnalyticsStrings.dailyEmpty,
         ),
       ),
 
       // ---------- 11. Accuracy by source ----------
       ChartCard(
-        title: 'Accuracy',
-        subtitle: 'Correct answers across practice and tests',
+        title: AnalyticsStrings.accuracyTitle,
+        subtitle: AnalyticsStrings.accuracySubtitle,
         height: max(120.0, accuracyRows.length * 44.0),
         empty: latest == null,
-        emptyLabel: 'No answers recorded yet',
+        emptyLabel: AnalyticsStrings.accuracyEmpty,
         emptyIcon: Icons.speed,
         child: RankedBars(
           rows: accuracyRows,
           color: colors.primary,
           maxValue: 100,
-          emptyLabel: 'No answers recorded yet',
+          emptyLabel: AnalyticsStrings.accuracyEmpty,
         ),
       ),
 
@@ -1066,7 +1076,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              'Insights',
+              AnalyticsStrings.insightTitle,
               style: TextStyle(
                 fontSize: ExpoType.bodyLarge,
                 fontWeight: FontWeight.w700,
@@ -1077,13 +1087,12 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             if (insights.strength != null) ...[
               InsightCard(
                 tone: InsightTone.strength,
-                eyebrow: 'Your strength',
+                eyebrow: AnalyticsStrings.insightStrengthEyebrow,
                 title: analyticsSourceLabel(insights.strength!.source),
-                description:
-                    'This is your highest-scoring area — keep the momentum going.',
+                description: AnalyticsStrings.insightStrengthBody,
                 value: formatPercent(insights.strength!.accuracy),
                 accent: analyticsHex(insights.strength!.color),
-                ctaLabel: 'Keep going',
+                ctaLabel: AnalyticsStrings.insightKeepGoing,
                 onPress: () => context
                     .push(analyticsSourceRoute(insights.strength!.source)),
               ),
@@ -1092,16 +1101,16 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             if (insights.focus != null)
               InsightCard(
                 tone: InsightTone.focus,
-                eyebrow: 'Needs attention',
+                eyebrow: AnalyticsStrings.insightFocusEyebrow,
                 title: analyticsSourceLabel(insights.focus!.source),
                 description: insights.focusUntouched
-                    ? 'This area is still untouched. One short practice is all it takes to start.'
-                    : 'You have not touched this area in a while. A short session today would move your score.',
+                    ? AnalyticsStrings.insightFocusUntouchedBody
+                    : AnalyticsStrings.insightFocusBody,
                 value: insights.focusUntouched
                     ? null
                     : formatPercent(insights.focus!.accuracy),
                 accent: analyticsHex(insights.focus!.color),
-                ctaLabel: 'Practice now',
+                ctaLabel: AnalyticsStrings.insightPracticeNow,
                 onPress: () => context
                     .push(analyticsSourceRoute(insights.focus!.source)),
               ),
@@ -1110,11 +1119,11 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
       // ---------- 13. Consistency ----------
       ChartCard(
-        title: 'This week',
-        subtitle: 'Your recent rhythm',
+        title: AnalyticsStrings.weekTitle,
+        subtitle: AnalyticsStrings.weekSubtitle,
         height: 72,
         empty: weekDots.isEmpty,
-        emptyLabel: 'Nothing recorded this week',
+        emptyLabel: AnalyticsStrings.weekEmpty,
         emptyIcon: Icons.calendar_today_outlined,
         right: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1123,7 +1132,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
                 size: 14, color: colors.warning),
             const SizedBox(width: 4),
             Text(
-              '${streak.current} day streak',
+              AnalyticsStrings.weekStreakLabel,
               style: TextStyle(
                 fontSize: ExpoType.caption,
                 fontWeight: FontWeight.w700,
@@ -1137,20 +1146,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
           children: [
             if (peakDay != null)
               _FactRow(
-                label: 'Peak day',
-                value: weekdayLabels()[peakDay.weekday],
+                label: AnalyticsStrings.weekPeakDay,
+                value: weekdayLabels(_chartLang)[peakDay.weekday],
               ),
             if (streak.best > 0)
               _FactRow(
-                label: 'Best streak',
-                value: '${streak.best} day streak',
+                label: AnalyticsStrings.weekBestStreak,
+                value: AnalyticsStrings.dayStreak(streak.best),
               ),
           ],
         ),
         child: Center(
           child: WeekStrip(
             dots: weekDots,
-            weekdayLabels: weekdayLabels(),
+            weekdayLabels: weekdayLabels(_chartLang),
             color: colors.primary,
           ),
         ),
@@ -1158,27 +1167,25 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
       // ---------- 14. You vs the cohort ----------
       ChartCard(
-        title: 'Compare with your cohort',
-        subtitle: 'Everyone enrolled in the same sub-course',
+        title: AnalyticsStrings.cohortTitle,
+        subtitle: AnalyticsStrings.cohortSubtitle,
         height: _cohort != null ? 184 : 84,
         emptyIcon: Icons.people_outline,
         child: CohortStrip(
           facts: _cohort,
           loading: _cohortLoading,
-          prompt:
-              'See how your effort compares with others studying the same sub-course.',
-          loadLabel: 'Load comparison',
-          emptyLabel: 'Not enough learners to compare yet',
-          medianLabel: 'Median',
-          youLabel: 'You',
-          toNextLabel: 'To next rank',
-          headline: _cohort?.rank != null
-              ? 'Rank #${_cohort!.rank} of ${_cohort!.size}'
-              : null,
+          prompt: AnalyticsStrings.cohortPrompt,
+          loadLabel: AnalyticsStrings.cohortLoad,
+          emptyLabel: AnalyticsStrings.cohortEmpty,
+          medianLabel: AnalyticsStrings.cohortMedian,
+          youLabel: AnalyticsStrings.cohortYou,
+          toNextLabel: AnalyticsStrings.cohortToNext,
+          headline:
+              _cohort?.rank != null ? AnalyticsStrings.cohortHeadline : null,
           subline: _cohort?.topPercent != null
-              ? 'Top ${_cohort!.topPercent}%'
+              ? AnalyticsStrings.cohortSubline(_cohort!.topPercent!)
               : null,
-          boardLabel: 'View leaderboard',
+          boardLabel: AnalyticsStrings.cohortBoardLabel,
           onLoad: _loadCohort,
           onOpenBoard: () => context.push('/leaderboard'),
         ),
@@ -1186,43 +1193,41 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
       // ---------- 15. Milestones ----------
       ChartCard(
-        title: 'Milestones',
-        subtitle: 'Small wins that add up',
+        title: AnalyticsStrings.milestoneTitle,
+        subtitle: AnalyticsStrings.milestoneSubtitle,
         height: max(
             120.0, MilestoneList.preferredHeight(milestones.length)),
         empty: milestones.isEmpty,
-        emptyLabel: 'Complete your first activity to unlock milestones',
+        emptyLabel: AnalyticsStrings.milestoneEmpty,
         emptyIcon: Icons.flag_outlined,
         child: MilestoneList(
           milestones: milestones,
           labelFor: _milestoneLabel,
-          doneLabel: 'done',
+          doneLabel: AnalyticsStrings.milestoneDone,
         ),
       ),
 
       // ---------- 16. How this is calculated ----------
       MethodFooter(
-        title: 'How these numbers are built',
-        intro:
-            'Every day the app stores a snapshot of your totals, so trends survive without re-reading your whole history.',
-        weightsTitle: 'Scoring weights',
+        title: AnalyticsStrings.methodTitle,
+        intro: AnalyticsStrings.methodIntro,
+        weightsTitle: AnalyticsStrings.methodWeightsTitle,
         labelFor: pointsRowLabel,
-        timeNote: (hours) => 'Study time counts ${hours}h per activity-day.',
-        estimateNote:
-            'Days before your first snapshot are estimated, never invented.',
-        privacyNote: 'All of this data is private to your account.',
-        expandLabel: 'Show details',
-        collapseLabel: 'Hide details',
+        timeNote: (hours) => AnalyticsStrings.methodTimeNote(hours),
+        estimateNote: AnalyticsStrings.methodEstimateNote,
+        privacyNote: AnalyticsStrings.methodPrivacyNote,
+        expandLabel: AnalyticsStrings.methodExpand,
+        collapseLabel: AnalyticsStrings.methodCollapse,
         fetchedAt: _payload?.fetchedAt ??
             DateTime.now().millisecondsSinceEpoch,
         updatedLabel: (key, value) {
           switch (key) {
             case 'minutesAgo':
-              return 'Updated $value min ago';
+              return AnalyticsStrings.updatedMinutesAgo(value);
             case 'hoursAgo':
-              return 'Updated $value hr ago';
+              return AnalyticsStrings.updatedHoursAgo(value);
             default:
-              return 'Updated just now';
+              return AnalyticsStrings.updatedJustNow();
           }
         },
       ),
@@ -1262,13 +1267,13 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   String _milestoneLabel(Milestone milestone) {
     switch (milestone.key) {
       case 'points':
-        return 'Reach ${milestone.targetLabel} points';
+        return AnalyticsStrings.milestonePoints(milestone.targetLabel);
       case 'streak':
-        return 'Study ${milestone.targetLabel} days in a row';
+        return AnalyticsStrings.milestoneStreak(milestone.targetLabel);
       case 'accuracy':
-        return 'Hold ${milestone.targetLabel} accuracy';
+        return AnalyticsStrings.milestoneAccuracy(milestone.targetLabel);
       case 'hours':
-        return 'Study ${milestone.targetLabel} in total';
+        return AnalyticsStrings.milestoneHours(milestone.targetLabel);
       default:
         return milestone.key;
     }
@@ -1322,7 +1327,7 @@ class _Gate extends StatelessWidget {
               const SizedBox(height: ExpoSpacing.md),
               FilledButton(
                 onPressed: onRetry,
-                child: const Text('Retry'),
+                child: Text(AnalyticsStrings.retry),
               ),
             ],
           ],

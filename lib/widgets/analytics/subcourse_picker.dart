@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../services/analytics/analytics_strings.dart';
+
 import '../../theme/app_theme.dart';
 import 'analytics_shared.dart';
 
@@ -123,13 +125,13 @@ class _Sheet extends StatelessWidget {
                 color: colors.border,
               ),
             ),
-            const Text(
-              'Sub-course',
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
+            Text(
+              AnalyticsStrings.pickerTitle,
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 2),
             Text(
-              'Analytics follow your enrolled sub-course',
+              AnalyticsStrings.pickerSubtitle,
               style: TextStyle(
                 fontSize: ExpoType.caption,
                 color: colors.textSecondary,

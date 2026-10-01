@@ -17,6 +17,9 @@ import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_hero.dart';
+import 'package:loksewa_solution/services/analytics/analytics_strings.dart';
+import 'package:loksewa_solution/services/app_language.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 String _dayKey(DateTime date) =>
     '${date.year.toString().padLeft(4, '0')}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
@@ -215,13 +218,14 @@ void main() {
       ));
 
       expect(boardCalls, 0);
-      expect(find.textContaining('Rank #'), findsNothing);
+      expect(find.text('Where you stand'), findsNothing);
 
       await tester.tap(find.text('Load comparison'));
       await _settle(tester);
 
       expect(boardCalls, 1);
-      expect(find.text('Rank #2 of 3'), findsOneWidget);
+      expect(find.text('Where you stand'), findsOneWidget);
+      expect(find.text('Top 67%'), findsOneWidget);
     });
 
     testWidgets('switching subcourse resets selections and reloads',
@@ -296,13 +300,38 @@ void main() {
         },
       ));
 
-      expect(find.text('Something went wrong'), findsOneWidget);
+      expect(find.text('Data Not Found'), findsOneWidget);
       expect(identityCalls, 1);
 
-      await tester.tap(find.text('Retry'));
+      await tester.tap(find.text('Try Again'));
       await _settle(tester);
       expect(identityCalls, 2);
-      expect(find.text('Something went wrong'), findsOneWidget);
+      expect(find.text('Data Not Found'), findsOneWidget);
+    });
+
+    testWidgets('Nepali language renders the Nepali error gate', (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await AppLanguage.setLanguage('ne');
+      addTearDown(() => AppLanguage.setLanguage('en'));
+      await _pumpScreen(tester, _screen(
+        loadIdentity: (_) async => throw Exception('nope'),
+      ));
+
+      expect(find.text('डाटा भेटिएन'), findsOneWidget);
+      expect(find.text('पुनः प्रयास गर्नुहोस्'), findsOneWidget);
+      expect(find.text('Data Not Found'), findsNothing);
+    });
+
+    test('AnalyticsStrings switches with the app language', () async {
+      SharedPreferences.setMockInitialValues({});
+      await AppLanguage.setLanguage('ne');
+      expect(AnalyticsStrings.retry, 'पुनः प्रयास गर्नुहोस्');
+      expect(AnalyticsStrings.range7d, '७ दिन');
+      expect(AnalyticsStrings.cohortHeadline, 'तपाईं कहाँ हुनुहुन्छ');
+      await AppLanguage.setLanguage('en');
+      expect(AnalyticsStrings.retry, 'Try Again');
+      expect(AnalyticsStrings.range7d, '7 days');
+      expect(AnalyticsStrings.cohortHeadline, 'Where you stand');
     });
 
     testWidgets('missing document shows the no-data gate', (tester) async {

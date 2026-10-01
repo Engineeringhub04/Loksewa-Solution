@@ -1,206 +1,358 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
-/// Course details — mirrors app/course-details.tsx.
-/// Reads the user's enrolled course/subcourse from users/{uid} and
-/// resolves the display names from the courses collections.
+/// Course details — mirrors app/course-details.tsx (Profile → App Settings →
+/// Course details).
+///
+/// Reads the user's enrolled course/subcourse from users/{uid} and resolves
+/// the display names from the course catalogue collections, exactly like
+/// React's `fetchUserCourseInfo`: `app_courses/{id}`,
+/// `app_courses/{id}/subcourses/{sub}`, with the legacy `app_subcourses/{sub}`
+/// fallback for subcourses seeded before the sub-collection restructure.
 class CourseDetailsScreen extends StatefulWidget {
-  const CourseDetailsScreen({super.key});
+  const CourseDetailsScreen({super.key, this.debugUid, this.loadInfo});
+
+  /// Test seam: when set, the screen loads info for this uid instead of the
+  /// signed-in user, and never touches AuthService/Firestore.
+  final String? debugUid;
+
+  /// Test seam: replaces the whole Firestore load.
+  final Future<CourseDetailsInfo> Function(String uid)? loadInfo;
 
   @override
   State<CourseDetailsScreen> createState() => _CourseDetailsScreenState();
 }
 
+/// Resolved course info. Null names mean "not selected" (React's
+/// `courseDetails.notSelected`), not an error.
+class CourseDetailsInfo {
+  final String? courseId;
+  final String? subcourseId;
+  final String? courseName;
+  final String? subcourseName;
+
+  const CourseDetailsInfo({
+    this.courseId,
+    this.subcourseId,
+    this.courseName,
+    this.subcourseName,
+  });
+}
+
 class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
-  late Future<_CourseInfo> _future;
+  bool _loading = true;
+  bool _refreshing = false;
+  bool _failed = false;
+  CourseDetailsInfo? _info;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _boot();
   }
 
-  Future<_CourseInfo> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) {
-      return const _CourseInfo(courseName: null, subcourseName: null);
+  Future<void> _boot() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final info = await _loadInfo();
+      if (!mounted) return;
+      setState(() {
+        _info = info;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
     }
+  }
+
+  Future<void> _refresh() async {
+    if (!mounted || _refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final info = await _loadInfo();
+      if (!mounted) return;
+      setState(() {
+        _info = info;
+        _failed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      // A failed refresh keeps the last good data on screen (React's
+      // useAsyncData.refresh only surfaces errors on the first load).
+      setState(() => _failed = _info == null);
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
+  }
+
+  Future<CourseDetailsInfo> _loadInfo() async {
+    final uid = widget.debugUid ?? AuthService.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      // Not signed in: nothing to resolve — React's fetchUserCourseInfo is
+      // never called without a user either (the hook returns null).
+      return const CourseDetailsInfo();
+    }
+    if (widget.loadInfo != null) return widget.loadInfo!(uid);
     final token = await AuthService.getValidIdToken();
+
     final userDoc =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
+        await FirestoreRest.getDocument('users/$uid', idToken: token);
     final courseId = userDoc?['courseId'] as String?;
     final subcourseId = userDoc?['subcourseId'] as String?;
+    if (courseId == null || courseId.isEmpty) {
+      return const CourseDetailsInfo();
+    }
 
     String? courseName;
     String? subcourseName;
-    if (courseId != null) {
-      try {
-        final courseDoc = await FirestoreRest.getDocument('courses/$courseId',
-            idToken: token);
-        courseName = courseDoc?['name'] as String?;
-      } catch (_) {}
+    try {
+      final courseDoc = await FirestoreRest.getDocument('app_courses/$courseId',
+          idToken: token);
+      courseName = courseDoc?['name'] as String?;
+    } catch (_) {
+      // ignore — course may have been removed
     }
-    if (courseId != null && subcourseId != null) {
+    if (subcourseId != null && subcourseId.isNotEmpty) {
       try {
         final subDoc = await FirestoreRest.getDocument(
-            'courses/$courseId/subcourses/$subcourseId',
+            'app_courses/$courseId/subcourses/$subcourseId',
             idToken: token);
         subcourseName = subDoc?['name'] as String?;
       } catch (_) {
+        // ignore
+      }
+      if (subcourseName == null || subcourseName.isEmpty) {
         try {
-          final legacy = await FirestoreRest.getDocument(
+          final legacyDoc = await FirestoreRest.getDocument(
               'app_subcourses/$subcourseId',
               idToken: token);
-          subcourseName = legacy?['name'] as String?;
-        } catch (_) {}
+          subcourseName = legacyDoc?['name'] as String?;
+        } catch (_) {
+          // ignore — subcourse may have been removed
+        }
       }
     }
-    return _CourseInfo(courseName: courseName, subcourseName: subcourseName);
+    return CourseDetailsInfo(
+      courseId: courseId,
+      subcourseId: subcourseId,
+      courseName: courseName,
+      subcourseName: subcourseName,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: colors.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'Course Details'),
+          SubpageHeader(title: _Strings.title),
           Expanded(
-            child: FutureBuilder<_CourseInfo>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
+            child: RefreshIndicator(
+              onRefresh: _refresh,
+              color: colors.primary,
+              child: _body(context, colors),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _body(BuildContext context, ExpoPalette colors) {
+    if (_loading && !_refreshing && _info == null) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: PreloadingWidget(
               tinted: false,
-              label: 'Loading Course...',
-            );
-          }
-          if (snap.hasError) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Failed to load course details.'),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () => setState(() => _future = _load()),
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            );
-          }
-          final d = snap.data!;
-          return ListView(
-            padding: const EdgeInsets.all(16),
+              label: _Strings.loading,
+              hint: _Strings.loadingHint,
+            ),
+          ),
+        ],
+      );
+    }
+    if (_failed && _info == null) {
+      // Mirrors <DataNotFound onRetry={refetch} /> — the component defaults.
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          SizedBox(
+            height: MediaQuery.of(context).size.height * 0.6,
+            child: _DataNotFoundGate(
+              title: _Strings.errorTitle,
+              description: _Strings.errorDescription,
+              retryLabel: _Strings.retry,
+              onRetry: _boot,
+            ),
+          ),
+        ],
+      );
+    }
+    final info = _info ?? const CourseDetailsInfo();
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: colors.primary.withValues(alpha: 0x14 / 0xFF),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
             children: [
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: AppColors.navy.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.school, color: AppColors.navy),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'This is the course you are enrolled in. You can change it anytime.',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      leading: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: AppColors.navy.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.school_outlined,
-                            color: AppColors.navy),
-                      ),
-                      title: const Text('Course',
-                          style:
-                              TextStyle(fontSize: 12, color: Colors.grey)),
-                      subtitle: Text(d.courseName ?? 'Not selected',
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                    const Divider(height: 1, indent: 16, endIndent: 16),
-                    ListTile(
-                      leading: Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: AppColors.navy.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.layers_outlined,
-                            color: AppColors.navy),
-                      ),
-                      title: const Text('Subcourse',
-                          style:
-                              TextStyle(fontSize: 12, color: Colors.grey)),
-                      subtitle: Text(d.subcourseName ?? 'Not selected',
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Row(
-                  children: [
-                    Icon(Icons.info_outline,
-                        size: 18, color: Colors.grey),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Changing your course will switch the subjects, syllabus and exam sets shown to you.',
-                        style:
-                            TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.navy,
-                      foregroundColor: Colors.white,
-                      padding:
-                          const EdgeInsets.symmetric(vertical: 14)),
-                  onPressed: () =>
-                      context.push('/course-setup?mode=update'),
-                  child: const Text('Change Course'),
+              Icon(Icons.school, size: 26, color: colors.primary),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  _Strings.intro,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: colors.textSecondary,
+                  ),
                 ),
               ),
             ],
-          );
-        },
-      ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          decoration: BoxDecoration(
+            color: colors.surface,
+            border: Border.all(color: colors.border, width: 0.5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              _InfoRow(
+                icon: Icons.school_outlined,
+                label: _Strings.course,
+                value: info.courseName ?? _Strings.notSelected,
+              ),
+              Divider(
+                  height: 0.5,
+                  thickness: 0.5,
+                  indent: 16,
+                  endIndent: 16,
+                  color: colors.divider),
+              _InfoRow(
+                icon: Icons.layers_outlined,
+                label: _Strings.subcourse,
+                value: info.subcourseName ?? _Strings.notSelected,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border.all(color: colors.border, width: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.info_outline,
+                  size: 18, color: colors.textSecondary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _Strings.changeNote,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            onPressed: () => context.push('/course-setup?mode=update'),
+            child: Text(_Strings.changeCourse),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  const _InfoRow(
+      {required this.icon, required this.label, required this.value});
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ExpoPalette.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: colors.primary.withValues(alpha: 0x17 / 0xFF),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 20, color: colors.primary),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: colors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: colors.textPrimary,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -208,9 +360,94 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
   }
 }
 
-class _CourseInfo {
-  final String? courseName;
-  final String? subcourseName;
+/// Local mirror of the shared DataNotFound feedback component defaults
+/// (cloud-offline icon, title, description, primary retry pill).
+class _DataNotFoundGate extends StatelessWidget {
+  const _DataNotFoundGate({
+    required this.title,
+    required this.description,
+    required this.retryLabel,
+    required this.onRetry,
+  });
 
-  const _CourseInfo({this.courseName, this.subcourseName});
+  final String title;
+  final String description;
+  final String retryLabel;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = ExpoPalette.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_outlined,
+                size: 64, color: colors.textDisabled),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w600,
+                color: colors.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              description,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 14,
+                color: colors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 20),
+            FilledButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh, size: 15),
+              label: Text(retryLabel),
+              style: FilledButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+                shape: const StadiumBorder(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Bilingual strings for this screen (mirrors `courseDetails`, `loadHints`
+/// and `profile.courseDetails` in src/core/i18n).
+abstract final class _Strings {
+  static String get title => AppLanguage.tr('Course Details', 'कोर्स विवरण');
+  static String get loading =>
+      AppLanguage.tr('Loading Course Details...', 'कोर्स विवरण लोड हुँदै...');
+  static String get loadingHint => AppLanguage.tr(
+      'Fetching your course information', 'कोर्स जानकारी ल्याउँदै');
+  static String get course => AppLanguage.tr('Course', 'कोर्स');
+  static String get subcourse => AppLanguage.tr('Sub-course', 'सब-कोर्स');
+  static String get notSelected =>
+      AppLanguage.tr('Not selected yet', 'अझै छानिएको छैन');
+  static String get intro => AppLanguage.tr(
+      'This is the course your study content, mock tests and daily questions are based on.',
+      'तपाईंको अध्ययन सामग्री, मक टेस्ट र दैनिक प्रश्नहरू यही कोर्समा आधारित छन्।');
+  static String get changeNote => AppLanguage.tr(
+      'Changing your course updates the content shown across the app. Your progress is kept.',
+      'कोर्स परिवर्तन गर्दा एपभरि देखिने सामग्री अपडेट हुन्छ। तपाईंको प्रगति सुरक्षित रहन्छ।');
+  static String get changeCourse =>
+      AppLanguage.tr('Change Course', 'कोर्स परिवर्तन गर्नुहोस्');
+  static String get errorTitle =>
+      AppLanguage.tr('Data Not Found', 'डाटा भेटिएन');
+  static String get errorDescription => AppLanguage.tr(
+      "We couldn't load this content. Please try again.",
+      'यो सामग्री लोड हुन सकेन। पुनः प्रयास गर्नुहोस्।');
+  static String get retry =>
+      AppLanguage.tr('Try Again', 'पुनः प्रयास गर्नुहोस्');
 }

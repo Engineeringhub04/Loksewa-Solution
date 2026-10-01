@@ -1,14 +1,21 @@
-// My answer-sheet submissions.
-// Mirrors app/exam-answer/my-submissions.tsx: a hero tally
-// (submitted / pending / passed) and cards with status + score pills that
-// route to /exam-answer/:id.
+// "My Answer Submissions" — every Theory answer this student has ever
+// uploaded, newest first, with a Pending/Reviewed badge. Tapping one opens its
+// details screen (score, reviewer note, edit-window re-upload).
+//
+// Mirrors app/exam-answer/my-submissions.tsx: summary hero band with
+// Submitted / Pending / Passed tallies, per-status tone cards (icon tile,
+// course line, status pill + score pill, relative time), empty state,
+// pull-to-refresh, error toast.
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/status_pill.dart';
 
 class MySubmissionsScreen extends StatefulWidget {
   const MySubmissionsScreen({super.key});
@@ -18,169 +25,469 @@ class MySubmissionsScreen extends StatefulWidget {
 }
 
 class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
-  late final Future<List<Map<String, dynamic>>> _future = _load();
+  List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
 
-  Future<List<Map<String, dynamic>>> _load() async {
-    final token = await AuthService.getValidIdToken();
-    final uid = AuthService.currentUser?.uid;
-    final raw = await FirestoreRest.listDocuments('app_exam_answers',
-        idToken: token, pageSize: 200);
-    final mine =
-        raw.where((d) => d['uid']?.toString() == uid).toList()
-          ..sort((a, b) => _date(b['createdAt'])
-              .compareTo(_date(a['createdAt'])));
-    return mine;
+  @override
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  DateTime _date(dynamic v) =>
-      DateTime.tryParse(v.toString()) ?? DateTime.fromMillisecondsSinceEpoch(0);
+  /// Mirrors `fetchMyExamAnswers`: the student's own docs from the flat
+  /// `app_exam_answers` collection (ownership is a `uid` field, not a
+  /// subcollection), newest first. Security rules only ever return this
+  /// user's docs for non-admins, so the client-side filter is a no-op.
+  Future<void> _load({bool refresh = false}) async {
+    if (!refresh) setState(() => _loading = true);
+    try {
+      final uid = AuthService.currentUser?.uid;
+      final idToken = await AuthService.getValidIdToken();
+      final raw = await FirestoreRest.listDocuments('app_exam_answers',
+          idToken: idToken, pageSize: 200);
+      final mine = raw
+          .where((d) => d['uid']?.toString() == uid)
+          .toList()
+        ..sort((a, b) => _millis(b['createdAt'])
+            .compareTo(_millis(a['createdAt'])));
+      if (!mounted) return;
+      setState(() {
+        _items = mine;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      showToast(
+          context,
+          AppLanguage.tr('Could not load your submissions.',
+              'तपाईंका उत्तरहरू लोड हुन सकेन।'),
+          ToastVariant.error);
+    }
+  }
+
+  int _millis(dynamic raw) {
+    if (raw is DateTime) return raw.millisecondsSinceEpoch;
+    if (raw is num) return raw.toInt();
+    if (raw is String) {
+      return DateTime.tryParse(raw)?.millisecondsSinceEpoch ?? 0;
+    }
+    return 0;
+  }
 
   String _docId(Map<String, dynamic> d) => d['id']?.toString() ?? '';
 
+  String _timeAgo(dynamic raw) {
+    final ms = _millis(raw);
+    if (ms == 0) return '';
+    final diffMin =
+        DateTime.now().difference(DateTime.fromMillisecondsSinceEpoch(ms))
+            .inMinutes
+            .clamp(0, 1 << 30);
+    if (diffMin < 1) return AppLanguage.tr('just now', 'भर्खरै');
+    if (diffMin < 60) {
+      return AppLanguage.tr('$diffMin m ago', '$diffMin मिनेट अघि');
+    }
+    final diffHr = (diffMin / 60).round();
+    if (diffHr < 24) {
+      return AppLanguage.tr('$diffHr h ago', '$diffHr घण्टा अघि');
+    }
+    final diffDay = (diffHr / 24).round();
+    return AppLanguage.tr('$diffDay d ago', '$diffDay दिन अघि');
+  }
+
   @override
   Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: pal.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'My Submissions'),
+          SubpageHeader(
+              title: AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू')),
           Expanded(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Submissions...',
-            );
-          }
-          if (snap.hasError) {
-            return Center(
-                child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text('Could not load submissions.\n${snap.error}',
-                        textAlign: TextAlign.center)));
-          }
-          final list = snap.data!;
-          final pending = list
-              .where((d) => d['status']?.toString() == 'pending')
-              .length;
-          final passed =
-              list.where((d) => d['passed'] == true).length;
+            child: _loading
+                ? PreloadingWidget(
+                    tinted: false,
+                    label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+                    hint: AppLanguage.tr('Fetching your submissions',
+                        'तपाईंका उत्तरहरू ल्याउँदै'),
+                  )
+                : RefreshIndicator(
+                    onRefresh: () => _load(refresh: true),
+                    color: pal.primary,
+                    child: _items.isEmpty
+                        ? _emptyBody(pal)
+                        : ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+                            children: [
+                              _hero(pal),
+                              const SizedBox(height: 12),
+                              for (var i = 0; i < _items.length; i++) ...[
+                                if (i > 0) const SizedBox(height: 10),
+                                _SubmissionCard(
+                                  answer: _items[i],
+                                  pal: pal,
+                                  timeAgo: _timeAgo(_items[i]['createdAt']),
+                                  onTap: () => context.push(
+                                      '/exam-answer/${_docId(_items[i])}'),
+                                ),
+                              ],
+                            ],
+                          ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
 
-          if (list.isEmpty) {
-            return const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text(
-                  'No submissions yet.\nUpload your first answer sheet from the Theory Desk.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            );
-          }
-
-          return Column(
+  /// Summary band — icon + title + subtitle, with the three tally tiles.
+  Widget _hero(ExpoPalette pal) {
+    final reviewed =
+        _items.where((d) => d['status']?.toString() == 'reviewed');
+    final pending = _items.length - reviewed.length;
+    final passed = reviewed.where((d) => d['passed'] == true).length;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [pal.primary, const Color(0xFF1E40AF)],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0x1A / 0xFF),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
               Container(
-                margin: const EdgeInsets.all(16),
-                padding: const EdgeInsets.all(20),
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: [
-                    AppColors.navy,
-                    AppColors.deepNavy,
-                  ]),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
+                  color: Colors.white.withValues(alpha: 0x29 / 0xFF),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                child: const Icon(Icons.cloud_done_outlined,
+                    size: 22, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _tally('${list.length}', 'Submitted'),
-                    _tally('$pending', 'Pending'),
-                    _tally('$passed', 'Passed'),
+                    Text(
+                      AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू'),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      AppLanguage.tr(
+                          'Every Theory answer you have uploaded, newest first.',
+                          'तपाईंले अपलोड गर्नुभएका सबै थ्योरी उत्तरहरू, नयाँ पहिले।'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color:
+                            Colors.white.withValues(alpha: 0xCC / 0xFF),
+                      ),
+                    ),
                   ],
                 ),
               ),
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  itemCount: list.length,
-                  itemBuilder: (_, i) => _card(list[i]),
-                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _StatTile(
+                value: '${_items.length}',
+                label: AppLanguage.tr('Submitted', 'पेश गरिएको'),
+                icon: Icons.description_outlined,
+                color: Colors.white,
+              ),
+              const SizedBox(width: 8),
+              _StatTile(
+                value: '$pending',
+                label: AppLanguage.tr('Pending', 'बाँकी'),
+                icon: Icons.schedule_outlined,
+                color: const Color(0xFFFCD34D),
+              ),
+              const SizedBox(width: 8),
+              _StatTile(
+                value: '$passed',
+                label: AppLanguage.tr('Passed', 'उत्तीर्ण'),
+                icon: Icons.emoji_events_outlined,
+                color: const Color(0xFF6EE7B7),
               ),
             ],
-          );
-        },
-      ),
           ),
         ],
       ),
     );
   }
 
-  Widget _tally(String n, String label) => Column(
-        children: [
-          Text(n,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 26,
-                  fontWeight: FontWeight.bold)),
-          Text(label, style: const TextStyle(color: Colors.white70)),
-        ],
-      );
-
-  Widget _card(Map<String, dynamic> d) {
-    final reviewed = d['status']?.toString() == 'reviewed';
-    final passed = d['passed'] == true;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      child: ListTile(
-        leading: Icon(
-            reviewed ? Icons.fact_check : Icons.hourglass_top,
-            color: reviewed
-                ? (passed ? Colors.green : Colors.red)
-                : Colors.amber.shade700),
-        title: Text(d['examSetTitle']?.toString() ?? 'Exam',
-            style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(_fmtDate(d['createdAt'])),
-        trailing: Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: (reviewed
-                    ? (passed ? Colors.green : Colors.red)
-                    : Colors.amber.shade700)
-                .withValues(alpha: 0.15),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            reviewed
-                ? '${_num(d['score'])}/${_num(d['fullMarks'])}'
-                : 'PENDING',
-            style: TextStyle(
-                color: reviewed
-                    ? (passed ? Colors.green : Colors.red)
-                    : Colors.amber.shade700,
-                fontWeight: FontWeight.bold,
-                fontSize: 12),
-          ),
+  Widget _emptyBody(ExpoPalette pal) {
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 64),
+      children: [
+        Column(
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: pal.primary.withValues(alpha: 0x14 / 0xFF),
+              ),
+              child: Icon(Icons.cloud_upload_outlined,
+                  size: 32, color: pal.primary),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              AppLanguage.tr('No submissions yet', 'अहिलेसम्म कुनै उत्तर छैन'),
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: pal.textPrimary),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              AppLanguage.tr(
+                  'Answers you upload for Theory Desk papers will appear here.',
+                  'थ्योरी डेस्क पेपरका लागि अपलोड गरेका उत्तरहरू यहाँ देखिनेछन्।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 13, color: pal.textSecondary),
+            ),
+          ],
         ),
-        onTap: () => context.push('/exam-answer/${_docId(d)}'),
+      ],
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _StatTile(
+      {required this.value,
+      required this.label,
+      required this.icon,
+      required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          color: Colors.white.withValues(alpha: 0x1F / 0xFF),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 16, color: color),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+              ),
+            ),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.white.withValues(alpha: 0xCC / 0xFF),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
+}
+
+class _SubmissionCard extends StatefulWidget {
+  final Map<String, dynamic> answer;
+  final ExpoPalette pal;
+  final String timeAgo;
+  final VoidCallback onTap;
+  const _SubmissionCard(
+      {required this.answer,
+      required this.pal,
+      required this.timeAgo,
+      required this.onTap});
+
+  @override
+  State<_SubmissionCard> createState() => _SubmissionCardState();
+}
+
+class _SubmissionCardState extends State<_SubmissionCard> {
+  bool _pressed = false;
 
   String _num(dynamic v) {
-    final n = v is num ? v : num.tryParse(v.toString()) ?? 0;
+    final n = v is num ? v : num.tryParse('$v') ?? 0;
     return n % 1 == 0 ? n.toInt().toString() : n.toString();
   }
 
-  String _fmtDate(dynamic v) {
-    final dt = v is DateTime ? v : DateTime.tryParse(v.toString());
-    if (dt == null) return '—';
-    const m = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${dt.day} ${m[dt.month - 1]} ${dt.year}';
+  @override
+  Widget build(BuildContext context) {
+    final pal = widget.pal;
+    final a = widget.answer;
+    final reviewed = a['status']?.toString() == 'reviewed';
+    final passed = a['passed'] == true;
+    final tone =
+        reviewed ? (passed ? pal.success : pal.danger) : pal.warning;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final tint = dark ? 0x26 / 0xFF : 0x14 / 0xFF;
+    final courseLine = [
+      (a['courseName'] ?? '').toString(),
+      (a['subcourseName'] ?? '').toString()
+    ].where((s) => s.isNotEmpty).join(' · ');
+
+    return GestureDetector(
+      onTap: widget.onTap,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: _pressed
+              ? tone.withValues(alpha: tint)
+              : pal.surface,
+          border: Border.all(color: pal.border, width: 0.75),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0x0F / 0xFF),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(13),
+                    color: tone.withValues(alpha: tint),
+                    border: Border.all(
+                      color: tone.withValues(
+                          alpha: dark ? 0x55 / 0xFF : 0x33 / 0xFF),
+                      width: 0.75,
+                    ),
+                  ),
+                  child: Icon(
+                    reviewed
+                        ? (passed
+                            ? Icons.done_all_outlined
+                            : Icons.error_outline)
+                        : Icons.hourglass_top_outlined,
+                    size: 20,
+                    color: tone,
+                  ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        ((a['examSetTitle'] ?? '').toString().isNotEmpty)
+                            ? a['examSetTitle'].toString()
+                            : AppLanguage.tr(
+                                'Theory Answer', 'थ्योरी उत्तर'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                          color: pal.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        courseLine.isNotEmpty ? courseLine : '—',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 12, color: pal.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(Icons.chevron_right,
+                    size: 18, color: pal.textDisabled),
+              ],
+            ),
+            const SizedBox(height: 11),
+            Row(
+              children: [
+                Expanded(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      StatusPill(
+                        label: reviewed
+                            ? (passed
+                                ? AppLanguage.tr('Passed', 'उत्तीर्ण')
+                                : AppLanguage.tr(
+                                    'Not passed', 'अनुत्तीर्ण'))
+                            : AppLanguage.tr('Pending', 'बाँकी'),
+                        color: tone,
+                        icon: reviewed
+                            ? (passed
+                                ? Icons.check_circle_outline
+                                : Icons.cancel_outlined)
+                            : Icons.schedule_outlined,
+                      ),
+                      if (reviewed)
+                        StatusPill(
+                          label:
+                              '${_num(a['score'])}/${_num(a['fullMarks'])}',
+                          color: tone,
+                          icon: Icons.emoji_events_outlined,
+                        ),
+                    ],
+                  ),
+                ),
+                if (widget.timeAgo.isNotEmpty)
+                  Text(
+                    widget.timeAgo,
+                    maxLines: 1,
+                    style: TextStyle(
+                        fontSize: 12, color: pal.textSecondary),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

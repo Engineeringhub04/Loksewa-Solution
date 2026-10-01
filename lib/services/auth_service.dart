@@ -270,4 +270,68 @@ class AuthService {
       await FirestoreRest.deleteDocument('users/$uid/session/active').catchError((_) {});
     }
   }
+
+  /// Permanently deletes the Firebase Auth identity (Identity Toolkit
+  /// `accounts:delete`), then clears the local session.
+  /// Mirrors `deleteCurrentAccount` in `src/core/firebase/auth.ts`.
+  ///
+  /// Callers must delete the user's Firestore profile document FIRST —
+  /// once the auth identity is gone the request is no longer authorised
+  /// to touch the document.
+  static Future<void> deleteCurrentAccount() async {
+    final idToken = await getValidIdToken();
+    if (idToken.isEmpty) return;
+    final uid = _session?.user.uid;
+    if (uid != null) {
+      // Drop this device's session claim while we still have auth.
+      await FirestoreRest.deleteDocument('users/$uid/session/active')
+          .catchError((_) {});
+    }
+    await _identityRequest('delete', {'idToken': idToken});
+    _session = null;
+    await PrefsService.remove(PrefsService.sessionKey);
+  }
+
+  /// Sentinel distinguishing "leave this field unchanged" from "clear it".
+  /// Identity Toolkit treats an explicit null as a clear, so plain nullable
+  /// params cannot express both.
+  static const keepField = Object();
+
+  /// Updates the Firebase Auth user profile (Identity Toolkit `accounts:update`)
+  /// and patches the cached session user so Home/Profile headers update
+  /// immediately without a re-login. Mirrors `updateCurrentUserProfile` in
+  /// src/core/firebase/auth.ts. Failures are the caller's to swallow.
+  static Future<void> updateCurrentUserProfile({
+    Object? displayName = keepField,
+    Object? photoURL = keepField,
+  }) async {
+    final idToken = await getValidIdToken();
+    if (idToken.isEmpty) return;
+    await _identityRequest('update', {
+      'idToken': idToken,
+      if (displayName != keepField) 'displayName': displayName,
+      if (photoURL != keepField) 'photoUrl': photoURL,
+      'returnSecureToken': false,
+    });
+    final session = _session;
+    if (session != null) {
+      final user = session.user;
+      _session = _Session(
+        user: AppUser(
+          uid: user.uid,
+          email: user.email,
+          displayName: displayName == keepField
+              ? user.displayName
+              : displayName as String?,
+          photoURL:
+              photoURL == keepField ? user.photoURL : photoURL as String?,
+        ),
+        idToken: session.idToken,
+        refreshToken: session.refreshToken,
+        expiresAt: session.expiresAt,
+      );
+      await PrefsService.setString(
+          PrefsService.sessionKey, json.encode(_session!.toJson()));
+    }
+  }
 }

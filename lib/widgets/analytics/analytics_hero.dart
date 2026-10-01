@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/analytics/analytics_strings.dart';
 import 'analytics_shared.dart';
 
 /// The page's identity card: which subcourse these numbers describe, how far
@@ -152,11 +153,11 @@ class AnalyticsHero extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Text(
-                          'This period',
+                        Text(
+                          AnalyticsStrings.heroEyebrow,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
                             letterSpacing: 0.3,
                             color: _onBlueDim,
@@ -214,18 +215,18 @@ class AnalyticsHero extends StatelessWidget {
                   child: Row(
                     children: [
                       _StripCell(
-                          value: formatCount(points), label: 'Points'),
+                          value: formatCount(points), label: AnalyticsStrings.heroPoints),
                       const _StripDivider(),
                       if (rank != null)
-                        _StripCell(value: '#$rank', label: 'Rank')
+                        _StripCell(value: '#$rank', label: AnalyticsStrings.heroRank)
                       else
                         _StripCell(
                             value: formatCount(activeDays),
-                            label: 'Active days'),
+                            label: AnalyticsStrings.heroActiveDays),
                       const _StripDivider(),
                       _StripCell(
                         value: formatCount(streak),
-                        label: 'Day streak',
+                        label: AnalyticsStrings.heroStreak,
                         icon: Icons.local_fire_department,
                       ),
                     ],
@@ -239,9 +240,13 @@ class AnalyticsHero extends StatelessWidget {
     );
 
     if (!interactive) return body;
-    return GestureDetector(
-      onTap: onPress,
-      child: body,
+    return Semantics(
+      button: true,
+      label: AnalyticsStrings.heroSwitch,
+      child: GestureDetector(
+        onTap: onPress,
+        child: body,
+      ),
     );
   }
 }

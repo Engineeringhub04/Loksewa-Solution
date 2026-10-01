@@ -116,6 +116,102 @@ void main() {
     });
   });
 
+  group('BookmarkDetailBody — React parity gating', () {
+    Future<void> pumpBody(
+        WidgetTester tester, Map<String, dynamic> bookmark) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: BookmarkDetailBody(bookmark: bookmark),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('explanation shows without reveal when there is no answer',
+        (WidgetTester tester) async {
+      final b = _questionBookmark();
+      // Options exist but no answerIndex → hasAnswer is false.
+      (b['payload'] as Map).remove('answerIndex');
+      await pumpBody(tester, b);
+
+      // No reveal button, but the explanation is visible anyway.
+      expect(find.text('Reveal answer'), findsNothing);
+      expect(find.text('Hide answer'), findsNothing);
+      expect(find.text('Kathmandu has been the capital for centuries.'),
+          findsOneWidget);
+      // Options still render.
+      expect(find.text('Kathmandu'), findsOneWidget);
+    });
+
+    testWidgets('options without answer render, and no correct mark exists',
+        (WidgetTester tester) async {
+      final b = _questionBookmark();
+      (b['payload'] as Map).remove('answerIndex');
+      (b['payload'] as Map).remove('explanation');
+      await pumpBody(tester, b);
+
+      expect(find.text('Pokhara'), findsOneWidget);
+      expect(find.text('Reveal answer'), findsNothing);
+      expect(find.byIcon(Icons.check_circle), findsNothing);
+    });
+
+    testWidgets('body renders alongside the question',
+        (WidgetTester tester) async {
+      final b = _questionBookmark();
+      (b['payload'] as Map)['body'] =
+          'Long-form reading text saved with the question.';
+      await pumpBody(tester, b);
+
+      // Question UI intact…
+      expect(find.text('What is the capital of Nepal?'), findsOneWidget);
+      expect(find.text('Reveal answer'), findsOneWidget);
+      // …and the body is NOT dropped.
+      expect(find.text('Long-form reading text saved with the question.'),
+          findsOneWidget);
+      expect(find.text('Content'), findsOneWidget);
+    });
+
+    testWidgets('empty payload shows the no-content card',
+        (WidgetTester tester) async {
+      final b = {
+        'title': 'Mystery bookmark',
+        'context': 'other',
+        'sourceLabel': 'Something',
+        'preview': 'A short preview of nothing much.',
+        'payload': <String, dynamic>{},
+      };
+      await pumpBody(tester, b);
+
+      expect(find.text('Mystery bookmark'), findsOneWidget);
+      expect(find.text('A short preview of nothing much.'), findsOneWidget);
+      expect(find.text('Nothing bookmarked in this section yet'),
+          findsOneWidget);
+      // No question UI at all.
+      expect(find.text('Reveal answer'), findsNothing);
+      expect(find.text('Explanation'), findsNothing);
+    });
+
+    testWidgets('question without options/explanation still has content',
+        (WidgetTester tester) async {
+      final b = {
+        'title': 'Question only',
+        'context': 'practice',
+        'payload': {
+          'question': 'What is the capital of Nepal?',
+        },
+      };
+      await pumpBody(tester, b);
+
+      // The question title card shows; the no-content card does not.
+      expect(find.text('What is the capital of Nepal?'), findsOneWidget);
+      expect(find.text('Nothing bookmarked in this section yet'),
+          findsNothing);
+      expect(find.text('Reveal answer'), findsNothing);
+    });
+  });
+
   group('BookmarkDetailScreen — header delete flow', () {
     testWidgets(
         'tapping the header delete icon, confirming in the modal, removes '

@@ -178,6 +178,28 @@ class ReportService {
     } catch (_) {}
   }
 
+  /// Contact Us — free-text message from the user.
+  /// Mirrors `submitContactMessage` in `src/core/messaging/support.ts`.
+  static Future<void> submitContactMessage(String message) async {
+    await _submitToGoogleForm(
+      type: 'contact',
+      issueCategory: '',
+      message: message,
+    );
+  }
+
+  /// App feedback with a 1–5 star rating.
+  /// Mirrors `submitFeedback` in `src/core/messaging/support.ts`: the row
+  /// stays readable in the sheet even when the user rates without commenting.
+  static Future<void> submitFeedback(int rating, String message) async {
+    await _submitToGoogleForm(
+      type: 'feedback',
+      issueCategory: '',
+      message: message.isEmpty ? '(no comment)' : message,
+      rating: rating,
+    );
+  }
+
   static Future<String> _platformLabel() async {
     try {
       final info = await DeviceInfoPlugin().androidInfo;
@@ -188,10 +210,85 @@ class ReportService {
     }
   }
 
+  /// Report an issue with a specific exam/quiz question (manual entry screen).
+  /// Mirrors `submitQuestionReport` in `src/core/messaging/support.ts`: the
+  /// Google Form POST (the copy support actually reads) and the private
+  /// Firestore report-history copy are awaited TOGETHER — a Form failure is
+  /// a visible failure, exactly like the Expo app.
+  static Future<void> submitQuestionReport({
+    required String questionRef,
+    required String issue,
+    required String description,
+  }) async {
+    final ref = questionRef.trim();
+    final body = description.trim();
+    await Future.wait([
+      _submitToGoogleForm(
+        type: 'report',
+        questionReference: ref,
+        issueCategory: 'question / $issue',
+        message: body,
+      ),
+      _createQuestionReportHistory(
+        questionRef: ref,
+        issue: issue,
+        description: body,
+      ),
+    ]);
+  }
+
+  /// Mirrors the `createReportHistory` call inside the Expo
+  /// `submitQuestionReport` — fixed source/target for the manual screen.
+  static Future<void> _createQuestionReportHistory({
+    required String questionRef,
+    required String issue,
+    required String description,
+  }) async {
+    final user = AuthService.currentUser;
+    if (user == null) throw Exception('AUTH_REQUIRED');
+    final idToken = await AuthService.getValidIdToken();
+    final userDoc =
+        await FirestoreRest.getDocument('users/${user.uid}', idToken: idToken)
+            .catchError((_) => null);
+
+    await FirestoreRest.setDocument(
+      'app_report_history/${_randomId()}',
+      {
+        'reporterId': user.uid,
+        'reporterName':
+            (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString(),
+        'reporterEmail': userDoc?['email'] ?? user.email,
+        'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
+        'reporterCourseId': userDoc?['courseId'],
+        'reporterSubcourseId': userDoc?['subcourseId'],
+        'source': 'question',
+        'targetType': 'question',
+        'targetId': questionRef,
+        'targetTitle': questionRef,
+        'targetPreview': null,
+        'contextLabel': 'Question · Manual report',
+        'targetAuthorName': null,
+        'targetAuthorPhoto': null,
+        // The issue VALUE (e.g. 'wrong-answer') — the history list shows it
+        // raw, exactly like the Expo record.
+        'reason': issue,
+        'description': description,
+        'status': 'pending',
+        'adminMessage': null,
+        'adminResponses': [],
+        'createdAt': FirestoreRest.serverTimestamp(),
+        'reviewedAt': null,
+      },
+      idToken: idToken,
+    );
+  }
+
   static Future<void> _submitToGoogleForm({
     required String type,
     required String issueCategory,
     required String message,
+    String? questionReference,
+    int? rating,
   }) async {
     final user = AuthService.currentUser;
     final displayName = user?.displayName?.trim();
@@ -205,6 +302,8 @@ class ReportService {
       _entries['name']!: displayName ?? '',
       _entries['email']!: user?.email ?? '',
       _entries['message']!: message,
+      _entries['rating']!: rating != null ? '$rating' : '',
+      _entries['questionReference']!: questionReference ?? '',
       _entries['issueCategory']!: issueCategory,
       _entries['appVersion']!: appVersion,
       _entries['platform']!: await _platformLabel(),

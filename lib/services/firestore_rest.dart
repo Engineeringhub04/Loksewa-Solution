@@ -201,6 +201,10 @@ class FirestoreRest {  static String get _base =>
 
   /// Marks a field to be set to the server's commit time (approximated client-side).
   static _ServerTimestamp serverTimestamp() => _ServerTimestamp();
+
+  /// Public server-timestamp sentinel for merge writes from other services
+  /// (mirrors serverTimestamp() in firestoreRest.ts).
+  static Object serverTimestampValue() => const _ServerTimestamp();
 }
 
 class _ServerTimestamp {

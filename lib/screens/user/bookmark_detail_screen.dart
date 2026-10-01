@@ -224,16 +224,22 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
     final question = (p['question'] ?? '').toString();
     final options = p['options'];
     final List optionList = options is List ? options : [];
-    final answerIndex =
-        p['answerIndex'] is int ? p['answerIndex'] as int : -1;
+    // Mirrors React: answerIndex must be a real number >= 0 AND there must be
+    // options to pick from; options can exist without an answer (no reveal).
+    final answerRaw = p['answerIndex'];
+    final answerIndex = answerRaw is num ? answerRaw.toInt() : -1;
+    final hasAnswer =
+        answerRaw is num && answerRaw >= 0 && optionList.isNotEmpty;
     final explanation = (p['explanation'] ?? '').toString();
     final bodyText = (p['body'] ?? '').toString();
+    final body = bodyText.trim();
     final preview = (b['preview'] ?? '').toString();
     final isQuestion = question.isNotEmpty;
-    final isArticle = !isQuestion &&
-        (track.key == 'article' ||
-            bodyText.isNotEmpty ||
-            preview.isNotEmpty);
+    // Mirrors React's hasContent: meta/preview/title alone don't count.
+    final hasContent = isQuestion ||
+        body.isNotEmpty ||
+        optionList.isNotEmpty ||
+        explanation.isNotEmpty;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
@@ -248,88 +254,110 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
           ),
         ),
         const SizedBox(height: 14),
-        _EntranceOnce(
-          delayMs: 60,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: pal.surface,
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: pal.border, width: 1),
-            ),
-            child: Text(
-              isQuestion ? question : (b['title'] ?? '').toString(),
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                height: 1.35,
-                color: pal.textPrimary,
-              ),
-            ),
-          ),
-        ),
         if (metaRows.isNotEmpty) ...[
-          const SizedBox(height: 12),
           _EntranceOnce(
-            delayMs: 120,
+            delayMs: 60,
             child: _MetaCard(rows: metaRows, pal: pal),
           ),
-        ],
-        if (isQuestion) ...[
           const SizedBox(height: 14),
-          for (var i = 0; i < optionList.length; i++)
-            _Stagger(
-              index: i,
-              child: _OptionTile(
-                index: i,
-                text: optionList[i].toString(),
-                answerIndex: answerIndex,
-                revealed: _revealAnswer,
-                pal: pal,
-              ),
-            ),
-          const SizedBox(height: 10),
+        ],
+        if (!hasContent)
           _EntranceOnce(
-            delayMs: 200,
-            child: SizedBox(
+            delayMs: 80,
+            child: _NoContentCard(
+              title: (b['title'] ?? '').toString(),
+              preview: preview,
+              pal: pal,
+            ),
+          )
+        else ...[
+          _EntranceOnce(
+            delayMs: 80,
+            child: Container(
               width: double.infinity,
-              child: FilledButton.tonalIcon(
-                onPressed: () =>
-                    setState(() => _revealAnswer = !_revealAnswer),
-                icon: Icon(_revealAnswer
-                    ? Icons.visibility_off_outlined
-                    : Icons.visibility_outlined),
-                label: Text(AppLanguage.tr(
-                    _revealAnswer ? 'Hide answer' : 'Reveal answer',
-                    _revealAnswer ? 'उत्तर लुकाउनुहोस्' : 'उत्तर देखाउनुहोस्')),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: pal.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: pal.border, width: 1),
+              ),
+              child: Text(
+                question.isNotEmpty
+                    ? question
+                    : (b['title'] ?? '').toString(),
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  height: 1.35,
+                  color: pal.textPrimary,
                 ),
               ),
             ),
           ),
-          // The explanation is gated on the reveal toggle — it must never
-          // show before the user taps "Reveal answer".
+          if (optionList.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            for (var i = 0; i < optionList.length; i++)
+              _Stagger(
+                index: i,
+                child: _OptionTile(
+                  index: i,
+                  text: optionList[i].toString(),
+                  answerIndex: answerIndex,
+                  revealed: _revealAnswer,
+                  pal: pal,
+                ),
+              ),
+            // The reveal toggle only exists when there IS an answer to
+            // reveal; options can be saved without one.
+            if (hasAnswer) ...[
+              const SizedBox(height: 10),
+              _EntranceOnce(
+                delayMs: 200,
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () =>
+                        setState(() => _revealAnswer = !_revealAnswer),
+                    icon: Icon(_revealAnswer
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined),
+                    label: Text(AppLanguage.tr(
+                        _revealAnswer ? 'Hide answer' : 'Reveal answer',
+                        _revealAnswer ? 'उत्तर लुकाउनुहोस्' : 'उत्तर देखाउनुहोस्')),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+          // Mirrors React: the explanation is gated on `revealed ||
+          // !hasAnswer`, so a saved explanation with no answerIndex is
+          // always visible.
           AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeOut,
-            child: _revealAnswer && explanation.isNotEmpty
+            child: (_revealAnswer || !hasAnswer) && explanation.isNotEmpty
                 ? _ExplanationCard(text: explanation, pal: pal)
                 : const SizedBox.shrink(),
           ),
-        ] else if (isArticle) ...[
-          const SizedBox(height: 14),
-          _EntranceOnce(
-            delayMs: 120,
-            child: _ArticleCard(
-              body: bodyText.isNotEmpty ? bodyText : preview,
-              pal: pal,
+          // Long-form content renders whenever it's present — even on a
+          // question bookmark.
+          if (body.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            _EntranceOnce(
+              delayMs: 150,
+              child: _ArticleCard(
+                body: body,
+                pal: pal,
+                tint: track.color,
+              ),
             ),
-          ),
+          ],
         ],
       ],
     );
@@ -781,12 +809,89 @@ class _ExplanationCard extends StatelessWidget {
   }
 }
 
+/// Shown when the payload carries nothing renderable (no question, body,
+/// options, or explanation) — mirrors React's noContent card: title +
+/// preview, then a quiet note explaining the section is empty.
+class _NoContentCard extends StatelessWidget {
+  final String title;
+  final String preview;
+  final ExpoPalette pal;
+  const _NoContentCard(
+      {required this.title, required this.preview, required this.pal});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: pal.border, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              height: 1.35,
+              color: pal.textPrimary,
+            ),
+          ),
+          if (preview.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              preview,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.55,
+                color: pal.textSecondary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: pal.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline,
+                    size: 17, color: pal.textSecondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    AppLanguage.tr('Nothing bookmarked in this section yet',
+                        'यो सेक्सनमा अझ केही बुकमार्क छैन'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.5,
+                      color: pal.textSecondary,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Premium article layout for article/Gorkhapatra bookmarks: readable
 /// long-form typography inside a soft card.
 class _ArticleCard extends StatelessWidget {
   final String body;
   final ExpoPalette pal;
-  const _ArticleCard({required this.body, required this.pal});
+  final Color tint;
+  const _ArticleCard(
+      {required this.body, required this.pal, required this.tint});
 
   @override
   Widget build(BuildContext context) {
@@ -808,6 +913,22 @@ class _ArticleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              Icon(Icons.menu_book_outlined, size: 16, color: tint),
+              const SizedBox(width: 6),
+              Text(
+                AppLanguage.tr('Content', 'सामग्री'),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                  color: tint,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
           Text(
             body,
             style: TextStyle(

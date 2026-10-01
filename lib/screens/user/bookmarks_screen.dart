@@ -164,12 +164,18 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           'users/$uid/bookmarks/${_bookmarkDocId(b)}',
           idToken: idToken);
       if (mounted) {
-        showToast(context, 'Removed from bookmarks', ToastVariant.info);
+        showToast(
+            context,
+            AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
+            ToastVariant.info);
         _load();
       }
     } catch (_) {
       if (mounted) {
-        showToast(context, 'Something went wrong', ToastVariant.error);
+        showToast(
+            context,
+            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+            ToastVariant.error);
       }
     }
   }
@@ -193,12 +199,15 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
       backgroundColor: pal.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'Bookmarks'),
+          SubpageHeader(
+              title: AppLanguage.tr('Bookmarks', 'बुकमार्कहरू')),
           Expanded(
             child: _loading
-                ? const PreloadingWidget(
+                ? PreloadingWidget(
                     tinted: false,
-                    label: 'Loading Bookmarks...',
+                    label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+                    hint: AppLanguage.tr(
+                        'Fetching your content', 'सामग्री ल्याउँदै'),
                   )
                 : _error && _items.isEmpty
                     ? _errorBody(pal)
@@ -221,11 +230,13 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           Icon(Icons.cloud_off_outlined,
               size: 44, color: pal.textDisabled),
           const SizedBox(height: 12),
-          Text('Could not load bookmarks.',
+          Text(AppLanguage.tr('Could not load bookmarks.', 'बुकमार्क लोड हुन सकेन।'),
               style:
                   TextStyle(fontSize: 14, color: pal.textPrimary)),
           const SizedBox(height: 12),
-          OutlinedButton(onPressed: _load, child: const Text('Retry')),
+          OutlinedButton(
+              onPressed: _load,
+              child: Text(AppLanguage.tr('Retry', 'पुनः प्रयास'))),
         ],
       ),
     );
@@ -305,9 +316,10 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'BOOKMARK SLOTS',
-                      style: TextStyle(
+                    Text(
+                      AppLanguage.tr('Bookmark slots', 'बुकमार्क स्लट')
+                          .toUpperCase(),
+                      style: const TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 1.1,
@@ -317,8 +329,10 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                     const SizedBox(height: 3),
                     Text(
                       _premium
-                          ? 'Unlimited with Premium'
-                          : '$used of $_limit used',
+                          ? AppLanguage.tr('Unlimited with Premium',
+                              'प्रिमियममा असीमित')
+                          : AppLanguage.tr('$used of $_limit used',
+                              '$_limit मध्ये $used प्रयोग'),
                       style: const TextStyle(
                         fontSize: 12,
                         color: Color(0xD2EFF6FF),
@@ -349,7 +363,8 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                     const SizedBox(width: 5),
                     Text(
                       _premium
-                          ? 'Premium members can save more'
+                          ? AppLanguage.tr('Premium members can save more',
+                              'प्रिमियम सदस्यले थप सुरक्षित गर्न सक्छन्')
                           : '$used/$_limit',
                       style: const TextStyle(
                         fontSize: 11,
@@ -388,10 +403,13 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
               Expanded(
                 child: Text(
                   _premium
-                      ? '${_items.length} item(s)'
+                      ? AppLanguage.tr('${_items.length} item(s)',
+                          '${_items.length} वस्तु')
                       : full
-                          ? 'Bookmark slots are full'
-                          : '$left left this sub-course',
+                          ? AppLanguage.tr('Bookmark slots are full',
+                              'बुकमार्क स्लट भरियो')
+                          : AppLanguage.tr('$left left this sub-course',
+                              'यो सब-कोर्समा $left बाँकी'),
                   style: const TextStyle(
                     fontSize: 11,
                     color: Color(0xC2FFFFFF),
@@ -408,9 +426,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(999),
                     ),
-                    child: const Text(
-                      'Upgrade',
-                      style: TextStyle(
+                    child: Text(
+                      AppLanguage.tr('Upgrade', 'अपग्रेड'),
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF0B1F51),
@@ -444,7 +462,8 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
               onChanged: (v) => setState(() => _query = v),
               style: TextStyle(fontSize: 14, color: pal.textPrimary),
               decoration: InputDecoration(
-                hintText: 'Search bookmarks...',
+                hintText: AppLanguage.tr(
+                    'Search bookmarks...', 'बुकमार्क खोज्नुहोस्...'),
                 hintStyle:
                     TextStyle(fontSize: 14, color: pal.textDisabled),
                 border: InputBorder.none,
@@ -568,7 +587,11 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           ),
           const SizedBox(height: 16),
           Text(
-            searching ? 'Nothing matches your search' : 'No bookmarks yet',
+            searching
+                ? AppLanguage.tr(
+                    'Nothing matches your search', 'खोजसँग मिल्ने केही छैन')
+                : AppLanguage.tr('No bookmarks yet',
+                    'अहिलेसम्म कुनै बुकमार्क छैन'),
             style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -577,7 +600,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           if (!searching) ...[
             const SizedBox(height: 8),
             Text(
-              'Save questions and chapters while studying and they appear here',
+              AppLanguage.tr(
+                  'Save questions and chapters while studying and they appear here',
+                  'पढ्दै गर्दा प्रश्न र च्याप्टर बुकमार्क गर्नुहोस्, यहाँ देखिन्छन्'),
               textAlign: TextAlign.center,
               style:
                   TextStyle(fontSize: 13, color: pal.textSecondary),
@@ -588,8 +613,8 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
               child: ElevatedButton.icon(
                 onPressed: () => context.push('/subjects'),
                 icon: const Icon(Icons.search, size: 18),
-                label: const Text('Browse Subjects',
-                    style: TextStyle(
+                label: Text(AppLanguage.tr('Browse Subjects', 'विषयहरू ब्राउज गर्नुहोस्'),
+                    style: const TextStyle(
                         fontSize: 14, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: pal.primary,
@@ -637,7 +662,12 @@ class _BookmarkCardState extends State<_BookmarkCard> {
     final track = bookmarkTrackOf(b);
     final dark =
         Theme.of(context).brightness == Brightness.dark;
-    final badge = AppLanguage.tr(track.label, track.labelNe);
+    // React: the bookmarked content's own label wins verbatim; the track
+    // label is only the fallback.
+    final sourceLabelRaw = (b['sourceLabel'] ?? '').toString();
+    final badge = sourceLabelRaw.isNotEmpty
+        ? sourceLabelRaw
+        : AppLanguage.tr(track.label, track.labelNe);
 
     return GestureDetector(
       onTap: widget.onTap,
@@ -750,7 +780,8 @@ class _BookmarkCardState extends State<_BookmarkCard> {
                               const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
-                                  'Saved on ${widget.date}',
+                                  AppLanguage.tr('Saved on ${widget.date}',
+                                      '${widget.date} मा सुरक्षित'),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(

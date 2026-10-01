@@ -10,12 +10,31 @@ import 'package:loksewa_solution/screens/learn/profile_tab.dart';
 class TabsScreen extends StatefulWidget {
   const TabsScreen({super.key});
 
+  /// Global tab switch — lets screens outside the tab bar jump to a tab.
+  /// Used by the Profile tab's admin "Answer Review" row, which on the Expo
+  /// side is `router.push('/(tabs)/exam')` (the exam is tab index 1).
+  static final ValueNotifier<int> tabIndex = ValueNotifier<int>(0);
+
   @override
   State<TabsScreen> createState() => _TabsScreenState();
 }
 
 class _TabsScreenState extends State<TabsScreen> {
-  int _index = 0;
+  int get _index => TabsScreen.tabIndex.value;
+
+  @override
+  void initState() {
+    super.initState();
+    TabsScreen.tabIndex.addListener(_onTabIndexChanged);
+  }
+
+  @override
+  void dispose() {
+    TabsScreen.tabIndex.removeListener(_onTabIndexChanged);
+    super.dispose();
+  }
+
+  void _onTabIndexChanged() => setState(() {});
 
   static const _tabs = <Widget>[
     HomeTab(),
@@ -39,7 +58,7 @@ class _TabsScreenState extends State<TabsScreen> {
         body: IndexedStack(index: _index, children: _tabs),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _index,
-        onTap: (i) => setState(() => _index = i),
+        onTap: (i) => TabsScreen.tabIndex.value = i,
         type: BottomNavigationBarType.fixed,
         selectedItemColor: AppColors.navy,
         unselectedItemColor: Colors.grey,

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../../services/analytics/analytics_strings.dart';
 import '../../services/analytics/analytics_types.dart';
+import '../../services/app_language.dart';
 
-/// Shared English strings and tiny helpers for the analytics widgets.
+/// Shared bilingual strings and tiny helpers for the analytics widgets.
 ///
-/// The app has no l10n infra, so every user-facing string lives here in
-/// English (mirroring the English values in the React app's i18n), exactly
-/// once — the screen and the widgets all read from these.
+/// Every user-facing string goes through [AppLanguage.tr] (pure English /
+/// pure Devanagari Nepali), mirroring the values in the React app's i18n —
+/// the screen and the widgets all read from these.
 
 /// Parses a '#RRGGBB' source colour into an opaque [Color].
 Color analyticsHex(String hex) {
@@ -42,17 +44,17 @@ String formatCount(num value) {
 String analyticsSourceLabel(AnalyticsSourceKey key) {
   switch (key) {
     case AnalyticsSourceKey.exam:
-      return 'Exam';
+      return AnalyticsStrings.sourceExam;
     case AnalyticsSourceKey.dailyTest:
-      return 'Daily Test';
+      return AnalyticsStrings.sourceDailyTest;
     case AnalyticsSourceKey.practice:
-      return 'Practice';
+      return AnalyticsStrings.sourcePractice;
     case AnalyticsSourceKey.qotd:
-      return 'Question of the Day';
+      return AnalyticsStrings.sourceQotd;
     case AnalyticsSourceKey.gkPm:
-      return 'GK & Current Affairs';
+      return AnalyticsStrings.sourceGkPm;
     case AnalyticsSourceKey.reading:
-      return 'Reading';
+      return AnalyticsStrings.sourceReading;
   }
 }
 
@@ -61,21 +63,21 @@ String analyticsSourceLabel(AnalyticsSourceKey key) {
 String pointsRowLabel(String labelKey) {
   switch (labelKey) {
     case 'analytics.sources.exam':
-      return 'Exam';
+      return AnalyticsStrings.sourceExam;
     case 'analytics.sources.dailyTest':
-      return 'Daily Test';
+      return AnalyticsStrings.sourceDailyTest;
     case 'analytics.sources.practice':
-      return 'Practice';
+      return AnalyticsStrings.sourcePractice;
     case 'analytics.sources.qotd':
-      return 'Question of the Day';
+      return AnalyticsStrings.sourceQotd;
     case 'analytics.sources.gkPm':
-      return 'GK & Current Affairs';
+      return AnalyticsStrings.sourceGkPm;
     case 'analytics.sources.reading':
-      return 'Reading';
+      return AnalyticsStrings.sourceReading;
     case 'analytics.sources.time':
-      return 'Study Time';
+      return AnalyticsStrings.sourceTime;
     case 'analytics.sources.bonus':
-      return 'Bonus';
+      return AnalyticsStrings.sourceBonus;
     default:
       return labelKey;
   }

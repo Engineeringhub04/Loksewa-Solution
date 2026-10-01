@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
+import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/home/subject_card_colored.dart';
 import '../../widgets/preloading.dart';
@@ -229,12 +231,19 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                       ),
                     ),
                     if (_premiumSubject != null)
-                      _PremiumGateDialog(
+                      PremiumGateDialog(
                         itemName:
                             '${_premiumSubject!['name'] ?? 'Subject'}',
-                        title: 'Premium Subject',
-                        message:
+                        title: AppLanguage.tr(
+                            'Premium Subject', 'प्रिमियम विषय'),
+                        message: AppLanguage.tr(
                             'A subscription is required to access this premium subject.',
+                            'यो प्रिमियम विषय खोल्न सदस्यता आवश्यक छ।'),
+                        confirmLabel: AppLanguage.tr(
+                            'Go To Subscription Plan',
+                            'सदस्यता योजना खोल्नुहोस्'),
+                        cancelLabel:
+                            AppLanguage.tr('Close', 'बन्द गर्नुहोस्'),
                         onConfirm: () {
                           setState(() => _premiumSubject = null);
                           context.push('/subscription');
@@ -436,70 +445,6 @@ class _JourneyStat extends StatelessWidget {
                     color: Color(0xFFE2EAFF), fontSize: 10),
                 textAlign: TextAlign.center),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PremiumGateDialog extends StatelessWidget {
-  final String? itemName;
-  final String title;
-  final String message;
-  final VoidCallback onConfirm;
-  final VoidCallback onCancel;
-
-  const _PremiumGateDialog(
-      {this.itemName,
-      required this.title,
-      required this.message,
-      required this.onConfirm,
-      required this.onCancel});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.5),
-      child: Center(
-        child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 32),
-          padding: const EdgeInsets.all(22),
-          decoration: BoxDecoration(
-            color: Theme.of(context).cardColor,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.lock, size: 40, color: Color(0xFF9A3412)),
-              const SizedBox(height: 12),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              Text(message, textAlign: TextAlign.center),
-              if (itemName != null) ...[
-                const SizedBox(height: 6),
-                Text(itemName!,
-                    style:
-                        const TextStyle(fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center),
-              ],
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1D4ED8),
-                      foregroundColor: Colors.white),
-                  onPressed: onConfirm,
-                  child: const Text('Go To Subscription Plan'),
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextButton(onPressed: onCancel, child: const Text('Close')),
-            ],
-          ),
         ),
       ),
     );

@@ -1,20 +1,29 @@
 // Exam purchase request detail.
-// Mirrors app/subscription/exam-purchase/[id].tsx: status box, admin message,
-// a 30-minute edit window (transactionRef / screenshot / customerMessage),
-// details card (examTitle, courseName, subcourseName, amount, transactionRef)
-// and a screenshot preview.
-import 'package:flutter/material.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/preloading.dart';
+// Mirrors app/subscription/exam-purchase/[id].tsx: a status box (status tag
+// + live 30-minute edit countdown + rejection reason), the admin-message box,
+// the edit-request flow (transaction ref / screenshot picker uploaded to
+// Cloudinary / message) gated on the 30-minute edit window, a details card,
+// and the receipt screenshot preview.
+import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
-const int _editWindowMs = 30 * 60 * 1000;
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/services/exam_purchases.dart';
+import 'package:loksewa_solution/services/report_service.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
 
 class SubscriptionExamPurchaseScreen extends StatefulWidget {
   final String id;
-  const SubscriptionExamPurchaseScreen({super.key, required this.id});
+  final String? source;
+  const SubscriptionExamPurchaseScreen(
+      {super.key, required this.id, this.source});
 
   @override
   State<SubscriptionExamPurchaseScreen> createState() =>
@@ -23,350 +32,609 @@ class SubscriptionExamPurchaseScreen extends StatefulWidget {
 
 class _SubscriptionExamPurchaseScreenState
     extends State<SubscriptionExamPurchaseScreen> {
-  late Future<Map<String, dynamic>?> _future = _load();
+  ExamPurchaseRecord? _record;
+  bool _loading = true;
+  Object? _error;
+  String _title = 'Exam Details';
+
   final _refCtrl = TextEditingController();
-  final _shotCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
+  String? _screenshotUrl; // remote URL from the record
+  Uint8List? _screenshotBytes; // newly picked, not yet uploaded
   bool _editing = false;
   bool _saving = false;
+  int _nowMs = DateTime.now().millisecondsSinceEpoch;
+  Timer? _ticker;
 
-  Future<Map<String, dynamic>?> _load() async {
-    final token = await AuthService.getValidIdToken();
-    return FirestoreRest.getDocument('app_exam_purchases/${widget.id}',
-        idToken: token);
+  String _t(String en, String ne) => AppLanguage.tr(en, ne);
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    // React ticks `now` every second so the remaining edit time counts down
+    // live on screen.
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      if (_record?.submittedAt != null) {
+        setState(() => _nowMs = DateTime.now().millisecondsSinceEpoch);
+      }
+    });
   }
 
   @override
   void dispose() {
+    _ticker?.cancel();
     _refCtrl.dispose();
-    _shotCtrl.dispose();
     _msgCtrl.dispose();
     super.dispose();
   }
 
-  bool _canEdit(Map<String, dynamic> r) {
-    if (r['status']?.toString() != 'pending') return false;
-    final submitted = DateTime.tryParse(r['submittedAt']?.toString() ?? '');
-    if (submitted == null) return false;
-    return DateTime.now().difference(submitted).inMilliseconds < _editWindowMs;
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final record = await fetchExamPurchaseById(widget.id);
+      if (!mounted) return;
+      setState(() {
+        _record = record;
+        _loading = false;
+        _title = (record != null && record.examTitle.isNotEmpty)
+            ? record.examTitle
+            : _t('Exam Details', 'परीक्षा विवरण');
+        if (!_editing) {
+          _refCtrl.text = record?.transactionRef ?? '';
+          _msgCtrl.text = record?.customerMessage ?? '';
+          _screenshotUrl =
+              (record?.screenshotUrl.isNotEmpty ?? false)
+                  ? record!.screenshotUrl
+                  : null;
+          _screenshotBytes = null;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e;
+      });
+    }
   }
 
-  Future<void> _saveEdits() async {
+  void _handleBack() {
+    // React: source === 'exam' replaces onto the exam tab.
+    if (widget.source == 'exam') {
+      context.go('/exam');
+    } else {
+      context.pop();
+    }
+  }
+
+  Future<void> _pickScreenshot() async {
+    final result = await FilePicker.platform
+        .pickFiles(type: FileType.image, withData: true);
+    if (result == null || result.files.isEmpty) return;
+    final picked = result.files.single;
+    Uint8List? bytes = picked.bytes;
+    if (bytes == null && picked.path != null) {
+      try {
+        bytes = await File(picked.path!).readAsBytes();
+      } catch (_) {
+        bytes = null;
+      }
+    }
+    if (bytes == null) {
+      if (!mounted) return;
+      showToast(
+          context,
+          _t('Attach a screenshot of your payment as proof — required.',
+              'प्रमाणको रूपमा आफ्नो भुक्तानीको स्क्रिनसट संलग्न गर्नुहोस् — आवश्यक।'),
+          ToastVariant.warning);
+      return;
+    }
+    setState(() => _screenshotBytes = bytes);
+  }
+
+  Future<void> _save() async {
+    final record = _record;
+    if (record == null || !isExamPurchaseEditable(record, _nowMs)) {
+      showToast(
+          context,
+          _t('The 30-minute edit window has expired.',
+              '३० मिनेटको सम्पादन समय समाप्त भयो।'),
+          ToastVariant.warning);
+      return;
+    }
+    final ref = _refCtrl.text.trim();
+    final hasScreenshot =
+        _screenshotBytes != null || (_screenshotUrl?.isNotEmpty ?? false);
+    if (ref.isEmpty || !hasScreenshot) {
+      showToast(
+          context,
+          _t(
+              'Transaction ID / Reference and Payment Screenshot are required.',
+              'ट्रान्जेक्सन आईडी / सन्दर्भ र भुक्तानी स्क्रिनसट आवश्यक छ।'),
+          ToastVariant.error);
+      return;
+    }
     setState(() => _saving = true);
     try {
-      final token = await AuthService.getValidIdToken();
-      await FirestoreRest.setDocument(
-        'app_exam_purchases/${widget.id}',
-        {
-          'transactionRef': _refCtrl.text.trim(),
-          'screenshotUrl': _shotCtrl.text.trim(),
-          'customerMessage':
-              _msgCtrl.text.trim().isEmpty ? null : _msgCtrl.text.trim(),
-          'updatedAt': DateTime.now().toIso8601String(),
-        },
-        merge: true,
-        idToken: token,
+      // React: keep the existing http(s) URL, upload only a newly picked file.
+      final screenshotUrl = _screenshotBytes != null
+          ? await CloudinaryUploader.uploadImage(_screenshotBytes!)
+          : _screenshotUrl ?? '';
+      await updateMyExamPurchaseDetails(
+        record.id,
+        transactionRef: ref,
+        screenshotUrl: screenshotUrl,
+        customerMessage:
+            _msgCtrl.text.trim().isEmpty ? null : _msgCtrl.text.trim(),
       );
+      if (!mounted) return;
+      showToast(
+          context,
+          _t('Subscription request updated.', 'सदस्यता अनुरोध अपडेट भयो।'),
+          ToastVariant.success);
       setState(() {
         _editing = false;
-        _future = _load();
+        _saving = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Details updated.')));
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Update failed: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _saving = false);
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+          context,
+          _t('Could not update your request. Please try again.',
+              'अनुरोध अपडेट गर्न सकिएन। फेरि प्रयास गर्नुहोस्।'),
+          ToastVariant.error);
+      setState(() => _saving = false);
     }
   }
 
-  Color _statusColor(String s) {
-    switch (s) {
-      case 'active':
-      case 'approved':
-        return Colors.green;
-      case 'pending':
-        return Colors.amber.shade700;
-      case 'rejected':
-        return Colors.red;
-      default:
-        return Colors.grey;
-    }
+  String _formatDuration(int ms) {
+    final totalSeconds = (ms / 1000).floor().clamp(0, 1 << 31);
+    final m = totalSeconds ~/ 60;
+    final s = (totalSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Exam Purchase'),
+          SubpageHeader(title: _title, onBackPress: _handleBack),
           Expanded(
-            child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading...',
-            );
-          }
-          if (snap.hasError) {
-            return Center(
-                child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text('Could not load purchase.\n${snap.error}',
-                        textAlign: TextAlign.center)));
-          }
-          final r = snap.data;
-          if (r == null) {
-            return const Center(child: Text('Purchase not found.'));
-          }
-          final status = r['status']?.toString() ?? 'pending';
-          final color = _statusColor(status);
-          final editable = _canEdit(r);
-          if (!_editing) {
-            _refCtrl.text = r['transactionRef']?.toString() ?? '';
-            _shotCtrl.text = r['screenshotUrl']?.toString() ?? '';
-            _msgCtrl.text = r['customerMessage']?.toString() ?? '';
-          }
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+            child: Stack(
               children: [
-                // Status box
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: color.withValues(alpha: 0.4)),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.school, color: color, size: 36),
-                      const SizedBox(width: 12),
-                      Expanded(
+                _buildBody(palette),
+                // React's PageLoaderOverlay while the save is in flight.
+                if (_saving)
+                  Positioned.fill(
+                    child: Container(
+                      color: Colors.black.withValues(alpha: 0.45),
+                      child: Center(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(r['examTitle']?.toString() ?? 'Exam',
-                                style: const TextStyle(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold)),
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(
-                                  color: color,
-                                  borderRadius: BorderRadius.circular(12)),
-                              child: Text(status.toUpperCase(),
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12)),
+                            const CircularProgressIndicator(
+                                color: Colors.white),
+                            const SizedBox(height: 12),
+                            Text(
+                              _t('Loading Subscription...',
+                                  'सदस्यता लोड हुँदैछ...'),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w600),
                             ),
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                if ((r['adminMessage']?.toString() ?? '').isNotEmpty)
-                  _noteCard('Message from admin',
-                      r['adminMessage'].toString(), Colors.blue),
-                if ((r['rejectionReason']?.toString() ?? '').isNotEmpty)
-                  _noteCard('Rejection reason',
-                      r['rejectionReason'].toString(), Colors.red),
-                const SizedBox(height: 12),
-                // Edit window
-                if (editable && !_editing)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                              'You can edit this request for 30 minutes after submitting.',
-                              style: TextStyle(fontWeight: FontWeight.w600)),
-                          const SizedBox(height: 8),
-                          ElevatedButton(
-                            onPressed: () =>
-                                setState(() => _editing = true),
-                            child: const Text('Edit Details'),
-                          ),
-                        ],
-                      ),
                     ),
                   ),
-                if (_editing)
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          const Text('Edit request',
-                              style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 12),
-                          TextField(
-                              controller: _refCtrl,
-                              decoration: const InputDecoration(
-                                  labelText: 'Transaction reference',
-                                  border: OutlineInputBorder())),
-                          const SizedBox(height: 12),
-                          TextField(
-                              controller: _shotCtrl,
-                              decoration: const InputDecoration(
-                                  labelText: 'Receipt screenshot URL',
-                                  border: OutlineInputBorder())),
-                          const SizedBox(height: 12),
-                          TextField(
-                              controller: _msgCtrl,
-                              maxLines: 3,
-                              decoration: const InputDecoration(
-                                  labelText: 'Message for admin (optional)',
-                                  border: OutlineInputBorder())),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: _saving ? null : _saveEdits,
-                                  style: ElevatedButton.styleFrom(
-                                      backgroundColor: AppColors.navy,
-                                      foregroundColor: Colors.white),
-                                  child: _saving
-                                      ? const SizedBox(
-                                          height: 20,
-                                          width: 20,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white))
-                                      : const Text('Save'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              TextButton(
-                                  onPressed: () =>
-                                      setState(() => _editing = false),
-                                  child: const Text('Cancel')),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                // Details card
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text('Details',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 8),
-                        _kv('Exam', r['examTitle']?.toString() ?? '—'),
-                        _kv('Course', r['courseName']?.toString() ?? '—'),
-                        _kv('Sub-course',
-                            r['subcourseName']?.toString() ?? '—'),
-                        _kv('Amount', 'Rs. ${_money(r['amount'])}'),
-                        _kv('Transaction ref',
-                            r['transactionRef']?.toString() ?? '—'),
-                        _kv('Submitted', _fmtDate(r['submittedAt'])),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                // Screenshot preview
-                if ((r['screenshotUrl']?.toString() ?? '').isNotEmpty) ...[
-                  const Text('Receipt screenshot',
-                      style:
-                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(12),
-                    child: Image.network(r['screenshotUrl'].toString(),
-                        height: 220,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                            height: 120,
-                            color: Colors.black12,
-                            child: const Center(
-                                child: Icon(Icons.broken_image)))),
-                  ),
-                ],
               ],
             ),
-          );
-        },
-      ),
           ),
         ],
       ),
     );
   }
 
-  Widget _noteCard(String title, String body, Color color) => Container(
-        margin: const EdgeInsets.only(top: 12),
-        child: Card(
-          color: color.withValues(alpha: 0.08),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    style: TextStyle(
-                        fontWeight: FontWeight.bold, color: color)),
-                const SizedBox(height: 6),
-                Text(body),
-              ],
-            ),
+  Widget _buildBody(ExpoPalette palette) {
+    if (_loading) {
+      return PreloadingWidget(
+        tinted: false,
+        label: _t('Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+        hint: _t('Fetching your purchase history',
+            'खरिद इतिहास ल्याउँदै'),
+      );
+    }
+    if (_error != null || _record == null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                _t('Could not load this purchase.',
+                    'यो खरिद लोड गर्न सकिएन।'),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: _load,
+                child:
+                    Text(_t('Retry', 'पुनः प्रयास गर्नुहोस्')),
+              ),
+            ],
           ),
         ),
       );
+    }
+    final record = _record!;
+    final status = record.status;
+    final statusColor = status == 'active'
+        ? const Color(0xFF16A34A)
+        : status == 'rejected'
+            ? const Color(0xFFDC2626)
+            : const Color(0xFFD97706);
+    final statusLabel = status == 'active'
+        ? _t('Approved', 'स्वीकृत')
+        : status == 'rejected'
+            ? _t('Rejected', 'अस्वीकृत')
+            : _t('Pending Review', 'समीक्षा हुँदैछ');
+    final statusIcon = status == 'active'
+        ? Icons.check_circle
+        : status == 'rejected'
+            ? Icons.cancel
+            : Icons.access_time;
+    final canEdit = isExamPurchaseEditable(record, _nowMs);
+    final remainingLabel =
+        _formatDuration(examPurchaseEditRemainingMs(record, _nowMs));
 
-  Widget _kv(String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(k, style: const TextStyle(color: Colors.black54)),
-            Flexible(
-                child: Text(v,
-                    textAlign: TextAlign.end,
-                    style: const TextStyle(fontWeight: FontWeight.w600))),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Status box.
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: statusColor.withValues(alpha: 0x14 / 0xFF),
+              border: Border.all(color: statusColor),
+              borderRadius: BorderRadius.circular(ExpoRadius.lg),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(statusIcon, size: 22, color: statusColor),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        statusLabel,
+                        style: TextStyle(
+                          fontSize: ExpoType.bodyLarge,
+                          fontWeight: FontWeight.bold,
+                          color: statusColor,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                if (status == 'pending')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      canEdit
+                          ? '${_t('Edit time remaining', 'सम्पादन गर्न बाँकी समय')}: $remainingLabel'
+                          : _t('The 30-minute edit window has expired.',
+                              '३० मिनेटको सम्पादन समय समाप्त भयो।'),
+                      style: TextStyle(
+                        fontSize: ExpoType.caption,
+                        color: palette.textSecondary,
+                      ),
+                    ),
+                  ),
+                if (record.rejectionReason != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      record.rejectionReason!,
+                      style: TextStyle(
+                        fontSize: ExpoType.body,
+                        color: statusColor,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+
+          // Admin message.
+          if (record.adminMessage != null)
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: palette.primary
+                    .withValues(alpha: 0x14 / 0xFF),
+                border: Border.all(color: palette.primary),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.chat_bubble_outline,
+                          size: 18, color: palette.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _t('Message from Admin', 'एड्मिनको सन्देश'),
+                          style: TextStyle(
+                            fontSize: ExpoType.bodySmall,
+                            fontWeight: FontWeight.bold,
+                            color: palette.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(record.adminMessage!,
+                      style: const TextStyle(fontSize: ExpoType.body)),
+                ],
+              ),
+            ),
+
+          // Edit / save request (pending only).
+          if (status == 'pending') ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: !canEdit
+                    ? null
+                    : _editing
+                        ? _save
+                        : () => setState(() => _editing = true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.navy,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                ),
+                icon: _saving
+                    ? const SizedBox(
+                        width: 17,
+                        height: 17,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white))
+                    : Icon(
+                        _editing
+                            ? Icons.check_outlined
+                            : Icons.edit_outlined,
+                        size: 17,
+                        color: Colors.white),
+                label: Text(_editing
+                    ? _t('Save Request', 'अनुरोध सुरक्षित गर्नुहोस्')
+                    : _t('Edit Request', 'अनुरोध सम्पादन गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              canEdit
+                  ? '${_t('Edit time remaining', 'सम्पादन गर्न बाँकी समय')}: $remainingLabel'
+                  : _t('The 30-minute edit window has expired.',
+                      '३० मिनेटको सम्पादन समय समाप्त भयो।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: ExpoType.caption,
+                color: palette.textSecondary,
+              ),
+            ),
           ],
-        ),
-      );
 
-  String _money(dynamic v) {
-    final n = v is num ? v : num.tryParse(v.toString()) ?? 0;
-    return n % 1 == 0 ? n.toInt().toString() : n.toString();
+          // Edit box.
+          if (_editing) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt,
+                border: Border.all(
+                    color: palette.border, width: 0.5),
+                borderRadius: BorderRadius.circular(ExpoRadius.lg),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: _refCtrl,
+                    textCapitalization: TextCapitalization.characters,
+                    decoration: InputDecoration(
+                      labelText: _t('Transaction ID / Reference',
+                          'ट्रान्जेक्सन आईडी / सन्दर्भ'),
+                      hintText:
+                          _t('e.g. TXN123456789', 'जस्तै TXN123456789'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    _t('Payment Screenshot', 'भुक्तानी स्क्रिनसट'),
+                    style: TextStyle(
+                      fontSize: ExpoType.bodySmall,
+                      fontWeight: FontWeight.w500,
+                      color: palette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  if (_screenshotBytes != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.memory(_screenshotBytes!,
+                          height: 160,
+                          width: double.infinity,
+                          fit: BoxFit.cover),
+                    )
+                  else if (_screenshotUrl != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.network(_screenshotUrl!,
+                          height: 160,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
+                              height: 120,
+                              color: Colors.black12,
+                              child: const Center(
+                                  child: Icon(Icons.broken_image)))),
+                    ),
+                  const SizedBox(height: 4),
+                  OutlinedButton(
+                    onPressed: _pickScreenshot,
+                    child: Text(_t(
+                        'Payment Screenshot', 'भुक्तानी स्क्रिनसट')),
+                  ),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: _msgCtrl,
+                    maxLines: 3,
+                    decoration: InputDecoration(
+                      labelText: _t(
+                          'Message (optional)', 'सन्देश (वैकल्पिक)'),
+                      hintText: _t(
+                          "Add a note for the admin, e.g. paid from a family member's account",
+                          'एड्मिनको लागि नोट थप्नुहोस्, जस्तै परिवारको सदस्यको खाताबाट तिरेको'),
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton(
+                    onPressed: _saving
+                        ? null
+                        : () => setState(() => _editing = false),
+                    child: Text(
+                        _t('Cancel', 'रद्द गर्नुहोस्')),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 12),
+          // Details card.
+          Container(
+            decoration: BoxDecoration(
+              color: palette.surface,
+              border:
+                  Border.all(color: palette.border, width: 0.5),
+              borderRadius: BorderRadius.circular(ExpoRadius.lg),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _row(palette, _t('Exam Details', 'परीक्षा विवरण'),
+                    record.examTitle),
+                _divider(palette),
+                _row(palette, _t('Course', 'कोर्स'),
+                    record.courseName ?? '—'),
+                _divider(palette),
+                _row(palette, _t('Subcourse', 'सबकोर्स'),
+                    record.subcourseName ?? '—'),
+                _divider(palette),
+                _row(palette, _t('Amount', 'रकम'),
+                    'Rs. ${record.amount}'),
+                _divider(palette),
+                _row(palette, _t('Reference', 'सन्दर्भ'),
+                    record.transactionRef ?? '—'),
+                if (record.customerMessage != null) ...[
+                  _divider(palette),
+                  _row(palette,
+                      _t('Message (optional)', 'सन्देश (वैकल्पिक)'),
+                      record.customerMessage!),
+                ],
+              ],
+            ),
+          ),
+
+          // Receipt screenshot preview.
+          if (record.screenshotUrl.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text(
+              _t('Payment Screenshot', 'भुक्तानी स्क्रिनसट'),
+              style: TextStyle(
+                fontSize: ExpoType.bodySmall,
+                fontWeight: FontWeight.w600,
+                color: palette.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(record.screenshotUrl,
+                  height: 220,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(
+                      height: 120,
+                      color: Colors.black12,
+                      child: const Center(
+                          child: Icon(Icons.broken_image)))),
+            ),
+          ],
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
   }
 
-  String _fmtDate(dynamic v) {
-    final dt = v is DateTime ? v : DateTime.tryParse(v.toString());
-    if (dt == null) return '—';
-    const m = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    return '${dt.day} ${m[dt.month - 1]} ${dt.year}';
+  Widget _row(ExpoPalette palette, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: ExpoType.bodySmall,
+                color: palette.textSecondary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Text(
+              value,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: ExpoType.bodyLarge,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _divider(ExpoPalette palette) {
+    return Container(
+      height: 0.5,
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      color: palette.divider,
+    );
   }
 }

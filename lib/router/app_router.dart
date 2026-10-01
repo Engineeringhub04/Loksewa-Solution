@@ -365,16 +365,20 @@ final appRouter = GoRouter(
     GoRoute(path: '/checkout', builder: (_, __) => const CheckoutScreen()),
     GoRoute(
       path: '/subscription/exam-purchase/:id',
-      builder: (_, s) =>
-          SubscriptionExamPurchaseScreen(id: s.pathParameters['id']!),
+      builder: (_, s) => SubscriptionExamPurchaseScreen(
+        id: s.pathParameters['id']!,
+        source: s.uri.queryParameters['source'],
+      ),
     ),
     GoRoute(
         path: '/purchase-details',
         builder: (_, __) => const PurchaseDetailsScreen()),
     GoRoute(
       path: '/purchase-details/content/:id',
-      builder: (_, s) =>
-          ContentPurchaseDetailScreen(id: s.pathParameters['id']!),
+      builder: (_, s) => ContentPurchaseDetailScreen(
+        id: s.pathParameters['id']!,
+        source: s.uri.queryParameters['source'],
+      ),
     ),
     GoRoute(
         path: '/achievements', builder: (_, __) => const AchievementsScreen()),

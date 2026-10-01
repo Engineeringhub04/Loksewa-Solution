@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
-import '../../widgets/subpage_header.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
+import 'admin_review_dialogs.dart' show showAdminReviewApproveDialog, showAdminReviewRejectDialog, adminContentTitle;
 
-/// Admin → review one content purchase request. Mirrors
-/// app/admin/content-purchases/[id].tsx. Collection: app_content_purchases.
+/// Admin → review one content (subject/unit/chapter) purchase request.
+/// Mirrors app/admin/content-purchases/[id].tsx. Collection:
+/// app_content_purchases. Approve tags it active; reject tags it rejected
+/// with a reason. The record is never deleted — it stays in the admin list
+/// as an audit trail.
 class AdminContentPurchaseDetailScreen extends StatefulWidget {
   final String id;
   const AdminContentPurchaseDetailScreen({super.key, required this.id});
@@ -21,7 +27,6 @@ class _AdminContentPurchaseDetailScreenState
     extends State<AdminContentPurchaseDetailScreen> {
   Future<Map<String, dynamic>?>? _future;
   final _adminMessage = TextEditingController();
-  final _rejectReason = TextEditingController();
   bool _busy = false;
 
   @override
@@ -33,7 +38,6 @@ class _AdminContentPurchaseDetailScreenState
   @override
   void dispose() {
     _adminMessage.dispose();
-    _rejectReason.dispose();
     super.dispose();
   }
 
@@ -62,28 +66,17 @@ class _AdminContentPurchaseDetailScreenState
 
   Future<void> _approve() async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Approve request'),
-        content:
-            const Text('This will approve the purchase request. Continue?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Approve')),
-        ],
-      ),
-    );
-    if (confirm != true) return;
+    if (reviewer == null || _busy) return;
+    if (!await showAdminReviewApproveDialog(context,
+        approveMessage: AppLanguage.tr(
+            'Approve this subscription? The user will be upgraded to Premium immediately.',
+            'यो सदस्यता स्वीकृत गर्ने हो? प्रयोगकर्ता तुरुन्तै प्रिमियममा अपग्रेड हुनेछ।'))) {
+      return;
+    }
     setState(() => _busy = true);
     try {
       final token = await AuthService.getValidIdToken();
-      await FirestoreRest.setDocument(
+      await FirestoreRest.updateDocument(
         'app_content_purchases/${widget.id}',
         {
           'status': 'active',
@@ -96,17 +89,21 @@ class _AdminContentPurchaseDetailScreenState
           'updatedAt': FirestoreRest.serverTimestamp(),
         },
         idToken: token,
-        merge: true,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Purchase approved.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Subscription approved.', 'सदस्यता स्वीकृत भयो।'),
+            ToastVariant.success);
         _refresh();
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Something went wrong.')));
+        showToast(
+            context,
+            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+            ToastVariant.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -115,36 +112,13 @@ class _AdminContentPurchaseDetailScreenState
 
   Future<void> _reject() async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null) return;
-    _rejectReason.text = '';
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Reject request'),
-        content: TextField(
-          controller: _rejectReason,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            hintText: 'Reason for rejection',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, _rejectReason.text.trim()),
-              child:
-                  const Text('Reject', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
+    if (reviewer == null || _busy) return;
+    final reason = await showAdminReviewRejectDialog(context);
     if (reason == null) return;
     setState(() => _busy = true);
     try {
       final token = await AuthService.getValidIdToken();
-      await FirestoreRest.setDocument(
+      await FirestoreRest.updateDocument(
         'app_content_purchases/${widget.id}',
         {
           'status': 'rejected',
@@ -158,17 +132,21 @@ class _AdminContentPurchaseDetailScreenState
           'updatedAt': FirestoreRest.serverTimestamp(),
         },
         idToken: token,
-        merge: true,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Purchase rejected.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
+            ToastVariant.success);
         _refresh();
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Something went wrong.')));
+        showToast(
+            context,
+            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+            ToastVariant.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -180,34 +158,45 @@ class _AdminContentPurchaseDetailScreenState
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Content Purchase Details'),
+          SubpageHeader(
+              title: AppLanguage.tr(
+                  'Content Details', 'सामग्री विवरण')),
           Expanded(
             child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Details...',
-            );
-          }
-          if (snap.hasError) {
-            if (snap.error is _Denied) {
-              return const Center(child: Text('Access denied'));
-            }
-            return Center(
-              child: ElevatedButton(
-                  onPressed: _refresh, child: const Text('Retry')),
-            );
-          }
-          final record = snap.data;
-          if (record == null) {
-            return const Center(
-                child: Text('This purchase request was not found.'));
-          }
-          return _body(record);
-        },
-      ),
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return PreloadingWidget(
+                    tinted: false,
+                    label: AppLanguage.tr('Loading Subscription...',
+                        'सदस्यता लोड हुँदैछ...'),
+                    hint: AppLanguage.tr('Fetching your purchase history',
+                        'खरिद इतिहास ल्याउँदै'),
+                  );
+                }
+                if (snap.hasError) {
+                  if (snap.error is _Denied) {
+                    return Center(
+                        child: Text(AppLanguage.tr(
+                            'Access denied', 'पहुँच अस्वीकृत')));
+                  }
+                  return Center(
+                    child: ElevatedButton(
+                        onPressed: _refresh,
+                        child: Text(
+                            AppLanguage.tr('Retry', 'पुनः प्रयास'))),
+                  );
+                }
+                final record = snap.data;
+                if (record == null) {
+                  return Center(
+                      child: Text(AppLanguage.tr(
+                          'This purchase request was not found.',
+                          'यो खरिद अनुरोध भेटिएन।')));
+                }
+                return _body(record);
+              },
+            ),
           ),
         ],
       ),
@@ -222,13 +211,18 @@ class _AdminContentPurchaseDetailScreenState
             ? Colors.red
             : Colors.orange;
     final label = status == 'active'
-        ? 'Approved'
+        ? AppLanguage.tr('Approved', 'स्वीकृत')
         : status == 'rejected'
-            ? 'Rejected'
-            : 'New';
+            ? AppLanguage.tr('Rejected', 'अस्वीकृत')
+            : AppLanguage.tr('New', 'नयाँ');
+    final icon = status == 'active'
+        ? Icons.check_circle
+        : status == 'rejected'
+            ? Icons.cancel
+            : Icons.schedule;
     final profile = record['_profile'] as Map<String, dynamic>?;
-    final title =
-        (record['contentTitleNe'] ?? record['contentTitle'] ?? '—').toString();
+    final title = adminContentTitle(record);
+    final screenshotUrl = (record['screenshotUrl'] as String?) ?? '';
 
     return Stack(
       children: [
@@ -238,7 +232,7 @@ class _AdminContentPurchaseDetailScreenState
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.08),
+                color: color.withValues(alpha: 0x14 / 0xFF),
                 border: Border.all(color: color),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -247,14 +241,7 @@ class _AdminContentPurchaseDetailScreenState
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        status == 'active'
-                            ? Icons.check_circle
-                            : status == 'rejected'
-                                ? Icons.cancel
-                                : Icons.schedule,
-                        color: color,
-                      ),
+                      Icon(icon, color: color, size: 22),
                       const SizedBox(width: 8),
                       Text(label,
                           style: TextStyle(
@@ -267,7 +254,7 @@ class _AdminContentPurchaseDetailScreenState
                     Padding(
                       padding: const EdgeInsets.only(top: 8),
                       child: Text('${record['adminMessage']}',
-                          style: TextStyle(color: color)),
+                          style: TextStyle(color: color, fontSize: 13)),
                     ),
                 ],
               ),
@@ -283,9 +270,17 @@ class _AdminContentPurchaseDetailScreenState
                 title: Text(
                     '${profile?['name'] ?? record['userName'] ?? '—'}',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(
-                    '${profile?['email'] ?? record['userEmail'] ?? '—'}\n'
-                    '${record['courseId'] ?? '—'} · ${record['subcourseId'] ?? '—'}'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${profile?['email'] ?? record['userEmail'] ?? '—'}'),
+                    Text(
+                      '${record['courseId'] ?? '—'} · ${record['subcourseId'] ?? '—'}',
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
                 isThreeLine: true,
               ),
             ),
@@ -299,15 +294,24 @@ class _AdminContentPurchaseDetailScreenState
                     TextField(
                       controller: _adminMessage,
                       maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Message to user (optional)',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: AppLanguage.tr(
+                            'Message to user (optional)',
+                            'प्रयोगकर्तालाई सन्देश (वैकल्पिक)'),
+                        helperText: AppLanguage.tr(
+                            'Shown back to the user alongside the approval/rejection.',
+                            'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
+                        hintText: AppLanguage.tr(
+                            'e.g. Thanks! Your payment matched perfectly.',
+                            'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
+                        border: const OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 12),
                     ElevatedButton(
                       onPressed: _busy ? null : _approve,
-                      child: const Text('Approve'),
+                      child: Text(AppLanguage.tr(
+                          'Approve', 'स्वीकृत गर्नुहोस्')),
                     ),
                     const SizedBox(height: 8),
                     ElevatedButton(
@@ -316,7 +320,8 @@ class _AdminContentPurchaseDetailScreenState
                         backgroundColor: Colors.red,
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('Reject'),
+                      child: Text(AppLanguage.tr(
+                          'Reject', 'अस्वीकार गर्नुहोस्')),
                     ),
                   ],
                 ),
@@ -326,40 +331,52 @@ class _AdminContentPurchaseDetailScreenState
             Card(
               child: Column(
                 children: [
-                  _row('Content', title),
-                  _row('Type', '${record['contentType'] ?? '—'}'),
-                  _row('User', '${record['userName'] ?? '—'}'),
-                  _row('Email', '${record['userEmail'] ?? '—'}'),
-                  _row('Course', '${record['courseId'] ?? '—'}'),
-                  _row('Subcourse', '${record['subcourseId'] ?? '—'}'),
-                  _row('Amount', 'Rs. ${record['amount'] ?? '—'}'),
-                  _row('Reference', '${record['transactionRef'] ?? '—'}'),
+                  _row(AppLanguage.tr('Content Details', 'सामग्री विवरण'),
+                      title.isEmpty ? '—' : title),
+                  _row(AppLanguage.tr('Content type', 'सामग्रीको प्रकार'),
+                      '${record['contentType'] ?? '—'}'),
+                  _row(AppLanguage.tr('User', 'प्रयोगकर्ता'),
+                      '${record['userName'] ?? '—'}'),
+                  _row(AppLanguage.tr('Email', 'इमेल'),
+                      '${record['userEmail'] ?? '—'}'),
+                  _row(AppLanguage.tr('Course', 'कोर्स'),
+                      '${record['courseId'] ?? '—'}'),
+                  _row(AppLanguage.tr('Subcourse', 'सबकोर्स'),
+                      '${record['subcourseId'] ?? '—'}'),
+                  _row(AppLanguage.tr('Amount', 'रकम'),
+                      'Rs. ${record['amount'] ?? '—'}'),
+                  _row(AppLanguage.tr('Reference', 'सन्दर्भ'),
+                      '${record['transactionRef'] ?? '—'}'),
                   if (record['customerMessage'] != null)
-                    _row('Customer note', '${record['customerMessage']}'),
+                    _row(AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
+                        '${record['customerMessage']}'),
                   if (record['rejectionReason'] != null)
-                    _row('Reject reason', '${record['rejectionReason']}'),
+                    _row(AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
+                        '${record['rejectionReason']}'),
                 ],
               ),
             ),
-            if ((record['screenshotUrl'] as String?)?.isNotEmpty == true) ...[
+            if (screenshotUrl.isNotEmpty) ...[
               const SizedBox(height: 12),
-              const Text('Payment screenshot',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => _fullscreen(record['screenshotUrl'] as String),
+                onTap: () => _fullscreen(screenshotUrl),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(record['screenshotUrl'] as String,
+                  child: Image.network(screenshotUrl,
                       height: 230, width: double.infinity, fit: BoxFit.cover),
                 ),
               ),
-              const Center(
-                  child: Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text('Tap to zoom',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-              )),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Center(
+                  child: Text(
+                    AppLanguage.tr('Tap to view full screen and zoom',
+                        'Full screen मा हेर्न र zoom गर्न थिच्नुहोस्'),
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ),
             ],
             const SizedBox(height: 24),
           ],
@@ -367,8 +384,9 @@ class _AdminContentPurchaseDetailScreenState
         if (_busy)
           Container(
             color: Colors.black45,
-            child: const PreloadingWidget(
-              label: 'Working...',
+            child: PreloadingWidget(
+              label: AppLanguage.tr(
+                  'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
             ),
           ),
       ],
@@ -387,6 +405,8 @@ class _AdminContentPurchaseDetailScreenState
                   style: const TextStyle(fontSize: 13, color: Colors.grey))),
           Expanded(
               child: Text(value,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600))),
         ],
       ),

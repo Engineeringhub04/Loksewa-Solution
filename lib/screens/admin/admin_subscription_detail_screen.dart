@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
-import '../../widgets/subpage_header.dart';
+import 'admin_review_dialogs.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Admin → review one subscription request. Approve activates the subscription
-/// immediately (writes isPremium + premiumPlanName + premiumExpiryDate onto the
-/// user doc); reject tags it rejected with a reason. Mirrors
-/// app/admin/subscriptions/[id].tsx. Collections: app_subscriptions,
-/// app_subscription_plans, users.
+/// immediately (writes isPremium + premiumPlanName + premiumExpiryDate onto
+/// the user doc); Reject tags it 'rejected' with a reason the user sees on
+/// their Subscription page. Either action keeps the request permanently
+/// visible in the admin list — this screen just updates its status/tag, never
+/// deletes it. Mirrors app/admin/subscriptions/[id].tsx. Collections:
+/// app_subscriptions, app_subscription_plans, users, app_courses.
 class AdminSubscriptionDetailScreen extends StatefulWidget {
   final String id;
   const AdminSubscriptionDetailScreen({super.key, required this.id});
@@ -24,7 +30,6 @@ class _AdminSubscriptionDetailScreenState
     extends State<AdminSubscriptionDetailScreen> {
   Future<Map<String, dynamic>?>? _future;
   final _adminMessage = TextEditingController();
-  final _rejectReason = TextEditingController();
   bool _busy = false;
 
   @override
@@ -36,7 +41,6 @@ class _AdminSubscriptionDetailScreenState
   @override
   void dispose() {
     _adminMessage.dispose();
-    _rejectReason.dispose();
     super.dispose();
   }
 
@@ -51,22 +55,75 @@ class _AdminSubscriptionDetailScreenState
         'app_subscriptions/${widget.id}',
         idToken: token);
     if (record == null) return null;
+    // Plans (active only, ordered) — the approve expiry window comes from
+    // the plan's durationDays, exactly like fetchSubscriptionPlans().
     try {
       final plans = await FirestoreRest.listDocuments(
           'app_subscription_plans',
           idToken: token);
+      plans.retainWhere((p) => p['isActive'] != false);
+      plans.sort(((a, b) =>
+          ((a['order'] ?? 0) as num).compareTo((b['order'] ?? 0) as num)));
       record['_plans'] = plans;
     } catch (_) {
       record['_plans'] = <Map<String, dynamic>>[];
     }
+    // Requesting user's profile + their course info (course · subcourse
+    // names), like fetchUserProfile + fetchUserCourseInfo.
     try {
       final uid = record['uid'];
       if (uid is String && uid.isNotEmpty) {
-        record['_profile'] =
+        final userProfile =
             await FirestoreRest.getDocument('users/$uid', idToken: token);
+        record['_profile'] = userProfile;
+        record['_courseInfo'] =
+            await _fetchUserCourseInfo(userProfile, token);
       }
     } catch (_) {}
     return record;
+  }
+
+  /// Mirrors fetchUserCourseInfo(): course name from app_courses/{courseId},
+  /// subcourse name from the sub-collection with the legacy flat
+  /// app_subcourses fallback.
+  Future<Map<String, String?>> _fetchUserCourseInfo(
+      Map<String, dynamic>? userDoc, String token) async {
+    final courseId = userDoc?['courseId'] as String?;
+    final subcourseId = userDoc?['subcourseId'] as String?;
+    if (courseId == null || courseId.isEmpty) {
+      return {'courseName': null, 'subcourseName': null};
+    }
+    String? courseName;
+    String? subcourseName;
+    try {
+      final courseDoc = await FirestoreRest.getDocument(
+          'app_courses/$courseId',
+          idToken: token);
+      courseName = courseDoc?['name'] as String?;
+    } catch (_) {
+      // ignore — course may have been removed
+    }
+    if (subcourseId != null && subcourseId.isNotEmpty) {
+      try {
+        final subDoc = await FirestoreRest.getDocument(
+            'app_courses/$courseId/subcourses/$subcourseId',
+            idToken: token);
+        subcourseName = subDoc?['name'] as String?;
+      } catch (_) {
+        // ignore
+      }
+      if (subcourseName == null) {
+        try {
+          final legacyDoc = await FirestoreRest.getDocument(
+              'app_subcourses/$subcourseId',
+              idToken: token);
+          subcourseName = legacyDoc?['name'] as String?;
+        } catch (_) {
+          // ignore — subcourse may have been removed
+        }
+      }
+    }
+    return {'courseName': courseName, 'subcourseName': subcourseName};
   }
 
   void _refresh() => setState(() => _future = _load());
@@ -86,24 +143,8 @@ class _AdminSubscriptionDetailScreenState
 
   Future<void> _approve(Map<String, dynamic> record) async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null) return;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Approve subscription'),
-        content: const Text(
-            'This will activate the subscription immediately. Continue?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Approve')),
-        ],
-      ),
-    );
-    if (confirm != true) return;
+    if (reviewer == null || _busy) return;
+    if (!await showAdminReviewApproveDialog(context, approveMessage: AppLanguage.tr('Approve this subscription? The user will be upgraded to Premium immediately.', 'यो सदस्यता स्वीकृत गर्ने हो? प्रयोगकर्ता तुरुन्तै प्रिमियममा अपग्रेड हुनेछ।'))) return;
     setState(() => _busy = true);
     try {
       final token = await AuthService.getValidIdToken();
@@ -113,45 +154,54 @@ class _AdminSubscriptionDetailScreenState
       final adminMessage = _adminMessage.text.trim().isEmpty
           ? null
           : _adminMessage.text.trim();
-      await FirestoreRest.setDocument(
-        'app_subscriptions/${widget.id}',
-        {
-          'status': 'active',
-          'reviewedAt': now.toIso8601String(),
-          'reviewedBy': reviewer.uid,
-          'adminMessage': adminMessage,
-          'rejectionReason': null,
-          'startDate': now.toIso8601String(),
-          'expiryDate': expiry.toIso8601String(),
-          'updatedAt': FirestoreRest.serverTimestamp(),
-        },
+      // Atomic two-write batch, like approveSubscription()'s commitWrites:
+      // activate the request AND mirror premium flags onto the user doc.
+      await FirestoreRest.commitWrites(
+        [
+          FirestoreWrite(
+            'app_subscriptions/${widget.id}',
+            {
+              'status': 'active',
+              'reviewedAt': now.toIso8601String(),
+              'reviewedBy': reviewer.uid,
+              'adminMessage': adminMessage,
+              'rejectionReason': null,
+              'startDate': now.toIso8601String(),
+              'expiryDate': expiry.toIso8601String(),
+              'updatedAt': FirestoreRest.serverTimestamp(),
+            },
+            merge: true,
+          ),
+          if (record['uid'] is String && (record['uid'] as String).isNotEmpty)
+            FirestoreWrite(
+              'users/${record['uid']}',
+              {
+                'isPremium': true,
+                'premiumPlanName': record['planName'],
+                'premiumBillingCycle': record['billingCycle'],
+                'premiumExpiryDate': expiry.toIso8601String(),
+                'updatedAt': FirestoreRest.serverTimestamp(),
+              },
+              merge: true,
+            ),
+        ],
         idToken: token,
-        merge: true,
       );
-      final uid = record['uid'];
-      if (uid is String && uid.isNotEmpty) {
-        await FirestoreRest.setDocument(
-          'users/$uid',
-          {
-            'isPremium': true,
-            'premiumPlanName': record['planName'],
-            'premiumBillingCycle': record['billingCycle'],
-            'premiumExpiryDate': expiry.toIso8601String(),
-            'updatedAt': FirestoreRest.serverTimestamp(),
-          },
-          idToken: token,
-          merge: true,
-        );
-      }
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Subscription approved.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Subscription approved.', 'सदस्यता स्वीकृत भयो।'),
+            ToastVariant.success);
         _refresh();
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Something went wrong.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Something went wrong', 'केही समस्या भयो'),
+            ToastVariant.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -160,36 +210,13 @@ class _AdminSubscriptionDetailScreenState
 
   Future<void> _reject() async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null) return;
-    _rejectReason.text = '';
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Reject subscription'),
-        content: TextField(
-          controller: _rejectReason,
-          maxLines: 3,
-          decoration: const InputDecoration(
-            hintText: 'Reason for rejection',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, _rejectReason.text.trim()),
-              child:
-                  const Text('Reject', style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
+    if (reviewer == null || _busy) return;
+    final reason = await showAdminReviewRejectDialog(context);
     if (reason == null) return;
     setState(() => _busy = true);
     try {
       final token = await AuthService.getValidIdToken();
-      await FirestoreRest.setDocument(
+      await FirestoreRest.updateDocument(
         'app_subscriptions/${widget.id}',
         {
           'status': 'rejected',
@@ -203,20 +230,33 @@ class _AdminSubscriptionDetailScreenState
           'updatedAt': FirestoreRest.serverTimestamp(),
         },
         idToken: token,
-        merge: true,
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Subscription rejected.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
+            ToastVariant.success);
         _refresh();
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Something went wrong.')));
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Something went wrong', 'केही समस्या भयो'),
+            ToastVariant.error);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _copyUrl(String url) async {
+    await Clipboard.setData(ClipboardData(text: url));
+    if (mounted) {
+      showToast(context, AppLanguage.tr('Copied', 'कपि भयो'),
+          ToastVariant.success);
     }
   }
 
@@ -225,34 +265,45 @@ class _AdminSubscriptionDetailScreenState
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'Subscription Details'),
+          SubpageHeader(
+              title: AppLanguage.tr(
+                  'Subscription Requests', 'सदस्यता अनुरोधहरू')),
           Expanded(
             child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Subscription...',
-            );
-          }
-          if (snap.hasError) {
-            if (snap.error is _Denied) {
-              return const Center(child: Text('Access denied'));
-            }
-            return Center(
-              child: ElevatedButton(
-                  onPressed: _refresh, child: const Text('Retry')),
-            );
-          }
-          final record = snap.data;
-          if (record == null) {
-            return const Center(
-                child: Text('This subscription request was not found.'));
-          }
-          return _body(record);
-        },
-      ),
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return PreloadingWidget(
+                    tinted: false,
+                    label: AppLanguage.tr('Loading Subscription...',
+                        'सदस्यता लोड हुँदैछ...'),
+                    hint: AppLanguage.tr('Fetching your purchase history',
+                        'खरिद इतिहास ल्याउँदै'),
+                  );
+                }
+                if (snap.hasError) {
+                  if (snap.error is _Denied) {
+                    return Center(
+                        child: Text(AppLanguage.tr(
+                            'Access denied', 'पहुँच अस्वीकृत')));
+                  }
+                  return Center(
+                    child: ElevatedButton(
+                        onPressed: _refresh,
+                        child: Text(
+                            AppLanguage.tr('Retry', 'पुनः प्रयास'))),
+                  );
+                }
+                final record = snap.data;
+                if (record == null) {
+                  return Center(
+                      child: Text(AppLanguage.tr(
+                          'This subscription request was not found.',
+                          'यो सदस्यता अनुरोध भेटिएन।')));
+                }
+                return _body(record);
+              },
+            ),
           ),
         ],
       ),
@@ -269,14 +320,16 @@ class _AdminSubscriptionDetailScreenState
                 ? Colors.grey
                 : Colors.orange;
     final label = status == 'active'
-        ? 'Approved'
+        ? AppLanguage.tr('Approved', 'स्वीकृत')
         : status == 'rejected'
-            ? 'Rejected'
+            ? AppLanguage.tr('Rejected', 'अस्वीकृत')
             : status == 'expired'
-                ? 'Expired'
-                : 'New';
+                ? AppLanguage.tr('Expired', 'म्याद सकिएको')
+                : AppLanguage.tr('New', 'नयाँ');
     final profile = record['_profile'] as Map<String, dynamic>?;
+    final courseInfo = record['_courseInfo'] as Map<String, String?>?;
     final alreadyReviewed = status == 'active' || status == 'rejected';
+    final screenshotUrl = (record['screenshotUrl'] as String?) ?? '';
 
     return Stack(
       children: [
@@ -286,7 +339,7 @@ class _AdminSubscriptionDetailScreenState
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.08),
+                color: color.withValues(alpha: 0x14 / 0xFF),
                 border: Border.all(color: color),
                 borderRadius: BorderRadius.circular(12),
               ),
@@ -302,7 +355,7 @@ class _AdminSubscriptionDetailScreenState
                     Padding(
                       padding: const EdgeInsets.only(top: 4),
                       child: Text('${record['adminMessage']}',
-                          style: TextStyle(color: color)),
+                          style: TextStyle(color: color, fontSize: 13)),
                     ),
                 ],
               ),
@@ -318,8 +371,18 @@ class _AdminSubscriptionDetailScreenState
                 title: Text(
                     '${profile?['name'] ?? record['userName'] ?? '—'}',
                     style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(
-                    '${profile?['email'] ?? record['userEmail'] ?? '—'}'),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('${profile?['email'] ?? record['userEmail'] ?? '—'}'),
+                    Text(
+                      '${courseInfo?['courseName'] ?? '—'} · ${courseInfo?['subcourseName'] ?? '—'}',
+                      style:
+                          const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ],
+                ),
+                isThreeLine: true,
               ),
             ),
             const SizedBox(height: 12),
@@ -332,15 +395,24 @@ class _AdminSubscriptionDetailScreenState
                     TextField(
                       controller: _adminMessage,
                       maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Message to user (optional)',
-                        border: OutlineInputBorder(),
+                      decoration: InputDecoration(
+                        labelText: AppLanguage.tr(
+                            'Message to user (optional)',
+                            'प्रयोगकर्तालाई सन्देश (वैकल्पिक)'),
+                        helperText: AppLanguage.tr(
+                            'Shown back to the user alongside the approval/rejection.',
+                            'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
+                        hintText: AppLanguage.tr(
+                            'e.g. Thanks! Your payment matched perfectly.',
+                            'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
+                        border: const OutlineInputBorder(),
                       ),
                     ),
                     const SizedBox(height: 12),
                     ElevatedButton(
                       onPressed: _busy ? null : () => _approve(record),
-                      child: const Text('Approve'),
+                      child: Text(AppLanguage.tr(
+                          'Approve', 'स्वीकृत गर्नुहोस्')),
                     ),
                     const SizedBox(height: 8),
                     ElevatedButton(
@@ -349,16 +421,19 @@ class _AdminSubscriptionDetailScreenState
                         backgroundColor: Colors.red,
                         foregroundColor: Colors.white,
                       ),
-                      child: const Text('Reject'),
+                      child: Text(AppLanguage.tr(
+                          'Reject', 'अस्वीकार गर्नुहोस्')),
                     ),
                     if (alreadyReviewed)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 8),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
                         child: Text(
-                          'This request was already reviewed — approving or rejecting again will overwrite the previous decision.',
+                          AppLanguage.tr(
+                              'You can change this decision any time — approving/rejecting again updates the status.',
+                              'तपाईं यो निर्णय जुनसुकै बेला परिवर्तन गर्न सक्नुहुन्छ — फेरि स्वीकृत/अस्वीकार गर्दा स्थिति अपडेट हुन्छ।'),
                           textAlign: TextAlign.center,
-                          style:
-                              TextStyle(fontSize: 12, color: Colors.grey),
+                          style: const TextStyle(
+                              fontSize: 12, color: Colors.grey),
                         ),
                       ),
                   ],
@@ -369,43 +444,73 @@ class _AdminSubscriptionDetailScreenState
             Card(
               child: Column(
                 children: [
-                  _row('User',
+                  _row(AppLanguage.tr('User', 'प्रयोगकर्ता'),
                       '${record['userName'] ?? record['userEmail'] ?? record['uid'] ?? '—'}'),
-                  _row('Plan', '${record['planName'] ?? '—'}'),
-                  _row('Amount', 'Rs. ${record['amount'] ?? '—'}'),
-                  _row('Method',
-                      '${'${record['method'] ?? ''}'.toUpperCase()}'),
-                  _row('Reference', '${record['transactionRef'] ?? '—'}'),
+                  _row(AppLanguage.tr('Plan', 'योजना'),
+                      '${record['planName'] ?? '—'}'),
+                  _row(AppLanguage.tr('Amount', 'रकम'),
+                      'Rs. ${record['amount'] ?? '—'}'),
+                  _row(AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
+                      (record['method'] ?? '').toString().toUpperCase()),
+                  _row(AppLanguage.tr('Reference', 'सन्दर्भ'),
+                      '${record['transactionRef'] ?? '—'}'),
                   if (record['couponCode'] != null)
-                    _row('Coupon', '${record['couponCode']}'),
-                  _row('Submitted on',
+                    _row(AppLanguage.tr('Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
+                        '${record['couponCode']}'),
+                  _row(AppLanguage.tr('Submitted', 'पेश गरिएको मिति'),
                       _fmtDateTime(record['submittedAt'])),
                   if (record['customerMessage'] != null)
-                    _row('Customer note', '${record['customerMessage']}'),
+                    _row(AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
+                        '${record['customerMessage']}'),
                   if (record['rejectionReason'] != null)
-                    _row('Reject reason', '${record['rejectionReason']}'),
+                    _row(AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
+                        '${record['rejectionReason']}'),
                 ],
               ),
             ),
-            if ((record['screenshotUrl'] as String?)?.isNotEmpty == true) ...[
+            if (screenshotUrl.isNotEmpty) ...[
               const SizedBox(height: 12),
-              const Text('Payment screenshot',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(AppLanguage.tr('Screenshot', 'स्क्रिनसट'),
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               GestureDetector(
-                onTap: () => _fullscreen(record['screenshotUrl'] as String),
+                onTap: () => _fullscreen(screenshotUrl),
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(record['screenshotUrl'] as String,
+                  child: Image.network(screenshotUrl,
                       height: 220, width: double.infinity, fit: BoxFit.cover),
                 ),
               ),
-              const Center(
-                  child: Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text('Tap to zoom',
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-              )),
+              const SizedBox(height: 8),
+              // URL row: display-only link + copy button (no url_launcher;
+              // external links stay display-only).
+              Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                      color: Theme.of(context).dividerColor),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Text(screenshotUrl,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12, color: Colors.grey)),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपि'),
+                      onPressed: () => _copyUrl(screenshotUrl),
+                      icon: const Icon(Icons.copy_outlined,
+                          size: 18, color: Colors.blue),
+                    ),
+                  ],
+                ),
+              ),
             ],
             const SizedBox(height: 24),
           ],
@@ -413,8 +518,9 @@ class _AdminSubscriptionDetailScreenState
         if (_busy)
           Container(
             color: Colors.black45,
-            child: const PreloadingWidget(
-              label: 'Working...',
+            child: PreloadingWidget(
+              label: AppLanguage.tr(
+                  'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
             ),
           ),
       ],
@@ -427,7 +533,7 @@ class _AdminSubscriptionDetailScreenState
     if (v is String) d = DateTime.tryParse(v);
     if (d == null) return '—';
     final l = d.toLocal();
-    return '${l.day}/${l.month}/${l.year} ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
+    return '${l.day.toString().padLeft(2, '0')}/${l.month.toString().padLeft(2, '0')}/${l.year} ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _row(String label, String value) {
@@ -437,11 +543,13 @@ class _AdminSubscriptionDetailScreenState
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-              width: 105,
+              width: 100,
               child: Text(label,
                   style: const TextStyle(fontSize: 13, color: Colors.grey))),
           Expanded(
               child: Text(value,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontWeight: FontWeight.w600))),
         ],
       ),

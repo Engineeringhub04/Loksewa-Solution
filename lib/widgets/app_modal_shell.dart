@@ -98,16 +98,23 @@ class AppModalShell extends StatelessWidget {
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 200),
       pageBuilder: (pageContext, _, __) {
-        return SafeArea(
-          child: AnimatedPadding(
-            duration: const Duration(milliseconds: 200),
-            padding: MediaQuery.of(pageContext).viewInsets,
-            child: Center(
-              // Matches the inline padding the daily-limit popup uses, so
-              // cards presented via show() render at the same width.
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: builder(pageContext),
+        // showGeneralDialog (unlike showDialog) puts no Material above the
+        // page, so raw InkWells inside modal content would throw "No Material
+        // widget found". The transparency material keeps every popup's ink
+        // effects working without changing any visuals.
+        return Material(
+          type: MaterialType.transparency,
+          child: SafeArea(
+            child: AnimatedPadding(
+              duration: const Duration(milliseconds: 200),
+              padding: MediaQuery.of(pageContext).viewInsets,
+              child: Center(
+                // Matches the inline padding the daily-limit popup uses, so
+                // cards presented via show() render at the same width.
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: builder(pageContext),
+                ),
               ),
             ),
           ),

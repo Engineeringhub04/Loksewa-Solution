@@ -250,13 +250,22 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
         const SizedBox(height: 14),
         _EntranceOnce(
           delayMs: 60,
-          child: Text(
-            isQuestion ? question : (b['title'] ?? '').toString(),
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              height: 1.35,
-              color: pal.textPrimary,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: pal.surface,
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: pal.border, width: 1),
+            ),
+            child: Text(
+              isQuestion ? question : (b['title'] ?? '').toString(),
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                height: 1.35,
+                color: pal.textPrimary,
+              ),
             ),
           ),
         ),
@@ -402,17 +411,17 @@ class _TrackHero extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            track.color.withValues(alpha: dark ? 0x66 : 0x38),
-            track.color.withValues(alpha: dark ? 0x33 : 0x16),
+            track.color.withValues(alpha: dark ? 0x66 / 0xFF : 0x38 / 0xFF),
+            track.color.withValues(alpha: dark ? 0x33 / 0xFF : 0x16 / 0xFF),
           ],
         ),
         border: Border.all(
-          color: track.color.withValues(alpha: dark ? 0x77 : 0x4D),
+          color: track.color.withValues(alpha: dark ? 0x77 / 0xFF : 0x4D / 0xFF),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: track.color.withValues(alpha: 0x1F),
+            color: track.color.withValues(alpha: 0x1F / 0xFF),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -430,7 +439,7 @@ class _TrackHero extends StatelessWidget {
                 icon,
                 size: 104,
                 color:
-                    track.color.withValues(alpha: dark ? 0x2E : 0x22),
+                    track.color.withValues(alpha: dark ? 0x2E / 0xFF : 0x22 / 0xFF),
               ),
             ),
             // Soft top sheen for depth.
@@ -446,8 +455,8 @@ class _TrackHero extends StatelessWidget {
                     end: Alignment.bottomCenter,
                     colors: [
                       Colors.white
-                          .withValues(alpha: dark ? 0x0A : 0x14),
-                      Colors.white.withValues(alpha: 0x00),
+                          .withValues(alpha: dark ? 0x0A / 0xFF : 0x14 / 0xFF),
+                      Colors.white.withValues(alpha: 0x00 / 0xFF),
                     ],
                   ),
                 ),
@@ -472,7 +481,7 @@ class _TrackHero extends StatelessWidget {
                       ),
                       boxShadow: [
                         BoxShadow(
-                          color: track.color.withValues(alpha: 0x55),
+                          color: track.color.withValues(alpha: 0x55 / 0xFF),
                           blurRadius: 10,
                           offset: const Offset(0, 4),
                         ),
@@ -529,7 +538,7 @@ class _TrackHero extends StatelessWidget {
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(999),
                               color: track.color.withValues(
-                                  alpha: dark ? 0x2E : 0x1A),
+                                  alpha: dark ? 0x2E / 0xFF : 0x1A / 0xFF),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
@@ -655,11 +664,11 @@ class _OptionTile extends StatelessWidget {
           const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
         color: isCorrect
-            ? const Color(0xFF16A34A).withValues(alpha: dark ? 0x26 : 0x14)
+            ? const Color(0xFF16A34A).withValues(alpha: dark ? 0x26 / 0xFF : 0x14 / 0xFF)
             : pal.surface,
         border: Border.all(
           color: isCorrect
-              ? const Color(0xFF16A34A).withValues(alpha: 0x66)
+              ? const Color(0xFF16A34A).withValues(alpha: 0x66 / 0xFF)
               : pal.border,
           width: 1,
         ),
@@ -676,7 +685,7 @@ class _OptionTile extends StatelessWidget {
               shape: BoxShape.circle,
               color: isCorrect
                   ? const Color(0xFF16A34A)
-                  : pal.primary.withValues(alpha: dark ? 0x2E : 0x14),
+                  : pal.primary.withValues(alpha: dark ? 0x2E / 0xFF : 0x14 / 0xFF),
             ),
             child: Text(
               String.fromCharCode(65 + index),
@@ -727,10 +736,10 @@ class _ExplanationCard extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: const Color(0xFF2563EB)
-            .withValues(alpha: dark ? 0x22 : 0x0D),
+            .withValues(alpha: dark ? 0x22 / 0xFF : 0x0D / 0xFF),
         border: Border.all(
           color: const Color(0xFF2563EB)
-              .withValues(alpha: dark ? 0x55 : 0x2E),
+              .withValues(alpha: dark ? 0x55 / 0xFF : 0x2E / 0xFF),
           width: 1,
         ),
         borderRadius: BorderRadius.circular(16),
@@ -790,7 +799,7 @@ class _ArticleCard extends StatelessWidget {
         border: Border.all(color: pal.border, width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0x08),
+            color: Colors.black.withValues(alpha: 0x08 / 0xFF),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),

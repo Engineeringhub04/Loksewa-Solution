@@ -15,6 +15,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Keep Notes list — the Additional Features "Keep Notes" page.
 ///
@@ -299,9 +300,12 @@ class _NotesScreenState extends State<NotesScreen> {
           children: [
             _modalOption(
               ctx,
-              icon: note.pinned
-                  ? Icons.push_pin_outlined
-                  : Icons.push_pin,
+              icon: Icon(
+                  note.pinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin,
+                  size: 22,
+                  color: ExpoPalette.of(context).primary),
               label: note.pinned
                   ? AppLanguage.tr('Unpin', 'पिन हटाउनुहोस्')
                   : AppLanguage.tr('Pin to top', 'माथि पिन गर्नुहोस्'),
@@ -312,7 +316,8 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
             _modalOption(
               ctx,
-              icon: Icons.delete_outline,
+              icon: TrashIcon(
+                  size: 22, color: ExpoPalette.of(context).danger),
               label: AppLanguage.tr('Delete', 'डिलिट गर्नुहोस्'),
               danger: true,
               onTap: () {
@@ -335,7 +340,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
   Widget _modalOption(
     BuildContext ctx, {
-    required IconData icon,
+    required Widget icon,
     required String label,
     required VoidCallback onTap,
     bool danger = false,
@@ -350,9 +355,7 @@ class _NotesScreenState extends State<NotesScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 12),
           child: Row(
             children: [
-              Icon(icon,
-                  size: 22,
-                  color: danger ? palette.danger : palette.primary),
+              icon,
               const SizedBox(width: 14),
               // Expanded so longer localized labels (e.g. Nepali) wrap
               // instead of overflowing the modal row.
@@ -390,7 +393,7 @@ class _NotesScreenState extends State<NotesScreen> {
             color: ExpoPalette.of(context).danger,
           ),
           child:
-              const Icon(Icons.delete_outline, size: 28, color: Colors.white),
+              const TrashIcon(size: 28, color: Colors.white),
         ),
         title: Text(
           AppLanguage.tr('Delete note?', 'नोट डिलिट गर्ने?'),

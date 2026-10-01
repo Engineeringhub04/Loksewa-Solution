@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Privacy Policy — mirrors app/privacy-policy.tsx.
 /// Readable in-app summary in five sections + the full hosted policy URL.
@@ -10,27 +11,27 @@ class PrivacyPolicyScreen extends StatelessWidget {
 
   static const _sections = [
     (
-      Icons.description_outlined,
+      const Icon(Icons.description_outlined, color: AppColors.navy),
       'What we collect',
       'Your name, email address and — only if you choose to add them — your date of birth, gender and profile photo. We also store your selected course so the app can show relevant content.'
     ),
     (
-      Icons.bar_chart_outlined,
+      const Icon(Icons.bar_chart_outlined, color: AppColors.navy),
       'Study data',
       'Your quiz and mock test attempts, scores, bookmarks and notes are saved to your account so your progress follows you across devices.'
     ),
     (
-      Icons.lock_outline,
+      const Icon(Icons.lock_outline, color: AppColors.navy),
       'How it is protected',
       'Your data is stored in Google Firebase and is readable only by your own signed-in account. We never sell your personal information to anyone.'
     ),
     (
-      Icons.share_outlined,
+      const Icon(Icons.share_outlined, color: AppColors.navy),
       'What we never do',
       'We do not sell, rent or trade your personal data. Aggregated, anonymous statistics may be used to improve the app, but these can never identify you.'
     ),
     (
-      Icons.delete_outline,
+      const TrashIcon(size: 24, color: AppColors.navy),
       'Your control',
       'You can edit your profile at any time, and you can permanently delete your account and its data from Profile → Delete Account.'
     ),
@@ -95,7 +96,7 @@ class PrivacyPolicyScreen extends StatelessWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(s.$1, color: AppColors.navy),
+                        s.$1,
                         const SizedBox(width: 12),
                         Expanded(
                           child: Column(

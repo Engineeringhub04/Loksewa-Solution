@@ -8,6 +8,7 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Report a Problem — mirrors `app/settings/report-problem.tsx`.
 ///
@@ -454,8 +455,7 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.delete_outline,
-                            size: 14, color: pal.danger),
+                        TrashIcon(size: 14, color: pal.danger),
                         const SizedBox(width: 4),
                         Text('Remove screenshot',
                             style: TextStyle(

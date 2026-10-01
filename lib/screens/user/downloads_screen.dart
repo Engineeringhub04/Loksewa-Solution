@@ -5,6 +5,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Downloads — mirrors app/downloads.tsx.
 ///
@@ -237,9 +238,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                                   ),
                                                 ),
                                                 IconButton(
-                                                  icon: const Icon(Icons
-                                                      .delete_outline,
-                                                      size: 20),
+                                                  icon: const TrashIcon(size: 20),
                                                   onPressed: () =>
                                                       _remove(id),
                                                 ),

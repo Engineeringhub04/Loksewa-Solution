@@ -8,6 +8,7 @@ import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/trash_icon.dart';
 import 'bookmark_tracks.dart';
 import 'bookmark_remove_dialog.dart';
 
@@ -152,8 +153,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.delete_outline,
-                        size: 20, color: Colors.white),
+                    : const TrashIcon(size: 20, color: Colors.white),
               ),
             ),
           ]),

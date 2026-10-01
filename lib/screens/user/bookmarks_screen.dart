@@ -8,6 +8,7 @@ import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/trash_icon.dart';
 import 'bookmark_tracks.dart';
 import 'bookmark_remove_dialog.dart';
 
@@ -770,8 +771,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
                       width: 32,
                       height: 32,
                       alignment: Alignment.center,
-                      child: Icon(Icons.delete_outline,
-                          size: 17, color: pal.textDisabled),
+                      child: TrashIcon(size: 17, color: pal.textDisabled),
                     ),
                   ),
                 ],

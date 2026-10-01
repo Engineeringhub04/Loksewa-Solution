@@ -4,6 +4,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Discussion tab — mirrors app/(tabs)/discussion.tsx.
 /// Gradient header + search, post list with like/report/delete, FAB.
@@ -329,8 +330,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
                   ),
                   if (isMine)
                     IconButton(
-                      icon: const Icon(Icons.delete_outline,
-                          size: 20, color: Colors.red),
+                      icon: const TrashIcon(size: 20, color: Colors.red),
                       onPressed: () => _deletePost(p),
                     )
                   else

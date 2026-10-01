@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/user/bookmark_detail_screen.dart';
 import 'package:loksewa_solution/screens/user/bookmark_remove_dialog.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/trash_icon.dart';
 
 Map<String, dynamic> _questionBookmark() => {
       'title': 'What is the capital of Nepal?',
@@ -149,10 +150,10 @@ void main() {
       await tester.pump(const Duration(seconds: 2));
 
       expect(find.text('home'), findsNothing);
-      // Modern delete icon (delete_outline) rendered in the header.
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+      // Modern delete icon (TrashIcon) rendered in the header.
+      expect(find.byType(TrashIcon), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.tap(find.byType(TrashIcon));
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.byType(AppModalShell), findsOneWidget);
       expect(find.text('Remove this bookmark?'), findsOneWidget);
@@ -194,7 +195,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(seconds: 2));
 
-      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.tap(find.byType(TrashIcon));
       await tester.pump(const Duration(milliseconds: 500));
       expect(find.byType(AppModalShell), findsOneWidget);
 

@@ -6,15 +6,18 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:loksewa_solution/screens/tabs_screen.dart';
-import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/services/app_link_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/animated_star_rating.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/disk_cached_image.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/profile_header.dart';
 import 'package:loksewa_solution/widgets/profile_rows.dart';
@@ -44,12 +47,10 @@ class _ProfileTabState extends State<ProfileTab> {
   final _scrollOffset = ValueNotifier<double>(0);
   String? _uid;
 
-  /// Analytics snapshot's coverage percent for the enrolled subcourse, used
-  /// as the stats card's ring value when the leaderboard aggregate has none
-  /// of its own yet (see [_onStoreChanged] / [_effectiveScore]).
-  String? _analyticsUid;
-  String? _analyticsKey;
-  double? _analyticsPercent;
+  /// Guards the one-shot canonical-stats refresh per account+subcourse (see
+  /// [_onStoreChanged]): the refresh ends in [ProfileStore.setScore], which
+  /// notifies this same listener — without the key the refresh would loop.
+  String? _canonicalKey;
 
   /// Minimum time the Logout button shows its spinner, so the press is visibly
   /// acknowledged even when the sign-out is instant.
@@ -120,44 +121,76 @@ class _ProfileTabState extends State<ProfileTab> {
     if (mounted) setState(() {});
   }
 
+  /// Avatar URL already warmed into the disk cache — warmed once per URL so
+  /// the Edit Profile header never pops the photo in late.
+  String? _warmedAvatarUrl;
+
   void _onStoreChanged() {
-    final uid = _uid;
-    if (uid != _analyticsUid) {
-      _analyticsUid = uid;
-      _analyticsKey = null;
-      _analyticsPercent = null;
+    // Warm the avatar's disk cache the moment the profile lands, so the
+    // Edit Profile header (and every other avatar surface) paints the photo
+    // instantly instead of popping it in late. Best-effort and idempotent.
+    final avatarUrl = ProfileStore.instance.profile?.photoURL;
+    if (avatarUrl != null &&
+        avatarUrl.isNotEmpty &&
+        avatarUrl != _warmedAvatarUrl) {
+      _warmedAvatarUrl = avatarUrl;
+      DiskCachedImage.warm(avatarUrl);
     }
-    final subcourseId = ProfileStore.instance.courseInfo?.subcourseId;
+    final uid = _uid;
+    final courseInfo = ProfileStore.instance.courseInfo;
+    final subcourseId = courseInfo?.subcourseId;
+    final profile = ProfileStore.instance.profile;
     if (uid == null ||
         uid.isEmpty ||
         subcourseId == null ||
-        subcourseId.isEmpty) {
+        subcourseId.isEmpty ||
+        profile == null) {
+      // Profile still loading — the store reads the stored aggregate itself
+      // on load; the refresh runs on the next store change.
       return;
     }
     final key = '$uid::$subcourseId';
-    if (_analyticsKey == key) return;
-    _analyticsKey = key;
-    fetchAnalyticsDocument(uid, subcourseId).then((doc) {
-      if (!mounted || _analyticsKey != key) return;
-      final p = doc?.percent ?? 0;
-      setState(() => _analyticsPercent = p > 0 ? p : null);
+    if (_canonicalKey == key) return;
+    // The stats card must read the same live computation as the Analytics
+    // hero and the Leaderboard board (computeMainLeaderboardScore + 50pt
+    // signup bonus). The publish is throttled to one recompute per 5 minutes
+    // per subcourse across ALL screens (shared throttle in
+    // main_leaderboard.dart), so this is free when another screen already
+    // refreshed recently. Never throws; a failed refresh simply leaves the
+    // card on the stored aggregate.
+    if (!shouldPublishMainLeaderboardScore(uid, subcourseId)) {
+      _canonicalKey = key;
+      return;
+    }
+    _canonicalKey = key;
+    publishMainLeaderboardScore(
+      uid: uid,
+      courseId: courseInfo?.courseId ?? '',
+      subcourseId: subcourseId,
+      name: profile.name,
+      photoURL: profile.photoURL,
+      isPro: hasActivePremium(profile),
+    ).then((row) {
+      if (!mounted || row == null) return;
+      ProfileStore.instance.setScore(MainLeaderboardScore(
+        percent: row.percent,
+        points: row.points,
+        activityCount: row.activityCount,
+      ));
     }).catchError((_) => null);
   }
 
-  /// The score the stats card renders. Prefers the store's leaderboard
-  /// aggregate; falls back to the analytics snapshot's percent (same number
-  /// the Analytics hero shows) when the aggregate carries no percent.
+  /// The score the stats card renders: the canonical leaderboard aggregate
+  /// (computeMainLeaderboardScore + 50pt signup bonus) — the same numbers the
+  /// Analytics hero and the Leaderboard board show. When the store has no
+  /// aggregate yet, the card falls back to the users/{uid} stats mirror for
+  /// points (percent honestly 0: nothing recorded yet).
   MainLeaderboardScore? _effectiveScore(
       MainLeaderboardScore? score, UserStats? stats) {
-    final snapshotPercent = _analyticsPercent;
-    if (snapshotPercent == null || snapshotPercent <= 0) return score;
-    if (score != null && score.percent > 0) return score;
-    return MainLeaderboardScore(
-      percent: snapshotPercent,
-      points: score?.points ?? stats?.points ?? 0,
-      activityCount: score?.activityCount ?? 0,
-      breakdown: score?.breakdown ?? const {},
-    );
+    if (score != null) return score;
+    final mirrorPoints = stats?.points ?? 0;
+    if (mirrorPoints <= 0) return null;
+    return MainLeaderboardScore(points: mirrorPoints);
   }
 
   /// Reload when the signed-in account changes (login/logout while mounted).
@@ -173,6 +206,44 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   void _goToEdit() => context.push('/edit-profile');
+
+  /// Admin-only one-time seed for the App Links / share configuration.
+  /// Writes (overwrites) the Firestore document `app_applink_details/main`.
+  /// The header seed button is removed in a later update once seeded, so
+  /// this is intentionally tap → write → toast with no confirm popup.
+  Future<void> _seedAppLinkDetails() async {
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final now = DateTime.now().toUtc();
+      await FirestoreRest.setDocument(
+        'app_applink_details/main',
+        {
+          'link': 'https://www.kbr.com.np/downloadapp',
+          'appDomainLink': 'www.kbr.com.np',
+          'discordWebhookUrl':
+              'https://discord.com/api/webhooks/1555288517297573989/10guY2tYhDOtIHX82hgluB-ADv2kwpFn3sK5S5Xb1z5-lqCCxwSAM1kjgSvQ4UxWb4G4',
+          'addedDate': now,
+          'updatedDate': now,
+        },
+        idToken: idToken,
+      );
+      if (!mounted) return;
+      showToast(
+        context,
+        AppLanguage.tr(
+            'App link details saved', 'एप लिङ्क विवरण सेभ भयो'),
+        ToastVariant.success,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+        context,
+        AppLanguage.tr('Could not save app link details',
+            'एप लिङ्क विवरण सेभ गर्न सकिएन'),
+        ToastVariant.error,
+      );
+    }
+  }
 
   String? _genderLabel(String? gender) {
     switch (gender) {
@@ -203,9 +274,13 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   Future<void> _shareApp() async {
-    // Brand stays English; the tagline is the app's config literal.
-    const message =
-        'Loksewa Solution — Prepare Smarter, Score Higher\n\nhttps://kbr.com.np';
+    // The share URL comes from Firestore (app_applink_details/main) so the
+    // link can change without an app update; falls back to the download page
+    // until the document is seeded. Brand stays English; the tagline is the
+    // app's config literal.
+    await AppLinkService.ensureLoaded();
+    final message =
+        'Loksewa Solution — Prepare Smarter, Score Higher\n\n${AppLinkService.shareLink}';
     try {
       await Share.share(message, subject: 'Loksewa Solution');
     } catch (_) {
@@ -431,12 +506,25 @@ class _ProfileTabState extends State<ProfileTab> {
           final profile = store.profile;
           final courseInfo = store.courseInfo;
 
-          // The header stays; the body is replaced by the glow-ring until the
-          // profile store has actually finished its FIRST load for this user.
-          // `error` counts as ready so a failed load shows the page (with its
-          // retry affordances), not a spinner forever. Pull-to-refresh keeps
-          // content on screen: only `loading` gates this.
+          // Home-style loading: while the store hasn't finished its FIRST
+          // load for this user, the whole tab is the brand-navy loader —
+          // no header, no text rows — exactly like HomeTab. The bottom
+          // navigation stays visible because this is a tab. Background
+          // preloading is untouched: when the data arrives the real header
+          // + content render directly.
+          // `error` counts as ready so a failed load shows the page (with
+          // its retry affordances), not a spinner forever.
+          // Pull-to-refresh keeps content on screen: only `loading` gates
+          // this.
           final ready = profile != null || store.error;
+          if (!ready) {
+            return Container(
+              color: const Color(0xFF03145C),
+              child: PreloadingWidget(
+                label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+              ),
+            );
+          }
           final user = AuthService.currentUser;
 
           // Prefer the Firestore document, fall back to the auth session
@@ -490,22 +578,7 @@ class _ProfileTabState extends State<ProfileTab> {
                         SliverToBoxAdapter(
                           child: SizedBox(height: headerH + 16),
                         ),
-                        if (!ready)
-                          SliverFillRemaining(
-                            hasScrollBody: false,
-                            child: Center(
-                              child: PreloadingWidget(
-                                tinted: false,
-                                label: AppLanguage.tr('Loading Profile...',
-                                    'प्रोफाइल लोड हुँदैछ...'),
-                                hint: AppLanguage.tr(
-                                    'Fetching your stats and account',
-                                    'तपाईंका तथ्याङ्क र खाता ल्याउँदै'),
-                              ),
-                            ),
-                          )
-                        else ...[
-                          SliverToBoxAdapter(
+                        SliverToBoxAdapter(
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16),
@@ -567,7 +640,6 @@ class _ProfileTabState extends State<ProfileTab> {
                           ),
                           const SliverToBoxAdapter(
                               child: SizedBox(height: 24)),
-                        ],
                       ],
                     ),
                   ),
@@ -583,6 +655,8 @@ class _ProfileTabState extends State<ProfileTab> {
                       subcourseName: courseInfo?.subcourseName,
                       planLabel: planLabel,
                       isPremiumPlan: profile?.isPremium == true,
+                      isAdmin: profile?.isAdmin == true,
+                      onSeedPress: _seedAppLinkDetails,
                       // Ring-only, and stricter than the pill above:
                       // hasActivePremium also checks the expiry date, so a
                       // lapsed member loses the ring the moment it runs out.

@@ -1,192 +1,616 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
+
+import '../../services/app_language.dart';
+import '../../theme/app_theme.dart';
+import '../../widgets/stagger_entrance.dart';
+import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 
 /// App Info — mirrors app/app-info.tsx.
 /// Identity block, About section, "What you get" highlights, Reach us,
 /// Follow us, Legal. No build/package internals — only the app version.
+///
+/// NOTE: no package_info_plus is available in this project, so the displayed
+/// version is a hand-maintained constant. Bump it with every release
+/// (reminder recorded in ~/AGENTS.md).
 class AppInfoScreen extends StatelessWidget {
   const AppInfoScreen({super.key});
 
-  static const _highlights = [
-    (Icons.library_books_outlined, 'Complete syllabus',
-        'Subject-wise notes and chapters mapped to the Loksewa syllabus.'),
-    (Icons.timer_outlined, 'Mock tests & quizzes',
-        'Timed practice with instant scoring and detailed explanations.'),
-    (Icons.newspaper_outlined, 'Daily current affairs',
-        'Gorkhapatra highlights and a fresh question every day.'),
-    (Icons.bar_chart_outlined, 'Progress analytics',
-        'See your strong and weak subjects as you prepare.'),
-    (Icons.people_outlined, 'Discussion forum',
-        'Ask questions and learn together with other aspirants.'),
-  ];
+  /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
+  static const _appVersion = '1.0.27';
 
-  static const _socials = [
-    ('Facebook', 'https://www.facebook.com/profile.php?id=61580182268110'),
-    ('YouTube', 'https://www.youtube.com/loksewasolution0'),
-    ('Instagram', 'https://www.instagram.com/loksewasolution?igsh=dmtlc3Zza2F1Y2xr&utm_source=qr'),
-    ('X', 'https://x.com/loksewa_soln'),
-  ];
+  static String _devanagariDigits(String s) => s.replaceAllMapped(
+        RegExp(r'[0-9]'),
+        (m) => '०१२३४५६७८९'[int.parse(m[0]!)],
+      );
 
   @override
   Widget build(BuildContext context) {
+    final versionLabel = AppLanguage.tr(
+      'Version $_appVersion',
+      'संस्करण ${_devanagariDigits(_appVersion)}',
+    );
     return Scaffold(
       body: Column(
         children: [
-          const SubpageHeader(title: 'App Info'),
+          SubpageHeader(
+              title: AppLanguage.tr('App Info', 'एप जानकारी')),
           Expanded(
             child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(24),
-                    child: Image.asset(
-                      'assets/images/app_logo.png',
-                      width: 108,
-                      height: 108,
-                      fit: BoxFit.cover,
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+              children: [
+                StaggerEntrance(
+                  delayMs: 0,
+                  child: _IdentityBlock(versionLabel: versionLabel),
+                ),
+                const SizedBox(height: 20),
+                StaggerEntrance(
+                  delayMs: 80,
+                  child: _SectionCard(
+                    icon: Icons.info_outline,
+                    tone: _Tone.primary,
+                    title: AppLanguage.tr('About', 'बारेमा'),
+                    body: Text(
+                      AppLanguage.tr(
+                        "Nepal's trusted digital preparation platform for Loksewa and other competitive government exams.",
+                        'लोकसेवा र अन्य प्रतिस्पर्धी सरकारी परीक्षाहरूका लागि नेपालको भरपर्दो डिजिटल तयारी प्लेटफर्म।',
+                      ),
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.5,
+                        color: ExpoPalette.of(context).textSecondary,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  const Text(
-                    'Loksewa Solution',
-                    style:
-                        TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 20),
+                StaggerEntrance(
+                  delayMs: 140,
+                  child: _SectionCard(
+                    icon: Icons.auto_awesome_outlined,
+                    tone: _Tone.accent,
+                    title: AppLanguage.tr(
+                        'What you get', 'तपाईंले पाउने कुरा'),
+                    body: Column(
+                      children: [
+                        for (int i = 0; i < _highlights.length; i++)
+                          _IconRow(
+                            icon: _highlights[i].icon,
+                            tone: _highlights[i].tone,
+                            title: AppLanguage.tr(
+                                _highlights[i].titleEn,
+                                _highlights[i].titleNe),
+                            subtitle: AppLanguage.tr(
+                                _highlights[i].bodyEn,
+                                _highlights[i].bodyNe),
+                            showDivider: i < _highlights.length - 1,
+                          ),
+                      ],
+                    ),
                   ),
+                ),
+                const SizedBox(height: 20),
+                StaggerEntrance(
+                  delayMs: 200,
+                  child: _SectionCard(
+                    icon: Icons.headset_outlined,
+                    tone: _Tone.info,
+                    title: AppLanguage.tr('Reach us', 'सम्पर्क'),
+                    body: Column(
+                      children: [
+                        _IconRow(
+                          icon: Icons.language_outlined,
+                          tone: _Tone.info,
+                          title: AppLanguage.tr('Website', 'वेबसाइट'),
+                          subtitle: 'kbr.com.np',
+                          trailing: true,
+                          showDivider: true,
+                        ),
+                        _IconRow(
+                          icon: Icons.mail_outline,
+                          tone: _Tone.primary,
+                          title: AppLanguage.tr('Support', 'सहयोग'),
+                          subtitle: 'contact@kbr.com.np',
+                          trailing: true,
+                          showDivider: false,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                StaggerEntrance(
+                  delayMs: 260,
+                  child: _SectionCard(
+                    icon: Icons.share_outlined,
+                    tone: _Tone.success,
+                    title: AppLanguage.tr(
+                        'Follow Us', 'हामीलाई फलो गर्नुहोस्'),
+                    body: const _SocialRow(),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                StaggerEntrance(
+                  delayMs: 320,
+                  child: _SectionCard(
+                    icon: Icons.lock_outline,
+                    tone: _Tone.neutral,
+                    title: AppLanguage.tr('Legal', 'कानुनी'),
+                    body: Column(
+                      children: [
+                        _IconRow(
+                          icon: Icons.shield_outlined,
+                          tone: _Tone.neutral,
+                          title: AppLanguage.tr(
+                              'Privacy Policy', 'गोपनीयता नीति'),
+                          showDivider: true,
+                          onTap: () => context.push('/privacy-policy'),
+                        ),
+                        _IconRow(
+                          icon: Icons.description_outlined,
+                          tone: _Tone.neutral,
+                          title: AppLanguage.tr(
+                              'Terms and Conditions', 'नियम र सर्तहरू'),
+                          showDivider: false,
+                          onTap: () => context.push('/terms-conditions'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const StaggerEntrance(
+                  delayMs: 380,
+                  child: Text(
+                    'Made for Nepali students 🇳🇵',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+enum _Tone { primary, danger, warning, info, success, accent, neutral }
+
+Color _toneColor(_Tone tone, ExpoPalette pal) {
+  switch (tone) {
+    case _Tone.primary:
+      return pal.primary;
+    case _Tone.danger:
+      return pal.danger;
+    case _Tone.warning:
+      return pal.warning;
+    case _Tone.info:
+      return pal.info;
+    case _Tone.success:
+      return pal.success;
+    case _Tone.accent:
+      return pal.accent;
+    case _Tone.neutral:
+      return pal.textSecondary;
+  }
+}
+
+class _Highlight {
+  final IconData icon;
+  final _Tone tone;
+  final String titleEn;
+  final String titleNe;
+  final String bodyEn;
+  final String bodyNe;
+
+  const _Highlight(
+      this.icon, this.tone, this.titleEn, this.titleNe, this.bodyEn, this.bodyNe);
+}
+
+const _highlights = [
+  _Highlight(
+    Icons.library_books_outlined,
+    _Tone.primary,
+    'Complete syllabus',
+    'पूर्ण पाठ्यक्रम',
+    'Subject-wise notes and chapters mapped to the Loksewa syllabus.',
+    'लोकसेवा पाठ्यक्रमअनुसार विषयगत नोट र अध्यायहरू।',
+  ),
+  _Highlight(
+    Icons.timer_outlined,
+    _Tone.danger,
+    'Mock tests & quizzes',
+    'मक टेस्ट र क्विजहरू',
+    'Timed practice with instant scoring and detailed explanations.',
+    'समयसहितको अभ्यास, तुरुन्त स्कोर र विस्तृत व्याख्यासहित।',
+  ),
+  _Highlight(
+    Icons.newspaper_outlined,
+    _Tone.warning,
+    'Daily current affairs',
+    'दैनिक समसामयिक',
+    'Gorkhapatra highlights and a fresh question every day.',
+    'गोरखापत्रका मुख्य अंश र हरेक दिन नयाँ प्रश्न।',
+  ),
+  _Highlight(
+    Icons.bar_chart_outlined,
+    _Tone.info,
+    'Progress analytics',
+    'प्रगति विश्लेषण',
+    'See your strong and weak subjects as you prepare.',
+    'तयारी गर्दै जाँदा आफ्ना बलिया र कमजोर विषय हेर्नुहोस्।',
+  ),
+  _Highlight(
+    Icons.people_outlined,
+    _Tone.success,
+    'Discussion forum',
+    'छलफल मञ्च',
+    'Ask questions and learn together with other aspirants.',
+    'प्रश्न सोध्नुहोस् र अन्य तयारीकर्तासँग सँगै सिक्नुहोस्।',
+  ),
+];
+
+/// Identity block: primary-tone → transparent wash, centered logo, app name
+/// (always English), tagline and version [StatusPill].
+class _IdentityBlock extends StatelessWidget {
+  final String versionLabel;
+
+  const _IdentityBlock({required this.versionLabel});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            pal.primary.withValues(alpha: 0x14 / 0xFF),
+            pal.surface.withValues(alpha: 0),
+          ],
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Image.asset(
+              'assets/images/app_logo.png',
+              width: 108,
+              height: 108,
+              fit: BoxFit.cover,
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Loksewa Solution',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            AppLanguage.tr(
+                'Prepare Smarter, Score Higher', 'राम्रो तयारी, उच्च अंक'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: pal.textSecondary),
+          ),
+          const SizedBox(height: 12),
+          StatusPill(
+            label: versionLabel,
+            color: pal.primary,
+            icon: Icons.check_circle,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Premium section: 36px tone-tinted icon box + bold title header, body inside
+/// a hairline-bordered surface card (radius 18).
+class _SectionCard extends StatelessWidget {
+  final IconData icon;
+  final _Tone tone;
+  final String title;
+  final Widget body;
+
+  const _SectionCard({
+    required this.icon,
+    required this.tone,
+    required this.title,
+    required this.body,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final c = _toneColor(tone, pal);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: c.withValues(alpha: 0x1F / 0xFF),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, size: 18, color: c),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              title,
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: pal.surface,
+            border: Border.all(color: pal.border),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: body,
+        ),
+      ],
+    );
+  }
+}
+
+/// Tinted 40px icon box + title (semibold) + subtitle (caption, secondary);
+/// optional hairline divider; optional trailing open_in_new; optional tap
+/// (chevron) for navigation rows.
+class _IconRow extends StatelessWidget {
+  final IconData icon;
+  final _Tone tone;
+  final String title;
+  final String? subtitle;
+  final bool trailing;
+  final bool showDivider;
+  final VoidCallback? onTap;
+
+  const _IconRow({
+    required this.icon,
+    required this.tone,
+    required this.title,
+    this.subtitle,
+    this.trailing = false,
+    this.showDivider = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final c = _toneColor(tone, pal);
+    final row = Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: 0x1F / 0xFF),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          alignment: Alignment.center,
+          child: Icon(icon, size: 20, color: c),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style:
+                    const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              ),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  subtitle!,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: pal.textSecondary,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (trailing)
+          Icon(Icons.open_in_new, size: 18, color: pal.textSecondary),
+        if (onTap != null) Icon(Icons.chevron_right, color: pal.textSecondary),
+      ],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (onTap != null)
+          InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: row,
+            ),
+          )
+        else
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: row,
+          ),
+        if (showDivider) Divider(color: pal.border, height: 1),
+      ],
+    );
+  }
+}
+
+class _Social {
+  final String label;
+  final Color color;
+  final Widget icon;
+
+  const _Social(this.label, this.color, this.icon);
+}
+
+/// Four brand buttons in one row: tinted bg + hairline brand border,
+/// 24px brand icon + brand-coloured label. Display-only (no tap).
+class _SocialRow extends StatelessWidget {
+  const _SocialRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final socials = [
+      const _Social('Facebook', Color(0xFF1877F2),
+          Icon(Icons.facebook, size: 24, color: Color(0xFF1877F2))),
+      const _Social('YouTube', Color(0xFFFF0000),
+          CustomPaint(size: Size(24, 24), painter: _YouTubePainter())),
+      const _Social('Instagram', Color(0xFFE4405F),
+          CustomPaint(size: Size(24, 24), painter: _InstagramPainter())),
+      _Social('X',
+          isDark ? const Color(0xFFE7E9EA) : const Color(0xFF0F1419),
+          _XPainterIcon(color: isDark ? const Color(0xFFE7E9EA) : const Color(0xFF0F1419))),
+    ];
+    return Row(
+      children: [
+        for (int i = 0; i < socials.length; i++) ...[
+          Expanded(
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: socials[i].color.withValues(alpha: 0x14 / 0xFF),
+                border: Border.all(
+                    color: socials[i].color.withValues(alpha: 0x55 / 0xFF)),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  socials[i].icon,
                   const SizedBox(height: 4),
-                  const Text(
-                    'Prepare Smarter, Score Higher',
-                    style: TextStyle(color: Colors.grey),
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 12),
-                  const Chip(
-                    label: Text('Version 1.0.0'),
-                    avatar: Icon(Icons.check_circle,
-                        size: 18, color: AppColors.navy),
+                  Text(
+                    socials[i].label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: socials[i].color,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 12),
-          _sectionCard(
-            title: 'About',
-            children: const [
-              Text(
-                "Nepal's trusted digital preparation platform for Loksewa and other competitive government exams.",
-                style: TextStyle(
-                    color: Colors.grey, fontSize: 15, height: 1.5),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _sectionCard(
-            title: 'What you get',
-            children: _highlights
-                .map((h) => ListTile(
-                      leading: Icon(h.$1, color: AppColors.navy),
-                      title: Text(h.$2,
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w600)),
-                      subtitle: Text(h.$3),
-                      contentPadding: EdgeInsets.zero,
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 12),
-          _sectionCard(
-            title: 'Reach us',
-            children: const [
-              ListTile(
-                leading: Icon(Icons.language, color: AppColors.navy),
-                title: Text('Website'),
-                subtitle: Text('kbr.com.np'),
-                contentPadding: EdgeInsets.zero,
-              ),
-              ListTile(
-                leading: Icon(Icons.mail_outline, color: AppColors.navy),
-                title: Text('Support'),
-                subtitle: Text('contact@kbr.com.np'),
-                contentPadding: EdgeInsets.zero,
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _sectionCard(
-            title: 'Follow Us',
-            children: _socials
-                .map((s) => ListTile(
-                      title: Text(s.$1),
-                      subtitle: Text(s.$2,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.grey)),
-                      contentPadding: EdgeInsets.zero,
-                    ))
-                .toList(),
-          ),
-          const SizedBox(height: 12),
-          _sectionCard(
-            title: 'Legal',
-            children: [
-              ListTile(
-                leading: const Icon(Icons.shield_outlined,
-                    color: AppColors.navy),
-                title: const Text('Privacy Policy'),
-                trailing: const Icon(Icons.chevron_right),
-                contentPadding: EdgeInsets.zero,
-                onTap: () => context.push('/privacy-policy'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.description_outlined,
-                    color: AppColors.navy),
-                title: const Text('Terms and Conditions'),
-                trailing: const Icon(Icons.chevron_right),
-                contentPadding: EdgeInsets.zero,
-                onTap: () => context.push('/terms-conditions'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          const Text(
-            'Made for Nepali students',
-            style: TextStyle(color: Colors.grey, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
+          if (i < socials.length - 1) const SizedBox(width: 8),
         ],
+      ],
+    );
+  }
+}
+
+/// YouTube glyph: rounded red rect + white play triangle.
+class _YouTubePainter extends CustomPainter {
+  const _YouTubePainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final red = Paint()..color = const Color(0xFFFF0000);
+    final white = Paint()..color = Colors.white;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(2, 5, size.width - 4, size.height - 10),
+        const Radius.circular(5),
       ),
-          ),
-        ],
+      red,
+    );
+    final triangle = Path()
+      ..moveTo(size.width / 2 - 2.5, size.height / 2 - 3.5)
+      ..lineTo(size.width / 2 - 2.5, size.height / 2 + 3.5)
+      ..lineTo(size.width / 2 + 4, size.height / 2)
+      ..close();
+    canvas.drawPath(triangle, white);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+/// Instagram glyph: rounded square outline + circle + dot.
+class _InstagramPainter extends CustomPainter {
+  const _InstagramPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final brand = Paint()
+      ..color = const Color(0xFFE4405F)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTWH(3, 3, size.width - 6, size.height - 6),
+        const Radius.circular(6),
       ),
+      brand,
+    );
+    canvas.drawCircle(
+        Offset(size.width / 2, size.height / 2), 4.5, brand);
+    canvas.drawCircle(
+      Offset(size.width - 7, 7),
+      1.6,
+      Paint()..color = const Color(0xFFE4405F),
     );
   }
 
-  Widget _sectionCard(
-      {required String title, required List<Widget> children}) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                  fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            ...children,
-          ],
-        ),
-      ),
-    );
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+class _XPainterIcon extends StatelessWidget {
+  final Color color;
+
+  const _XPainterIcon({required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+        size: const Size(24, 24), painter: _XPainter(color: color));
   }
+}
+
+/// X glyph: bold X letterform — two crossing strokes.
+class _XPainter extends CustomPainter {
+  final Color color;
+
+  const _XPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(const Offset(5, 5), Offset(size.width - 5, size.height - 5), p);
+    canvas.drawLine(Offset(size.width - 5, 5), Offset(5, size.height - 5), p);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

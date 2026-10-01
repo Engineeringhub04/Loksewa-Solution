@@ -91,8 +91,7 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
     try {
       final token = await AuthService.getValidIdToken();
       final message = _adminMessage.text.trim();
-      final existing =
-          (record['adminResponses'] as List?)?.toList() ?? [];
+      final existing = (record['adminResponses'] as List?)?.toList() ?? [];
       final next = List<Map<String, dynamic>>.from(
           existing.map((e) => Map<String, dynamic>.from(e as Map)));
       if (message.isNotEmpty) {
@@ -135,36 +134,51 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      // Stack (not Column): the busy dim barrier sits ABOVE everything
+      // including the header, so it never leaves white slivers at the
+      // header's curved corners — same pattern as the chapter/units pages.
+      body: Stack(
         children: [
-          const SubpageHeader(title: 'Report Details'),
-          Expanded(
-            child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Report...',
-            );
-          }
-          if (snap.hasError) {
-            if (snap.error is _Denied) {
-              return const Center(child: Text('Access denied'));
-            }
-            return Center(
-              child: ElevatedButton(
-                  onPressed: _refresh, child: const Text('Retry')),
-            );
-          }
-          final record = snap.data;
-          if (record == null) {
-            return const Center(child: Text('This report was not found.'));
-          }
-          return _body(record);
-        },
-      ),
+          Column(
+            children: [
+              const SubpageHeader(title: 'Report Details'),
+              Expanded(
+                child: FutureBuilder<Map<String, dynamic>?>(
+                  future: _future,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const PreloadingWidget(
+                        tinted: false,
+                        label: 'Loading Report...',
+                      );
+                    }
+                    if (snap.hasError) {
+                      if (snap.error is _Denied) {
+                        return const Center(child: Text('Access denied'));
+                      }
+                      return Center(
+                        child: ElevatedButton(
+                            onPressed: _refresh, child: const Text('Retry')),
+                      );
+                    }
+                    final record = snap.data;
+                    if (record == null) {
+                      return const Center(
+                          child: Text('This report was not found.'));
+                    }
+                    return _body(record);
+                  },
+                ),
+              ),
+            ],
           ),
+          if (_busy)
+            Container(
+              color: Colors.black45,
+              child: const PreloadingWidget(
+                label: 'Working...',
+              ),
+            ),
         ],
       ),
     );
@@ -182,212 +196,188 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
     final label = status == 'pending'
         ? 'New'
         : status[0].toUpperCase() + status.substring(1);
-    final reporter =
-        record['_reporterProfile'] as Map<String, dynamic>?;
-    final responses =
-        (record['adminResponses'] as List?) ?? [];
+    final reporter = record['_reporterProfile'] as Map<String, dynamic>?;
+    final responses = (record['adminResponses'] as List?) ?? [];
 
-    return Stack(
+    return ListView(
+      padding: const EdgeInsets.all(16),
       children: [
-        ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            // Answer box FIRST — answering is the whole reason this page exists.
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
+        // Answer box FIRST — answering is the whole reason this page exists.
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
                   children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: color.withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Text(label,
-                              style: TextStyle(
-                                  color: color,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '${record['contextLabel'] ?? record['source'] ?? ''}',
-                            style:
-                                const TextStyle(fontSize: 12, color: Colors.grey),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _adminMessage,
-                      maxLines: 4,
-                      decoration: const InputDecoration(
-                        labelText: 'Response to reporter (optional)',
-                        border: OutlineInputBorder(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _review(record, 'resolved', 'Resolve'),
-                      child: const Text('Resolve'),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _review(record, 'reviewed', 'Mark reviewed'),
-                      child: const Text('Mark reviewed'),
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: _busy
-                          ? null
-                          : () => _review(record, 'dismissed', 'Dismiss'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: const Text('Dismiss'),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Reported content',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    Text('${record['targetTitle'] ?? record['targetType'] ?? '—'}',
-                        style:
-                            const TextStyle(fontWeight: FontWeight.w600)),
-                    Text(
-                      '${record['targetAuthorName'] ?? ''} · ${_fmtDateTime(record['createdAt'])}',
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 8),
-                    Text('${record['targetPreview'] ?? '—'}'),
-                    const Divider(height: 24),
-                    _info('Target type', '${record['targetType'] ?? '—'}'),
-                    _info('Report ID', '${record['targetId'] ?? '—'}'),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Report message',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    _info('Reason', '${record['reason'] ?? '—'}'),
-                    _info('Details', '${record['description'] ?? '—'}'),
-                    _info('Submitted on',
-                        _fmtDateTime(record['createdAt'])),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: (reporter?['photoURL'] as String?)?.isNotEmpty == true
-                    ? CircleAvatar(
-                        backgroundImage: NetworkImage(
-                            reporter!['photoURL'] as String))
-                    : const CircleAvatar(child: Icon(Icons.person)),
-                title: Text(
-                    '${reporter?['name'] ?? record['reporterName'] ?? '—'}',
-                    style:
-                        const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(
-                    '${reporter?['email'] ?? record['reporterEmail'] ?? '—'}\n'
-                    '${record['reporterCourseId'] ?? '—'} · ${record['reporterSubcourseId'] ?? '—'}'),
-                isThreeLine: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            if (responses.isNotEmpty)
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Response history',
+                      child: Text(label,
                           style: TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      for (final resp in responses)
-                        Padding(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 6),
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text('${(resp as Map)['status'] ?? ''}',
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 12)),
-                                  Text(
-                                      _fmtDateTime(resp['createdAt']),
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey)),
-                                ],
-                              ),
-                              Text('${resp['message'] ?? ''}'),
-                              const Divider(),
-                            ],
-                          ),
-                        ),
-                    ],
+                              color: color, fontWeight: FontWeight.bold)),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '${record['contextLabel'] ?? record['source'] ?? ''}',
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _adminMessage,
+                  maxLines: 4,
+                  decoration: const InputDecoration(
+                    labelText: 'Response to reporter (optional)',
+                    border: OutlineInputBorder(),
                   ),
                 ),
-              )
-            else
-              const Card(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('No admin response yet.',
-                      style: TextStyle(color: Colors.grey)),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _review(record, 'resolved', 'Resolve'),
+                  child: const Text('Resolve'),
                 ),
-              ),
-            const SizedBox(height: 24),
-          ],
-        ),
-        if (_busy)
-          Container(
-            color: Colors.black45,
-            child: const PreloadingWidget(
-              label: 'Working...',
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _review(record, 'reviewed', 'Mark reviewed'),
+                  child: const Text('Mark reviewed'),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: _busy
+                      ? null
+                      : () => _review(record, 'dismissed', 'Dismiss'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Dismiss'),
+                ),
+              ],
             ),
           ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Reported content',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Text('${record['targetTitle'] ?? record['targetType'] ?? '—'}',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                Text(
+                  '${record['targetAuthorName'] ?? ''} · ${_fmtDateTime(record['createdAt'])}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+                const SizedBox(height: 8),
+                Text('${record['targetPreview'] ?? '—'}'),
+                const Divider(height: 24),
+                _info('Target type', '${record['targetType'] ?? '—'}'),
+                _info('Report ID', '${record['targetId'] ?? '—'}'),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Report message',
+                    style:
+                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                _info('Reason', '${record['reason'] ?? '—'}'),
+                _info('Details', '${record['description'] ?? '—'}'),
+                _info('Submitted on', _fmtDateTime(record['createdAt'])),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: (reporter?['photoURL'] as String?)?.isNotEmpty == true
+                ? CircleAvatar(
+                    backgroundImage:
+                        NetworkImage(reporter!['photoURL'] as String))
+                : const CircleAvatar(child: Icon(Icons.person)),
+            title: Text('${reporter?['name'] ?? record['reporterName'] ?? '—'}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Text(
+                '${reporter?['email'] ?? record['reporterEmail'] ?? '—'}\n'
+                '${record['reporterCourseId'] ?? '—'} · ${record['reporterSubcourseId'] ?? '—'}'),
+            isThreeLine: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        if (responses.isNotEmpty)
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Response history',
+                      style:
+                          TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  for (final resp in responses)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('${(resp as Map)['status'] ?? ''}',
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12)),
+                              Text(_fmtDateTime(resp['createdAt']),
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.grey)),
+                            ],
+                          ),
+                          Text('${resp['message'] ?? ''}'),
+                          const Divider(),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          )
+        else
+          const Card(
+            child: Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('No admin response yet.',
+                  style: TextStyle(color: Colors.grey)),
+            ),
+          ),
+        const SizedBox(height: 24),
       ],
     );
   }
@@ -401,8 +391,7 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
           SizedBox(
               width: 110,
               child: Text(label,
-                  style:
-                      const TextStyle(fontSize: 13, color: Colors.grey))),
+                  style: const TextStyle(fontSize: 13, color: Colors.grey))),
           Expanded(child: Text(value)),
         ],
       ),

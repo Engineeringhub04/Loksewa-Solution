@@ -90,10 +90,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
                                   color: Colors.white
                                       .withValues(alpha: 0x1F / 0xFF),
                                 ),
-                                child: const Icon(
-                                    Icons.shield_outlined,
-                                    color: Colors.white,
-                                    size: 20),
+                                child: const Icon(Icons.shield_outlined,
+                                    color: Colors.white, size: 20),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
@@ -155,19 +153,16 @@ class PrivacyPolicyScreen extends StatelessWidget {
                                 height: 38,
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
-                                  color: s.$2.withValues(
-                                      alpha: 0x14 / 0xFF),
+                                  color: s.$2.withValues(alpha: 0x14 / 0xFF),
                                 ),
                                 child: s.$1 != null
-                                    ? Icon(s.$1,
-                                        size: 19, color: s.$2)
+                                    ? Icon(s.$1, size: 19, color: s.$2)
                                     : TrashIcon(size: 19, color: s.$2),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
                                       s.$3,
@@ -210,39 +205,37 @@ class PrivacyPolicyScreen extends StatelessWidget {
                                       .withValues(alpha: 0x14 / 0xFF),
                                 ),
                                 child: const Icon(Icons.language_outlined,
-                                    size: 19,
-                                    color: Color(0xFF0EA5E9)),
+                                    size: 19, color: Color(0xFF0EA5E9)),
                               ),
                               const SizedBox(width: 12),
                               const Text(
                                 'Full policy',
                                 style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold),
+                                    fontSize: 16, fontWeight: FontWeight.bold),
                               ),
                             ],
                           ),
                           const SizedBox(height: 10),
-                          const SelectableText(
+                          SelectableText(
                             _policyUrl,
                             style: TextStyle(
-                                color: AppColors.navy, fontSize: 14),
+                                // Theme-aware link blue: readable on both
+                                // light and dark page backgrounds.
+                                color: ExpoPalette.of(context).info,
+                                fontSize: 14),
                           ),
                           const SizedBox(height: 12),
                           SizedBox(
                             width: double.infinity,
                             child: OutlinedButton.icon(
                               onPressed: () => _copyPolicyUrl(context),
-                              icon: const Icon(Icons.copy_outlined,
-                                  size: 18),
-                              label: const Text(
-                                  'Read the full policy online'),
+                              icon: const Icon(Icons.copy_outlined, size: 18),
+                              label: const Text('Read the full policy online'),
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 13),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 13),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius:
-                                      BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
                             ),

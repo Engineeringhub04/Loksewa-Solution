@@ -151,33 +151,35 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   }
 
   Future<void> _confirmRemove(Map<String, dynamic> b) async {
-    final ok = await AppModalShell.show<bool>(
+    final removed = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => BookmarkRemoveDialog(item: b),
+      builder: (c) => BookmarkRemoveDialog(
+        item: b,
+        // The Firestore path is unchanged — only the UX around it moved:
+        // the dialog shows a spinner on the delete icon while this runs,
+        // pops true on success (fading out), or stays open with an error
+        // toast on failure.
+        onRemove: () async {
+          final uid = AuthService.currentUser?.uid;
+          if (uid == null) throw Exception('Not signed in.');
+          final idToken = await AuthService.getValidIdToken();
+          await FirestoreRest.deleteDocument(
+              'users/$uid/bookmarks/${_bookmarkDocId(b)}',
+              idToken: idToken);
+        },
+      ),
     );
-    if (ok != true) return;
-    final uid = AuthService.currentUser?.uid;
-    if (uid == null) return;
-    try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/$uid/bookmarks/${_bookmarkDocId(b)}',
-          idToken: idToken);
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
-            ToastVariant.info);
-        _load();
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
-            ToastVariant.error);
-      }
-    }
+    if (removed != true || !mounted) return;
+    // The pop above already started the shell's 200ms fade-out — wait for it
+    // to finish before rebuilding the list underneath, so the close
+    // animation is actually visible.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+    showToast(
+        context,
+        AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
+        ToastVariant.info);
+    _load();
   }
 
   static const _months = [

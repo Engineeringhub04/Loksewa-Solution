@@ -13,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/user/edit_profile_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
+import 'package:loksewa_solution/widgets/profile_avatar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _doc = <String, dynamic>{
@@ -293,6 +294,146 @@ void main() {
       expect(find.text('पहिलो नाम'), findsOneWidget);
       expect(find.text('परिवर्तनहरू सेव गर्नुहोस्'), findsOneWidget);
       expect(find.text('Click On Photo To Change'), findsNothing);
+    });
+
+    testWidgets('save is disabled until the form is dirty', (tester) async {
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1', loadProfile: (_) async => _doc));
+
+      // Mirrors React's disabled={!isDirty || isOffline || saving}: nothing
+      // changed yet, so the button is inert.
+      final saveButton = find.widgetWithText(FilledButton, 'Save Changes');
+      expect(tester.widget<FilledButton>(saveButton).onPressed, isNull);
+
+      await tester.enterText(find.byType(TextField).at(0), 'Shyam');
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(tester.widget<FilledButton>(saveButton).onPressed, isNotNull);
+    });
+
+    testWidgets('save uploads the picked photo with a progress ring, '
+        'flashes done, then patches the shared store', (tester) async {
+      // A real 1x1 PNG — the image codec rejects arbitrary bytes.
+      final bytes = base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+      const uploadedUrl = 'https://res.cloudinary.com/x/photo.jpg';
+      final progressSeen = <double>[];
+      final uploadGate = Completer<String>();
+      final saveGate = Completer<void>();
+      String? savedPhotoURL;
+      String? savedSource;
+
+      // Seed the shared store so the post-save patch has something to merge
+      // into (and so we can observe it).
+      ProfileStore.instance.profile = const UserProfile(
+        uid: 'u1',
+        name: 'Ram Bahadur',
+        firstName: 'Ram',
+        lastName: 'Bahadur',
+        photoURLSource: 'none',
+      );
+      addTearDown(ProfileStore.instance.clear);
+
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1',
+              loadProfile: (_) async => _doc,
+              pickPhoto: () async => bytes,
+              uploadPhoto: (picked, onProgress) async {
+                onProgress(0.5);
+                progressSeen.add(0.5);
+                return uploadGate.future;
+              },
+              saveProfile: (
+                      {required uid,
+                      required firstName,
+                      required lastName,
+                      dob,
+                      gender,
+                      photoURL,
+                      photoURLSource}) async {
+                savedPhotoURL = photoURL;
+                savedSource = photoURLSource;
+                await saveGate.future;
+              }));
+
+      // Picking previews from memory but must NOT upload yet.
+      await tester.tap(find.byIcon(Icons.camera_alt));
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Gallery'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(progressSeen, isEmpty);
+      expect(find.byType(Image), findsWidgets);
+
+      // The picked (unsaved) photo makes the form dirty → save enables.
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNotNull);
+
+      await tester.tap(find.text('Save Changes'));
+      await tester.pump(const Duration(milliseconds: 100));
+
+      // Upload in flight: the progress ring is drawn on the photo's border
+      // (no full-screen overlay covers it), with the live caption.
+      expect(progressSeen, isNotEmpty);
+      expect(find.byType(AvatarProgressRing), findsOneWidget);
+      expect(find.textContaining('Uploading your photo...'), findsOneWidget);
+      expect(find.text('Saving your profile...'), findsNothing);
+
+      // The done beat: green full ring + checkmark flash, then the write
+      // phase's overlay.
+      uploadGate.complete(uploadedUrl);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byIcon(Icons.check), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 900));
+      // The 900ms done beat elapsed: now the write-phase overlay blocks the
+      // screen while saveProfile is in flight.
+      expect(find.text('Saving your profile...'), findsOneWidget);
+
+      saveGate.complete();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // The hosted URL was persisted and the shared store patched, so Home
+      // and Profile re-render with the new photo without any refresh.
+      expect(savedPhotoURL, uploadedUrl);
+      expect(savedSource, 'manual');
+      expect(ProfileStore.instance.profile?.photoURL, uploadedUrl);
+      expect(ProfileStore.instance.profile?.name, 'Ram Bahadur');
+      expect(find.text('Profile updated successfully'), findsOneWidget);
+      expect(find.text('home-marker'), findsOneWidget);
+
+      // Let the toast's auto-dismiss timer fire so no Timer is pending at
+      // teardown.
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('ProfileStore.applyLocalPatch notifies listeners',
+        (tester) async {
+      ProfileStore.instance.profile = const UserProfile(
+        uid: 'u9',
+        name: 'Old Name',
+        firstName: 'Old',
+        lastName: 'Name',
+      );
+      addTearDown(ProfileStore.instance.clear);
+
+      var notified = 0;
+      void listener() => notified++;
+      ProfileStore.instance.addListener(listener);
+      ProfileStore.instance
+          .applyLocalPatch((p) => p.copyWith(firstName: 'New'));
+      expect(ProfileStore.instance.profile?.firstName, 'New');
+      expect(notified, 1);
+      ProfileStore.instance.removeListener(listener);
     });
   });
 }

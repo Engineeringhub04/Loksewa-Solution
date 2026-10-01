@@ -58,8 +58,7 @@ class _AdminSubscriptionDetailScreenState
     // Plans (active only, ordered) — the approve expiry window comes from
     // the plan's durationDays, exactly like fetchSubscriptionPlans().
     try {
-      final plans = await FirestoreRest.listDocuments(
-          'app_subscription_plans',
+      final plans = await FirestoreRest.listDocuments('app_subscription_plans',
           idToken: token);
       plans.retainWhere((p) => p['isActive'] != false);
       plans.sort(((a, b) =>
@@ -76,8 +75,7 @@ class _AdminSubscriptionDetailScreenState
         final userProfile =
             await FirestoreRest.getDocument('users/$uid', idToken: token);
         record['_profile'] = userProfile;
-        record['_courseInfo'] =
-            await _fetchUserCourseInfo(userProfile, token);
+        record['_courseInfo'] = await _fetchUserCourseInfo(userProfile, token);
       }
     } catch (_) {}
     return record;
@@ -96,8 +94,7 @@ class _AdminSubscriptionDetailScreenState
     String? courseName;
     String? subcourseName;
     try {
-      final courseDoc = await FirestoreRest.getDocument(
-          'app_courses/$courseId',
+      final courseDoc = await FirestoreRest.getDocument('app_courses/$courseId',
           idToken: token);
       courseName = courseDoc?['name'] as String?;
     } catch (_) {
@@ -144,16 +141,20 @@ class _AdminSubscriptionDetailScreenState
   Future<void> _approve(Map<String, dynamic> record) async {
     final reviewer = AuthService.currentUser;
     if (reviewer == null || _busy) return;
-    if (!await showAdminReviewApproveDialog(context, approveMessage: AppLanguage.tr('Approve this subscription? The user will be upgraded to Premium immediately.', 'यो सदस्यता स्वीकृत गर्ने हो? प्रयोगकर्ता तुरुन्तै प्रिमियममा अपग्रेड हुनेछ।'))) return;
+    if (!await showAdminReviewApproveDialog(context,
+        approveMessage: AppLanguage.tr(
+            'Approve this subscription? The user will be upgraded to Premium immediately.',
+            'यो सदस्यता स्वीकृत गर्ने हो? प्रयोगकर्ता तुरुन्तै प्रिमियममा अपग्रेड हुनेछ।'))) {
+      return;
+    }
     setState(() => _busy = true);
     try {
       final token = await AuthService.getValidIdToken();
       final days = _durationDays(record);
       final now = DateTime.now();
       final expiry = now.add(Duration(days: days));
-      final adminMessage = _adminMessage.text.trim().isEmpty
-          ? null
-          : _adminMessage.text.trim();
+      final adminMessage =
+          _adminMessage.text.trim().isEmpty ? null : _adminMessage.text.trim();
       // Atomic two-write batch, like approveSubscription()'s commitWrites:
       // activate the request AND mirror premium flags onto the user doc.
       await FirestoreRest.commitWrites(
@@ -190,8 +191,7 @@ class _AdminSubscriptionDetailScreenState
       if (mounted) {
         showToast(
             context,
-            AppLanguage.tr(
-                'Subscription approved.', 'सदस्यता स्वीकृत भयो।'),
+            AppLanguage.tr('Subscription approved.', 'सदस्यता स्वीकृत भयो।'),
             ToastVariant.success);
         _refresh();
       }
@@ -199,8 +199,7 @@ class _AdminSubscriptionDetailScreenState
       if (mounted) {
         showToast(
             context,
-            AppLanguage.tr(
-                'Something went wrong', 'केही समस्या भयो'),
+            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
             ToastVariant.error);
       }
     } finally {
@@ -234,8 +233,7 @@ class _AdminSubscriptionDetailScreenState
       if (mounted) {
         showToast(
             context,
-            AppLanguage.tr(
-                'Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
+            AppLanguage.tr('Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
             ToastVariant.success);
         _refresh();
       }
@@ -243,8 +241,7 @@ class _AdminSubscriptionDetailScreenState
       if (mounted) {
         showToast(
             context,
-            AppLanguage.tr(
-                'Something went wrong', 'केही समस्या भयो'),
+            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
             ToastVariant.error);
       }
     } finally {
@@ -255,56 +252,71 @@ class _AdminSubscriptionDetailScreenState
   Future<void> _copyUrl(String url) async {
     await Clipboard.setData(ClipboardData(text: url));
     if (mounted) {
-      showToast(context, AppLanguage.tr('Copied', 'कपि भयो'),
-          ToastVariant.success);
+      showToast(
+          context, AppLanguage.tr('Copied', 'कपि भयो'), ToastVariant.success);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      // Stack (not Column): the busy dim barrier below sits ABOVE everything
+      // including the header, so it never leaves white slivers at the
+      // header's curved corners — same pattern as the chapter/units pages.
+      body: Stack(
         children: [
-          SubpageHeader(
-              title: AppLanguage.tr(
-                  'Subscription Requests', 'सदस्यता अनुरोधहरू')),
-          Expanded(
-            child: FutureBuilder<Map<String, dynamic>?>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return PreloadingWidget(
-                    tinted: false,
-                    label: AppLanguage.tr('Loading Subscription...',
-                        'सदस्यता लोड हुँदैछ...'),
-                    hint: AppLanguage.tr('Fetching your purchase history',
-                        'खरिद इतिहास ल्याउँदै'),
-                  );
-                }
-                if (snap.hasError) {
-                  if (snap.error is _Denied) {
-                    return Center(
-                        child: Text(AppLanguage.tr(
-                            'Access denied', 'पहुँच अस्वीकृत')));
-                  }
-                  return Center(
-                    child: ElevatedButton(
-                        onPressed: _refresh,
-                        child: Text(
-                            AppLanguage.tr('Retry', 'पुनः प्रयास'))),
-                  );
-                }
-                final record = snap.data;
-                if (record == null) {
-                  return Center(
-                      child: Text(AppLanguage.tr(
-                          'This subscription request was not found.',
-                          'यो सदस्यता अनुरोध भेटिएन।')));
-                }
-                return _body(record);
-              },
-            ),
+          Column(
+            children: [
+              SubpageHeader(
+                  title: AppLanguage.tr(
+                      'Subscription Requests', 'सदस्यता अनुरोधहरू')),
+              Expanded(
+                child: FutureBuilder<Map<String, dynamic>?>(
+                  future: _future,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return PreloadingWidget(
+                        tinted: false,
+                        label: AppLanguage.tr(
+                            'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+                        hint: AppLanguage.tr('Fetching your purchase history',
+                            'खरिद इतिहास ल्याउँदै'),
+                      );
+                    }
+                    if (snap.hasError) {
+                      if (snap.error is _Denied) {
+                        return Center(
+                            child: Text(AppLanguage.tr(
+                                'Access denied', 'पहुँच अस्वीकृत')));
+                      }
+                      return Center(
+                        child: ElevatedButton(
+                            onPressed: _refresh,
+                            child:
+                                Text(AppLanguage.tr('Retry', 'पुनः प्रयास'))),
+                      );
+                    }
+                    final record = snap.data;
+                    if (record == null) {
+                      return Center(
+                          child: Text(AppLanguage.tr(
+                              'This subscription request was not found.',
+                              'यो सदस्यता अनुरोध भेटिएन।')));
+                    }
+                    return _body(record);
+                  },
+                ),
+              ),
+            ],
           ),
+          if (_busy)
+            Container(
+              color: Colors.black45,
+              child: PreloadingWidget(
+                label: AppLanguage.tr(
+                    'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+              ),
+            ),
         ],
       ),
     );
@@ -331,198 +343,179 @@ class _AdminSubscriptionDetailScreenState
     final alreadyReviewed = status == 'active' || status == 'rejected';
     final screenshotUrl = (record['screenshotUrl'] as String?) ?? '';
 
-    return Stack(
+    return ListView(
+      padding: const EdgeInsets.all(16),
       children: [
-        ListView(
+        Container(
           padding: const EdgeInsets.all(16),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0x14 / 0xFF),
-                border: Border.all(color: color),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label,
-                      style: TextStyle(
-                          color: color,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold)),
-                  if (record['adminMessage'] != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text('${record['adminMessage']}',
-                          style: TextStyle(color: color, fontSize: 13)),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: ListTile(
-                leading: (profile?['photoURL'] as String?)?.isNotEmpty == true
-                    ? CircleAvatar(
-                        backgroundImage:
-                            NetworkImage(profile!['photoURL'] as String))
-                    : const CircleAvatar(child: Icon(Icons.person)),
-                title: Text(
-                    '${profile?['name'] ?? record['userName'] ?? '—'}',
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('${profile?['email'] ?? record['userEmail'] ?? '—'}'),
-                    Text(
-                      '${courseInfo?['courseName'] ?? '—'} · ${courseInfo?['subcourseName'] ?? '—'}',
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0x14 / 0xFF),
+            border: Border.all(color: color),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style: TextStyle(
+                      color: color, fontSize: 18, fontWeight: FontWeight.bold)),
+              if (record['adminMessage'] != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('${record['adminMessage']}',
+                      style: TextStyle(color: color, fontSize: 13)),
                 ),
-                isThreeLine: true,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextField(
-                      controller: _adminMessage,
-                      maxLines: 3,
-                      decoration: InputDecoration(
-                        labelText: AppLanguage.tr(
-                            'Message to user (optional)',
-                            'प्रयोगकर्तालाई सन्देश (वैकल्पिक)'),
-                        helperText: AppLanguage.tr(
-                            'Shown back to the user alongside the approval/rejection.',
-                            'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
-                        hintText: AppLanguage.tr(
-                            'e.g. Thanks! Your payment matched perfectly.',
-                            'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: _busy ? null : () => _approve(record),
-                      child: Text(AppLanguage.tr(
-                          'Approve', 'स्वीकृत गर्नुहोस्')),
-                    ),
-                    const SizedBox(height: 8),
-                    ElevatedButton(
-                      onPressed: _busy ? null : _reject,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                      ),
-                      child: Text(AppLanguage.tr(
-                          'Reject', 'अस्वीकार गर्नुहोस्')),
-                    ),
-                    if (alreadyReviewed)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          AppLanguage.tr(
-                              'You can change this decision any time — approving/rejecting again updates the status.',
-                              'तपाईं यो निर्णय जुनसुकै बेला परिवर्तन गर्न सक्नुहुन्छ — फेरि स्वीकृत/अस्वीकार गर्दा स्थिति अपडेट हुन्छ।'),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.grey),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Card(
-              child: Column(
-                children: [
-                  _row(AppLanguage.tr('User', 'प्रयोगकर्ता'),
-                      '${record['userName'] ?? record['userEmail'] ?? record['uid'] ?? '—'}'),
-                  _row(AppLanguage.tr('Plan', 'योजना'),
-                      '${record['planName'] ?? '—'}'),
-                  _row(AppLanguage.tr('Amount', 'रकम'),
-                      'Rs. ${record['amount'] ?? '—'}'),
-                  _row(AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
-                      (record['method'] ?? '').toString().toUpperCase()),
-                  _row(AppLanguage.tr('Reference', 'सन्दर्भ'),
-                      '${record['transactionRef'] ?? '—'}'),
-                  if (record['couponCode'] != null)
-                    _row(AppLanguage.tr('Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
-                        '${record['couponCode']}'),
-                  _row(AppLanguage.tr('Submitted', 'पेश गरिएको मिति'),
-                      _fmtDateTime(record['submittedAt'])),
-                  if (record['customerMessage'] != null)
-                    _row(AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
-                        '${record['customerMessage']}'),
-                  if (record['rejectionReason'] != null)
-                    _row(AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
-                        '${record['rejectionReason']}'),
-                ],
-              ),
-            ),
-            if (screenshotUrl.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text(AppLanguage.tr('Screenshot', 'स्क्रिनसट'),
-                  style: const TextStyle(fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () => _fullscreen(screenshotUrl),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.network(screenshotUrl,
-                      height: 220, width: double.infinity, fit: BoxFit.cover),
-                ),
-              ),
-              const SizedBox(height: 8),
-              // URL row: display-only link + copy button (no url_launcher;
-              // external links stay display-only).
-              Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                      color: Theme.of(context).dividerColor),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Text(screenshotUrl,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.grey)),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपि'),
-                      onPressed: () => _copyUrl(screenshotUrl),
-                      icon: const Icon(Icons.copy_outlined,
-                          size: 18, color: Colors.blue),
-                    ),
-                  ],
-                ),
-              ),
             ],
-            const SizedBox(height: 24),
-          ],
+          ),
         ),
-        if (_busy)
-          Container(
-            color: Colors.black45,
-            child: PreloadingWidget(
-              label: AppLanguage.tr(
-                  'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+        const SizedBox(height: 12),
+        Card(
+          child: ListTile(
+            leading: (profile?['photoURL'] as String?)?.isNotEmpty == true
+                ? CircleAvatar(
+                    backgroundImage:
+                        NetworkImage(profile!['photoURL'] as String))
+                : const CircleAvatar(child: Icon(Icons.person)),
+            title: Text('${profile?['name'] ?? record['userName'] ?? '—'}',
+                style: const TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${profile?['email'] ?? record['userEmail'] ?? '—'}'),
+                Text(
+                  '${courseInfo?['courseName'] ?? '—'} · ${courseInfo?['subcourseName'] ?? '—'}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
+              ],
+            ),
+            isThreeLine: true,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextField(
+                  controller: _adminMessage,
+                  maxLines: 3,
+                  decoration: InputDecoration(
+                    labelText: AppLanguage.tr('Message to user (optional)',
+                        'प्रयोगकर्तालाई सन्देश (वैकल्पिक)'),
+                    helperText: AppLanguage.tr(
+                        'Shown back to the user alongside the approval/rejection.',
+                        'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
+                    hintText: AppLanguage.tr(
+                        'e.g. Thanks! Your payment matched perfectly.',
+                        'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: _busy ? null : () => _approve(record),
+                  child: Text(AppLanguage.tr('Approve', 'स्वीकृत गर्नुहोस्')),
+                ),
+                const SizedBox(height: 8),
+                ElevatedButton(
+                  onPressed: _busy ? null : _reject,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: Text(AppLanguage.tr('Reject', 'अस्वीकार गर्नुहोस्')),
+                ),
+                if (alreadyReviewed)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      AppLanguage.tr(
+                          'You can change this decision any time — approving/rejecting again updates the status.',
+                          'तपाईं यो निर्णय जुनसुकै बेला परिवर्तन गर्न सक्नुहुन्छ — फेरि स्वीकृत/अस्वीकार गर्दा स्थिति अपडेट हुन्छ।'),
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                  ),
+              ],
             ),
           ),
+        ),
+        const SizedBox(height: 12),
+        Card(
+          child: Column(
+            children: [
+              _row(AppLanguage.tr('User', 'प्रयोगकर्ता'),
+                  '${record['userName'] ?? record['userEmail'] ?? record['uid'] ?? '—'}'),
+              _row(AppLanguage.tr('Plan', 'योजना'),
+                  '${record['planName'] ?? '—'}'),
+              _row(AppLanguage.tr('Amount', 'रकम'),
+                  'Rs. ${record['amount'] ?? '—'}'),
+              _row(AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
+                  (record['method'] ?? '').toString().toUpperCase()),
+              _row(AppLanguage.tr('Reference', 'सन्दर्भ'),
+                  '${record['transactionRef'] ?? '—'}'),
+              if (record['couponCode'] != null)
+                _row(
+                    AppLanguage.tr(
+                        'Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
+                    '${record['couponCode']}'),
+              _row(AppLanguage.tr('Submitted', 'पेश गरिएको मिति'),
+                  _fmtDateTime(record['submittedAt'])),
+              if (record['customerMessage'] != null)
+                _row(AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
+                    '${record['customerMessage']}'),
+              if (record['rejectionReason'] != null)
+                _row(AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
+                    '${record['rejectionReason']}'),
+            ],
+          ),
+        ),
+        if (screenshotUrl.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(AppLanguage.tr('Screenshot', 'स्क्रिनसट'),
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: () => _fullscreen(screenshotUrl),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Image.network(screenshotUrl,
+                  height: 220, width: double.infinity, fit: BoxFit.cover),
+            ),
+          ),
+          const SizedBox(height: 8),
+          // URL row: display-only link + copy button (no url_launcher;
+          // external links stay display-only).
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Theme.of(context).dividerColor),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(screenshotUrl,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ),
+                ),
+                IconButton(
+                  tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपि'),
+                  onPressed: () => _copyUrl(screenshotUrl),
+                  icon: const Icon(Icons.copy_outlined,
+                      size: 18, color: Colors.blue),
+                ),
+              ],
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
       ],
     );
   }

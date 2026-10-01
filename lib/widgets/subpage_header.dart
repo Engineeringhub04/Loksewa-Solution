@@ -83,79 +83,79 @@ class SubpageHeader extends StatelessWidget {
             bottomRight: Radius.circular(26),
           ),
         ),
-      child: SafeArea(
-        top: true,
-        bottom: false,
-        left: false,
-        right: false,
-        child: Padding(
-          padding: const EdgeInsets.only(top: 12, bottom: 20),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                if (showBack)
-                  GestureDetector(
-                    onTap: onBackPress ?? () => context.pop(),
-                    child: _iconBox(
-                      child: const Icon(
-                        Icons.arrow_back,
-                        size: 20,
+            padding: const EdgeInsets.only(top: 12, bottom: 20),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (showBack)
+                    GestureDetector(
+                      onTap: onBackPress ?? () => context.pop(),
+                      child: _iconBox(
+                        child: const Icon(
+                          Icons.arrow_back,
+                          size: 20,
+                          color: Colors.white,
+                        ),
+                      ),
+                    )
+                  else
+                    _iconBox(),
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
                         color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                  )
-                else
-                  _iconBox(),
-                Expanded(
-                  child: Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
                   ),
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (actions != null) ...actions!,
-                    // Small breathing room between custom actions (e.g. the
-                    // language pill) and the theme toggle so the two buttons
-                    // don't sit stuck together.
-                    if (actions != null && showThemeToggle)
-                      const SizedBox(width: 8),
-                    // The empty balancing box only applies when the screen adds
-                    // no actions of its own: with custom actions (e.g. the
-                    // notifications mark-all pill, which replaces the whole
-                    // right slot like Expo's rightSlot) a phantom box would
-                    // render visibly at the far right.
-                    if (showThemeToggle)
-                      GestureDetector(
-                        onTap: () => ThemeService.toggle(context),
-                        child: _iconBox(
-                          child: Icon(
-                            isDark
-                                ? Icons.light_mode_outlined
-                                : Icons.dark_mode_outlined,
-                            size: 20,
-                            color: Colors.white,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (actions != null) ...actions!,
+                      // Small breathing room between custom actions (e.g. the
+                      // language pill) and the theme toggle so the two buttons
+                      // don't sit stuck together.
+                      if (actions != null && showThemeToggle)
+                        const SizedBox(width: 8),
+                      // The empty balancing box only applies when the screen adds
+                      // no actions of its own: with custom actions (e.g. the
+                      // notifications mark-all pill, which replaces the whole
+                      // right slot like Expo's rightSlot) a phantom box would
+                      // render visibly at the far right.
+                      if (showThemeToggle)
+                        GestureDetector(
+                          onTap: () => ThemeService.toggle(context),
+                          child: _iconBox(
+                            child: Icon(
+                              isDark
+                                  ? Icons.light_mode_outlined
+                                  : Icons.dark_mode_outlined,
+                              size: 20,
+                              color: Colors.white,
+                            ),
                           ),
-                        ),
-                      )
-                    else if (actions == null)
-                      _iconBox(),
-                  ],
-                ),
-              ],
+                        )
+                      else if (actions == null)
+                        _iconBox(),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
         ),
       ),
     );

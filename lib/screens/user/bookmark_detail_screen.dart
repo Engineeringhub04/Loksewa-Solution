@@ -42,7 +42,6 @@ class BookmarkDetailScreen extends StatefulWidget {
 
 class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   late Future<Map<String, dynamic>?> _future;
-  bool _removing = false;
   Map<String, dynamic>? _loaded;
 
   @override
@@ -72,42 +71,43 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   }
 
   Future<void> _remove(Map<String, dynamic> b) async {
-    final ok = await AppModalShell.show<bool>(
+    final removed = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => BookmarkRemoveDialog(item: b),
+      builder: (c) => BookmarkRemoveDialog(
+        item: b,
+        // The Firestore path is unchanged — only the UX around it moved:
+        // the dialog shows a spinner on the delete icon while this runs,
+        // pops true on success (fading out), or stays open with an error
+        // toast on failure.
+        onRemove: () async {
+          final deleter = widget.deleteBookmark;
+          if (deleter != null) {
+            await deleter(widget.id, b);
+            return;
+          }
+          final uid = AuthService.currentUser?.uid;
+          if (uid == null) {
+            throw Exception(
+                AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
+          }
+          final idToken = await AuthService.getValidIdToken();
+          await FirestoreRest.deleteDocument(
+              'users/$uid/bookmarks/${widget.id}',
+              idToken: idToken);
+        },
+      ),
     );
-    if (ok != true) return;
-    setState(() => _removing = true);
-    try {
-      final deleter = widget.deleteBookmark;
-      if (deleter != null) {
-        await deleter(widget.id, b);
-      } else {
-        final uid = AuthService.currentUser?.uid;
-        if (uid == null) {
-          throw Exception(
-              AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
-        }
-        final idToken = await AuthService.getValidIdToken();
-        await FirestoreRest.deleteDocument(
-            'users/$uid/bookmarks/${widget.id}',
-            idToken: idToken);
-      }
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
-            ToastVariant.info);
-        context.pop();
-      }
-    } catch (e) {
-      setState(() => _removing = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text(AppLanguage.tr(
-                'Remove failed: $e', 'हटाउन असफल भयो: $e'))));
-      }
-    }
+    if (removed != true || !mounted) return;
+    // The pop above already started the shell's 200ms fade-out — wait for it
+    // to finish before popping this screen, so the close animation is
+    // actually visible over the detail page.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    if (!mounted) return;
+    showToast(
+        context,
+        AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
+        ToastVariant.info);
+    context.pop();
   }
 
   static const _months = [
@@ -135,9 +135,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
         children: [
           SubpageHeader(title: AppLanguage.tr('Bookmark', 'बुकमार्क'), actions: [
             GestureDetector(
-              onTap: (_loaded == null || _removing)
-                  ? null
-                  : () => _remove(_loaded!),
+              onTap: _loaded == null ? null : () => _remove(_loaded!),
               child: Container(
                 width: 36,
                 height: 36,
@@ -146,14 +144,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
                   color: Colors.white.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: _removing
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const TrashIcon(size: 20, color: Colors.white),
+                child: const TrashIcon(size: 20, color: Colors.white),
               ),
             ),
           ]),

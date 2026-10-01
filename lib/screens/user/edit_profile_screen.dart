@@ -13,7 +13,6 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
-import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/profile_avatar.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
@@ -24,9 +23,25 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// First/last name, email (locked), date of birth, gender and a
 /// Cloudinary-hosted profile photo, persisted to users/{uid}.
 ///
-/// Save stays disabled until something actually changes; backing out with
-/// unsaved changes asks for confirmation (header back button and the Android
-/// system back button alike).
+/// Design follows the app's premium dark language (dark surfaces, hairline
+/// borders, tone-coded icon boxes — same as the Profile tab) instead of the
+/// auth-style always-light floating fields.
+///
+/// Save stays disabled until something actually changes (React:
+/// `disabled={!isDirty || isOffline || saving}` — the grey "disabled" look is
+/// the correct React behaviour when nothing changed, not a bug); backing out
+/// with unsaved changes asks for confirmation (header back button and the
+/// Android system back button alike).
+///
+/// Photo flow: picking a photo does NOT upload it (mirrors React, which only
+/// uploads at save). The upload starts when Save is pressed: a progress ring
+/// sweeps around the photo's border showing the real upload fraction, then a
+/// brief "done" beat (green full ring + checkmark flash) before the Firestore
+/// write. No full-screen overlay covers the ring while it is in flight.
+///
+/// After a successful save the values are pushed into the shared
+/// [ProfileStore] so Home and Profile update in real time — no refresh
+/// needed anywhere.
 ///
 /// Camera capture is not offered: this project may not add new dependencies,
 /// so the photo sheet offers Gallery (via file_picker) and Remove only.
@@ -68,6 +83,11 @@ class EditProfileScreen extends StatefulWidget {
   State<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
+/// Save phases. The upload phase deliberately shows NO full-screen overlay:
+/// the photo's own progress ring is the feedback — covering it with an
+/// overlay is what made the upload invisible before.
+enum _SavePhase { idle, uploading, settling, writing }
+
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _firstCtrl = TextEditingController();
   final _lastCtrl = TextEditingController();
@@ -89,7 +109,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _hydrated = false;
   bool _minLoaderElapsed = false;
   bool _saving = false;
-  String? _savingMessage;
+  _SavePhase _phase = _SavePhase.idle;
   bool _refreshing = false;
   bool _offline = false;
   String? _dobError;
@@ -213,6 +233,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       _gender != _initGender ||
       _photoURL != _initPhotoURL ||
       _pickedBytes != null;
+
+  /// Mirrors React's `disabled={!isDirty || isOffline || saving}` exactly:
+  /// the button is inert until something actually changed, while online, and
+  /// while no save is in flight.
+  bool get _canSave => _isDirty && !_offline && !_saving;
 
   void _attemptLeave() {
     if (_isDirty) {
@@ -384,6 +409,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  /// Picking only previews the photo from memory — the upload happens at
+  /// save time (mirrors React, which uploads the local URI in handleSave),
+  /// so tapping a photo never fires a network request by itself.
   Future<void> _pickImage() async {
     try {
       Uint8List? bytes;
@@ -432,34 +460,42 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
 
+    final needsUpload = _pickedBytes != null;
     setState(() {
       _saving = true;
-      _savingMessage = _Strings.savingProfile;
+      _phase = needsUpload ? _SavePhase.uploading : _SavePhase.writing;
+      _uploadProgress = 0;
     });
     try {
       // Only a freshly picked local file needs uploading; an existing https
       // URL (Cloudinary or a Google avatar) is already hosted.
-      final photoWasChanged =
-          _pickedBytes != null || _photoURL != _initPhotoURL;
+      final photoWasChanged = needsUpload || _photoURL != _initPhotoURL;
       String? resolvedPhotoURL = _photoURL;
-      if (_pickedBytes != null) {
-        setState(() {
-          _uploadState = UploadState.uploading;
-          _uploadProgress = 0;
-          _savingMessage = _Strings.uploadingPhoto;
-        });
+      if (needsUpload) {
+        setState(() => _uploadState = UploadState.uploading);
         final uploader = widget.uploadPhoto ??
             (bytes, onProgress) => CloudinaryUploader.uploadImage(
                   bytes,
                   onProgress: onProgress,
                 );
-        resolvedPhotoURL =
-            await uploader(_pickedBytes!, (p) {
+        resolvedPhotoURL = await uploader(_pickedBytes!, (p) {
           if (mounted) setState(() => _uploadProgress = p);
         });
         if (!mounted) return;
-        setState(() => _uploadState = UploadState.done);
+        // The "done" beat: the new photo wears the green full ring and a
+        // checkmark flash before the Firestore write begins. The upload must
+        // be SEEN to finish — not just implied by a spinner behind an
+        // overlay (which is why the overlay stays away during upload).
+        setState(() {
+          _photoURL = resolvedPhotoURL;
+          _pickedBytes = null;
+          _uploadState = UploadState.done;
+          _phase = _SavePhase.settling;
+        });
         showToast(context, _Strings.photoUploaded, ToastVariant.success);
+        await Future.delayed(const Duration(milliseconds: 900));
+        if (!mounted) return;
+        setState(() => _phase = _SavePhase.writing);
       }
 
       // A photo selected/removed in Edit Profile is always a manual choice.
@@ -499,6 +535,33 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ).catchError((_) {});
       }
 
+      // Push the saved values into the shared store so Home and Profile
+      // update immediately — no pull-to-refresh required anywhere. Mirrors
+      // React's useProfileStore.getState().applyLocalPatch(...). Written as
+      // an explicit constructor (not copyWith) so a cleared DOB really
+      // becomes null in the store, like React's object spread.
+      final firstName = _firstCtrl.text.trim();
+      final lastName = _lastCtrl.text.trim();
+      ProfileStore.instance.applyLocalPatch((p) => UserProfile(
+            uid: p.uid,
+            name: fullNameOf(firstName, lastName),
+            firstName: firstName,
+            lastName: lastName,
+            email: p.email,
+            dob: dob.isEmpty ? null : dob,
+            gender: _gender,
+            photoURL: resolvedPhotoURL,
+            photoURLSource: photoURLSource ?? p.photoURLSource,
+            courseId: p.courseId,
+            subcourseId: p.subcourseId,
+            stats: p.stats,
+            isAdmin: p.isAdmin,
+            isPremium: p.isPremium,
+            premiumPlanName: p.premiumPlanName,
+            premiumBillingCycle: p.premiumBillingCycle,
+            premiumExpiryDate: p.premiumExpiryDate,
+          ));
+
       if (!mounted) return;
       setState(() {
         _initFirst = _firstCtrl.text;
@@ -506,11 +569,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _initDob = _dobCtrl.text;
         _initGender = _gender;
         _initPhotoURL = resolvedPhotoURL;
-        _photoURL = resolvedPhotoURL;
-        _pickedBytes = null;
-        _uploadState = UploadState.idle;
         _dobError = null;
-        _savingMessage = null;
+        _uploadState = UploadState.idle;
+        _phase = _SavePhase.idle;
       });
       showToast(context, _Strings.updated, ToastVariant.success);
       context.pop();
@@ -518,7 +579,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         setState(() {
           _uploadState = UploadState.idle;
-          _savingMessage = null;
+          _phase = _SavePhase.idle;
         });
       }
       showToast(context, _Strings.saveFailed, ToastVariant.error);
@@ -526,7 +587,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (mounted) {
         setState(() {
           _saving = false;
-          _savingMessage = null;
+          _phase = _SavePhase.idle;
         });
       }
     }
@@ -546,142 +607,148 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             Column(
               children: [
-            SubpageHeader(
-              title: _Strings.title,
-              onBackPress: _attemptLeave,
-            ),
-            Expanded(
-              child: !_hydrated || !_minLoaderElapsed
-                  ? PreloadingWidget(
-                      tinted: false,
-                      label: _Strings.loadingProfile,
-                      hint: _Strings.loadingHint,
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _refresh,
-                      color: colors.primary,
-                      child: ListView(
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                        children: [
-                          SyllabusEntrance(
-                            delayMs: 0,
-                            child: _photoBlock(colors),
-                          ),
-                          const SizedBox(height: 16),
-                          SyllabusEntrance(
-                            delayMs: 60,
-                            child: Column(
-                              children: [
-                                FloatingLabelField(
-                                  label: _Strings.firstName,
-                                  controller: _firstCtrl,
-                                  leftIcon: Icons.person_outline,
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                                const SizedBox(height: 16),
-                                FloatingLabelField(
-                                  label: _Strings.lastName,
-                                  controller: _lastCtrl,
-                                  leftIcon: Icons.person_outline,
-                                  onChanged: (_) => setState(() {}),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          SyllabusEntrance(
-                            delayMs: 120,
-                            child: _emailRow(colors),
-                          ),
-                          const SizedBox(height: 16),
-                          SyllabusEntrance(
-                            delayMs: 180,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                FloatingLabelField(
-                                  label: _Strings.dateOfBirth,
-                                  controller: _dobCtrl,
-                                  leftIcon: Icons.calendar_today_outlined,
-                                  keyboardType: TextInputType.number,
-                                  errorText: _dobError,
-                                  onChanged: _handleDobChange,
-                                ),
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                      left: 12, top: 4),
-                                  child: Text(
-                                    _Strings.dobHint,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: colors.textSecondary,
+                SubpageHeader(
+                  title: _Strings.title,
+                  onBackPress: _attemptLeave,
+                ),
+                Expanded(
+                  child: !_hydrated || !_minLoaderElapsed
+                      ? PreloadingWidget(
+                          tinted: false,
+                          label: _Strings.loadingProfile,
+                          hint: _Strings.loadingHint,
+                        )
+                      : RefreshIndicator(
+                          onRefresh: _refresh,
+                          color: colors.primary,
+                          child: ListView(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding:
+                                const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                            children: [
+                              SyllabusEntrance(
+                                delayMs: 0,
+                                child: _photoBlock(colors),
+                              ),
+                              const SizedBox(height: 20),
+                              SyllabusEntrance(
+                                delayMs: 60,
+                                child: Column(
+                                  children: [
+                                    _ProfileField(
+                                      label: _Strings.firstName,
+                                      controller: _firstCtrl,
+                                      icon: Icons.person_outline,
+                                      textInputAction: TextInputAction.next,
+                                      onChanged: (_) => setState(() {}),
                                     ),
+                                    const SizedBox(height: 12),
+                                    _ProfileField(
+                                      label: _Strings.lastName,
+                                      controller: _lastCtrl,
+                                      icon: Icons.person_outline,
+                                      textInputAction: TextInputAction.next,
+                                      onChanged: (_) => setState(() {}),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              SyllabusEntrance(
+                                delayMs: 120,
+                                child: _emailRow(colors),
+                              ),
+                              const SizedBox(height: 12),
+                              SyllabusEntrance(
+                                delayMs: 180,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    _ProfileField(
+                                      label: _Strings.dateOfBirth,
+                                      controller: _dobCtrl,
+                                      icon: Icons.calendar_today_outlined,
+                                      keyboardType: TextInputType.number,
+                                      maxLength: 10,
+                                      errorText: _dobError,
+                                      onChanged: _handleDobChange,
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 12, top: 6),
+                                      child: Text(
+                                        _Strings.dobHint,
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          color: colors.textSecondary,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              SyllabusEntrance(
+                                delayMs: 240,
+                                child: _genderBlock(colors),
+                              ),
+                              if (_offline) ...[
+                                const SizedBox(height: 12),
+                                Text(
+                                  _Strings.offlineBlocked,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: colors.warning,
                                   ),
                                 ),
                               ],
-                            ),
+                            ],
                           ),
-                          const SizedBox(height: 16),
-                          SyllabusEntrance(
-                            delayMs: 240,
-                            child: _genderBlock(colors),
-                          ),
-                          if (_offline) ...[
-                            const SizedBox(height: 12),
-                            Text(
-                              _Strings.offlineBlocked,
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: colors.warning,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-            ),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: colors.surface,
-                border: Border(
-                  top: BorderSide(color: colors.divider, width: 0.5),
+                        ),
                 ),
-              ),
-              child: SafeArea(
-                top: false,
-                child: SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    onPressed:
-                        (_isDirty && !_offline && !_saving) ? _handleSave : null,
-                    style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: colors.surface,
+                    border: Border(
+                      top: BorderSide(color: colors.divider, width: 0.5),
+                    ),
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton(
+                        onPressed: _canSave ? _handleSave : null,
+                        style: FilledButton.styleFrom(
+                          padding:
+                              const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: _saving
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(_Strings.saveChanges),
                       ),
                     ),
-                    child: _saving
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(_Strings.saveChanges),
                   ),
                 ),
-              ),
+              ],
             ),
-          ],
-        ),
-        // Blocks the whole screen while the save is in flight, like
-        // React's PageLoaderOverlay.
-        if (_saving)
-          Positioned.fill(
+            // Only the Firestore-write phase blocks the screen with an
+            // overlay. The upload phase stays overlay-free so the progress
+            // ring on the photo is always visible.
+            if (_phase == _SavePhase.writing)
+              Positioned.fill(
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.45),
                   alignment: Alignment.center,
@@ -698,7 +765,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                         CircularProgressIndicator(color: colors.primary),
                         const SizedBox(height: 12),
                         Text(
-                          _savingMessage ?? _Strings.savingProfile,
+                          _Strings.savingProfile,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 14,
@@ -747,8 +814,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: colors.primary,
-                      border: Border.all(
-                          color: colors.background, width: 2),
+                      border:
+                          Border.all(color: colors.background, width: 2),
                     ),
                     child: const Icon(Icons.camera_alt,
                         size: 16, color: Colors.white),
@@ -772,27 +839,69 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
         const SizedBox(height: 2),
         Text(
-          _Strings.clickPhotoToChange,
+          _photoCaption(),
           style: TextStyle(
             fontSize: 12,
-            color: colors.textSecondary,
+            color: _phase == _SavePhase.uploading
+                ? colors.primary
+                : colors.textSecondary,
+            fontWeight: _phase == _SavePhase.uploading
+                ? FontWeight.w600
+                : FontWeight.normal,
           ),
         ),
       ],
     );
   }
 
+  /// The caption under the photo: during upload it carries the live upload
+  /// status (the ring shows the fraction), otherwise the change hint.
+  String _photoCaption() {
+    if (_phase == _SavePhase.uploading) {
+      return '${_Strings.uploadingPhoto} ${(_uploadProgress * 100).round()}%';
+    }
+    return _Strings.clickPhotoToChange;
+  }
+
   /// Identity ring at rest, progress ring while uploading. A freshly picked
   /// (not yet uploaded) photo previews from memory with the same ring
-  /// treatment ProfileAvatar draws.
+  /// treatment ProfileAvatar draws; once the upload completes, the new
+  /// hosted photo wears the green "done" ring with a checkmark flash.
   Widget _avatarFace(String displayName) {
     if (_uploadState != UploadState.idle) {
-      return AvatarProgressRing(
+      final content = _pickedBytes != null
+          ? _pickedFace(96)
+          : ProfileAvatar(
+              uri: _photoURL,
+              name: displayName,
+              size: 96,
+              pro: _pro,
+            );
+      final ring = AvatarProgressRing(
         size: 96,
         progress: _uploadProgress,
         state: _uploadState,
-        child: _pickedFace(96),
+        child: content,
       );
+      if (_phase == _SavePhase.settling) {
+        // The brief "done" state: green full ring + checkmark flash.
+        return Stack(
+          alignment: Alignment.center,
+          children: [
+            ring,
+            Container(
+              width: 44,
+              height: 44,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0xFF22C55E),
+              ),
+              child: const Icon(Icons.check, size: 26, color: Colors.white),
+            ),
+          ],
+        );
+      }
+      return ring;
     }
     if (_pickedBytes != null) return _pickedFaceWithRing(96);
     return ProfileAvatar(
@@ -838,20 +947,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  /// Email — displayed, never editable.
+  /// Email — displayed, never editable. Dark locked field with the
+  /// "Coming soon" pill, in the profile design language.
   Widget _emailRow(ExpoPalette colors) {
     return Container(
       decoration: BoxDecoration(
-        border: Border.all(color: colors.border, width: 1.5),
-        color: colors.surfaceAlt,
-        borderRadius: BorderRadius.circular(10),
+        color: colors.surface,
+        border: Border.all(color: colors.border, width: 0.5),
+        borderRadius: BorderRadius.circular(14),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      constraints: const BoxConstraints(minHeight: 58),
+      padding: const EdgeInsets.all(10),
       child: Row(
         children: [
-          Icon(Icons.mail_outline, size: 20, color: colors.textSecondary),
-          const SizedBox(width: 12),
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: colors.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.mail_outline,
+                size: 20, color: colors.textSecondary),
+          ),
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -879,8 +998,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             ),
           ),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(
               color: colors.warning.withValues(alpha: 0x22 / 0xFF),
               borderRadius: BorderRadius.circular(999),
@@ -905,7 +1023,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: 12, bottom: 8),
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
           child: Text(
             _Strings.gender,
             style: TextStyle(
@@ -920,41 +1038,50 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             final selected = _gender == option;
             return Expanded(
               child: Padding(
-                padding: EdgeInsets.only(
-                    right: option == 'other' ? 0 : 8),
+                padding:
+                    EdgeInsets.only(right: option == 'other' ? 0 : 8),
                 child: GestureDetector(
                   onTap: () => setState(() => _gender = option),
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                        vertical: 12, horizontal: 8),
+                        vertical: 10, horizontal: 8),
                     decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: selected
-                            ? colors.primary
-                            : colors.border,
-                        width: 1.5,
+                        color: selected ? colors.primary : colors.border,
+                        width: selected ? 1.5 : 0.5,
                       ),
                       color: selected
-                          ? colors.primary
-                              .withValues(alpha: 0x17 / 0xFF)
+                          ? colors.primary.withValues(alpha: 0x17 / 0xFF)
                           : colors.surface,
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(
-                          option == 'male'
-                              ? Icons.male
-                              : option == 'female'
-                                  ? Icons.female
-                                  : Icons.transgender,
-                          size: 16,
-                          color: selected
-                              ? colors.primary
-                              : colors.textSecondary,
+                        Container(
+                          width: 30,
+                          height: 30,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? colors.primary
+                                    .withValues(alpha: 0x17 / 0xFF)
+                                : colors.surfaceAlt,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            option == 'male'
+                                ? Icons.male
+                                : option == 'female'
+                                    ? Icons.female
+                                    : Icons.transgender,
+                            size: 16,
+                            color: selected
+                                ? colors.primary
+                                : colors.textSecondary,
+                          ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Flexible(
                           child: Text(
                             _genderLabel(option),
@@ -992,6 +1119,211 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       default:
         return _Strings.genderOther;
     }
+  }
+}
+
+/// Dark floating-label text input in the app's premium design language —
+/// dark surface, hairline border (1.5px primary/danger on focus/error),
+/// tone-coded icon box — instead of the auth screens' always-light fields.
+///
+/// Mirrors FloatingLabelField's motion: the label rests as the placeholder,
+/// then floats up and shrinks to 0.82 on focus/value.
+class _ProfileField extends StatefulWidget {
+  final String label;
+  final TextEditingController controller;
+  final IconData icon;
+  final String? errorText;
+  final TextInputType keyboardType;
+  final TextInputAction textInputAction;
+  final ValueChanged<String>? onChanged;
+  final int? maxLength;
+
+  const _ProfileField({
+    required this.label,
+    required this.controller,
+    required this.icon,
+    this.errorText,
+    this.keyboardType = TextInputType.text,
+    this.textInputAction = TextInputAction.done,
+    this.onChanged,
+    this.maxLength,
+  });
+
+  @override
+  State<_ProfileField> createState() => _ProfileFieldState();
+}
+
+class _ProfileFieldState extends State<_ProfileField>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _anim;
+  late final FocusNode _focusNode;
+  bool _focused = false;
+
+  bool get _hasError => widget.errorText != null;
+  bool get _hasValue => widget.controller.text.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _focusNode = FocusNode();
+    if (_hasValue) _anim.value = 1.0;
+    _focusNode.addListener(_onFocusChange);
+    widget.controller.addListener(_onTextChange);
+  }
+
+  void _onFocusChange() {
+    if (!mounted) return;
+    setState(() => _focused = _focusNode.hasFocus);
+    _drive();
+  }
+
+  void _onTextChange() {
+    if (!mounted) return;
+    setState(() {});
+    _drive();
+  }
+
+  void _drive() {
+    if (_focused || _hasValue) {
+      _anim.animateTo(1.0, curve: Curves.easeOutCubic);
+    } else {
+      _anim.animateTo(0.0, curve: Curves.easeOutCubic);
+    }
+  }
+
+  @override
+  void dispose() {
+    _focusNode.removeListener(_onFocusChange);
+    widget.controller.removeListener(_onTextChange);
+    _focusNode.dispose();
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, _) {
+        final t = _anim.value;
+        final borderColor = _hasError
+            ? palette.danger
+            : Color.lerp(palette.border, palette.primary, t)!;
+        final labelColor = _hasError
+            ? palette.danger
+            : Color.lerp(palette.textSecondary, palette.primary, t)!;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              constraints: const BoxConstraints(minHeight: 62),
+              decoration: BoxDecoration(
+                color: palette.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: borderColor,
+                    width: (_focused || _hasError) ? 1.5 : 0.5),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: _hasError
+                          ? palette.danger.withValues(alpha: 0x17 / 0xFF)
+                          : _focused
+                              ? palette.primary
+                                  .withValues(alpha: 0x17 / 0xFF)
+                              : palette.surfaceAlt,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      widget.icon,
+                      size: 20,
+                      color: _hasError
+                          ? palette.danger
+                          : _focused
+                              ? palette.primary
+                              : palette.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: SizedBox(
+                      height: 62,
+                      child: Stack(
+                        children: [
+                          // Floating label — anchored left-center so it never
+                          // drifts right as it scales.
+                          Positioned.fill(
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: Transform.translate(
+                                offset: Offset(0, -17.0 * t),
+                                child: Transform.scale(
+                                  scale: 1.0 - 0.18 * t,
+                                  alignment: Alignment.centerLeft,
+                                  child: Text(
+                                    widget.label,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: labelColor,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          TextField(
+                            controller: widget.controller,
+                            focusNode: _focusNode,
+                            keyboardType: widget.keyboardType,
+                            textInputAction: widget.textInputAction,
+                            maxLength: widget.maxLength,
+                            onChanged: widget.onChanged,
+                            style: TextStyle(
+                              fontSize: 16,
+                              color: palette.textPrimary,
+                            ),
+                            decoration: const InputDecoration(
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding:
+                                  EdgeInsets.only(top: 20, bottom: 8),
+                              // The mask caps the digits anyway; React's
+                              // maxLength is semantic parity only.
+                              counterText: '',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (widget.errorText != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4, left: 4),
+                child: Text(
+                  widget.errorText!,
+                  style: TextStyle(fontSize: 12, color: palette.danger),
+                ),
+              ),
+          ],
+        );
+      },
+    );
   }
 }
 

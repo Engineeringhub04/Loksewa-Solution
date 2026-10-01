@@ -148,43 +148,58 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
 
   void _snack(String msg) {
     if (mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      // Stack (not Column): the saving dim barrier sits ABOVE everything
+      // including the header, so it never leaves white slivers at the
+      // header's curved corners — same pattern as the chapter/units pages.
+      body: Stack(
         children: [
-          const SubpageHeader(title: 'Answer Update'),
-          Expanded(
-            child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Answers...',
-            );
-          }
-          if (snap.hasError) {
-            if (snap.error is _Denied) {
-              return const Center(child: Text('Access denied'));
-            }
-            return const Center(child: Text('Could not load this submission.'));
-          }
-          final a = snap.data;
-          if (a == null) {
-            return const Center(
-                child: Text('Submission not found — it may have been removed.'));
-          }
-          _prefill(a);
-          return _body(a);
-        },
-      ),
+          Column(
+            children: [
+              const SubpageHeader(title: 'Answer Update'),
+              Expanded(
+                child: FutureBuilder<Map<String, dynamic>?>(
+                  future: _future,
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return const PreloadingWidget(
+                        tinted: false,
+                        label: 'Loading Answers...',
+                      );
+                    }
+                    if (snap.hasError) {
+                      if (snap.error is _Denied) {
+                        return const Center(child: Text('Access denied'));
+                      }
+                      return const Center(
+                          child: Text('Could not load this submission.'));
+                    }
+                    final a = snap.data;
+                    if (a == null) {
+                      return const Center(
+                          child: Text(
+                              'Submission not found — it may have been removed.'));
+                    }
+                    _prefill(a);
+                    return _body(a);
+                  },
+                ),
+              ),
+            ],
           ),
+          if (_saving)
+            Container(
+              color: Colors.black45,
+              child: const PreloadingWidget(
+                label: 'Saving...',
+              ),
+            ),
         ],
       ),
     );
@@ -197,157 +212,146 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
         ? '$studentName ($profileName)'
         : (studentName.isNotEmpty ? studentName : profileName);
 
-    return Stack(
+    return ListView(
+      padding: const EdgeInsets.all(16),
       children: [
-        ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(displayName.isEmpty ? 'Unnamed student' : displayName,
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold)),
-                    if (a['email'] != null)
-                      Text('${a['email']}',
-                          style: const TextStyle(color: Colors.grey)),
-                    Text(
-                      '${a['courseName'] ?? ''} · ${a['subcourseName'] ?? ''}',
-                      style:
-                          const TextStyle(color: Colors.grey, fontSize: 13),
-                    ),
-                    Text('${a['examSetTitle'] ?? 'Untitled paper'}',
-                        style:
-                            const TextStyle(color: Colors.grey, fontSize: 13)),
-                    if ((a['message'] as String?)?.isNotEmpty == true) ...[
-                      const SizedBox(height: 8),
-                      const Text("Student's message",
-                          style: TextStyle(fontWeight: FontWeight.w600)),
-                      Text('${a['message']}',
-                          style: const TextStyle(color: Colors.grey)),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _score,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Score',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
+                Text(displayName.isEmpty ? 'Unnamed student' : displayName,
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.bold)),
+                if (a['email'] != null)
+                  Text('${a['email']}',
+                      style: const TextStyle(color: Colors.grey)),
+                Text(
+                  '${a['courseName'] ?? ''} · ${a['subcourseName'] ?? ''}',
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _fullMarks,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Full Marks',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ),
+                Text('${a['examSetTitle'] ?? 'Untitled paper'}',
+                    style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                if ((a['message'] as String?)?.isNotEmpty == true) ...[
+                  const SizedBox(height: 8),
+                  const Text("Student's message",
+                      style: TextStyle(fontWeight: FontWeight.w600)),
+                  Text('${a['message']}',
+                      style: const TextStyle(color: Colors.grey)),
+                ],
               ],
-            ),
-            const SizedBox(height: 12),
-            const Text('Custom message to student',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => setState(() {
-                      _passed = true;
-                      _reviewNote.text = _preset(true, profileName.isNotEmpty ? profileName : studentName);
-                    }),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _passed == true ? Colors.green : null,
-                      foregroundColor: _passed == true ? Colors.white : null,
-                    ),
-                    child: const Text('Pass'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => setState(() {
-                      _passed = false;
-                      _reviewNote.text = _preset(false, profileName.isNotEmpty ? profileName : studentName);
-                    }),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _passed == false ? Colors.red : null,
-                      foregroundColor: _passed == false ? Colors.white : null,
-                    ),
-                    child: const Text('Fail'),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _reviewNote,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Message',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text('Submitted PDF',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            _linkBox('${a['pdfUrl'] ?? ''}'),
-            const SizedBox(height: 12),
-            const Text('Checked PDF',
-                style: TextStyle(fontWeight: FontWeight.w600)),
-            const Padding(
-              padding: EdgeInsets.only(top: 4, bottom: 8),
-              child: Text(
-                'Paste the link to your checked/marked copy of the answer sheet. This is what the student will download.',
-                style: TextStyle(fontSize: 12, color: Colors.grey),
-              ),
-            ),
-            TextField(
-              controller: _checkedPdfUrl,
-              decoration: const InputDecoration(
-                labelText: 'Checked PDF URL (optional)',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _saving ? null : _save,
-              style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14)),
-              child: _saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('Update'),
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
-        if (_saving)
-          Container(
-            color: Colors.black45,
-            child: const PreloadingWidget(
-              label: 'Saving...',
             ),
           ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _score,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Score',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _fullMarks,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Full Marks',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        const Text('Custom message to student',
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () => setState(() {
+                  _passed = true;
+                  _reviewNote.text = _preset(
+                      true, profileName.isNotEmpty ? profileName : studentName);
+                }),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _passed == true ? Colors.green : null,
+                  foregroundColor: _passed == true ? Colors.white : null,
+                ),
+                child: const Text('Pass'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () => setState(() {
+                  _passed = false;
+                  _reviewNote.text = _preset(false,
+                      profileName.isNotEmpty ? profileName : studentName);
+                }),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _passed == false ? Colors.red : null,
+                  foregroundColor: _passed == false ? Colors.white : null,
+                ),
+                child: const Text('Fail'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _reviewNote,
+          maxLines: 4,
+          decoration: const InputDecoration(
+            labelText: 'Message',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        const Text('Submitted PDF',
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 8),
+        _linkBox('${a['pdfUrl'] ?? ''}'),
+        const SizedBox(height: 12),
+        const Text('Checked PDF',
+            style: TextStyle(fontWeight: FontWeight.w600)),
+        const Padding(
+          padding: EdgeInsets.only(top: 4, bottom: 8),
+          child: Text(
+            'Paste the link to your checked/marked copy of the answer sheet. This is what the student will download.',
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ),
+        TextField(
+          controller: _checkedPdfUrl,
+          decoration: const InputDecoration(
+            labelText: 'Checked PDF URL (optional)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 16),
+        ElevatedButton(
+          onPressed: _saving ? null : _save,
+          style: ElevatedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 14)),
+          child: _saving
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white))
+              : const Text('Update'),
+        ),
+        const SizedBox(height: 24),
       ],
     );
   }

@@ -29,7 +29,6 @@ class DeleteAccountScreen extends StatefulWidget {
 
 class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   static const _confirmWord = 'DELETE';
-  static const _danger = Color(0xFFDC2626);
 
   final _confirmText = TextEditingController();
   bool _deleting = false;
@@ -61,13 +60,15 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   bool get _matches => _confirmText.text.trim().toUpperCase() == _confirmWord;
 
   Future<void> _askConfirm() async {
+    // Theme-aware danger red (React colors.error: #DC2626 light / #F87171 dark).
+    final danger = ExpoPalette.of(context).danger;
     final ok = await AppModalShell.show<bool>(
       context: context,
       builder: (ctx) => AppModalShell(
-        accent: _danger,
+        accent: danger,
         accentMid: const Color(0xFFEF4444),
         accentLight: const Color(0xFFFECACA),
-        tagColor: _danger,
+        tagColor: danger,
         tagLabel: AppLanguage.tr('DELETE', 'मेट्नुहोस्'),
         onClose: () => Navigator.of(ctx).pop(false),
         icon: Container(
@@ -76,7 +77,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: _danger,
+            color: danger,
           ),
           child: const Icon(Icons.warning_amber_rounded,
               size: 28, color: Colors.white),
@@ -125,15 +126,15 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
               child: ElevatedButton(
                 onPressed: () => Navigator.of(ctx).pop(true),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: _danger,
+                  backgroundColor: danger,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(22),
                   ),
                 ),
-                child: Text(
-                    AppLanguage.tr('Delete My Account', 'मेरो खाता मेट्नुहोस्')),
+                child: Text(AppLanguage.tr(
+                    'Delete My Account', 'मेरो खाता मेट्नुहोस्')),
               ),
             ),
           ],
@@ -158,8 +159,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       if (!mounted) return;
       showToast(
         context,
-        AppLanguage.tr(
-            'Your account has been deleted', 'तपाईंको खाता मेटियो'),
+        AppLanguage.tr('Your account has been deleted', 'तपाईंको खाता मेटियो'),
         ToastVariant.success,
       );
       context.go('/login');
@@ -180,15 +180,23 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
     final offline = _offline == true;
+    // Theme-aware palette (React useTheme colors): danger red, secondary
+    // text and surfaceAlt all flip correctly between light and dark.
+    final palette = ExpoPalette.of(context);
+    final danger = palette.danger;
+    final enabled = _matches && !_deleting;
     return Scaffold(
-      body: Column(
+      // Stack (not Column): the deleting dim barrier sits ABOVE everything
+      // including the header — same as React's full-screen PageLoaderOverlay
+      // — so it never leaves white slivers at the header's curved corners.
+      body: Stack(
         children: [
-          SubpageHeader(
-              title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
-          Expanded(
-            child: Stack(
-              children: [
-                ListView(
+          Column(
+            children: [
+              SubpageHeader(
+                  title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
+              Expanded(
+                child: ListView(
                   padding: const EdgeInsets.all(16),
                   children: [
                     SyllabusEntrance(
@@ -196,14 +204,15 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                       child: Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: _danger.withValues(alpha: 0x14 / 0xFF),
-                          border: Border.all(color: _danger),
-                          borderRadius: BorderRadius.circular(12),
+                          color: danger.withValues(alpha: 0x14 / 0xFF),
+                          border: Border.all(color: danger),
+                          // React radius.lg (20) on the warning box.
+                          borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.warning_amber_rounded,
-                                size: 26, color: _danger),
+                            Icon(Icons.warning_amber_rounded,
+                                size: 26, color: danger),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Column(
@@ -212,8 +221,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                                   Text(
                                     AppLanguage.tr('This cannot be undone',
                                         'यो फिर्ता गर्न मिल्दैन'),
-                                    style: const TextStyle(
-                                        color: _danger,
+                                    style: TextStyle(
+                                        color: danger,
                                         fontWeight: FontWeight.bold,
                                         fontSize: 16),
                                   ),
@@ -223,8 +232,9 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                                       'Deleting your account permanently removes your profile and study data.',
                                       'खाता मेट्दा तपाईंको प्रोफाइल र अध्ययन डाटा सधैंको लागि हट्नेछ।',
                                     ),
-                                    style: const TextStyle(
-                                        color: Colors.grey, fontSize: 13),
+                                    style: TextStyle(
+                                        color: palette.textSecondary,
+                                        fontSize: 13),
                                   ),
                                 ],
                               ),
@@ -250,17 +260,16 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                               ),
                               const SizedBox(height: 12),
                               ..._losses.map((l) => Padding(
-                                    padding:
-                                        const EdgeInsets.only(bottom: 10),
+                                    padding: const EdgeInsets.only(bottom: 10),
                                     child: Row(
                                       children: [
-                                        Icon(l.$1, size: 18, color: _danger),
+                                        Icon(l.$1, size: 18, color: danger),
                                         const SizedBox(width: 10),
                                         Expanded(
                                           child: Text(
                                             AppLanguage.tr(l.$2, l.$3),
-                                            style: const TextStyle(
-                                                color: Colors.grey,
+                                            style: TextStyle(
+                                                color: palette.textSecondary,
                                                 fontSize: 14),
                                           ),
                                         ),
@@ -279,8 +288,11 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8),
+                            // React colors.surfaceAlt — theme-aware so the
+                            // email stays readable in both themes (the old
+                            // fixed light-grey box washed the text out).
+                            color: palette.surfaceAlt,
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -288,13 +300,16 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                               Text(
                                 AppLanguage.tr(
                                     'Account to be deleted', 'मेटिने खाता'),
-                                style: const TextStyle(
-                                    color: Colors.grey, fontSize: 12),
+                                style: TextStyle(
+                                    color: palette.textSecondary, fontSize: 12),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 user!.email!,
-                                style: const TextStyle(
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    color: palette.textPrimary,
                                     fontSize: 16,
                                     fontWeight: FontWeight.w600),
                               ),
@@ -308,10 +323,10 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                       SyllabusEntrance(
                         delayMs: 180,
                         child: Text(
-                          AppLanguage.tr('No internet connection',
-                              'इन्टरनेट जडान छैन'),
-                          style: const TextStyle(
-                              color: Colors.orange, fontSize: 13),
+                          AppLanguage.tr(
+                              'No internet connection', 'इन्टरनेट जडान छैन'),
+                          style:
+                              TextStyle(color: palette.warning, fontSize: 13),
                         ),
                       )
                     else ...[
@@ -326,8 +341,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                               'Type $_confirmWord to confirm',
                               'पुष्टि गर्न $_confirmWord टाइप गर्नुहोस्',
                             ),
-                            prefixIcon: const Icon(
-                                Icons.error_outline_rounded,
+                            prefixIcon: const Icon(Icons.error_outline_rounded,
                                 size: 20),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
@@ -339,24 +353,31 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                       const SizedBox(height: 16),
                       SyllabusEntrance(
                         delayMs: 240,
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed:
-                                (_matches && !_deleting) ? _askConfirm : null,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _danger,
-                              foregroundColor: Colors.white,
-                              disabledBackgroundColor:
-                                  Colors.grey.shade300,
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                        // React's danger Button: the red fill + white label
+                        // stay the same when disabled — only the whole button
+                        // dims to 50% opacity. Never a grey/white box.
+                        child: Opacity(
+                          opacity: enabled ? 1.0 : 0.5,
+                          child: SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: enabled ? _askConfirm : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: danger,
+                                foregroundColor: Colors.white,
+                                disabledBackgroundColor: danger,
+                                disabledForegroundColor: Colors.white,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                textStyle: const TextStyle(
+                                    fontSize: 16, fontWeight: FontWeight.w600),
                               ),
+                              child: Text(AppLanguage.tr(
+                                  'Delete My Account', 'मेरो खाता मेट्नुहोस्')),
                             ),
-                            child: Text(AppLanguage.tr(
-                                'Delete My Account', 'मेरो खाता मेट्नुहोस्')),
                           ),
                         ),
                       ),
@@ -366,25 +387,26 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                       onPressed: () => context.pop(),
                       child: Text(
                         AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
-                        style:
-                            const TextStyle(color: AppColors.navy),
+                        // React's text-variant Button uses colors.primary —
+                        // theme-aware, readable on both themes.
+                        style: TextStyle(color: palette.primary),
                       ),
                     ),
                   ],
                 ),
-                if (_deleting)
-                  Container(
-                    color: Colors.black54,
-                    child: Center(
-                      child: PreloadingWidget(
-                        label: AppLanguage.tr('Deleting your account...',
-                            'खाता मेटिँदै...'),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+              ),
+            ],
           ),
+          if (_deleting)
+            Container(
+              color: Colors.black54,
+              child: Center(
+                child: PreloadingWidget(
+                  label: AppLanguage.tr(
+                      'Deleting your account...', 'खाता मेटिँदै...'),
+                ),
+              ),
+            ),
         ],
       ),
     );

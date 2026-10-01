@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -7,6 +8,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/widgets/home/home_header.dart';
 import 'package:loksewa_solution/widgets/home/banner_carousel.dart';
 import 'package:loksewa_solution/widgets/home/question_of_day_card.dart';
@@ -57,6 +59,16 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     _scrollController.addListener(() {
       _scrollOffset.value = _scrollController.offset;
     });
+    // Warm the shared profile store (like the root layout does on the Expo
+    // side) so the header below can read name/photo from it — and so a save
+    // in Edit Profile updates this header in real time. Deduplicated inside
+    // the store, so racing the Profile tab's own warm-up is harmless.
+    final uid = AuthService.currentUser?.uid;
+    if (uid != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ProfileStore.instance.load(uid);
+      });
+    }
   }
 
   @override
@@ -331,6 +343,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                   RefreshIndicator(
                     onRefresh: () async {
                       setState(() => _future = _load());
+                      // Keep the shared store fresh too, so the header (and
+                      // Profile) shows the same data — mirrors index.tsx.
+                      final refreshUid = AuthService.currentUser?.uid;
+                      if (refreshUid != null) {
+                        unawaited(ProfileStore.instance
+                            .load(refreshUid, refresh: true));
+                      }
                       await _future;
                     },
                     child: ListView(
@@ -445,22 +464,40 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       ],
                     ),
                   ),
-                  // Fixed collapsing header overlay.
+                  // Fixed collapsing header overlay. Sourced from the shared
+                  // profile store first, so a photo/name change saved in Edit
+                  // Profile shows up here immediately — no refresh needed
+                  // (mirrors index.tsx's storeProfile-first header).
                   ValueListenableBuilder<double>(
                     valueListenable: _scrollOffset,
-                    builder: (context, offset, _) => HomeHeader(
-                      scrollOffset: offset < 0 ? 0 : offset,
-                      displayName: user?.displayName ?? user?.email,
-                      photoURL: d.photoURL,
-                      pro: d.isPremium,
-                      notificationCount: d.notificationCount,
-                      courseName: d.courseName,
-                      subcourseName: d.subcourseName,
-                      onNotificationsPress: () =>
-                          context.push('/notifications'),
-                      onProfilePress: () => context.push('/profile'),
-                      onCoursePress: () =>
-                          context.push('/course-setup?mode=update'),
+                    builder: (context, offset, _) => ListenableBuilder(
+                      listenable: ProfileStore.instance,
+                      builder: (context, _) {
+                        final storeProfile = ProfileStore.instance.profile;
+                        final storeName = storeProfile?.name.trim() ?? '';
+                        final storePhoto = storeProfile?.photoURL;
+                        return HomeHeader(
+                          scrollOffset: offset < 0 ? 0 : offset,
+                          displayName: storeName.isNotEmpty
+                              ? storeName
+                              : (user?.displayName ?? user?.email),
+                          photoURL:
+                              (storePhoto != null && storePhoto.isNotEmpty)
+                                  ? storePhoto
+                                  : d.photoURL,
+                          pro: storeProfile != null
+                              ? hasActivePremium(storeProfile)
+                              : d.isPremium,
+                          notificationCount: d.notificationCount,
+                          courseName: d.courseName,
+                          subcourseName: d.subcourseName,
+                          onNotificationsPress: () =>
+                              context.push('/notifications'),
+                          onProfilePress: () => context.push('/profile'),
+                          onCoursePress: () =>
+                              context.push('/course-setup?mode=update'),
+                        );
+                      },
                     ),
                   ),
                 ],

@@ -306,9 +306,10 @@ void main() {
   });
 
   group('BookmarkRemoveDialog — AppModalShell global modal', () {
-    testWidgets('uses AppModalShell; Remove pops true',
+    testWidgets('uses AppModalShell; Remove runs onRemove then pops true',
         (WidgetTester tester) async {
       bool? result;
+      var removed = false;
       await tester.pumpWidget(
         MaterialApp(
           home: Builder(
@@ -316,8 +317,12 @@ void main() {
               onPressed: () async {
                 result = await AppModalShell.show<bool>(
                   context: context,
-                  builder: (c) => const BookmarkRemoveDialog(
-                      item: {'title': 'Sample bookmark'}),
+                  builder: (c) => BookmarkRemoveDialog(
+                    item: const {'title': 'Sample bookmark'},
+                    onRemove: () async {
+                      removed = true;
+                    },
+                  ),
                 );
               },
               child: const Text('open'),
@@ -326,14 +331,22 @@ void main() {
         ),
       );
       await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
+      // The shell fades the card in over 200ms — small pumps, never
+      // pumpAndSettle (the delete spinner is an infinite animation).
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
 
       expect(find.byType(AppModalShell), findsOneWidget);
       expect(find.text('Remove this bookmark?'), findsOneWidget);
 
       await tester.tap(find.text('Remove'));
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(removed, isTrue);
       expect(result, isTrue);
+      expect(find.text('Remove this bookmark?'), findsNothing);
     });
 
     testWidgets('Cancel pops false', (WidgetTester tester) async {
@@ -345,8 +358,10 @@ void main() {
               onPressed: () async {
                 result = await AppModalShell.show<bool>(
                   context: context,
-                  builder: (c) => const BookmarkRemoveDialog(
-                      item: {'title': 'Sample bookmark'}),
+                  builder: (c) => BookmarkRemoveDialog(
+                    item: const {'title': 'Sample bookmark'},
+                    onRemove: () async {},
+                  ),
                 );
               },
               child: const Text('open'),
@@ -355,10 +370,14 @@ void main() {
         ),
       );
       await tester.tap(find.text('open'));
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
 
       await tester.tap(find.text('Cancel'));
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       expect(result, isFalse);
     });
   });

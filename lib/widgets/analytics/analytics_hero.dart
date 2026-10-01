@@ -6,9 +6,10 @@ import 'analytics_shared.dart';
 /// along it is, and the three figures worth checking first.
 ///
 /// Mirrors AnalyticsHero.tsx: fixed blue gradient (#2563EB → #1D4ED8 →
-/// #0B1F5B, radius 24), an offset white glow blob, a 56px translucent
-/// school-icon box, course/subcourse names, a LIVE animated progress ring on
-/// the right, and a bottom inner strip (PTS · Rank/Active days · Streak).
+/// #0B1F5B, radius 24), soft translucent decorative bubbles, a 56px
+/// translucent school-icon box, course/subcourse names, a LIVE animated
+/// progress ring on the right, and a bottom inner strip (PTS · Rank/Active
+/// days · Streak).
 ///
 /// This is the single place on the screen that does NOT follow the app theme.
 /// The gradient is fixed, so everything drawn on it is fixed white too.
@@ -75,13 +76,52 @@ class AnalyticsHero extends StatelessWidget {
       padding: const EdgeInsets.all(18),
       child: Stack(
         children: [
-          // Offset white glow blob.
+          // Decorative bubbles: soft translucent circles that sit fully
+          // INSIDE the card. A bubble sliced by the card edge reads as a
+          // rendering bug (the old top:-30/right:-20 blob bled past the
+          // rounded corner and was clipped into an awkward sliver), so every
+          // bubble uses positive offsets and sizes that stay clear of the
+          // card boundary. The container's Clip.antiAlias is only a backstop.
+          //
+          // Keyed so widget tests can assert the decoration never escapes
+          // the card at small phone widths.
           const Positioned(
-            top: -30,
-            right: -20,
+            key: ValueKey('hero-bubble-large'),
+            top: 10,
+            right: 16,
             child: SizedBox(
-              width: 120,
-              height: 120,
+              width: 100,
+              height: 100,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x1FFFFFFF),
+                ),
+              ),
+            ),
+          ),
+          const Positioned(
+            key: ValueKey('hero-bubble-small'),
+            left: 14,
+            bottom: 12,
+            child: SizedBox(
+              width: 56,
+              height: 56,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0x14FFFFFF),
+                ),
+              ),
+            ),
+          ),
+          const Positioned(
+            key: ValueKey('hero-bubble-dot'),
+            right: 18,
+            bottom: 16,
+            child: SizedBox(
+              width: 30,
+              height: 30,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,

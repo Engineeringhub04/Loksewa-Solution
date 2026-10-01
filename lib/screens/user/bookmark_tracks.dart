@@ -14,37 +14,42 @@ import 'package:flutter/material.dart';
 /// - anything else keeps its own track
 ///
 /// Storage is untouched — this is grouping/filter/display only.
+///
+/// Language rule: [label] is pure English, [labelNe] is pure Devanagari
+/// Nepali. Callers render them through `AppLanguage.tr(label, labelNe)`.
 class BookmarkTrack {
   final String key;
   final String label;
+  final String labelNe;
   final IconData icon;
   final Color color;
-  const BookmarkTrack(this.key, this.label, this.icon, this.color);
+  const BookmarkTrack(
+      this.key, this.label, this.labelNe, this.icon, this.color);
 }
 
 const bookmarkTracks = <String, BookmarkTrack>{
-  'subject': BookmarkTrack(
-      'subject', 'Subject Question', Icons.quiz_outlined, Color(0xFFEA580C)),
+  'subject': BookmarkTrack('subject', 'Subject Question', 'विषय प्रश्न',
+      Icons.quiz_outlined, Color(0xFFEA580C)),
   'gk': BookmarkTrack(
-      'gk', 'GK', Icons.public_outlined, Color(0xFF0284C7)),
-  'pm': BookmarkTrack('pm', 'PM', Icons.account_balance_outlined,
-      Color(0xFF0D9488)),
+      'gk', 'GK', 'सामान्य ज्ञान', Icons.public_outlined, Color(0xFF0284C7)),
+  'pm': BookmarkTrack('pm', 'PM', 'सार्वजनिक व्यवस्थापन',
+      Icons.account_balance_outlined, Color(0xFF0D9488)),
   'exam': BookmarkTrack(
-      'exam', 'Exam', Icons.school_outlined, Color(0xFF2563EB)),
-  'article': BookmarkTrack(
-      'article', 'Article', Icons.newspaper_outlined, Color(0xFF059669)),
-  'daily-test': BookmarkTrack('daily-test', 'Daily Test',
+      'exam', 'Exam', 'परीक्षा', Icons.school_outlined, Color(0xFF2563EB)),
+  'article': BookmarkTrack('article', 'Article', 'लेख',
+      Icons.newspaper_outlined, Color(0xFF059669)),
+  'daily-test': BookmarkTrack('daily-test', 'Daily Test', 'दैनिक परीक्षा',
       Icons.calendar_today_outlined, Color(0xFF7C3AED)),
-  'qotd': BookmarkTrack(
-      'qotd', 'QOTD', Icons.wb_sunny_outlined, Color(0xFFD97706)),
+  'qotd': BookmarkTrack('qotd', 'QOTD', 'आजको प्रश्न',
+      Icons.wb_sunny_outlined, Color(0xFFD97706)),
   'quiz': BookmarkTrack(
-      'quiz', 'Quiz', Icons.help_outline, Color(0xFFDB2777)),
-  'discussion': BookmarkTrack(
-      'discussion', 'Discussion', Icons.forum_outlined, Color(0xFF4F46E5)),
-  'note': BookmarkTrack(
-      'note', 'Note', Icons.description_outlined, Color(0xFF475569)),
-  'other': BookmarkTrack(
-      'other', 'Other', Icons.bookmark_outline, Color(0xFF64748B)),
+      'quiz', 'Quiz', 'क्विज', Icons.help_outline, Color(0xFFDB2777)),
+  'discussion': BookmarkTrack('discussion', 'Discussion', 'छलफल',
+      Icons.forum_outlined, Color(0xFF4F46E5)),
+  'note': BookmarkTrack('note', 'Note', 'नोट',
+      Icons.description_outlined, Color(0xFF475569)),
+  'other': BookmarkTrack('other', 'Other', 'अन्य',
+      Icons.bookmark_outline, Color(0xFF64748B)),
 };
 
 /// Track key for one bookmark doc. Pure — safe to unit test.

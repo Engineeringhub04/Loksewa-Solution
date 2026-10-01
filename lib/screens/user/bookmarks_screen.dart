@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -474,11 +475,17 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          _filterChip(pal, dark, 'all', 'All', _items.length, null),
+          _filterChip(
+              pal, dark, 'all', AppLanguage.tr('All', 'सबै'), _items.length, null),
           for (final e in chips) ...[
             const SizedBox(width: 7),
-            _filterChip(pal, dark, e.key,
-                bookmarkTracks[e.key]?.label ?? e.key, e.value,
+            _filterChip(
+                pal,
+                dark,
+                e.key,
+                AppLanguage.tr(bookmarkTracks[e.key]?.label ?? e.key,
+                    bookmarkTracks[e.key]?.labelNe ?? e.key),
+                e.value,
                 bookmarkTracks[e.key]),
           ],
         ],
@@ -629,7 +636,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
     final track = bookmarkTrackOf(b);
     final dark =
         Theme.of(context).brightness == Brightness.dark;
-    final badge = track.label;
+    final badge = AppLanguage.tr(track.label, track.labelNe);
 
     return GestureDetector(
       onTap: widget.onTap,

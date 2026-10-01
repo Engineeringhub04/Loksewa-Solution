@@ -276,8 +276,9 @@ void main() {
       expect(find.text('OTHERS'), findsOneWidget);
       expect(find.text('Pinned note'), findsOneWidget);
       expect(find.text('Other note'), findsOneWidget);
-      // Security info card is visible (Devanagari — no Romanized Nepali).
-      expect(find.textContaining('डाटा database मा save हुँदैन'),
+      // Security info card uses the approved copy
+      // (pure English in EN mode — no Romanized Nepali).
+      expect(find.textContaining('Keep Notes are saved only on your phone'),
           findsOneWidget);
 
       tmp.deleteSync(recursive: true);

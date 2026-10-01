@@ -316,4 +316,56 @@ void main() {
           findsOneWidget);
     });
   });
+
+  group('AnalyticsHero bubbles', () {
+    Widget hero({double width = 360}) {
+      return MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: width,
+            child: AnalyticsHero(
+              courseName: 'A Very Long Course Name That Must Ellipsize',
+              subcourseName: 'Subcourse With A Long Name Too',
+              percent: 80,
+              points: 1234,
+              streak: 5,
+              activeDays: 12,
+              rank: 3,
+              switchable: true,
+              onPress: () {},
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('bubbles stay fully inside the card at 360dp',
+        (tester) async {
+      await tester.pumpWidget(hero());
+      // The ring's draw-in is 600ms; a bounded pump, never pumpAndSettle.
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(tester.takeException(), isNull);
+
+      final card = tester.getRect(find.byType(AnalyticsHero));
+      for (final key in [
+        'hero-bubble-large',
+        'hero-bubble-small',
+        'hero-bubble-dot'
+      ]) {
+        final bubble = tester.getRect(find.byKey(ValueKey(key)));
+        expect(card.contains(bubble.topLeft), isTrue,
+            reason: '$key top-left escapes the card');
+        expect(card.contains(bubble.bottomRight), isTrue,
+            reason: '$key bottom-right escapes the card');
+      }
+    });
+
+    testWidgets('no overflow at a narrow 320dp width', (tester) async {
+      await tester.pumpWidget(hero(width: 320));
+      await tester.pump(const Duration(milliseconds: 700));
+      // RenderFlex overflow errors surface as test exceptions.
+      expect(tester.takeException(), isNull);
+      expect(find.byType(AnalyticsHero), findsOneWidget);
+    });
+  });
 }

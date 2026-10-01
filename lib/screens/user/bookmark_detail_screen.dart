@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -19,7 +20,20 @@ import 'bookmark_remove_dialog.dart';
 /// the bookmark document behind the shared AppModalShell confirm modal.
 class BookmarkDetailScreen extends StatefulWidget {
   final String id;
-  const BookmarkDetailScreen({super.key, required this.id});
+
+  /// Test seams — production code never passes these. [loadBookmark]
+  /// replaces the Firestore/auth load; [deleteBookmark] replaces the
+  /// Firestore delete (receives the bookmark id and the loaded doc).
+  final Future<Map<String, dynamic>?> Function()? loadBookmark;
+  final Future<void> Function(String id, Map<String, dynamic> bookmark)?
+      deleteBookmark;
+
+  const BookmarkDetailScreen({
+    super.key,
+    required this.id,
+    this.loadBookmark,
+    this.deleteBookmark,
+  });
 
   @override
   State<BookmarkDetailScreen> createState() => _BookmarkDetailScreenState();
@@ -34,11 +48,23 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   void initState() {
     super.initState();
     _future = _load();
+    // Rebuild (in particular the header above the FutureBuilder) once the
+    // bookmark arrives. The header's delete action is disabled until
+    // _loaded is set; the FutureBuilder's own rebuild does NOT rebuild the
+    // header, so without this the delete icon's onTap would stay null
+    // forever and tapping it would do nothing.
+    _future.then((b) {
+      if (mounted) setState(() => _loaded = b);
+    }, onError: (_) {});
   }
 
   Future<Map<String, dynamic>?> _load() async {
+    final loader = widget.loadBookmark;
+    if (loader != null) return loader();
     final uid = AuthService.currentUser?.uid;
-    if (uid == null) throw Exception('Not signed in.');
+    if (uid == null) {
+      throw Exception(AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
+    }
     final idToken = await AuthService.getValidIdToken();
     return FirestoreRest.getDocument('users/$uid/bookmarks/${widget.id}',
         idToken: idToken);
@@ -50,23 +76,35 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
       builder: (c) => BookmarkRemoveDialog(item: b),
     );
     if (ok != true) return;
-    final uid = AuthService.currentUser?.uid;
-    if (uid == null) return;
     setState(() => _removing = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/$uid/bookmarks/${widget.id}',
-          idToken: idToken);
+      final deleter = widget.deleteBookmark;
+      if (deleter != null) {
+        await deleter(widget.id, b);
+      } else {
+        final uid = AuthService.currentUser?.uid;
+        if (uid == null) {
+          throw Exception(
+              AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
+        }
+        final idToken = await AuthService.getValidIdToken();
+        await FirestoreRest.deleteDocument(
+            'users/$uid/bookmarks/${widget.id}',
+            idToken: idToken);
+      }
       if (mounted) {
-        showToast(context, 'Removed from bookmarks', ToastVariant.info);
+        showToast(
+            context,
+            AppLanguage.tr('Removed from bookmarks', 'बुकमार्कबाट हटाइयो'),
+            ToastVariant.info);
         context.pop();
       }
     } catch (e) {
       setState(() => _removing = false);
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Remove failed: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(AppLanguage.tr(
+                'Remove failed: $e', 'हटाउन असफल भयो: $e'))));
       }
     }
   }
@@ -94,7 +132,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     return Scaffold(
       body: Column(
         children: [
-          SubpageHeader(title: 'Bookmark', actions: [
+          SubpageHeader(title: AppLanguage.tr('Bookmark', 'बुकमार्क'), actions: [
             GestureDetector(
               onTap: (_loaded == null || _removing)
                   ? null
@@ -124,9 +162,9 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  return const PreloadingWidget(
+                  return PreloadingWidget(
                     tinted: false,
-                    label: 'Loading...',
+                    label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
                   );
                 }
                 if (snap.hasError || snap.data == null) {
@@ -135,15 +173,16 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
                       padding: const EdgeInsets.all(24),
                       child: Text(
                         snap.hasError
-                            ? 'Failed to load bookmark:\n${snap.error}'
-                            : 'Bookmark not found.',
+                            ? '${AppLanguage.tr('Failed to load bookmark:',
+                                    'बुकमार्क लोड हुन असफल भयो:')}\n${snap.error}'
+                            : AppLanguage.tr(
+                                'Bookmark not found.', 'बुकमार्क भेटिएन।'),
                         textAlign: TextAlign.center,
                       ),
                     ),
                   );
                 }
                 final b = snap.data!;
-                _loaded = b;
                 return BookmarkDetailBody(
                   bookmark: b,
                   savedDate: _savedDate(b['createdAt']),
@@ -203,6 +242,7 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
           delayMs: 0,
           child: _TrackHero(
             track: track,
+            subject: _subjectOf(p),
             sourceLabel: (b['sourceLabel'] ?? '').toString(),
             savedDate: widget.savedDate,
           ),
@@ -251,8 +291,9 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
                 icon: Icon(_revealAnswer
                     ? Icons.visibility_off_outlined
                     : Icons.visibility_outlined),
-                label: Text(
-                    _revealAnswer ? 'Hide answer' : 'Reveal answer'),
+                label: Text(AppLanguage.tr(
+                    _revealAnswer ? 'Hide answer' : 'Reveal answer',
+                    _revealAnswer ? 'उत्तर लुकाउनुहोस्' : 'उत्तर देखाउनुहोस्')),
                 style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   shape: RoundedRectangleBorder(
@@ -286,13 +327,66 @@ class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
   }
 }
 
-/// Premium track hero: gradient card carrying the track identity.
+/// Subject/topic name pulled from the saved payload's meta rows
+/// (labels like Subject / Chapter / Topic), or '' when absent.
+String _subjectOf(Map<String, dynamic> p) {
+  final meta = p['meta'];
+  if (meta is List) {
+    for (final row in meta) {
+      if (row is Map) {
+        final label = (row['label'] ?? '').toString().toLowerCase();
+        if (label.contains('subject') ||
+            label.contains('chapter') ||
+            label.contains('topic')) {
+          final v = (row['value'] ?? '').toString().trim();
+          if (v.isNotEmpty) return v;
+        }
+      }
+    }
+  }
+  return '';
+}
+
+/// Topic-wise hero icon: matched from the bookmark's subject/topic name
+/// (English or Devanagari keywords); falls back to the track icon when
+/// nothing matches.
+IconData _subjectIcon(String subject, BookmarkTrack track) {
+  final s = subject.toLowerCase();
+  bool has(List<String> keys) => keys.any(s.contains);
+  if (has(['civil', 'engineering', 'इन्जिनियर', 'प्राविधिक'])) {
+    return Icons.engineering_outlined;
+  }
+  if (has(['medical', 'health', 'nurse', 'स्वास्थ्य', 'चिकित्सा'])) {
+    return Icons.medical_services_outlined;
+  }
+  if (has(['computer', 'ict', 'कम्प्युटर', 'सूचना'])) {
+    return Icons.computer_outlined;
+  }
+  if (has(['math', 'गणित'])) return Icons.calculate_outlined;
+  if (has(['english', 'अंग्रेजी', 'अङ्ग्रेजी'])) return Icons.translate_outlined;
+  if (has(['nepali', 'नेपाली'])) return Icons.language_outlined;
+  if (has(['science', 'विज्ञान'])) return Icons.science_outlined;
+  if (has(['history', 'इतिहास'])) return Icons.history_edu_outlined;
+  if (has(['geography', 'भूगोल'])) return Icons.map_outlined;
+  if (has(['constitution', 'संविधान', 'law', 'कानुन', 'कानून'])) {
+    return Icons.account_balance_outlined;
+  }
+  if (has(['econom', 'अर्थ'])) return Icons.trending_up_outlined;
+  if (has(['agricultur', 'कृषि'])) return Icons.agriculture_outlined;
+  if (has(['current', 'समसामयिक', 'समाचार'])) return Icons.newspaper_outlined;
+  return track.icon;
+}
+
+/// Premium track hero: layered track-color gradient, a large topic-wise
+/// watermark icon, a glossy gradient icon tile, and a "saved" pill.
 class _TrackHero extends StatelessWidget {
   final BookmarkTrack track;
+  final String subject;
   final String sourceLabel;
   final String savedDate;
   const _TrackHero(
       {required this.track,
+      this.subject = '',
       required this.sourceLabel,
       required this.savedDate});
 
@@ -300,82 +394,178 @@ class _TrackHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final pal = ExpoPalette.of(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
+    final icon = _subjectIcon(subject, track);
     return Container(
-      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(22),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            track.color.withValues(alpha: dark ? 0x59 : 0x29),
-            track.color.withValues(alpha: dark ? 0x2E : 0x14),
+            track.color.withValues(alpha: dark ? 0x66 : 0x38),
+            track.color.withValues(alpha: dark ? 0x33 : 0x16),
           ],
         ),
         border: Border.all(
-          color: track.color.withValues(alpha: dark ? 0x66 : 0x40),
+          color: track.color.withValues(alpha: dark ? 0x77 : 0x4D),
           width: 1,
         ),
         boxShadow: [
           BoxShadow(
-            color: track.color.withValues(alpha: 0x14),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: track.color.withValues(alpha: 0x1F),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
-              color: track.color.withValues(alpha: dark ? 0x40 : 0x26),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Stack(
+          children: [
+            // Decorative oversized watermark of the topic icon.
+            Positioned(
+              right: -16,
+              bottom: -16,
+              child: Icon(
+                icon,
+                size: 104,
+                color:
+                    track.color.withValues(alpha: dark ? 0x2E : 0x22),
+              ),
             ),
-            child: Icon(track.icon, size: 24, color: track.color),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  track.label.toUpperCase(),
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1.2,
-                    color: track.color,
+            // Soft top sheen for depth.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 56,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white
+                          .withValues(alpha: dark ? 0x0A : 0x14),
+                      Colors.white.withValues(alpha: 0x00),
+                    ],
                   ),
                 ),
-                if (sourceLabel.isNotEmpty) ...[
-                  const SizedBox(height: 3),
-                  Text(
-                    sourceLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: pal.textPrimary,
-                    ),
-                  ),
-                ],
-                if (savedDate.isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    'Saved on $savedDate',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: pal.textSecondary,
-                    ),
-                  ),
-                ],
-              ],
+              ),
             ),
-          ),
-        ],
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 54,
+                    height: 54,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(17),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          track.color,
+                          Color.lerp(track.color, Colors.black, 0.18)!,
+                        ],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: track.color.withValues(alpha: 0x55),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Icon(icon, size: 27, color: Colors.white),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          AppLanguage.tr(track.label, track.labelNe)
+                              .toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 1.2,
+                            color: track.color,
+                          ),
+                        ),
+                        if (subject.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            subject,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: pal.textPrimary,
+                            ),
+                          ),
+                        ],
+                        if (sourceLabel.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            sourceLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: pal.textSecondary,
+                            ),
+                          ),
+                        ],
+                        if (savedDate.isNotEmpty) ...[
+                          const SizedBox(height: 7),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 9, vertical: 4),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(999),
+                              color: track.color.withValues(
+                                  alpha: dark ? 0x2E : 0x1A),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  Icons.calendar_month_outlined,
+                                  size: 12,
+                                  color: track.color,
+                                ),
+                                const SizedBox(width: 5),
+                                Flexible(
+                                  child: Text(
+                                    AppLanguage.tr(
+                                        'Saved on $savedDate',
+                                        '$savedDate मा सेभ गरियो'),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: track.color,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -548,17 +738,17 @@ class _ExplanationCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.lightbulb_outline,
                 size: 16,
                 color: Color(0xFF2563EB),
               ),
-              SizedBox(width: 6),
+              const SizedBox(width: 6),
               Text(
-                'Explanation',
-                style: TextStyle(
+                AppLanguage.tr('Explanation', 'व्याख्या'),
+                style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                   letterSpacing: 0.8,

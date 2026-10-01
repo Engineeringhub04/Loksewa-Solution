@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../models/keep_note.dart';
+import '../../services/app_language.dart';
 import '../../services/keep_notes_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/keep_rich_text.dart';
@@ -247,14 +248,16 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             icon: const Icon(Icons.arrow_back),
             color: iconColor,
             onPressed: _onBack,
-            tooltip: 'Back',
+            tooltip: AppLanguage.tr('Back', 'फर्कनुहोस्'),
           ),
           const Spacer(),
           IconButton(
             icon: Icon(_pinned ? Icons.push_pin : Icons.push_pin_outlined),
             color: iconColor,
             onPressed: _togglePin,
-            tooltip: _pinned ? 'Unpin' : 'Pin',
+            tooltip: _pinned
+                ? AppLanguage.tr('Unpin', 'पिन हटाउनुहोस्')
+                : AppLanguage.tr('Pin', 'पिन गर्नुहोस्'),
           ),
         ],
       ),
@@ -270,7 +273,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         style: TextStyle(
             fontSize: 22, fontWeight: FontWeight.bold, color: textColor),
         decoration: InputDecoration(
-          hintText: 'Title',
+          hintText: AppLanguage.tr('Title', 'शीर्षक'),
           hintStyle: TextStyle(color: hintColor, fontWeight: FontWeight.bold),
           border: InputBorder.none,
           isDense: true,
@@ -290,7 +293,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         controller: _bodyCtrl,
         style: TextStyle(fontSize: 16, color: textColor),
         decoration: InputDecoration(
-          hintText: 'Note',
+          hintText: AppLanguage.tr('Note', 'नोट'),
           hintStyle: TextStyle(color: hintColor),
           border: InputBorder.none,
           contentPadding: EdgeInsets.zero,
@@ -316,11 +319,20 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           _formatButton(
-              KeepTextStyle.bold, Icons.format_bold, 'Bold', palette),
-          _formatButton(KeepTextStyle.underline, Icons.format_underline,
-              'Underline', palette),
+              KeepTextStyle.bold,
+              Icons.format_bold,
+              AppLanguage.tr('Bold', 'बोल्ड'),
+              palette),
           _formatButton(
-              KeepTextStyle.italic, Icons.format_italic, 'Italic', palette),
+              KeepTextStyle.underline,
+              Icons.format_underline,
+              AppLanguage.tr('Underline', 'अन्डरलाइन'),
+              palette),
+          _formatButton(
+              KeepTextStyle.italic,
+              Icons.format_italic,
+              AppLanguage.tr('Italic', 'इटालिक'),
+              palette),
         ],
       ),
     );
@@ -372,14 +384,14 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             color: palette.textPrimary,
             disabledColor: palette.textDisabled,
             onPressed: _history.canUndo ? _undo : null,
-            tooltip: 'Undo',
+            tooltip: AppLanguage.tr('Undo', 'अनडु'),
           ),
           IconButton(
             icon: const Icon(Icons.redo),
             color: palette.textPrimary,
             disabledColor: palette.textDisabled,
             onPressed: _history.canRedo ? _redo : null,
-            tooltip: 'Redo',
+            tooltip: AppLanguage.tr('Redo', 'रिडु'),
           ),
           IconButton(
             icon: Text(
@@ -395,7 +407,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             ),
             onPressed: () =>
                 setState(() => _showFormatBar = !_showFormatBar),
-            tooltip: 'Text formatting',
+            tooltip: AppLanguage.tr('Text formatting', 'टेक्स्ट फर्म्याटिङ'),
           ),
         ],
       ),

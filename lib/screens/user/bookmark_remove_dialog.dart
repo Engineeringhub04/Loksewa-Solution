@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 
@@ -16,7 +17,7 @@ class BookmarkRemoveDialog extends StatelessWidget {
     final pal = ExpoPalette.of(context);
     return AppModalShell(
       maxWidth: 340,
-      tagLabel: 'Bookmarks',
+      tagLabel: AppLanguage.tr('Bookmarks', 'बुकमार्कहरू'),
       accent: const Color(0xFFDC2626),
       accentMid: const Color(0xFFF87171),
       accentLight: const Color(0xFFFECACA),
@@ -36,10 +37,10 @@ class BookmarkRemoveDialog extends StatelessWidget {
           color: Colors.white,
         ),
       ),
-      title: const Text(
-        'Remove this bookmark?',
+      title: Text(
+        AppLanguage.tr('Remove this bookmark?', 'यो बुकमार्क हटाउने?'),
         textAlign: TextAlign.center,
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.bold,
           color: Color(0xFF0F172A),
@@ -63,9 +64,10 @@ class BookmarkRemoveDialog extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 8),
-          const Text(
-            'You can save it again any time.',
-            style: TextStyle(
+          Text(
+            AppLanguage.tr('You can save it again any time.',
+                'तपाईंले यसलाई जुनसुकै बेला फेरि सेभ गर्न सक्नुहुन्छ।'),
+            style: const TextStyle(
               fontSize: 13,
               color: Color(0xFF64748B),
               decoration: TextDecoration.none,
@@ -84,7 +86,7 @@ class BookmarkRemoveDialog extends StatelessWidget {
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
-              child: const Text('Cancel'),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
             ),
           ),
           const SizedBox(width: 10),
@@ -98,7 +100,7 @@ class BookmarkRemoveDialog extends StatelessWidget {
                 ),
                 padding: const EdgeInsets.symmetric(vertical: 12),
               ),
-              child: const Text('Remove'),
+              child: Text(AppLanguage.tr('Remove', 'हटाउनुहोस्')),
             ),
           ),
         ],

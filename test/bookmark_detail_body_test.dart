@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/user/bookmark_detail_screen.dart';
 import 'package:loksewa_solution/screens/user/bookmark_remove_dialog.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
@@ -111,6 +112,99 @@ void main() {
       // No question UI for articles.
       expect(find.text('Reveal answer'), findsNothing);
       expect(find.text('ARTICLE'), findsOneWidget);
+    });
+  });
+
+  group('BookmarkDetailScreen — header delete flow', () {
+    testWidgets(
+        'tapping the header delete icon, confirming in the modal, removes '
+        'the bookmark and pops back', (WidgetTester tester) async {
+      final removedIds = <String>[];
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+              path: '/',
+              builder: (_, __) =>
+                  const Scaffold(body: Center(child: Text('home')))),
+          GoRoute(
+            path: '/bookmarks/:id',
+            builder: (_, s) => BookmarkDetailScreen(
+              id: s.pathParameters['id']!,
+              loadBookmark: () async => _questionBookmark(),
+              deleteBookmark: (id, _) async {
+                removedIds.add(id);
+              },
+            ),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      // push (not go) so '/' stays underneath — the delete flow pops back.
+      router.push('/bookmarks/practice__q1');
+      // Let the injected load complete and the entrance animations settle
+      // (pump with durations — never pumpAndSettle — per repo test lessons).
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(seconds: 2));
+
+      expect(find.text('home'), findsNothing);
+      // Modern delete icon (delete_outline) rendered in the header.
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byType(AppModalShell), findsOneWidget);
+      expect(find.text('Remove this bookmark?'), findsOneWidget);
+
+      await tester.tap(find.text('Remove'));
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(removedIds, ['practice__q1']);
+      // The bookmark is gone, so the detail route popped back home.
+      expect(find.text('home'), findsOneWidget);
+    });
+
+    testWidgets('dismissing the confirm modal removes nothing',
+        (WidgetTester tester) async {
+      final removedIds = <String>[];
+      final router = GoRouter(
+        initialLocation: '/',
+        routes: [
+          GoRoute(
+              path: '/',
+              builder: (_, __) =>
+                  const Scaffold(body: Center(child: Text('home')))),
+          GoRoute(
+            path: '/bookmarks/:id',
+            builder: (_, s) => BookmarkDetailScreen(
+              id: s.pathParameters['id']!,
+              loadBookmark: () async => _questionBookmark(),
+              deleteBookmark: (id, _) async {
+                removedIds.add(id);
+              },
+            ),
+          ),
+        ],
+      );
+      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      router.push('/bookmarks/practice__q1');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(seconds: 2));
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.byType(AppModalShell), findsOneWidget);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(removedIds, isEmpty);
+      // Still on the detail page — nothing was deleted.
+      expect(find.text('home'), findsNothing);
+      expect(find.text('What is the capital of Nepal?'), findsOneWidget);
     });
   });
 

@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/keep_note.dart';
+import '../../services/app_language.dart';
 import '../../services/keep_notes_backup.dart';
 import '../../services/keep_notes_store.dart';
 import '../../theme/app_theme.dart';
@@ -77,16 +78,82 @@ class _NotesScreenState extends State<NotesScreen> {
   // ------------------------------------------------------------------
   // Backup: one-tap export (Downloads + share sheet) and signed import.
   // 100% local — no Firestore, no server, ever.
+  //
+  // Feedback convention: important feedback goes through the shared global
+  // AppModalShell (never a SnackBar) — same modal as the daily-limit popup
+  // everywhere in the app; only the content differs.
   // ------------------------------------------------------------------
 
-  void _toast(String message) {
+  /// Converts ASCII digits in [s] to Devanagari digits — Nepali strings
+  /// never carry Roman-script numerals.
+  static String _dev(String s) {
+    const en = '0123456789';
+    const ne = '०१२३४५६७८९';
+    return s.split('').map((c) {
+      final i = en.indexOf(c);
+      return i >= 0 ? ne[i] : c;
+    }).join();
+  }
+
+  /// Info/error feedback in the shared global modal. All text goes through
+  /// [AppLanguage.tr] — pure English or pure Devanagari Nepali, never mixed.
+  void _showInfoModal({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String body,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    AppModalShell.show(
+      context: context,
+      builder: (ctx) => AppModalShell(
+        maxWidth: 340,
+        tagLabel: AppLanguage.tr('Keep Notes', 'किप नोट्स'),
+        onClose: () => Navigator.of(ctx).pop(),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: iconColor,
+          ),
+          child: Icon(icon, size: 28, color: Colors.white),
+        ),
+        title: Text(
+          title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          body,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: Color(0xFF64748B),
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: Text(AppLanguage.tr('OK', 'ठीक छ')),
+          ),
+        ),
+      ),
     );
   }
 
   Future<void> _exportBackup() async {
+    final palette = ExpoPalette.of(context);
     try {
       final notes = _store.loadAll();
       final envelope = KeepNotesBackup.buildEnvelope(notes);
@@ -108,15 +175,44 @@ class _NotesScreenState extends State<NotesScreen> {
       // (WhatsApp / Telegram / Drive to self, then import on the new phone).
       await Share.shareXFiles(
         [XFile(file.path)],
-        text: 'Keep Notes backup',
+        text: AppLanguage.tr('Keep Notes backup', 'किप नोट्स ब्याकअप'),
       );
-      _toast('ब्याकअप तयार भयो');
+      _showInfoModal(
+        icon: Icons.check_circle_outline,
+        iconColor: palette.primary,
+        title: AppLanguage.tr('Backup saved', 'ब्याकअप सेभ भयो'),
+        body: AppLanguage.tr(
+          'Your backup file was saved to the Downloads folder.',
+          'तपाईंको ब्याकअप फाइल डाउनलोड्स फोल्डरमा सेभ भयो।',
+        ),
+      );
     } catch (_) {
-      _toast('Export failed');
+      _showInfoModal(
+        icon: Icons.error_outline,
+        iconColor: palette.danger,
+        title: AppLanguage.tr('Export failed', 'एक्सपोर्ट असफल भयो'),
+        body: AppLanguage.tr(
+          'The backup file could not be saved. Please try again.',
+          'ब्याकअप फाइल सेभ गर्न सकिएन। कृपया पुनः प्रयास गर्नुहोस्।',
+        ),
+      );
     }
   }
 
   Future<void> _importBackup() async {
+    final palette = ExpoPalette.of(context);
+
+    void invalid() => _showInfoModal(
+          icon: Icons.error_outline,
+          iconColor: palette.danger,
+          title:
+              AppLanguage.tr('Invalid backup file', 'अमान्य ब्याकअप फाइल'),
+          body: AppLanguage.tr(
+            'This file is not a valid Keep Notes backup.',
+            'यो मान्य किप नोट्स ब्याकअप होइन।',
+          ),
+        );
+
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
@@ -133,7 +229,7 @@ class _NotesScreenState extends State<NotesScreen> {
         raw = utf8.decode(picked.bytes!);
       }
       if (raw == null) {
-        _toast('यो मान्य Keep Notes backup होइन');
+        invalid();
         return;
       }
 
@@ -141,7 +237,7 @@ class _NotesScreenState extends State<NotesScreen> {
       // are rejected here, before anything touches the note store.
       final imported = KeepNotesBackup.parseAndVerify(raw);
       if (imported == null) {
-        _toast('यो मान्य Keep Notes backup होइन');
+        invalid();
         return;
       }
 
@@ -150,10 +246,17 @@ class _NotesScreenState extends State<NotesScreen> {
       final counts = KeepNotesBackup.merge(local, imported);
       _store.saveAll(local);
       _reload();
-      _toast(
-          'आयात सम्पन्न: ${counts.added} नयाँ, ${counts.skipped} स्किप');
+      _showInfoModal(
+        icon: Icons.check_circle_outline,
+        iconColor: palette.primary,
+        title: AppLanguage.tr('Import complete', 'इम्पोर्ट पूरा भयो'),
+        body: AppLanguage.tr(
+          '${counts.added} new, ${counts.skipped} skipped.',
+          '${_dev('${counts.added}')} नयाँ, ${_dev('${counts.skipped}')} स्किप भए।',
+        ),
+      );
     } catch (_) {
-      _toast('यो मान्य Keep Notes backup होइन');
+      invalid();
     }
   }
 
@@ -164,7 +267,7 @@ class _NotesScreenState extends State<NotesScreen> {
       context: context,
       builder: (ctx) => AppModalShell(
         maxWidth: 340,
-        tagLabel: 'Keep Notes',
+        tagLabel: AppLanguage.tr('Keep Notes', 'किप नोट्स'),
         onClose: () => Navigator.of(ctx).pop(),
         icon: Container(
           width: 56,
@@ -177,7 +280,9 @@ class _NotesScreenState extends State<NotesScreen> {
           child: const Icon(Icons.push_pin, size: 28, color: Colors.white),
         ),
         title: Text(
-          note.title.isEmpty ? 'Note options' : note.title,
+          note.title.isEmpty
+              ? AppLanguage.tr('Note options', 'नोट विकल्पहरू')
+              : note.title,
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontSize: 20,
@@ -197,7 +302,9 @@ class _NotesScreenState extends State<NotesScreen> {
               icon: note.pinned
                   ? Icons.push_pin_outlined
                   : Icons.push_pin,
-              label: note.pinned ? 'Unpin' : 'Pin to top',
+              label: note.pinned
+                  ? AppLanguage.tr('Unpin', 'पिन हटाउनुहोस्')
+                  : AppLanguage.tr('Pin to top', 'माथि पिन गर्नुहोस्'),
               onTap: () {
                 Navigator.of(ctx).pop();
                 _togglePin(note);
@@ -206,7 +313,7 @@ class _NotesScreenState extends State<NotesScreen> {
             _modalOption(
               ctx,
               icon: Icons.delete_outline,
-              label: 'Delete',
+              label: AppLanguage.tr('Delete', 'डिलिट गर्नुहोस्'),
               danger: true,
               onTap: () {
                 Navigator.of(ctx).pop();
@@ -217,7 +324,7 @@ class _NotesScreenState extends State<NotesScreen> {
         ),
         footer: TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
-          child: Text('Cancel',
+          child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
               style: TextStyle(
                   color: ExpoPalette.of(context).primary,
                   decoration: TextDecoration.none)),
@@ -247,13 +354,17 @@ class _NotesScreenState extends State<NotesScreen> {
                   size: 22,
                   color: danger ? palette.danger : palette.primary),
               const SizedBox(width: 14),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: danger ? palette.danger : const Color(0xFF0F172A),
-                  decoration: TextDecoration.none,
+              // Expanded so longer localized labels (e.g. Nepali) wrap
+              // instead of overflowing the modal row.
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: danger ? palette.danger : const Color(0xFF0F172A),
+                    decoration: TextDecoration.none,
+                  ),
                 ),
               ),
             ],
@@ -268,7 +379,7 @@ class _NotesScreenState extends State<NotesScreen> {
       context: context,
       builder: (ctx) => AppModalShell(
         maxWidth: 340,
-        tagLabel: 'Keep Notes',
+        tagLabel: AppLanguage.tr('Keep Notes', 'किप नोट्स'),
         onClose: () => Navigator.of(ctx).pop(),
         icon: Container(
           width: 56,
@@ -281,10 +392,10 @@ class _NotesScreenState extends State<NotesScreen> {
           child:
               const Icon(Icons.delete_outline, size: 28, color: Colors.white),
         ),
-        title: const Text(
-          'Delete note?',
+        title: Text(
+          AppLanguage.tr('Delete note?', 'नोट डिलिट गर्ने?'),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 20,
             fontWeight: FontWeight.bold,
             color: Color(0xFF0F172A),
@@ -292,10 +403,13 @@ class _NotesScreenState extends State<NotesScreen> {
             decoration: TextDecoration.none,
           ),
         ),
-        body: const Text(
-          'This note will be permanently deleted.',
+        body: Text(
+          AppLanguage.tr(
+            'This note will be permanently deleted.',
+            'यो नोट स्थायी रूपमा डिलिट हुनेछ।',
+          ),
           textAlign: TextAlign.center,
-          style: TextStyle(
+          style: const TextStyle(
             fontSize: 14,
             height: 1.5,
             color: Color(0xFF64748B),
@@ -307,7 +421,7 @@ class _NotesScreenState extends State<NotesScreen> {
             Expanded(
               child: OutlinedButton(
                 onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
               ),
             ),
             const SizedBox(width: 12),
@@ -320,7 +434,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   Navigator.of(ctx).pop();
                   _delete(note);
                 },
-                child: const Text('Delete'),
+                child: Text(AppLanguage.tr('Delete', 'डिलिट गर्नुहोस्')),
               ),
             ),
           ],
@@ -336,11 +450,14 @@ class _NotesScreenState extends State<NotesScreen> {
       backgroundColor: palette.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'Keep Notes'),
+          SubpageHeader(
+              title: AppLanguage.tr('Keep Notes', 'किप नोट्स')),
           Expanded(
             child: _loading
-                ? const Center(
-                    child: PreloadingWidget(label: 'Loading notes...'))
+                ? Center(
+                    child: PreloadingWidget(
+                        label: AppLanguage.tr(
+                            'Loading notes...', 'नोटहरू लोड हुँदैछन्...')))
                 : RefreshIndicator(
                     onRefresh: () async => _reload(),
                     child: ListView(
@@ -361,7 +478,7 @@ class _NotesScreenState extends State<NotesScreen> {
         backgroundColor: palette.primary,
         foregroundColor: Colors.white,
         onPressed: () => _openEditor('new'),
-        tooltip: 'New note',
+        tooltip: AppLanguage.tr('New note', 'नयाँ नोट'),
         child: const Icon(Icons.add),
       ),
     );
@@ -369,6 +486,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
   /// Security notice: Keep Notes data never leaves the phone.
   /// App UI rule: English + Devanagari Nepali only — no Romanized Nepali.
+  /// Uses the approved copy verbatim (EN/NE pair).
   Widget _securityCard(ExpoPalette palette) {
     return Container(
       padding: const EdgeInsets.all(14),
@@ -386,8 +504,14 @@ class _NotesScreenState extends State<NotesScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Keep Notes को डाटा database मा save हुँदैन — '
-              'तपाईंको फोनमा मात्र सुरक्षित save हुन्छ।',
+              AppLanguage.tr(
+                'Keep Notes are saved only on your phone — never in the database. '
+                'If you delete the app or move to a new phone, export your notes '
+                'first and keep the backup file safe.',
+                'किप नोट्स तपाईंको फोनमा मात्र सेभ हुन्छ — डाटाबेसमा कहिल्यै हुँदैन। '
+                'यदि तपाईंले एप डिलिट गर्नुहुन्छ वा नयाँ फोनमा जानुहुन्छ भने, '
+                'पहिले नोटहरू एक्सपोर्ट गरेर ब्याकअप फाइल सुरक्षित राख्नुहोस्।',
+              ),
               style: TextStyle(
                   fontSize: 13,
                   height: 1.45,
@@ -408,7 +532,7 @@ class _NotesScreenState extends State<NotesScreen> {
           child: OutlinedButton.icon(
             onPressed: _exportBackup,
             icon: const Icon(Icons.upload_outlined, size: 18),
-            label: const Text('Export'),
+            label: Text(AppLanguage.tr('Export', 'एक्सपोर्ट')),
             style: OutlinedButton.styleFrom(
               foregroundColor: palette.primary,
               side: BorderSide(
@@ -424,7 +548,7 @@ class _NotesScreenState extends State<NotesScreen> {
           child: OutlinedButton.icon(
             onPressed: _importBackup,
             icon: const Icon(Icons.download_outlined, size: 18),
-            label: const Text('Import'),
+            label: Text(AppLanguage.tr('Import', 'इम्पोर्ट')),
             style: OutlinedButton.styleFrom(
               foregroundColor: palette.primary,
               side: BorderSide(
@@ -447,7 +571,7 @@ class _NotesScreenState extends State<NotesScreen> {
             size: 56, color: palette.textDisabled),
         const SizedBox(height: 12),
         Center(
-          child: Text('No notes yet',
+          child: Text(AppLanguage.tr('No notes yet', 'अहिलेसम्म कुनै नोट छैन'),
               style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
@@ -455,7 +579,9 @@ class _NotesScreenState extends State<NotesScreen> {
         ),
         const SizedBox(height: 6),
         Center(
-          child: Text('Tap + to create your first note.',
+          child: Text(
+              AppLanguage.tr('Tap + to create your first note.',
+                  'पहिलो नोट बनाउन + थिच्नुहोस्।'),
               style: TextStyle(
                   fontSize: 13, color: palette.textSecondary)),
         ),
@@ -465,13 +591,17 @@ class _NotesScreenState extends State<NotesScreen> {
     final others = _notes.where((n) => !n.pinned).toList();
     final widgets = <Widget>[];
     if (pinned.isNotEmpty) {
-      widgets.add(_sectionLabel('Pinned', palette));
+      widgets.add(_sectionLabel(
+          AppLanguage.tr('Pinned', 'पिन गरिएका'), palette));
       widgets.addAll(pinned.map((n) => _noteCard(n, palette)));
       widgets.add(const SizedBox(height: 8));
     }
     if (others.isNotEmpty) {
       widgets.add(_sectionLabel(
-          pinned.isNotEmpty ? 'Others' : 'Notes', palette));
+          pinned.isNotEmpty
+              ? AppLanguage.tr('Others', 'अन्य')
+              : AppLanguage.tr('Notes', 'नोटहरू'),
+          palette));
       widgets.addAll(others.map((n) => _noteCard(n, palette)));
     }
     return widgets;
@@ -560,9 +690,11 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   static String _previewHeadline(String body) {
-    if (body.isEmpty) return 'Empty note';
+    if (body.isEmpty) return AppLanguage.tr('Empty note', 'खाली नोट');
     final firstLine = body.split('\n').first.trim();
-    return firstLine.isEmpty ? 'Empty note' : firstLine;
+    return firstLine.isEmpty
+        ? AppLanguage.tr('Empty note', 'खाली नोट')
+        : firstLine;
   }
 
   static String _dateLabel(int ms) {
@@ -573,10 +705,12 @@ class _NotesScreenState extends State<NotesScreen> {
     final day = DateTime(d.year, d.month, d.day);
     final diff = today.difference(day).inDays;
     if (diff == 0) {
-      return 'Today ${_two(d.hour)}:${_two(d.minute)}';
+      final time = '${_two(d.hour)}:${_two(d.minute)}';
+      return AppLanguage.tr('Today $time', 'आज ${_dev(time)}');
     }
-    if (diff == 1) return 'Yesterday';
-    return '${_two(d.day)}/${_two(d.month)}/${d.year}';
+    if (diff == 1) return AppLanguage.tr('Yesterday', 'हिजो');
+    final date = '${_two(d.day)}/${_two(d.month)}/${d.year}';
+    return AppLanguage.tr(date, _dev(date));
   }
 
   static String _two(int v) => v.toString().padLeft(2, '0');

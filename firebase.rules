@@ -39,6 +39,29 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // App Links configuration (Share App + deep links). The share URL and the
+    // app domain live in Firestore so they can change without an app update.
+    // READ is public: any client (even signed-out) needs the share link.
+    // WRITES are admin-only and schema-locked to the seed fields.
+    // Schema: link (string, required) — canonical share URL, e.g. https://kbr.com.np/app
+    //         appDomainLink (string) — App Links host, e.g. www.kbr.com.np
+    //         discordWebhookUrl (string) — admin alert webhook for account requests
+    //         addedDate, updatedDate (timestamp)
+    match /app_applink_details/{doc} {
+      allow read: if true;
+      allow create, update: if isAdmin() &&
+        request.resource.data.keys().hasOnly([
+          'link', 'appDomainLink', 'discordWebhookUrl', 'addedDate', 'updatedDate'
+        ]) &&
+        request.resource.data.link is string &&
+        request.resource.data.link.size() > 0 &&
+        (request.resource.data.appDomainLink == null ||
+          request.resource.data.appDomainLink is string) &&
+        (request.resource.data.discordWebhookUrl == null ||
+          request.resource.data.discordWebhookUrl is string);
+      allow delete: if isAdmin();
+    }
+
     // One-copy announcements: every signed-in app user reads the same document.
     match /app_global_notification/{notificationId} {
       allow read: if isSignedIn();

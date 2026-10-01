@@ -4,9 +4,9 @@
 // Firestore. A GoRouter with marker routes verifies the subscribe /
 // request-row navigation targets.
 //
-// Animation note: plan cards enter through StaggerEntrance (index * 110ms
-// delay + 450ms draw-in), so pumps stay small and repeated instead of one
-// big pumpAndSettle (per the AGENTS.md widget-test lessons).
+// Animation note: plan cards enter through SyllabusEntrance (min(index, 8)
+// * 60ms delay + 380ms draw-in), so pumps stay small and repeated instead
+// of one big pumpAndSettle (per the AGENTS.md widget-test lessons).
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/shop/subscription_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 SubscriptionPlan _plan({
   required String id,
@@ -134,8 +135,8 @@ GoRouter _router(Future<SubscriptionScreenData> Function() loader) {
   );
 }
 
-/// Small repeated pumps: settles every StaggerEntrance (≤220ms delay here)
-/// plus its 450ms draw-in without one giant pump.
+/// Small repeated pumps: settles every SyllabusEntrance (≤480ms delay here)
+/// plus its 380ms draw-in without one giant pump.
 Future<void> _settle(WidgetTester tester) async {
   for (var i = 0; i < 4; i++) {
     await tester.pump(const Duration(milliseconds: 500));
@@ -215,6 +216,9 @@ void main() {
       (tester) async {
     await _pump(tester, _router(() async => _data()));
     await _settle(tester);
+
+    // Each plan card enters through a SyllabusEntrance cascade wrapper.
+    expect(find.byType(SyllabusEntrance), findsWidgets);
 
     // Matrix: known feature labelled, excluded rows still legible. 'Priority
     // support' appears in both the free card (excluded row) and the yearly

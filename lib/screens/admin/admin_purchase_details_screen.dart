@@ -6,6 +6,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 import 'admin_review_dialogs.dart' show adminContentTitle;
 
 /// Admin → Purchase Request Control: every exam + content purchase request in
@@ -181,10 +182,13 @@ class _AdminPurchaseDetailsScreenState
                       if (visible.isEmpty)
                         _emptyState()
                       else
-                        for (final item in visible)
-                          item.kind == 'content'
-                              ? _contentCard(item)
-                              : _examCard(item),
+                        for (var i = 0; i < visible.length; i++)
+                          SyllabusEntrance(
+                            delayMs: (i < 8 ? i : 8) * 60,
+                            child: visible[i].kind == 'content'
+                                ? _contentCard(visible[i])
+                                : _examCard(visible[i]),
+                          ),
                     ],
                   ),
                 );

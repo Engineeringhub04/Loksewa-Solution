@@ -5,8 +5,8 @@ import 'package:loksewa_solution/screens/auth/app_info_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/widgets/status_pill.dart';
 
-// The screen is a lazily-built ListView whose sections each carry a
-// StaggerEntrance (delayed AnimationController + Future.delayed). Pump it on
+// The screen is a lazily-built ListView whose sections and rows each carry a
+// SyllabusEntrance (delayed AnimationController + Future.delayed). Pump it on
 // a very tall test surface so every section builds at once — no scrolling,
 // no half-built sections, no timers left pending at dispose.
 // (pumpAndSettle never settles while the entrance animations are scheduled,
@@ -51,7 +51,7 @@ void main() {
 
       expect(find.text('Loksewa Solution'), findsOneWidget);
       expect(find.text('Prepare Smarter, Score Higher'), findsOneWidget);
-      expect(find.text('Version 1.0.27'), findsOneWidget);
+      expect(find.text('Version 1.0.28'), findsOneWidget);
       expect(find.byType(StatusPill), findsOneWidget);
       expect(find.byType(Image), findsWidgets);
     });
@@ -134,7 +134,7 @@ void main() {
 
       expect(find.text('एप जानकारी'), findsOneWidget);
       expect(find.text('राम्रो तयारी, उच्च अंक'), findsOneWidget);
-      expect(find.text('संस्करण १.०.२७'), findsOneWidget);
+      expect(find.text('संस्करण १.०.२८'), findsOneWidget);
       expect(find.text('बारेमा'), findsOneWidget);
       expect(find.text('तपाईंले पाउने कुरा'), findsOneWidget);
       expect(find.text('सम्पर्क'), findsOneWidget);

@@ -5,6 +5,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Admin → exam purchase review queue. Mirrors
 /// app/admin/exam-purchases/index.tsx. Collection: app_exam_purchases.
@@ -159,7 +160,11 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
                       if (filtered.isEmpty)
                         _emptyState()
                       else
-                        for (final r in filtered) _card(r),
+                        for (var i = 0; i < filtered.length; i++)
+                          SyllabusEntrance(
+                            delayMs: (i < 8 ? i : 8) * 60,
+                            child: _card(filtered[i]),
+                          ),
                     ],
                   ),
                 );

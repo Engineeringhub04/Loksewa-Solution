@@ -19,7 +19,7 @@ import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Brand logos — brand marks drawn for a light background, so they sit on a
@@ -164,8 +164,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                         return Padding(
                           padding:
                               const EdgeInsets.only(bottom: ExpoSpacing.md),
-                          child: StaggerEntrance(
-                            delayMs: entry.key * 110,
+                          child: SyllabusEntrance(
+                            delayMs: min(entry.key, 8) * 60,
                             child: _PlanCard(
                               plan: plan,
                               isCurrent: isCurrent,

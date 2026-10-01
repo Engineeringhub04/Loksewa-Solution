@@ -26,9 +26,9 @@ GoRouter _router() {
   );
 }
 
-/// Advances the fake clock past every StaggerEntrance delay (≤300ms) plus
-/// its 450ms animation — three rounds, because a pump's own frame can mount
-/// new (previously below-fold) StaggerEntrances whose timers then need a
+/// Advances the fake clock past every SyllabusEntrance delay (≤420ms) plus
+/// its 380ms animation — three rounds, because a pump's own frame can mount
+/// new (previously below-fold) SyllabusEntrances whose timers then need a
 /// later pump to fire.
 Future<void> _settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 500));

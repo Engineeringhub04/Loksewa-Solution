@@ -1,9 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -40,13 +42,13 @@ class AppInfoScreen extends StatelessWidget {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
-                StaggerEntrance(
+                SyllabusEntrance(
                   delayMs: 0,
                   child: _IdentityBlock(versionLabel: versionLabel),
                 ),
                 const SizedBox(height: 20),
-                StaggerEntrance(
-                  delayMs: 80,
+                SyllabusEntrance(
+                  delayMs: 60,
                   child: _SectionCard(
                     icon: Icons.info_outline,
                     tone: _Tone.primary,
@@ -65,34 +67,47 @@ class AppInfoScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                StaggerEntrance(
-                  delayMs: 140,
-                  child: _SectionCard(
-                    icon: Icons.auto_awesome_outlined,
-                    tone: _Tone.accent,
-                    title: AppLanguage.tr(
-                        'What you get', 'तपाईंले पाउने कुरा'),
-                    body: Column(
-                      children: [
-                        for (int i = 0; i < _highlights.length; i++)
-                          _IconRow(
-                            icon: _highlights[i].icon,
-                            tone: _highlights[i].tone,
-                            title: AppLanguage.tr(
-                                _highlights[i].titleEn,
-                                _highlights[i].titleNe),
-                            subtitle: AppLanguage.tr(
-                                _highlights[i].bodyEn,
-                                _highlights[i].bodyNe),
-                            showDivider: i < _highlights.length - 1,
-                          ),
-                      ],
+                // "What you get": header enters at the section base delay;
+                // each highlight row cascades syllabus-style (min(i, 8) * 60).
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SyllabusEntrance(
+                      delayMs: 120,
+                      child: _SectionHeader(
+                        icon: Icons.auto_awesome_outlined,
+                        tone: _Tone.accent,
+                        title: AppLanguage.tr(
+                            'What you get', 'तपाईंले पाउने कुरा'),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 10),
+                    _SectionBodyCard(
+                      child: Column(
+                        children: [
+                          for (int i = 0; i < _highlights.length; i++)
+                            SyllabusEntrance(
+                              delayMs: 120 + min(i, 8) * 60,
+                              child: _IconRow(
+                                icon: _highlights[i].icon,
+                                tone: _highlights[i].tone,
+                                title: AppLanguage.tr(
+                                    _highlights[i].titleEn,
+                                    _highlights[i].titleNe),
+                                subtitle: AppLanguage.tr(
+                                    _highlights[i].bodyEn,
+                                    _highlights[i].bodyNe),
+                                showDivider: i < _highlights.length - 1,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 20),
-                StaggerEntrance(
-                  delayMs: 200,
+                SyllabusEntrance(
+                  delayMs: 180,
                   child: _SectionCard(
                     icon: Icons.headset_outlined,
                     tone: _Tone.info,
@@ -120,8 +135,8 @@ class AppInfoScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                StaggerEntrance(
-                  delayMs: 260,
+                SyllabusEntrance(
+                  delayMs: 240,
                   child: _SectionCard(
                     icon: Icons.share_outlined,
                     tone: _Tone.success,
@@ -131,37 +146,55 @@ class AppInfoScreen extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 20),
-                StaggerEntrance(
-                  delayMs: 320,
-                  child: _SectionCard(
-                    icon: Icons.lock_outline,
-                    tone: _Tone.neutral,
-                    title: AppLanguage.tr('Legal', 'कानुनी'),
-                    body: Column(
-                      children: [
-                        _IconRow(
-                          icon: Icons.shield_outlined,
-                          tone: _Tone.neutral,
-                          title: AppLanguage.tr(
-                              'Privacy Policy', 'गोपनीयता नीति'),
-                          showDivider: true,
-                          onTap: () => context.push('/privacy-policy'),
-                        ),
-                        _IconRow(
-                          icon: Icons.description_outlined,
-                          tone: _Tone.neutral,
-                          title: AppLanguage.tr(
-                              'Terms and Conditions', 'नियम र सर्तहरू'),
-                          showDivider: false,
-                          onTap: () => context.push('/terms-conditions'),
-                        ),
-                      ],
+                // Legal: header enters at the section base delay; each row
+                // cascades syllabus-style (base + i * 60).
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SyllabusEntrance(
+                      delayMs: 300,
+                      child: _SectionHeader(
+                        icon: Icons.lock_outline,
+                        tone: _Tone.neutral,
+                        title: AppLanguage.tr('Legal', 'कानुनी'),
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 10),
+                    _SectionBodyCard(
+                      child: Column(
+                        children: [
+                          SyllabusEntrance(
+                            delayMs: 300,
+                            child: _IconRow(
+                              icon: Icons.shield_outlined,
+                              tone: _Tone.neutral,
+                              title: AppLanguage.tr(
+                                  'Privacy Policy', 'गोपनीयता नीति'),
+                              showDivider: true,
+                              onTap: () =>
+                                  context.push('/privacy-policy'),
+                            ),
+                          ),
+                          SyllabusEntrance(
+                            delayMs: 360,
+                            child: _IconRow(
+                              icon: Icons.description_outlined,
+                              tone: _Tone.neutral,
+                              title: AppLanguage.tr(
+                                  'Terms and Conditions', 'नियम र सर्तहरू'),
+                              showDivider: false,
+                              onTap: () =>
+                                  context.push('/terms-conditions'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
-                const StaggerEntrance(
-                  delayMs: 380,
+                const SyllabusEntrance(
+                  delayMs: 360,
                   child: Text(
                     'Made for Nepali students 🇳🇵',
                     textAlign: TextAlign.center,
@@ -313,8 +346,68 @@ class _IdentityBlock extends StatelessWidget {
   }
 }
 
-/// Premium section: 36px tone-tinted icon box + bold title header, body inside
-/// a hairline-bordered surface card (radius 18).
+/// 36px tone-tinted icon box + bold title row — the header half of a section.
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final _Tone tone;
+  final String title;
+
+  const _SectionHeader({
+    required this.icon,
+    required this.tone,
+    required this.title,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final c = _toneColor(tone, pal);
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: c.withValues(alpha: 0x1F / 0xFF),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          alignment: Alignment.center,
+          child: Icon(icon, size: 18, color: c),
+        ),
+        const SizedBox(width: 12),
+        Text(
+          title,
+          style:
+              const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+}
+
+/// Hairline-bordered surface card (radius 18) — the body half of a section.
+class _SectionBodyCard extends StatelessWidget {
+  final Widget child;
+
+  const _SectionBodyCard({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        border: Border.all(color: pal.border),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Premium section: header above a body card.
 class _SectionCard extends StatelessWidget {
   final IconData icon;
   final _Tone tone;
@@ -330,42 +423,12 @@ class _SectionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    final c = _toneColor(tone, pal);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Container(
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: c.withValues(alpha: 0x1F / 0xFF),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              alignment: Alignment.center,
-              child: Icon(icon, size: 18, color: c),
-            ),
-            const SizedBox(width: 12),
-            Text(
-              title,
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-          ],
-        ),
+        _SectionHeader(icon: icon, tone: tone, title: title),
         const SizedBox(height: 10),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: pal.surface,
-            border: Border.all(color: pal.border),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: body,
-        ),
+        _SectionBodyCard(child: body),
       ],
     );
   }

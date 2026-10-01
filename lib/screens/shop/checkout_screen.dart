@@ -35,7 +35,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 const _esewaLogo = 'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png';
@@ -863,13 +863,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                           settingsAvailable, esewaReady, khaltiReady),
                       const SizedBox(height: 16),
                       if (_method == 'esewa' || _method == 'khalti')
-                        StaggerEntrance(
-                          delayMs: 0,
+                        SyllabusEntrance(
+                          delayMs: 180,
                           child: _gatewayBlock(d),
                         )
                       else if (_method == 'qr')
-                        StaggerEntrance(
-                          delayMs: 0,
+                        SyllabusEntrance(
+                          delayMs: 180,
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -1033,8 +1033,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ],
         ),
         if (_couponApplied != null)
-          StaggerEntrance(
-            delayMs: 0,
+          SyllabusEntrance(
+            delayMs: 60,
             child: Container(
               margin: const EdgeInsets.only(top: 8),
               padding: const EdgeInsets.all(12),

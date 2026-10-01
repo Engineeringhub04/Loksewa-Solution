@@ -10,7 +10,7 @@
 //
 // Motion rule: only two things animate on a loop — the pulse on the step the
 // request is sitting at, and the draining edit bar. Everything else animates
-// once on entry (StaggerEntrance) and then holds still.
+// once on entry (SyllabusEntrance) and then holds still.
 import 'dart:async';
 import 'dart:typed_data';
 
@@ -24,7 +24,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -346,12 +346,12 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       child: ListView(
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
         children: [
-          StaggerEntrance(
+          SyllabusEntrance(
               delayMs: 0, child: _StatusCrown(record: record)),
           if (showEditBar) ...[
             const SizedBox(height: ExpoSpacing.md),
-            StaggerEntrance(
-              delayMs: 80,
+            SyllabusEntrance(
+              delayMs: 60,
               child: _EditWindowBar(
                 remainingMs: _remainingMs,
                 barPercent: _barPercent,
@@ -365,7 +365,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           ],
           if ((record.adminMessage ?? '').isNotEmpty) ...[
             const SizedBox(height: ExpoSpacing.md),
-            StaggerEntrance(
+            SyllabusEntrance(
               delayMs: 120,
               child: _QuotePanel(
                 tone: ExpoPalette.of(context).info,
@@ -380,8 +380,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           if (record.status == SubscriptionStatus.rejected &&
               (record.rejectionReason ?? '').isNotEmpty) ...[
             const SizedBox(height: ExpoSpacing.md),
-            StaggerEntrance(
-              delayMs: 140,
+            SyllabusEntrance(
+              delayMs: 180,
               child: _QuotePanel(
                 tone: ExpoPalette.of(context).danger,
                 icon: Icons.error_outline,
@@ -393,8 +393,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             ),
           ],
           const SizedBox(height: ExpoSpacing.md),
-          StaggerEntrance(
-            delayMs: 180,
+          SyllabusEntrance(
+            delayMs: 240,
             child: _SectionCard(
               icon: Icons.commit_outlined,
               tone: ExpoPalette.of(context).info,
@@ -405,7 +405,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           ),
           if (_editing) ...[
             const SizedBox(height: ExpoSpacing.md),
-            StaggerEntrance(
+            SyllabusEntrance(
               delayMs: 0,
               child: _EditForm(
                 refCtrl: _refCtrl,
@@ -422,8 +422,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             ),
           ],
           const SizedBox(height: ExpoSpacing.md),
-          StaggerEntrance(
-            delayMs: 220,
+          SyllabusEntrance(
+            delayMs: 300,
             child: _SectionCard(
               icon: Icons.receipt_long_outlined,
               tone: ExpoPalette.of(context).primary,
@@ -434,8 +434,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           ),
           if (record.screenshotUrl.isNotEmpty) ...[
             const SizedBox(height: ExpoSpacing.md),
-            StaggerEntrance(
-              delayMs: 260,
+            SyllabusEntrance(
+              delayMs: 360,
               child: _SectionCard(
                 icon: Icons.image_outlined,
                 tone: ExpoPalette.of(context).accent,
@@ -455,8 +455,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             ),
           ],
           const SizedBox(height: ExpoSpacing.md),
-          StaggerEntrance(
-            delayMs: 300,
+          SyllabusEntrance(
+            delayMs: 420,
             child: Row(
               children: [
                 Expanded(

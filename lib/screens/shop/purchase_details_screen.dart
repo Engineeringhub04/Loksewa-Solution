@@ -7,6 +7,8 @@
 // cards that route to /subscription/exam-purchase/:id and
 // /purchase-details/content/:id. Records come from the purchase services
 // (server-side uid filter, newest first).
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
@@ -17,6 +19,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 class PurchaseDetailsScreen extends StatefulWidget {
   const PurchaseDetailsScreen({super.key});
@@ -188,24 +191,33 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
             if (exams.isEmpty && contents.isEmpty)
               _emptyPurchases(palette)
             else ...[
-              for (final r in exams) ...[
-                _ExamPurchaseCard(
-                  record: r,
-                  date: _fmtDate(r.submittedAt),
-                  onPress: () => context.push(
-                      '/subscription/exam-purchase/${r.id}'),
-                ),
-                const SizedBox(height: 12),
-              ],
-              for (final r in contents) ...[
-                _ContentPurchaseCard(
-                  record: r,
-                  date: _fmtDate(r.submittedAt),
-                  onPress: () => context
-                      .push('/purchase-details/content/${r.id}'),
-                ),
-                const SizedBox(height: 12),
-              ],
+              // Syllabus-style per-item cascade: exam cards first, then
+              // content cards, 60ms steps capped at 8 (identical spacing to
+              // the old trailing SizedBox — Padding(bottom: 12) per card).
+              ...exams.asMap().entries.map((entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SyllabusEntrance(
+                      delayMs: min(entry.key, 8) * 60,
+                      child: _ExamPurchaseCard(
+                        record: entry.value,
+                        date: _fmtDate(entry.value.submittedAt),
+                        onPress: () => context.push(
+                            '/subscription/exam-purchase/${entry.value.id}'),
+                      ),
+                    ),
+                  )),
+              ...contents.asMap().entries.map((entry) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: SyllabusEntrance(
+                      delayMs: min(exams.length + entry.key, 8) * 60,
+                      child: _ContentPurchaseCard(
+                        record: entry.value,
+                        date: _fmtDate(entry.value.submittedAt),
+                        onPress: () => context.push(
+                            '/purchase-details/content/${entry.value.id}'),
+                      ),
+                    ),
+                  )),
             ],
           ],
         ),

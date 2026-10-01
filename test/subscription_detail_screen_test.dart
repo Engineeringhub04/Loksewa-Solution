@@ -4,7 +4,7 @@
 // file picker, no Cloudinary. The 30-minute edit window is driven by the
 // record's submittedAt relative to DateTime.now().
 //
-// Pumps stay small and repeated (StaggerEntrance draw-ins + the 1s edit
+// Pumps stay small and repeated (SyllabusEntrance draw-ins + the 1s edit
 // timer); no pumpAndSettle, per the AGENTS.md widget-test lessons.
 import 'dart:async';
 import 'dart:typed_data';
@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/shop/subscription_detail_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 SubscriptionRecord _record({
   String id = 'r1',
@@ -99,7 +100,7 @@ Future<void> _pump(WidgetTester tester, GoRouter router) async {
   await tester.pump();
 }
 
-/// Small repeated pumps: settles StaggerEntrance draw-ins and lets the 1s
+/// Small repeated pumps: settles SyllabusEntrance draw-ins and lets the 1s
 /// edit-window timer tick without one giant pump.
 Future<void> _settle(WidgetTester tester) async {
   for (var i = 0; i < 4; i++) {
@@ -145,6 +146,9 @@ void main() {
       (tester) async {
     await _pump(tester, _router(loader: (_) async => _record()));
     await _settle(tester);
+
+    // Page sections enter through SyllabusEntrance cascade wrappers.
+    expect(find.byType(SyllabusEntrance), findsWidgets);
 
     // Crown: status tag + plan name + amount hero + method. The amount also
     // appears in the payment summary, so both are expected.

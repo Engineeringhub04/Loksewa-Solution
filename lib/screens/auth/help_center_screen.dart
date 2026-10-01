@@ -1,9 +1,11 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Help Center — mirrors app/settings/help-center.tsx.
@@ -449,7 +451,7 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
               padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
               children: [
                 // ===== Hero =====
-                StaggerEntrance(
+                SyllabusEntrance(
                   delayMs: 0,
                   child: Container(
                     padding: const EdgeInsets.all(ExpoSpacing.md),
@@ -506,8 +508,8 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                 const SizedBox(height: 12),
 
                 // ===== Search =====
-                StaggerEntrance(
-                  delayMs: 50,
+                SyllabusEntrance(
+                  delayMs: 60,
                   child: TextField(
                     controller: _search,
                     style: TextStyle(
@@ -554,19 +556,22 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                 const SizedBox(height: 12),
 
                 // ===== Topic chips (hidden while searching) =====
-                StaggerEntrance(
-                  delayMs: 100,
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: query.isNotEmpty
-                        ? const SizedBox.shrink(
-                            key: ValueKey('chips-hidden'))
-                        : SingleChildScrollView(
-                            key: const ValueKey('chips'),
-                            scrollDirection: Axis.horizontal,
-                            child: Row(
-                              children: [
-                                _chip(
+                // Syllabus-style per-item cascade: the AnimatedSwitcher only
+                // swaps chips vs. the hidden placeholder; each chip entrance
+                // replays when the chip row remounts (query cleared).
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: query.isNotEmpty
+                      ? const SizedBox.shrink(
+                          key: ValueKey('chips-hidden'))
+                      : SingleChildScrollView(
+                          key: const ValueKey('chips'),
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              SyllabusEntrance(
+                                delayMs: 120,
+                                child: _chip(
                                   palette: palette,
                                   label: AppLanguage.tr(
                                       'All topics', 'सबै विषय'),
@@ -574,35 +579,42 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                                   active: _topic == null,
                                   onTap: () => _selectTopic(null),
                                 ),
-                                ..._topics.map((t) => Padding(
-                                      padding: const EdgeInsets.only(
-                                          left: 8),
-                                      child: _chip(
-                                        palette: palette,
-                                        icon: t.icon,
-                                        label: AppLanguage.tr(
-                                            t.nameEn, t.nameNe),
-                                        color: t.color,
-                                        active: _topic == t.key,
-                                        onTap: () => _selectTopic(
-                                            _topic == t.key
-                                                ? null
-                                                : t.key),
-                                      ),
-                                    )),
-                                const SizedBox(width: 4),
-                              ],
-                            ),
+                              ),
+                              ..._topics.asMap().entries.map((e) {
+                                final t = e.value;
+                                return Padding(
+                                  padding: const EdgeInsets.only(
+                                      left: 8),
+                                  child: SyllabusEntrance(
+                                    delayMs:
+                                        120 + min(e.key + 1, 8) * 60,
+                                    child: _chip(
+                                      palette: palette,
+                                      icon: t.icon,
+                                      label: AppLanguage.tr(
+                                          t.nameEn, t.nameNe),
+                                      color: t.color,
+                                      active: _topic == t.key,
+                                      onTap: () => _selectTopic(
+                                          _topic == t.key
+                                              ? null
+                                              : t.key),
+                                    ),
+                                  ),
+                                );
+                              }),
+                              const SizedBox(width: 4),
+                            ],
                           ),
-                  ),
+                        ),
                 ),
                 const SizedBox(height: 12),
 
                 // ===== FAQ =====
-                StaggerEntrance(
-                  delayMs: 150,
-                  child: items.isEmpty
-                      ? Container(
+                items.isEmpty
+                    ? SyllabusEntrance(
+                        delayMs: 180,
+                        child: Container(
                           padding: const EdgeInsets.all(
                               ExpoSpacing.lg),
                           decoration: BoxDecoration(
@@ -641,41 +653,48 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                               ),
                             ],
                           ),
-                        )
-                      : Container(
-                          decoration: BoxDecoration(
-                            color: palette.surface,
-                            borderRadius: BorderRadius.circular(
-                                ExpoRadius.lg),
-                            border:
-                                Border.all(color: palette.border),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: Column(
-                            children: [
-                              for (var i = 0;
-                                  i < items.length;
-                                  i++) ...[
-                                if (i > 0)
-                                  Divider(
-                                      height: 1,
-                                      indent: 16,
-                                      color: palette.divider),
-                                _faqRow(items[i]),
-                              ],
-                            ],
-                          ),
                         ),
-                ),
+                      )
+                    : Container(
+                        decoration: BoxDecoration(
+                          color: palette.surface,
+                          borderRadius: BorderRadius.circular(
+                              ExpoRadius.lg),
+                          border:
+                              Border.all(color: palette.border),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: Column(
+                          children: [
+                            for (var i = 0;
+                                i < items.length;
+                                i++) ...[
+                              if (i > 0)
+                                Divider(
+                                    height: 1,
+                                    indent: 16,
+                                    color: palette.divider),
+                              // ValueKey keeps already-visible rows from
+                              // replaying when the search query reshapes
+                              // the list.
+                              SyllabusEntrance(
+                                key: ValueKey(items[i].id),
+                                delayMs: 180 + min(i, 8) * 60,
+                                child: _faqRow(items[i]),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                 const SizedBox(height: 16),
 
                 // ===== Still stuck =====
-                StaggerEntrance(
-                  delayMs: 200,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SyllabusEntrance(
+                      delayMs: 240,
+                      child: Text(
                         AppLanguage.tr(
                             'Still stuck?', 'अझ अप्ठ्यारो भयो?'),
                         style: const TextStyle(
@@ -683,18 +702,21 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: palette.surface,
-                          borderRadius:
-                              BorderRadius.circular(ExpoRadius.lg),
-                          border: Border.all(color: palette.border),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            _actionRow(
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: palette.surface,
+                        borderRadius:
+                            BorderRadius.circular(ExpoRadius.lg),
+                        border: Border.all(color: palette.border),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: [
+                          SyllabusEntrance(
+                            delayMs: 240,
+                            child: _actionRow(
                               palette: palette,
                               icon: Icons.warning_amber_outlined,
                               color: const Color(0xFFEF4444),
@@ -707,11 +729,14 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                               onTap: () => context
                                   .push('/settings/report-problem'),
                             ),
-                            Divider(
-                                height: 1,
-                                indent: 16,
-                                color: palette.divider),
-                            _actionRow(
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 16,
+                              color: palette.divider),
+                          SyllabusEntrance(
+                            delayMs: 300,
+                            child: _actionRow(
                               palette: palette,
                               icon: Icons.chat_bubble_outline,
                               color: const Color(0xFF0EA5E9),
@@ -724,11 +749,14 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                               onTap: () =>
                                   context.push('/contact-us'),
                             ),
-                            Divider(
-                                height: 1,
-                                indent: 16,
-                                color: palette.divider),
-                            _actionRow(
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 16,
+                              color: palette.divider),
+                          SyllabusEntrance(
+                            delayMs: 360,
+                            child: _actionRow(
                               palette: palette,
                               icon: Icons.star_outline,
                               color: const Color(0xFFF59E0B),
@@ -741,21 +769,21 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                               onTap: () =>
                                   context.push('/feedback'),
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
 
                 // ===== Reach us directly =====
-                StaggerEntrance(
-                  delayMs: 250,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SyllabusEntrance(
+                      delayMs: 300,
+                      child: Text(
                         AppLanguage.tr(
                             'Still stuck? Reach us directly',
                             'अझ अप्ठ्यारो भयो? सिधै सम्पर्क गर्नुहोस्'),
@@ -764,40 +792,49 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: palette.surface,
-                          borderRadius:
-                              BorderRadius.circular(ExpoRadius.lg),
-                          border: Border.all(color: palette.border),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: Column(
-                          children: [
-                            _contactRow(
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: palette.surface,
+                        borderRadius:
+                            BorderRadius.circular(ExpoRadius.lg),
+                        border: Border.all(color: palette.border),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: [
+                          SyllabusEntrance(
+                            delayMs: 300,
+                            child: _contactRow(
                               palette: palette,
                               icon: Icons.mail_outline,
                               label: AppLanguage.tr(
                                   'Email us', 'इमेल गर्नुहोस्'),
                               value: 'contact@kbr.com.np',
                             ),
-                            Divider(
-                                height: 1,
-                                indent: 16,
-                                color: palette.divider),
-                            _contactRow(
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 16,
+                              color: palette.divider),
+                          SyllabusEntrance(
+                            delayMs: 360,
+                            child: _contactRow(
                               palette: palette,
                               icon: Icons.call_outlined,
                               label: AppLanguage.tr(
                                   'Call us', 'फोन गर्नुहोस्'),
                               value: '+977-9810768297',
                             ),
-                            Divider(
-                                height: 1,
-                                indent: 16,
-                                color: palette.divider),
-                            _contactRow(
+                          ),
+                          Divider(
+                              height: 1,
+                              indent: 16,
+                              color: palette.divider),
+                          SyllabusEntrance(
+                            delayMs: 420,
+                            child: _contactRow(
                               palette: palette,
                               icon: Icons.language,
                               label: AppLanguage.tr(
@@ -805,17 +842,17 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
                                   'हाम्रो वेबसाइट हेर्नुहोस्'),
                               value: 'kbr.com.np',
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 12),
 
                 // ===== Footnote =====
-                StaggerEntrance(
-                  delayMs: 300,
+                SyllabusEntrance(
+                  delayMs: 360,
                   child: Text(
                     AppLanguage.tr(
                       'Most reports get a response within 1-2 working days.',

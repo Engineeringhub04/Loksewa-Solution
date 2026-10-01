@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../services/app_language.dart';
 import '../../widgets/image_viewer.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Notification detail — mirrors app/notification/[id].tsx.
@@ -10,9 +12,30 @@ import '../../widgets/subpage_header.dart';
 /// (title, body, imageUrl, category, deepLink, updatedNotice, createdAtMs):
 /// category + updated-notice tags, icon + title + time-ago header row,
 /// tappable image (full-screen viewer), body, and the deep-link button.
-class NotificationDetailScreen extends StatelessWidget {
+/// Shows a 1s premium preloading shimmer first: this page has no fetch —
+/// the payload is already in GoRouterState.extra — so the content would
+/// pop in instantly without it.
+class NotificationDetailScreen extends StatefulWidget {
   final String id;
   const NotificationDetailScreen({super.key, required this.id});
+
+  @override
+  State<NotificationDetailScreen> createState() =>
+      _NotificationDetailScreenState();
+}
+
+class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -39,138 +62,151 @@ class NotificationDetailScreen extends StatelessWidget {
         children: [
           const SubpageHeader(title: 'Notification details'),
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      if (category.isNotEmpty)
-                        _tag(context,
-                            icon: _categoryIcon(category), label: category),
-                      if (updatedNotice)
-                        _tag(context,
-                            icon: Icons.refresh_outlined,
-                            label: 'Updated Notice'),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 52,
-                        height: 52,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: primary.withValues(alpha: 0x1F / 0xFF),
+            child: _preloading
+                ? _preloadingBody()
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (category.isNotEmpty)
+                              _tag(context,
+                                  icon: _categoryIcon(category),
+                                  label: category),
+                            if (updatedNotice)
+                              _tag(context,
+                                  icon: Icons.refresh_outlined,
+                                  label: 'Updated Notice'),
+                          ],
                         ),
-                        alignment: Alignment.center,
-                        child: Icon(_categoryIcon(category),
-                            size: 26, color: primary),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SelectableText(
-                                title,
-                                style: TextStyle(
-                                  color: palette.textPrimary,
-                                  fontSize: ExpoType.h3,
-                                  fontWeight: FontWeight.bold,
+                        const SizedBox(height: 16),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 52,
+                              height: 52,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: primary.withValues(alpha: 0x1F / 0xFF),
+                              ),
+                              alignment: Alignment.center,
+                              child: Icon(_categoryIcon(category),
+                                  size: 26, color: primary),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    SelectableText(
+                                      title,
+                                      style: TextStyle(
+                                        color: palette.textPrimary,
+                                        fontSize: ExpoType.h3,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    if (timestamp.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(top: 3),
+                                        child: Text(
+                                          timestamp,
+                                          style: TextStyle(
+                                            color: palette.textSecondary,
+                                            fontSize: ExpoType.caption,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
-                              if (timestamp.isNotEmpty)
-                                Padding(
-                                  padding:
-                                      const EdgeInsets.only(top: 3),
-                                  child: Text(
-                                    timestamp,
-                                    style: TextStyle(
-                                      color: palette.textSecondary,
-                                      fontSize: ExpoType.caption,
-                                    ),
+                            ),
+                          ],
+                        ),
+                        if (imageUrl.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 18),
+                            child: GestureDetector(
+                              onTap: () => _openViewer(context, imageUrl),
+                              child: ClipRRect(
+                                borderRadius:
+                                    BorderRadius.circular(ExpoRadius.lg),
+                                child: Container(
+                                  color: palette.surfaceAlt,
+                                  child: Image.network(
+                                    imageUrl,
+                                    width: double.infinity,
+                                    height: 220,
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) =>
+                                        const SizedBox.shrink(),
                                   ),
                                 ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (imageUrl.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 18),
-                      child: GestureDetector(
-                        onTap: () => _openViewer(context, imageUrl),
-                        child: ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(ExpoRadius.lg),
-                          child: Container(
-                            color: palette.surfaceAlt,
-                            child: Image.network(
-                              imageUrl,
-                              width: double.infinity,
-                              height: 220,
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) =>
-                                  const SizedBox.shrink(),
+                              ),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                  if (body.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 18),
-                      child: SelectableText(
-                        body,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: ExpoType.body,
-                          height: 24 / 14,
-                        ),
-                      ),
-                    ),
-                  if (deepLink.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 24),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 12, horizontal: 24),
-                            shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(ExpoRadius.md),
-                            ),
-                          ),
-                          onPressed: () => context.push(deepLink),
-                          icon: const Icon(Icons.open_in_new_outlined,
-                              size: 18),
-                          label: const Text('Click here',
+                        if (body.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 18),
+                            child: SelectableText(
+                              body,
                               style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600)),
-                        ),
-                      ),
+                                color: palette.textPrimary,
+                                fontSize: ExpoType.body,
+                                height: 24 / 14,
+                              ),
+                            ),
+                          ),
+                        if (deepLink.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 24),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: primary,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 12, horizontal: 24),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(ExpoRadius.md),
+                                  ),
+                                ),
+                                onPressed: () => context.push(deepLink),
+                                icon: const Icon(Icons.open_in_new_outlined,
+                                    size: 18),
+                                label: const Text('Click here',
+                                    style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w600)),
+                              ),
+                            ),
+                          ),
+                        const SizedBox(height: 24),
+                      ],
                     ),
-                  const SizedBox(height: 24),
-                ],
-              ),
-            ),
+                  ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
       ),
     );
   }
@@ -179,8 +215,7 @@ class NotificationDetailScreen extends StatelessWidget {
       {required IconData icon, required String label}) {
     final primary = ExpoPalette.of(context).primary;
     return Container(
-      padding:
-          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ExpoRadius.pill),
         color: primary.withValues(alpha: 0x18 / 0xFF),
@@ -233,8 +268,18 @@ IconData _categoryIcon(String category) {
 }
 
 const _enMonths = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sept',
+  'Oct',
+  'Nov',
+  'Dec'
 ];
 
 /// Mirrors formatTimeAgo in src/core/notifications/timeAgo.ts (English).

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../services/app_language.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -17,9 +18,14 @@ import '../../widgets/syllabus_entrance.dart';
 /// screen title and UI chrome (subtitle, pills, buttons) are localised.
 /// The outbound link is display-only (no url_launcher): the button copies
 /// the URL to the clipboard.
-class TermsConditionsScreen extends StatelessWidget {
+class TermsConditionsScreen extends StatefulWidget {
   const TermsConditionsScreen({super.key});
 
+  @override
+  State<TermsConditionsScreen> createState() => _TermsConditionsScreenState();
+}
+
+class _TermsConditionsScreenState extends State<TermsConditionsScreen> {
   static const _termsUrl = 'https://www.kbr.com.np/terms';
 
   static const _terms = [
@@ -73,6 +79,18 @@ class TermsConditionsScreen extends StatelessWidget {
     ),
   ];
 
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
+
   void _copyTermsUrl(BuildContext context) {
     Clipboard.setData(const ClipboardData(text: _termsUrl));
     showToast(
@@ -92,7 +110,9 @@ class TermsConditionsScreen extends StatelessWidget {
               title:
                   AppLanguage.tr('Terms & Conditions', 'नियम र सर्तहरू')),
           Expanded(
-            child: ListView(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
                 SyllabusEntrance(
@@ -215,6 +235,17 @@ class TermsConditionsScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
       ),
     );
   }

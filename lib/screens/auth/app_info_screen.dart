@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
@@ -17,11 +18,11 @@ import '../../widgets/x_logo_icon.dart';
 /// NOTE: no package_info_plus is available in this project, so the displayed
 /// version is a hand-maintained constant. Bump it with every release
 /// (reminder recorded in ~/AGENTS.md).
-class AppInfoScreen extends StatelessWidget {
+class AppInfoScreen extends StatefulWidget {
   const AppInfoScreen({super.key});
 
   /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
-  static const _appVersion = '1.0.33';
+  static const _appVersion = '1.0.34';
 
   static String _devanagariDigits(String s) => s.replaceAllMapped(
         RegExp(r'[0-9]'),
@@ -29,10 +30,38 @@ class AppInfoScreen extends StatelessWidget {
       );
 
   @override
+  State<AppInfoScreen> createState() => _AppInfoScreenState();
+}
+
+class _AppInfoScreenState extends State<AppInfoScreen> {
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final versionLabel = AppLanguage.tr(
-      'Version $_appVersion',
-      'संस्करण ${_devanagariDigits(_appVersion)}',
+      'Version ${AppInfoScreen._appVersion}',
+      'संस्करण ${AppInfoScreen._devanagariDigits(AppInfoScreen._appVersion)}',
     );
     return Scaffold(
       body: Column(
@@ -40,7 +69,9 @@ class AppInfoScreen extends StatelessWidget {
           SubpageHeader(
               title: AppLanguage.tr('App Info', 'एप जानकारी')),
           Expanded(
-            child: ListView(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
                 SyllabusEntrance(

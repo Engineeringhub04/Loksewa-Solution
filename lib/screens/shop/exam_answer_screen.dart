@@ -15,6 +15,8 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/pdf_download_dialog.dart';
 import '../../widgets/syllabus_entrance.dart';
 
 const int _answerEditWindowMs = 60 * 60 * 1000;
@@ -42,6 +44,55 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     if (created == null) return false;
     return DateTime.now().difference(created).inMilliseconds <
         _answerEditWindowMs;
+  }
+
+  /// "Download Checked PDF": real byte-counted download into the phone's
+  /// Downloads folder (no share sheet). Progress shows in an AppModalShell
+  /// popup; on completion the popup closes and a toast confirms. Empty URL
+  /// keeps the graceful "no file attached" popup.
+  void _downloadCheckedPdf(String url) {
+    if (url.isEmpty) {
+      _showPdfDialog(
+          AppLanguage.tr('Checked PDF', 'जाँचिएको PDF'), '');
+      return;
+    }
+    final outer = context;
+    AppModalShell.show(
+      context: context,
+      builder: (ctx) => PdfDownloadDialog(
+        url: url,
+        fileName: 'checked-answer-${widget.id}.pdf',
+        onDone: () {
+          Navigator.of(ctx).pop();
+          if (mounted) {
+            showToast(
+                outer,
+                AppLanguage.tr(
+                    'PDF saved to Downloads', 'PDF डाउनलोड्समा सेभ भयो'),
+                ToastVariant.success);
+          }
+        },
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
+  }
+
+  /// "View Submitted PDF": opens the same in-app pdfx viewer the Syllabus
+  /// page and Theory mode use (native rendering, temp-cache download) on a
+  /// new full page — no more link-only popup.
+  void _viewSubmittedPdf(String url, String examTitle) {
+    if (url.isEmpty) {
+      _showPdfDialog(
+          AppLanguage.tr('Submitted PDF', 'पेश गरिएको PDF'), '');
+      return;
+    }
+    final title = examTitle.isNotEmpty
+        ? examTitle
+        : AppLanguage.tr('Submitted PDF', 'पेश गरिएको PDF');
+    context.push(Uri(
+      path: '/pdf/${Uri.encodeComponent('exam-answer-${widget.id}')}',
+      queryParameters: {'uri': url, 'title': title},
+    ).toString());
   }
 
   void _showPdfDialog(String title, String url) {
@@ -172,9 +223,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                             label: Text(AppLanguage.tr(
                                 'Download Checked PDF',
                                 'जाँचिएको PDF डाउनलोड गर्नुहोस्')),
-                            onPressed: () => _showPdfDialog(
-                                AppLanguage.tr(
-                                    'Checked PDF', 'जाँचिएको PDF'),
+                            onPressed: () => _downloadCheckedPdf(
                                 a['checkedPdfUrl']?.toString() ?? ''),
                           ),
                         ),
@@ -186,10 +235,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                             label: Text(AppLanguage.tr(
                                 'View Submitted PDF',
                                 'पेश गरिएको PDF हेर्नुहोस्')),
-                            onPressed: () => _showPdfDialog(
-                                AppLanguage.tr(
-                                    'Submitted PDF', 'पेश गरिएको PDF'),
-                                a['pdfUrl']?.toString() ?? ''),
+                            onPressed: () => _viewSubmittedPdf(
+                                a['pdfUrl']?.toString() ?? '',
+                                a['examSetTitle']?.toString() ?? ''),
                           ),
                         ),
                       ] else ...[
@@ -216,10 +264,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                             label: Text(AppLanguage.tr(
                                 'View Submitted PDF',
                                 'पेश गरिएको PDF हेर्नुहोस्')),
-                            onPressed: () => _showPdfDialog(
-                                AppLanguage.tr(
-                                    'Submitted PDF', 'पेश गरिएको PDF'),
-                                a['pdfUrl']?.toString() ?? ''),
+                            onPressed: () => _viewSubmittedPdf(
+                                a['pdfUrl']?.toString() ?? '',
+                                a['examSetTitle']?.toString() ?? ''),
                           ),
                         ),
                         if (_canEdit(a)) ...[

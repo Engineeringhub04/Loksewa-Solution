@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../services/app_language.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -18,9 +19,14 @@ import '../../widgets/trash_icon.dart';
 /// screen title and UI chrome (pills, subtitle, buttons) are localised.
 /// The outbound link is display-only (no url_launcher): the button copies the
 /// URL to the clipboard.
-class PrivacyPolicyScreen extends StatelessWidget {
+class PrivacyPolicyScreen extends StatefulWidget {
   const PrivacyPolicyScreen({super.key});
 
+  @override
+  State<PrivacyPolicyScreen> createState() => _PrivacyPolicyScreenState();
+}
+
+class _PrivacyPolicyScreenState extends State<PrivacyPolicyScreen> {
   static const _policyUrl = 'https://www.kbr.com.np/privacy';
 
   static const _sections = [
@@ -56,6 +62,18 @@ class PrivacyPolicyScreen extends StatelessWidget {
     ),
   ];
 
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
+
   void _copyPolicyUrl(BuildContext context) {
     Clipboard.setData(const ClipboardData(text: _policyUrl));
     showToast(
@@ -74,7 +92,9 @@ class PrivacyPolicyScreen extends StatelessWidget {
           SubpageHeader(
               title: AppLanguage.tr('Privacy Policy', 'गोपनीयता नीति')),
           Expanded(
-            child: ListView(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
                 SyllabusEntrance(
@@ -144,6 +164,17 @@ class PrivacyPolicyScreen extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
       ),
     );
   }

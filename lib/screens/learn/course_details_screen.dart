@@ -6,6 +6,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Course details — mirrors app/course-details.tsx (Profile → App Settings →
 /// Course details).
@@ -212,96 +213,238 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: colors.primary.withValues(alpha: 0x14 / 0xFF),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.school, size: 26, color: colors.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  _Strings.intro,
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        SyllabusEntrance(
+          delayMs: 0,
+          child: _hero(info),
         ),
         const SizedBox(height: 16),
-        Container(
-          decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border.all(color: colors.border, width: 0.5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              _InfoRow(
-                icon: Icons.school_outlined,
-                label: _Strings.course,
-                value: info.courseName ?? _Strings.notSelected,
-              ),
-              Divider(
-                  height: 0.5,
-                  thickness: 0.5,
-                  indent: 16,
-                  endIndent: 16,
-                  color: colors.divider),
-              _InfoRow(
-                icon: Icons.layers_outlined,
-                label: _Strings.subcourse,
-                value: info.subcourseName ?? _Strings.notSelected,
-              ),
-            ],
-          ),
+        SyllabusEntrance(
+          delayMs: 60,
+          child: _infoCard(colors, info),
         ),
         const SizedBox(height: 16),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            border: Border.all(color: colors.border, width: 0.5),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Row(
-            children: [
-              Icon(Icons.info_outline,
-                  size: 18, color: colors.textSecondary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  _Strings.changeNote,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: colors.textSecondary,
-                  ),
-                ),
-              ),
-            ],
-          ),
+        SyllabusEntrance(
+          delayMs: 120,
+          child: _noteBox(colors),
         ),
         const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton(
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            onPressed: () => context.push('/course-setup?mode=update'),
-            child: Text(_Strings.changeCourse),
-          ),
+        SyllabusEntrance(
+          delayMs: 180,
+          child: _changeCourseButton(context),
         ),
       ],
+    );
+  }
+
+  /// Premium gradient hero: decorative rings, glass school tile, the enrolled
+  /// course name as the headline and the intro copy as the subtitle.
+  Widget _hero(CourseDetailsInfo info) {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF1D4ED8),
+            Color(0xFF2563EB),
+            Color(0xFF3B82F6),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -36,
+              top: -36,
+              child: Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.10),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 58,
+              bottom: -48,
+              child: Container(
+                width: 104,
+                height: 104,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.07),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.18),
+                        ),
+                        child: const Icon(Icons.school,
+                            color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          info.courseName ?? _Strings.notSelected,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 21,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    _Strings.intro,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.88),
+                      height: 1.55,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Premium info card with the course / sub-course rows.
+  Widget _infoCard(ExpoPalette colors, CourseDetailsInfo info) {
+    return Container(
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border.all(color: colors.border, width: 0.5),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          _InfoRow(
+            icon: Icons.school_outlined,
+            label: _Strings.course,
+            value: info.courseName ?? _Strings.notSelected,
+          ),
+          Divider(
+              height: 0.5,
+              thickness: 0.5,
+              indent: 16,
+              endIndent: 16,
+              color: colors.divider),
+          _InfoRow(
+            icon: Icons.layers_outlined,
+            label: _Strings.subcourse,
+            value: info.subcourseName ?? _Strings.notSelected,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// The "changing updates content" note box.
+  Widget _noteBox(ExpoPalette colors) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: colors.surface,
+        border: Border.all(color: colors.border, width: 0.5),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 18, color: colors.textSecondary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _Strings.changeNote,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                color: colors.textSecondary,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Gradient "Change Course" CTA.
+  Widget _changeCourseButton(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF1D4ED8),
+            Color(0xFF2563EB),
+            Color(0xFF3B82F6),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withValues(alpha: 0.30),
+            blurRadius: 16,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => context.push('/course-setup?mode=update'),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            child: Center(
+              child: Text(
+                _Strings.changeCourse,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

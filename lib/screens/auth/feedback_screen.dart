@@ -48,9 +48,9 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   void initState() {
     super.initState();
     _checkOnline();
-    // Premium preloading shimmer (~1.5s): this page has no database fetch,
+    // Premium preloading shimmer (~1s): this page has no database fetch,
     // so without it the content would pop in instantly and look cheap.
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    Future.delayed(const Duration(milliseconds: 1000), () {
       if (mounted) setState(() => _preloading = false);
     });
   }
@@ -375,7 +375,7 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     );
   }
 
-  /// Premium preloading shimmer shown for ~1.5s on first build, before the
+  /// Premium preloading shimmer shown for ~1s on first build, before the
   /// page content is revealed.
   Widget _preloadingBody() {
     return Center(

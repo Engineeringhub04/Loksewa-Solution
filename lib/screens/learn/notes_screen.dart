@@ -46,13 +46,13 @@ class _NotesScreenState extends State<NotesScreen> {
   Future<void> _boot() async {
     // Premium preloading shimmer: the note store is local and inits nearly
     // instantly, so without this minimum delay the page would pop in cheaply.
-    // The shimmer (PreloadingWidget) stays up for at least ~1.5s.
+    // The shimmer (PreloadingWidget) stays up for at least ~1s.
     await Future.wait([
       () async {
         await _store.ensureInit();
         await _store.migrateLegacyOnce();
       }(),
-      Future.delayed(const Duration(milliseconds: 1500)),
+      Future.delayed(const Duration(milliseconds: 1000)),
     ]);
     if (!mounted) return;
     setState(() {

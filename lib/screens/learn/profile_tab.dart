@@ -78,6 +78,11 @@ class _ProfileTabState extends State<ProfileTab> {
     });
     _uid = AuthService.currentUser?.uid;
     ProfileStore.instance.addListener(_onStoreChanged);
+    // The tab widgets live in TabsScreen's `static const` list, so the
+    // app-level rebuild in main.dart never reaches them (identical const
+    // widgets skip element updates). Without this listener the new language
+    // only appeared after an in-tab rebuild such as scrolling.
+    AppLanguage.current.addListener(_onLanguageChanged);
     if (_uid != null) {
       final uid = _uid!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -91,6 +96,7 @@ class _ProfileTabState extends State<ProfileTab> {
   @override
   void dispose() {
     ProfileStore.instance.removeListener(_onStoreChanged);
+    AppLanguage.current.removeListener(_onLanguageChanged);
     _scrollController.dispose();
     _scrollOffset.dispose();
     super.dispose();
@@ -108,6 +114,12 @@ class _ProfileTabState extends State<ProfileTab> {
   /// When the aggregate has no percent of its own but the snapshot does, the
   /// snapshot's percent stands in for the ring. Never throws; a missing
   /// snapshot simply leaves the card on the store's value.
+  /// Rebuilds the tab the moment the profile language converter flips the
+  /// language — see the note in [initState] about the const tab list.
+  void _onLanguageChanged() {
+    if (mounted) setState(() {});
+  }
+
   void _onStoreChanged() {
     final uid = _uid;
     if (uid != _analyticsUid) {

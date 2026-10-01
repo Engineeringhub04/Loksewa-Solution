@@ -41,7 +41,9 @@ void main() {
               debugUid: 'u1', loadInfo: (_) async => _info));
 
       expect(find.text('Course Details'), findsOneWidget);
-      expect(find.text('GK & Current Affairs'), findsOneWidget);
+      // The course name shows both in the gradient hero headline and in the
+      // info card's Course row.
+      expect(find.text('GK & Current Affairs'), findsNWidgets(2));
       expect(find.text('GK Basics'), findsOneWidget);
       expect(find.text('Not selected yet'), findsNothing);
       expect(
@@ -58,7 +60,8 @@ void main() {
               debugUid: 'u1',
               loadInfo: (_) async => const CourseDetailsInfo()));
 
-      expect(find.text('Not selected yet'), findsNWidgets(2));
+      // 'Not selected yet' shows in the hero headline plus both info rows.
+      expect(find.text('Not selected yet'), findsNWidgets(3));
     });
 
     testWidgets('loading shows the preloader with label and hint',

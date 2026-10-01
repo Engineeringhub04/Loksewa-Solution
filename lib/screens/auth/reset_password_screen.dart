@@ -6,6 +6,7 @@ import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
+import '../../services/app_language.dart';
 
 /// In-app password reset completion — mirrors app/reset-password.tsx.
 /// Reads the Firebase action-link params (oobCode, mode) from the route,
@@ -25,12 +26,19 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   final _confirm = TextEditingController();
   final _confirmFocus = FocusNode();
   bool _loading = false;
+  bool _preloading = true;
   _CodeStatus _status = _CodeStatus.checking;
   String? _oobCode;
 
   @override
   void initState() {
     super.initState();
+    // 1s premium preloading shimmer: shown before the reset-link check UI,
+    // so the page doesn't pop in instantly. Separate from [_loading],
+    // which drives the Change Password action button.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) => _validateCode());
   }
 
@@ -184,6 +192,17 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     );
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Transparent status bar with dark icons so the light background flows
@@ -200,18 +219,20 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         body: AuthScreenLayout(
           title: 'Set New Password',
           subtitle: 'Choose a strong new password for your account',
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 300),
-            transitionBuilder: (child, animation) => FadeTransition(
-              opacity: animation,
-              child: child,
-            ),
-            child: switch (_status) {
-              _CodeStatus.checking => _checking(),
-              _CodeStatus.invalid => _invalid(),
-              _CodeStatus.valid => _form(),
-            },
-          ),
+          child: _preloading
+              ? _preloadingBody()
+              : AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 300),
+                  transitionBuilder: (child, animation) => FadeTransition(
+                    opacity: animation,
+                    child: child,
+                  ),
+                  child: switch (_status) {
+                    _CodeStatus.checking => _checking(),
+                    _CodeStatus.invalid => _invalid(),
+                    _CodeStatus.valid => _form(),
+                  },
+                ),
         ),
       ),
     );

@@ -1,20 +1,50 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../services/app_language.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// About — mirrors app/about.tsx.
 /// Logo, app name, version, description, social links and legal entries.
 /// (External links render as text: url_launcher is not a dependency.)
-class AboutScreen extends StatelessWidget {
+class AboutScreen extends StatefulWidget {
   const AboutScreen({super.key});
 
+  @override
+  State<AboutScreen> createState() => _AboutScreenState();
+}
+
+class _AboutScreenState extends State<AboutScreen> {
   static const _socials = [
     ('Facebook', 'https://www.facebook.com/profile.php?id=61580182268110'),
     ('YouTube', 'https://www.youtube.com/loksewasolution0'),
     ('Instagram', 'https://www.instagram.com/loksewasolution'),
     ('X', 'https://x.com/loksewa_soln'),
   ];
+
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -23,7 +53,9 @@ class AboutScreen extends StatelessWidget {
         children: [
           const SubpageHeader(title: 'About'),
           Expanded(
-            child: ListView(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
         padding: const EdgeInsets.all(24),
         children: [
           Center(

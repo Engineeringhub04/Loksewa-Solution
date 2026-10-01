@@ -36,11 +36,17 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   final _confirmText = TextEditingController();
   bool _deleting = false;
   bool? _offline;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
     _checkOnline();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   Future<void> _checkOnline() async {
@@ -179,6 +185,17 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     }
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = AuthService.currentUser;
@@ -199,7 +216,9 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
               SubpageHeader(
                   title: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्')),
               Expanded(
-                child: ListView(
+                child: _preloading
+                    ? _preloadingBody()
+                    : ListView(
                   padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                   children: [
                     SyllabusEntrance(

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../services/app_language.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Fallback destination for feature buttons that don't have a real page yet —
@@ -30,7 +32,9 @@ class UnderConstructionScreen extends StatefulWidget {
 }
 
 class _UnderConstructionScreenState extends State<UnderConstructionScreen>
-    with SingleTickerProviderStateMixin {
+    // Two controllers (_haloController + _progressController), so this must be
+    // the multi-ticker mixin — SingleTicker throws on the second createTicker.
+    with TickerProviderStateMixin {
   /// Breathing halo behind the disc: 1600ms in-out, repeated forever.
   /// Deliberately a slow pulse, not a spinner (matches React).
   late final AnimationController _haloController;
@@ -43,10 +47,16 @@ class _UnderConstructionScreenState extends State<UnderConstructionScreen>
   String _pageName = 'This Feature';
   int _percent = 20;
   bool _progressStarted = false;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
     _haloController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1600),
@@ -86,202 +96,218 @@ class _UnderConstructionScreenState extends State<UnderConstructionScreen>
     await Future<void>.delayed(const Duration(milliseconds: 800));
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final badgeBg =
-        palette.accent.withValues(alpha: isDark ? 0.18 : 0.14);
+    final badgeBg = palette.accent.withValues(alpha: isDark ? 0.18 : 0.14);
 
     return Scaffold(
       body: Column(
         children: [
           SubpageHeader(title: _pageName),
           Expanded(
-            child: RefreshIndicator(
-              color: palette.primary,
-              onRefresh: _onRefresh,
-              child: SingleChildScrollView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(20),
-                child: _Entrance(
-                  child: Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 22, vertical: 28),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // Breathing halo stacked behind the brand disc.
-                          SizedBox(
-                            width: 112,
-                            height: 112,
-                            child: Stack(
-                              alignment: Alignment.center,
+            child: _preloading
+                ? _preloadingBody()
+                : RefreshIndicator(
+                    color: palette.primary,
+                    onRefresh: _onRefresh,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: const EdgeInsets.all(20),
+                      child: _Entrance(
+                        child: Card(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(24),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 22, vertical: 28),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                AnimatedBuilder(
-                                  animation: _haloController,
-                                  builder: (context, _) => Transform.scale(
-                                    scale:
-                                        1 + _haloController.value * 0.16,
-                                    child: Opacity(
-                                      opacity: 0.3 -
-                                          _haloController.value * 0.18,
-                                      child: Container(
-                                        width: 96,
-                                        height: 96,
-                                        decoration: BoxDecoration(
+                                // Breathing halo stacked behind the brand disc.
+                                SizedBox(
+                                  width: 112,
+                                  height: 112,
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      AnimatedBuilder(
+                                        animation: _haloController,
+                                        builder: (context, _) =>
+                                            Transform.scale(
+                                          scale:
+                                              1 + _haloController.value * 0.16,
+                                          child: Opacity(
+                                            opacity: 0.3 -
+                                                _haloController.value * 0.18,
+                                            child: Container(
+                                              width: 96,
+                                              height: 96,
+                                              decoration: BoxDecoration(
+                                                shape: BoxShape.circle,
+                                                color: palette.primary,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      Container(
+                                        width: 88,
+                                        height: 88,
+                                        decoration: const BoxDecoration(
                                           shape: BoxShape.circle,
-                                          color: palette.primary,
+                                          gradient: LinearGradient(
+                                            colors: [
+                                              AppColors.navy,
+                                              Color(0xFF2D5BFF)
+                                            ],
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                          ),
+                                        ),
+                                        child: const Icon(Icons.construction,
+                                            size: 40, color: Colors.white),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 15),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 11, vertical: 5),
+                                  decoration: BoxDecoration(
+                                    color: badgeBg,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(Icons.handyman,
+                                          size: 12, color: palette.accent),
+                                      const SizedBox(width: 5),
+                                      Text(
+                                        'IN PROGRESS',
+                                        style: TextStyle(
+                                          color: palette.accent,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.bold,
+                                          letterSpacing: 0.8,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 15),
+                                Text(
+                                  _pageName,
+                                  style: TextStyle(
+                                      fontSize: 24,
+                                      fontWeight: FontWeight.bold,
+                                      color: palette.textPrimary),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  'Under construction',
+                                  style: TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: palette.primary),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 15),
+                                Text(
+                                  "We're building this feature right now. It will be available in an upcoming update.",
+                                  style: TextStyle(
+                                      color: palette.textSecondary,
+                                      height: 1.5),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 15),
+                                // Animated progress track: 10px ClipRRect(999),
+                                // fill sweeps 0→percent via FractionallySizedBox.
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(999),
+                                  child: Container(
+                                    height: 10,
+                                    color: isDark
+                                        ? Colors.white.withValues(alpha: 0.1)
+                                        : Colors.grey.shade200,
+                                    child: AnimatedBuilder(
+                                      animation: _progressController,
+                                      builder: (context, _) =>
+                                          FractionallySizedBox(
+                                        alignment: Alignment.centerLeft,
+                                        widthFactor: _progressAnim?.value ?? 0,
+                                        child: Container(
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              colors: [
+                                                palette.primary,
+                                                palette.accent,
+                                              ],
+                                              begin: Alignment.centerLeft,
+                                              end: Alignment.centerRight,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
                                 ),
-                                Container(
-                                  width: 88,
-                                  height: 88,
-                                  decoration: const BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    gradient: LinearGradient(
-                                      colors: [
-                                        AppColors.navy,
-                                        Color(0xFF2D5BFF)
-                                      ],
-                                      begin: Alignment.topLeft,
-                                      end: Alignment.bottomRight,
-                                    ),
+                                const SizedBox(height: 6),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text(
+                                    '$_percent% complete',
+                                    style: TextStyle(
+                                        color: palette.textSecondary,
+                                        fontSize: 12),
                                   ),
-                                  child: const Icon(Icons.construction,
-                                      size: 40, color: Colors.white),
                                 ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 15),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 11, vertical: 5),
-                            decoration: BoxDecoration(
-                              color: badgeBg,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.handyman,
-                                    size: 12, color: palette.accent),
-                                const SizedBox(width: 5),
+                                const Divider(height: 30),
                                 Text(
-                                  'IN PROGRESS',
+                                  'Thanks for your patience.',
                                   style: TextStyle(
-                                    color: palette.accent,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    letterSpacing: 0.8,
+                                      color: palette.textSecondary,
+                                      fontSize: 13),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 15),
+                                ElevatedButton.icon(
+                                  onPressed: () => context.pop(),
+                                  icon: const Icon(Icons.arrow_back, size: 16),
+                                  label: const Text('Go Back'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: palette.primary,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 20, vertical: 11),
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 15),
-                          Text(
-                            _pageName,
-                            style: TextStyle(
-                                fontSize: 24,
-                                fontWeight: FontWeight.bold,
-                                color: palette.textPrimary),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 5),
-                          Text(
-                            'Under construction',
-                            style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                                color: palette.primary),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 15),
-                          Text(
-                            "We're building this feature right now. It will be available in an upcoming update.",
-                            style: TextStyle(
-                                color: palette.textSecondary, height: 1.5),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 15),
-                          // Animated progress track: 10px ClipRRect(999),
-                          // fill sweeps 0→percent via FractionallySizedBox.
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(999),
-                            child: Container(
-                              height: 10,
-                              color: isDark
-                                  ? Colors.white.withValues(alpha: 0.1)
-                                  : Colors.grey.shade200,
-                              child: AnimatedBuilder(
-                                animation: _progressController,
-                                builder: (context, _) =>
-                                    FractionallySizedBox(
-                                  alignment: Alignment.centerLeft,
-                                  widthFactor: _progressAnim?.value ?? 0,
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        colors: [
-                                          palette.primary,
-                                          palette.accent,
-                                        ],
-                                        begin: Alignment.centerLeft,
-                                        end: Alignment.centerRight,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(
-                              '$_percent% complete',
-                              style: TextStyle(
-                                  color: palette.textSecondary, fontSize: 12),
-                            ),
-                          ),
-                          const Divider(height: 30),
-                          Text(
-                            'Thanks for your patience.',
-                            style: TextStyle(
-                                color: palette.textSecondary, fontSize: 13),
-                            textAlign: TextAlign.center,
-                          ),
-                          const SizedBox(height: 15),
-                          ElevatedButton.icon(
-                            onPressed: () => context.pop(),
-                            icon: const Icon(Icons.arrow_back, size: 16),
-                            label: const Text('Go Back'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: palette.primary,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 20, vertical: 11),
-                            ),
-                          ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ),
           ),
         ],
       ),

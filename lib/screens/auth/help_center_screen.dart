@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -393,11 +394,17 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
   final TextEditingController _search = TextEditingController();
   String? _topic;
   String? _openId;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
     _search.addListener(_onSearchChanged);
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   @override
@@ -435,6 +442,17 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
     });
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
@@ -447,7 +465,9 @@ class _HelpCenterScreenState extends State<HelpCenterScreen> {
           SubpageHeader(
               title: AppLanguage.tr('Help Center', 'सहायता केन्द्र')),
           Expanded(
-            child: ListView(
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
               padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
               children: [
                 // ===== Hero =====

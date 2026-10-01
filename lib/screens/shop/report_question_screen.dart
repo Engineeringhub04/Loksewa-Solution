@@ -13,6 +13,7 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/syllabus_entrance.dart';
 
@@ -24,8 +25,8 @@ class _Issue {
 }
 
 const _issues = [
-  _Issue('wrong-answer', 'Wrong answer marked correct',
-      'गलत उत्तर सही देखाइएको'),
+  _Issue(
+      'wrong-answer', 'Wrong answer marked correct', 'गलत उत्तर सही देखाइएको'),
   _Issue('typo', 'Spelling or typo', 'हिज्जे वा टाइपिङ गल्ती'),
   _Issue('duplicate', 'Duplicate question', 'दोहोरो प्रश्न'),
   _Issue('unclear', 'Question is unclear', 'प्रश्न अस्पष्ट छ'),
@@ -46,11 +47,17 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
   bool _sending = false;
   bool? _offline;
   bool _refParamRead = false;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
     _checkOnline();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   @override
@@ -70,8 +77,8 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
     try {
       final results = await Connectivity().checkConnectivity();
       if (!mounted) return;
-      setState(() =>
-          _offline = results.every((r) => r == ConnectivityResult.none));
+      setState(
+          () => _offline = results.every((r) => r == ConnectivityResult.none));
     } catch (_) {
       if (mounted) setState(() => _offline = false);
     }
@@ -90,8 +97,7 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
       _descCtrl.text.trim().isNotEmpty &&
       !_sending;
 
-  int get _filled =>
-      [
+  int get _filled => [
         _refCtrl.text.trim().isNotEmpty,
         _issue != null,
         _descCtrl.text.trim().isNotEmpty
@@ -116,7 +122,8 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
       context.pop();
     } catch (_) {
       if (!mounted) return;
-      showToast(context,
+      showToast(
+          context,
           AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
           ToastVariant.error);
     } finally {
@@ -135,9 +142,22 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
           SubpageHeader(
               title: AppLanguage.tr('Report Question', 'प्रश्न रिपोर्ट')),
           Expanded(
-            child: offline ? _offlineBody(pal) : _formBody(pal),
+            child: _preloading
+                ? _preloadingBody()
+                : (offline ? _offlineBody(pal) : _formBody(pal)),
           ),
         ],
+      ),
+    );
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
       ),
     );
   }
@@ -210,8 +230,7 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
           // Filled-step count — the one piece of feedback the old form never
           // gave: what is still missing before submit lights up.
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               color: Colors.white.withValues(alpha: 0x1F / 0xFF),
@@ -234,9 +253,7 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
                   )
                 : StatusPill(
                     label: '$filled/3',
-                    color: filled == 3
-                        ? const Color(0xFF6EE7B7)
-                        : Colors.white,
+                    color: filled == 3 ? const Color(0xFF6EE7B7) : Colors.white,
                     icon: filled == 3
                         ? Icons.check_circle_outline
                         : Icons.radio_button_unchecked,
@@ -264,8 +281,7 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
             ),
             child: Row(
               children: [
-                Icon(Icons.cloud_off_outlined,
-                    size: 24, color: pal.warning),
+                Icon(Icons.cloud_off_outlined, size: 24, color: pal.warning),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -282,11 +298,10 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        AppLanguage.tr(
-                            'This requires an internet connection',
+                        AppLanguage.tr('This requires an internet connection',
                             'यसका लागि इन्टरनेट जडान आवश्यक छ'),
-                        style: TextStyle(
-                            fontSize: 12, color: pal.textSecondary),
+                        style:
+                            TextStyle(fontSize: 12, color: pal.textSecondary),
                       ),
                     ],
                   ),
@@ -329,8 +344,7 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
                   labelText: AppLanguage.tr(
                       'e.g. "Mock Test 2, question 14" or the question text',
                       'जस्तै "मक टेस्ट २, प्रश्न १४" वा प्रश्नको बेहोरा'),
-                  prefixIcon:
-                      const Icon(Icons.bookmark_outline, size: 20),
+                  prefixIcon: const Icon(Icons.bookmark_outline, size: 20),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -348,8 +362,8 @@ class _ReportQuestionScreenState extends State<ReportQuestionScreen> {
               title: AppLanguage.tr('What is wrong?', 'के गलत छ?'),
               child: DropdownButtonFormField<String>(
                 initialValue: _issue,
-                hint: Text(AppLanguage.tr(
-                    'Select an issue', 'समस्या छान्नुहोस्')),
+                hint: Text(
+                    AppLanguage.tr('Select an issue', 'समस्या छान्नुहोस्')),
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
@@ -473,8 +487,8 @@ class _SectionCard extends StatelessWidget {
                 height: 32,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(10),
-                  color: tone.withValues(
-                      alpha: dark ? 0x26 / 0xFF : 0x14 / 0xFF),
+                  color:
+                      tone.withValues(alpha: dark ? 0x26 / 0xFF : 0x14 / 0xFF),
                 ),
                 child: Icon(icon, size: 17, color: tone),
               ),
@@ -495,8 +509,8 @@ class _SectionCard extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         subtitle!,
-                        style: TextStyle(
-                            fontSize: 11, color: pal.textSecondary),
+                        style:
+                            TextStyle(fontSize: 11, color: pal.textSecondary),
                       ),
                     ],
                   ],

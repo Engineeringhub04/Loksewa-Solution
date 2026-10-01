@@ -8,6 +8,7 @@ import '../../services/app_language.dart';
 import '../../services/keep_notes_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/keep_rich_text.dart';
+import '../../widgets/preloading.dart';
 
 /// Keep Notes editor — Google Keep style.
 ///
@@ -34,6 +35,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   late final KeepRichController _bodyCtrl;
 
   bool _loaded = false;
+  bool _preloading = true;
   bool _pinned = false;
   bool _showFormatBar = false;
   String _noteId = '';
@@ -50,6 +52,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     _bodyCtrl.addListener(_onBodyChanged);
     _titleCtrl.addListener(_onTitleChanged);
     _boot();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   Future<void> _boot() async {
@@ -215,25 +222,37 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       child: Scaffold(
         backgroundColor: bg,
         body: SafeArea(
-          child: _loaded
-              ? Column(
-                  children: [
-                    _topBar(textPrimary),
-                    _titleField(textPrimary, textDisabled),
-                    Expanded(child: _bodyField(textPrimary, textDisabled)),
-                    if (_showFormatBar) _formatBar(palette),
-                    _footer(palette),
-                  ],
-                )
-              : const Center(
-                  child: SizedBox(
-                    width: 20,
-                    height: 20,
-                    child:
-                        CircularProgressIndicator(strokeWidth: 2.5),
-                  ),
-                ),
+          child: _preloading
+              ? _preloadingBody()
+              : (_loaded
+                  ? Column(
+                      children: [
+                        _topBar(textPrimary),
+                        _titleField(textPrimary, textDisabled),
+                        Expanded(child: _bodyField(textPrimary, textDisabled)),
+                        if (_showFormatBar) _formatBar(palette),
+                        _footer(palette),
+                      ],
+                    )
+                  : const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                    )),
         ),
+      ),
+    );
+  }
+
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
       ),
     );
   }
@@ -318,38 +337,28 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          _formatButton(
-              KeepTextStyle.bold,
-              Icons.format_bold,
-              AppLanguage.tr('Bold', 'बोल्ड'),
-              palette),
-          _formatButton(
-              KeepTextStyle.underline,
-              Icons.format_underline,
-              AppLanguage.tr('Underline', 'अन्डरलाइन'),
-              palette),
-          _formatButton(
-              KeepTextStyle.italic,
-              Icons.format_italic,
-              AppLanguage.tr('Italic', 'इटालिक'),
-              palette),
+          _formatButton(KeepTextStyle.bold, Icons.format_bold,
+              AppLanguage.tr('Bold', 'बोल्ड'), palette),
+          _formatButton(KeepTextStyle.underline, Icons.format_underline,
+              AppLanguage.tr('Underline', 'अन्डरलाइन'), palette),
+          _formatButton(KeepTextStyle.italic, Icons.format_italic,
+              AppLanguage.tr('Italic', 'इटालिक'), palette),
         ],
       ),
     );
   }
 
-  Widget _formatButton(KeepTextStyle style, IconData icon, String tip,
-      ExpoPalette palette) {
-    final active = _bodyCtrl.typingStyles.contains(style) ||
-        _selectionHas(style);
+  Widget _formatButton(
+      KeepTextStyle style, IconData icon, String tip, ExpoPalette palette) {
+    final active =
+        _bodyCtrl.typingStyles.contains(style) || _selectionHas(style);
     return IconButton(
       icon: Icon(icon),
       color: active ? palette.primary : palette.textSecondary,
       style: IconButton.styleFrom(
         backgroundColor:
             active ? palette.primary.withValues(alpha: 0.14) : null,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       onPressed: () => _toggleFormat(style),
       tooltip: tip,
@@ -399,14 +408,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
               style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: _showFormatBar
-                    ? palette.primary
-                    : palette.textPrimary,
+                color: _showFormatBar ? palette.primary : palette.textPrimary,
                 decoration: TextDecoration.underline,
               ),
             ),
-            onPressed: () =>
-                setState(() => _showFormatBar = !_showFormatBar),
+            onPressed: () => setState(() => _showFormatBar = !_showFormatBar),
             tooltip: AppLanguage.tr('Text formatting', 'टेक्स्ट फर्म्याटिङ'),
           ),
         ],

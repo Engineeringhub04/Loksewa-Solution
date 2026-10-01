@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../services/app_config.dart';
+import '../services/app_language.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
 import '../services/device_session.dart';
@@ -11,6 +12,7 @@ import '../widgets/auth/auth_screen_layout.dart';
 import '../widgets/auth/floating_label_field.dart';
 import '../widgets/auth/shake.dart';
 import '../widgets/auth/terms_checkbox.dart';
+import '../widgets/preloading.dart';
 
 /// Login — mirrors app/(auth)/login.tsx pixel-close.
 /// Collapsed state (Continue with Google / or / Continue with Email / terms /
@@ -36,6 +38,9 @@ class _LoginScreenState extends State<LoginScreen>
   bool _googleLoading = false;
   bool _acceptedTerms = false;
   bool _termsError = false;
+  // _loading above is the sign-in ACTION; _preloading is the separate 1s
+  // shimmer shown on first build before the page content reveals.
+  bool _preloading = true;
 
   late final AnimationController _shakeController;
   late final AnimationController _termsShakeController;
@@ -49,6 +54,11 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   void initState() {
     super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
     _shakeController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 400));
     _termsShakeController = AnimationController(
@@ -347,6 +357,17 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Transparent status bar with dark icons so the light background flows
@@ -365,15 +386,17 @@ class _LoginScreenState extends State<LoginScreen>
             AuthScreenLayout(
               title: 'Welcome Back',
               subtitle: 'Sign in to continue your Loksewa preparation journey',
-              child: Shake(
-                controller: _shakeController,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  transitionBuilder: (child, animation) =>
-                      FadeTransition(opacity: animation, child: child),
-                  child: _showEmailFields ? _expanded() : _collapsed(),
-                ),
-              ),
+              child: _preloading
+                  ? _preloadingBody()
+                  : Shake(
+                      controller: _shakeController,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        transitionBuilder: (child, animation) =>
+                            FadeTransition(opacity: animation, child: child),
+                        child: _showEmailFields ? _expanded() : _collapsed(),
+                      ),
+                    ),
             ),
             if (_googleLoading) const GoogleLoadingOverlay(),
           ],

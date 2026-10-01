@@ -1,21 +1,21 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/report_service.dart';
+import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import 'package:loksewa_solution/widgets/disk_cached_image.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/profile_avatar.dart';
-import 'package:loksewa_solution/widgets/subpage_header.dart';
 import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 /// §40 Edit Profile — mirrors app/edit-profile.tsx.
@@ -676,10 +676,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             Column(
               children: [
-                SubpageHeader(
-                  title: _Strings.title,
-                  onBackPress: _attemptLeave,
-                ),
+                _headerBlock(colors),
                 Expanded(
                   child: !_hydrated || !_minLoaderElapsed
                       ? PreloadingWidget(
@@ -697,11 +694,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             children: [
                               SyllabusEntrance(
                                 delayMs: 0,
-                                child: _photoBlock(colors),
-                              ),
-                              const SizedBox(height: 20),
-                              SyllabusEntrance(
-                                delayMs: 60,
                                 child: Column(
                                   children: [
                                     _ProfileField(
@@ -860,78 +852,202 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// the determinate progress ring while a photo uploads. The rings share a
   /// fixed 106px slot centred in a 118px box with no clipping, so nothing
   /// ever looks cut and the avatar never shifts when the ring swaps.
-  Widget _photoBlock(ExpoPalette colors) {
+  /// The big curved header: the shared blue gradient (26px bottom radius,
+  /// full-bleed behind the status bar, light status icons — same language as
+  /// SubpageHeader) extended downward so it CONTAINS the profile photo, the
+  /// live name preview and the "Click On Photo To Change" hint. The form
+  /// fields stay below on the page background.
+  ///
+  /// The photo-upload flow is untouched: tap photo → Gallery/Camera
+  /// AppModalShell popup → immediate upload with the circular progress ring.
+  /// Name/hint text is white-on-blue so it reads in both app themes.
+  Widget _headerBlock(ExpoPalette colors) {
     final displayName = fullNameOf(_firstCtrl.text, _lastCtrl.text);
-    return Column(
-      children: [
-        GestureDetector(
-          onTap: _uploading ? null : _openPhotoOptions,
-          child: SizedBox(
-            width: _photoBox,
-            height: _photoBox,
-            child: Stack(
-              clipBehavior: Clip.none,
-              alignment: Alignment.center,
-              children: [
-                _avatarFace(displayName),
-                Positioned(
-                  bottom: 4,
-                  right: 4,
-                  child: Container(
-                    width: 32,
-                    height: 32,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: colors.primary,
-                      border:
-                          Border.all(color: colors.background, width: 2),
-                    ),
-                    child: _uploading
-                        ? const SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.camera_alt,
-                            size: 16, color: Colors.white),
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          // Solid fallback under the gradient so the header can never render
+          // colourless — same stops as the shared SubpageHeader.
+          color: Color(0xFF1D4ED8),
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF2563EB),
+              Color(0xFF1D4ED8),
+              Color(0xFF0B1F5B),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(26),
+            bottomRight: Radius.circular(26),
+          ),
+        ),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: _headerTopRow(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _photoAvatar(colors),
+              const SizedBox(height: 8),
+              // Live identity preview: the name the user is TYPING, updated
+              // in real time, with the verified tick for pro members.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: NameWithTick(
+                  name: displayName.isEmpty ? _Strings.yourName : displayName,
+                  pro: _pro,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white,
                   ),
                 ),
-              ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _photoCaption(),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: _uploading || _uploadState == UploadState.done
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: 0.75),
+                  fontWeight: _uploading || _uploadState == UploadState.done
+                      ? FontWeight.w600
+                      : FontWeight.normal,
+                ),
+              ),
+              const SizedBox(height: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Top row inside the big header: back button / centered title / theme
+  /// toggle — the same 36×36 translucent icon boxes as SubpageHeader.
+  Widget _headerTopRow() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    Widget iconBox({Widget? child}) {
+      return Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        alignment: Alignment.center,
+        child: child,
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        GestureDetector(
+          onTap: _attemptLeave,
+          child: iconBox(
+            child: const Icon(
+              Icons.arrow_back,
+              size: 20,
+              color: Colors.white,
             ),
           ),
         ),
-        const SizedBox(height: 4),
-        // Live identity preview: the name the user is TYPING, updated in real
-        // time, with the verified tick for pro members.
-        NameWithTick(
-          name: displayName.isEmpty ? _Strings.yourName : displayName,
-          pro: _pro,
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.w600,
-            color: colors.textPrimary,
+        Expanded(
+          child: Text(
+            _Strings.title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ),
-        const SizedBox(height: 2),
-        Text(
-          _photoCaption(),
-          style: TextStyle(
-            fontSize: 12,
-            color: _uploading
-                ? colors.info
-                : _uploadState == UploadState.done
-                    ? colors.success
-                    : colors.textSecondary,
-            fontWeight: _uploading || _uploadState == UploadState.done
-                ? FontWeight.w600
-                : FontWeight.normal,
+        GestureDetector(
+          onTap: () => ThemeService.toggle(context),
+          child: iconBox(
+            child: Icon(
+              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+              size: 20,
+              color: Colors.white,
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  /// The tappable photo with its camera badge and upload ring. Behaviour is
+  /// identical to before (tap → photo options popup → immediate upload); only
+  /// the badge is white-on-blue so it stays visible against the header
+  /// gradient instead of blending into it.
+  Widget _photoAvatar(ExpoPalette colors) {
+    return GestureDetector(
+      onTap: _uploading ? null : _openPhotoOptions,
+      child: SizedBox(
+        width: _photoBox,
+        height: _photoBox,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.center,
+          children: [
+            _avatarFace(fullNameOf(_firstCtrl.text, _lastCtrl.text)),
+            Positioned(
+              bottom: 4,
+              right: 4,
+              child: Container(
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white,
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.25),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: _uploading
+                    ? SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.primary,
+                        ),
+                      )
+                    : Icon(Icons.camera_alt,
+                        size: 16, color: colors.primary),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

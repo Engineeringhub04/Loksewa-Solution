@@ -5,6 +5,8 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
+import '../../services/app_language.dart';
+import '../../widgets/preloading.dart';
 
 /// Forgot password — mirrors app/(auth)/forgot-password.tsx.
 /// Sends the reset email, then shows the "Check Your Email" state.
@@ -21,6 +23,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _email = TextEditingController();
   bool _loading = false;
   bool _sent = false;
+  bool _preloading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // 1s premium preloading shimmer: this page has no database fetch, so the
+    // content would pop in instantly without it.
+    Future.delayed(const Duration(milliseconds: 1000), () {
+      if (mounted) setState(() => _preloading = false);
+    });
+  }
 
   @override
   void dispose() {
@@ -126,6 +139,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
+  /// 1s preloading shimmer shown on first build before the page content.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // Transparent status bar with dark icons so the light background flows
@@ -143,7 +167,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           title: 'Reset Password',
           subtitle: "Enter your email and we'll send you a secure reset link",
           onBack: () => context.pop(),
-          child: AnimatedSwitcher(
+          child: _preloading
+              ? _preloadingBody()
+              : AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             transitionBuilder: (child, animation) => FadeTransition(
               opacity: animation,

@@ -6,6 +6,9 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/app_modal_shell.dart';
+import 'bookmark_tracks.dart';
+import 'bookmark_remove_dialog.dart';
 
 /// Bookmarks list — mirrors `app/bookmarks/index.tsx` exactly.
 ///
@@ -35,42 +38,6 @@ String _safeSegment(String value) {
 
 String _bookmarkDocId(Map<String, dynamic> b) =>
     '${b['context'] ?? 'other'}__${_safeSegment((b['refId'] ?? '').toString())}';
-
-class _ContextStyle {
-  final IconData icon;
-  final Color color;
-  const _ContextStyle(this.icon, this.color);
-}
-
-/// Per-context identity — mirrors `CONTEXT_STYLE` in bookmarks/index.tsx.
-const _contextStyles = <String, _ContextStyle>{
-  'exam': _ContextStyle(Icons.school_outlined, Color(0xFF2563EB)),
-  'read': _ContextStyle(Icons.menu_book_outlined, Color(0xFF0D9488)),
-  'practice': _ContextStyle(Icons.fitness_center_outlined, Color(0xFFEA580C)),
-  'daily-test': _ContextStyle(Icons.calendar_today_outlined, Color(0xFF7C3AED)),
-  'qotd': _ContextStyle(Icons.wb_sunny_outlined, Color(0xFFD97706)),
-  'quiz': _ContextStyle(Icons.help_outline, Color(0xFFDB2777)),
-  'discussion': _ContextStyle(Icons.forum_outlined, Color(0xFF4F46E5)),
-  'article': _ContextStyle(Icons.newspaper_outlined, Color(0xFF059669)),
-  'note': _ContextStyle(Icons.description_outlined, Color(0xFF475569)),
-  'chapter': _ContextStyle(Icons.layers_outlined, Color(0xFF0891B2)),
-  'other': _ContextStyle(Icons.bookmark_outline, Color(0xFF64748B)),
-};
-
-_ContextStyle _styleFor(String context) =>
-    _contextStyles[context] ?? _contextStyles['other']!;
-
-/// Human label per context. (The Expo app resolves `bookmarks.ctx.<key>` from
-/// i18n, which only defines quiz/exam — anything else falls back to the raw
-/// key; the prettified label below is what the design intends.)
-String _ctxLabel(String context) {
-  if (context == 'quiz') return 'Quiz';
-  if (context == 'exam') return 'Exam';
-  final spaced = context.replaceAll('-', ' ');
-  return spaced.isEmpty
-      ? spaced
-      : spaced[0].toUpperCase() + spaced.substring(1);
-}
 
 class _BookmarksScreenState extends State<BookmarksScreen> {
   static const _limit = 15;
@@ -163,22 +130,15 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
     return scoped == 0 ? _items.length : scoped;
   }
 
-  List<MapEntry<String, int>> get _chips {
-    final counts = <String, int>{};
-    for (final b in _items) {
-      final c = (b['context'] ?? 'other').toString();
-      counts[c] = (counts[c] ?? 0) + 1;
-    }
-    final entries = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-    return entries;
-  }
+  /// Filter chips: one per track present in the bookmarks (auto-created from
+  /// the actual sources), sorted by count desc. Only tracks the user has
+  /// appear, plus "All".
+  List<MapEntry<String, int>> get _chips => buildTrackChips(_items);
 
   List<Map<String, dynamic>> get _visible {
     final q = _query.trim().toLowerCase();
     return _items.where((b) {
-      if (_filter != 'all' &&
-          (b['context'] ?? 'other').toString() != _filter) {
+      if (_filter != 'all' && bookmarkTrackKey(b) != _filter) {
         return false;
       }
       if (q.isEmpty) return true;
@@ -189,9 +149,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   }
 
   Future<void> _confirmRemove(Map<String, dynamic> b) async {
-    final ok = await showDialog<bool>(
+    final ok = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => _RemoveDialog(item: b),
+      builder: (c) => BookmarkRemoveDialog(item: b),
     );
     if (ok != true) return;
     final uid = AuthService.currentUser?.uid;
@@ -517,8 +477,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
           _filterChip(pal, dark, 'all', 'All', _items.length, null),
           for (final e in chips) ...[
             const SizedBox(width: 7),
-            _filterChip(
-                pal, dark, e.key, _ctxLabel(e.key), e.value, _styleFor(e.key)),
+            _filterChip(pal, dark, e.key,
+                bookmarkTracks[e.key]?.label ?? e.key, e.value,
+                bookmarkTracks[e.key]),
           ],
         ],
       ),
@@ -526,9 +487,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   }
 
   Widget _filterChip(ExpoPalette pal, bool dark, String value, String label,
-      int count, _ContextStyle? style) {
+      int count, BookmarkTrack? track) {
     final active = _filter == value;
-    final accent = style?.color ?? pal.primary;
+    final accent = track?.color ?? pal.primary;
     return GestureDetector(
       onTap: () => setState(() => _filter = value),
       child: Container(
@@ -549,8 +510,8 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (style != null) ...[
-              Icon(style.icon,
+            if (track != null) ...[
+              Icon(track.icon,
                   size: 13,
                   color: active ? accent : pal.textSecondary),
               const SizedBox(width: 5),
@@ -665,13 +626,10 @@ class _BookmarkCardState extends State<_BookmarkCard> {
   Widget build(BuildContext context) {
     final pal = widget.pal;
     final b = widget.item;
-    final contextKey = (b['context'] ?? 'other').toString();
-    final style = _styleFor(contextKey);
+    final track = bookmarkTrackOf(b);
     final dark =
         Theme.of(context).brightness == Brightness.dark;
-    final badge = (b['sourceLabel'] ?? '').toString().isNotEmpty
-        ? (b['sourceLabel'] ?? '').toString()
-        : _ctxLabel(contextKey);
+    final badge = track.label;
 
     return GestureDetector(
       onTap: widget.onTap,
@@ -683,7 +641,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
           color: pal.surface,
           border: Border.all(
             color: _pressed
-                ? style.color.withAlpha(0x66)
+                ? track.color.withAlpha(0x66)
                 : pal.border,
             width: 1,
           ),
@@ -703,7 +661,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
               left: 0,
               top: 0,
               bottom: 0,
-              child: Container(width: 4, color: style.color),
+              child: Container(width: 4, color: track.color),
             ),
             Padding(
               padding:
@@ -716,11 +674,11 @@ class _BookmarkCardState extends State<_BookmarkCard> {
                     height: 40,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(13),
-                      color: style.color
+                      color: track.color
                           .withAlpha(dark ? 0x26 : 0x14),
                     ),
-                    child: Icon(style.icon,
-                        size: 19, color: style.color),
+                    child: Icon(track.icon,
+                        size: 19, color: track.color),
                   ),
                   const SizedBox(width: 11),
                   Expanded(
@@ -765,7 +723,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
                                 decoration: BoxDecoration(
                                   borderRadius:
                                       BorderRadius.circular(999),
-                                  color: style.color.withAlpha(
+                                  color: track.color.withAlpha(
                                       dark ? 0x22 : 0x12),
                                 ),
                                 child: Text(
@@ -775,7 +733,7 @@ class _BookmarkCardState extends State<_BookmarkCard> {
                                   style: TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w600,
-                                    color: style.color,
+                                    color: track.color,
                                   ),
                                 ),
                               ),
@@ -815,64 +773,6 @@ class _BookmarkCardState extends State<_BookmarkCard> {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// Confirm dialog — mirrors the Expo `ConfirmDialog` used on this screen.
-class _RemoveDialog extends StatelessWidget {
-  final Map<String, dynamic> item;
-  const _RemoveDialog({required this.item});
-
-  @override
-  Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    return AlertDialog(
-      backgroundColor: pal.surface,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20)),
-      icon: Container(
-        width: 52,
-        height: 52,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          color: pal.danger.withAlpha(0x14),
-        ),
-        child:
-            Icon(Icons.bookmark_outline, size: 24, color: pal.danger),
-      ),
-      title: Text('Remove this bookmark?',
-          style: TextStyle(fontSize: 17, color: pal.textPrimary)),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text((item['title'] ?? '').toString(),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 14,
-                  color: pal.textPrimary)),
-          const SizedBox(height: 8),
-          Text('You can save it again any time.',
-              style:
-                  TextStyle(fontSize: 13, color: pal.textSecondary)),
-        ],
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context, false),
-          child: Text('Cancel',
-              style: TextStyle(color: pal.textSecondary)),
-        ),
-        TextButton(
-          onPressed: () => Navigator.pop(context, true),
-          child: Text('Remove',
-              style: TextStyle(
-                  color: pal.danger, fontWeight: FontWeight.w600)),
-        ),
-      ],
     );
   }
 }

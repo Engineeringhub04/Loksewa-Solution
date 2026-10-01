@@ -6,13 +6,17 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/app_modal_shell.dart';
+import 'bookmark_tracks.dart';
+import 'bookmark_remove_dialog.dart';
 
-/// Bookmark detail — mirrors app/bookmarks/[id].tsx.
+/// Bookmark detail — premium redesign.
 ///
-/// Renders the saved snapshot payload: origin card (context icon + source
-/// label + saved date), meta rows, the question with its options (correct
-/// option revealed via toggle using payload.answerIndex), explanation, and
-/// body text. Remove deletes the bookmark document.
+/// Renders the saved snapshot payload: a track hero card (track identity +
+/// saved date), meta rows, the question with staggered premium option tiles
+/// (correct option + explanation revealed only via the Reveal toggle), and a
+/// premium article layout for article/Gorkhapatra bookmarks. Remove deletes
+/// the bookmark document behind the shared AppModalShell confirm modal.
 class BookmarkDetailScreen extends StatefulWidget {
   final String id;
   const BookmarkDetailScreen({super.key, required this.id});
@@ -23,7 +27,6 @@ class BookmarkDetailScreen extends StatefulWidget {
 
 class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   late Future<Map<String, dynamic>?> _future;
-  bool _revealAnswer = false;
   bool _removing = false;
   Map<String, dynamic>? _loaded;
 
@@ -42,31 +45,9 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
   }
 
   Future<void> _remove(Map<String, dynamic> b) async {
-    final ok = await showDialog<bool>(
+    final ok = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        icon: const Icon(Icons.bookmark_outline),
-        title: const Text('Remove this bookmark?'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text((b['title'] ?? '').toString(),
-                style: const TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            const Text('You can save it again any time.'),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child:
-                  const Text('Remove', style: TextStyle(color: Colors.red))),
-        ],
-      ),
+      builder: (c) => BookmarkRemoveDialog(item: b),
     );
     if (ok != true) return;
     final uid = AuthService.currentUser?.uid;
@@ -90,187 +71,6 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          SubpageHeader(title: 'Bookmark', actions: [
-          _removing
-              ? const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white)),
-                )
-              : IconButton(
-                  icon: const Icon(Icons.delete_outline),
-                  onPressed: _loaded == null ? null : () => _remove(_loaded!),
-                ),
-        ]),
-          Expanded(
-            child: FutureBuilder<Map<String, dynamic>?>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading...',
-            );
-          }
-          if (snap.hasError || snap.data == null) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  snap.hasError
-                      ? 'Failed to load bookmark:\n${snap.error}'
-                      : 'Bookmark not found.',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            );
-          }
-          final b = snap.data!;
-          _loaded = b;
-          final payload = b['payload'];
-          final Map<String, dynamic> p =
-              payload is Map ? Map<String, dynamic>.from(payload) : {};
-          final meta = p['meta'];
-          final List metaRows = meta is List ? meta : [];
-          final options = p['options'];
-          final List optionList = options is List ? options : [];
-          final answerIndex = p['answerIndex'] is int ? p['answerIndex'] as int : -1;
-
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              _originCard(b),
-              const SizedBox(height: 12),
-              Text((b['title'] ?? '').toString(),
-                  style: Theme.of(context).textTheme.headlineSmall),
-              if (metaRows.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      children: [
-                        for (final m in metaRows)
-                          if (m is Map)
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 4),
-                              child: Row(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  SizedBox(
-                                    width: 110,
-                                    child: Text(
-                                        (m['label'] ?? '').toString(),
-                                        style: const TextStyle(
-                                            color: Colors.grey)),
-                                  ),
-                                  Expanded(
-                                      child: Text(
-                                          (m['value'] ?? '').toString())),
-                                ],
-                              ),
-                            ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              if ((p['question'] ?? '').toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text((p['question'] ?? '').toString(),
-                    style: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 8),
-                for (var i = 0; i < optionList.length; i++)
-                  _optionTile(i, optionList[i].toString(), answerIndex),
-                if (answerIndex >= 0) ...[
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton.icon(
-                      onPressed: () =>
-                          setState(() => _revealAnswer = !_revealAnswer),
-                      icon: Icon(_revealAnswer
-                          ? Icons.visibility_off
-                          : Icons.visibility),
-                      label: Text(_revealAnswer
-                          ? 'Hide answer'
-                          : 'Reveal answer'),
-                    ),
-                  ),
-                ],
-                if ((p['explanation'] ?? '').toString().isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.navy.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text((p['explanation'] ?? '').toString()),
-                  ),
-                ],
-              ],
-              if ((p['body'] ?? '').toString().isNotEmpty) ...[
-                const SizedBox(height: 16),
-                Text((p['body'] ?? '').toString(),
-                    style: const TextStyle(height: 1.5)),
-              ],
-              if ((b['preview'] ?? '').toString().isNotEmpty &&
-                  (p['question'] ?? '').toString().isEmpty) ...[
-                const SizedBox(height: 16),
-                Text((b['preview'] ?? '').toString(),
-                    style: const TextStyle(height: 1.5)),
-              ],
-            ],
-          );
-        },
-      ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static const _ctxColors = <String, Color>{
-    'exam': Color(0xFF2563EB),
-    'read': Color(0xFF0D9488),
-    'practice': Color(0xFFEA580C),
-    'daily-test': Color(0xFF7C3AED),
-    'qotd': Color(0xFFD97706),
-    'quiz': Color(0xFFDB2777),
-    'discussion': Color(0xFF4F46E5),
-    'article': Color(0xFF059669),
-    'note': Color(0xFF475569),
-    'chapter': Color(0xFF0891B2),
-    'other': Color(0xFF64748B),
-  };
-
-  static const _ctxIcons = <String, IconData>{
-    'exam': Icons.school_outlined,
-    'read': Icons.menu_book_outlined,
-    'practice': Icons.fitness_center_outlined,
-    'daily-test': Icons.calendar_today_outlined,
-    'qotd': Icons.wb_sunny_outlined,
-    'quiz': Icons.help_outline,
-    'discussion': Icons.forum_outlined,
-    'article': Icons.newspaper_outlined,
-    'note': Icons.description_outlined,
-    'chapter': Icons.layers_outlined,
-    'other': Icons.bookmark_outline,
-  };
-
   static const _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
     'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
@@ -289,80 +89,622 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     return '${dt.day} ${_months[dt.month - 1]} ${dt.year}';
   }
 
-  Widget _originCard(Map<String, dynamic> b) {
-    final ctx = (b['context'] ?? 'other').toString();
-    final color = _ctxColors[ctx] ?? _ctxColors['other']!;
-    final icon = _ctxIcons[ctx] ?? _ctxIcons['other']!;
-    final label = (b['sourceLabel'] ?? '').toString().isNotEmpty
-        ? (b['sourceLabel'] ?? '').toString()
-        : (ctx == 'quiz'
-            ? 'Quiz'
-            : ctx == 'exam'
-                ? 'Exam'
-                : ctx.replaceAll('-', ' '));
-    final date = _savedDate(b['createdAt']);
-    final onSurface = Theme.of(context).colorScheme.onSurface;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Container(
-              width: 44,
-              height: 44,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(14),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Column(
+        children: [
+          SubpageHeader(title: 'Bookmark', actions: [
+            GestureDetector(
+              onTap: (_loaded == null || _removing)
+                  ? null
+                  : () => _remove(_loaded!),
+              child: Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: _removing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.delete_outline,
+                        size: 20, color: Colors.white),
               ),
-              child: Icon(icon, size: 21, color: color),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
+          ]),
+          Expanded(
+            child: FutureBuilder<Map<String, dynamic>?>(
+              future: _future,
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const PreloadingWidget(
+                    tinted: false,
+                    label: 'Loading...',
+                  );
+                }
+                if (snap.hasError || snap.data == null) {
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        snap.hasError
+                            ? 'Failed to load bookmark:\n${snap.error}'
+                            : 'Bookmark not found.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
+                final b = snap.data!;
+                _loaded = b;
+                return BookmarkDetailBody(
+                  bookmark: b,
+                  savedDate: _savedDate(b['createdAt']),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Loaded-state body of the bookmark detail screen. Public so widget tests
+/// can drive it directly with a fake bookmark map (no Firestore/auth).
+class BookmarkDetailBody extends StatefulWidget {
+  final Map<String, dynamic> bookmark;
+  final String savedDate;
+  const BookmarkDetailBody(
+      {super.key, required this.bookmark, this.savedDate = ''});
+
+  @override
+  State<BookmarkDetailBody> createState() => _BookmarkDetailBodyState();
+}
+
+class _BookmarkDetailBodyState extends State<BookmarkDetailBody> {
+  bool _revealAnswer = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final b = widget.bookmark;
+    final track = bookmarkTrackOf(b);
+    final payload = b['payload'];
+    final Map<String, dynamic> p =
+        payload is Map ? Map<String, dynamic>.from(payload) : {};
+    final meta = p['meta'];
+    final List metaRows = meta is List ? meta : [];
+    final question = (p['question'] ?? '').toString();
+    final options = p['options'];
+    final List optionList = options is List ? options : [];
+    final answerIndex =
+        p['answerIndex'] is int ? p['answerIndex'] as int : -1;
+    final explanation = (p['explanation'] ?? '').toString();
+    final bodyText = (p['body'] ?? '').toString();
+    final preview = (b['preview'] ?? '').toString();
+    final isQuestion = question.isNotEmpty;
+    final isArticle = !isQuestion &&
+        (track.key == 'article' ||
+            bodyText.isNotEmpty ||
+            preview.isNotEmpty);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        _EntranceOnce(
+          delayMs: 0,
+          child: _TrackHero(
+            track: track,
+            sourceLabel: (b['sourceLabel'] ?? '').toString(),
+            savedDate: widget.savedDate,
+          ),
+        ),
+        const SizedBox(height: 14),
+        _EntranceOnce(
+          delayMs: 60,
+          child: Text(
+            isQuestion ? question : (b['title'] ?? '').toString(),
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              height: 1.35,
+              color: pal.textPrimary,
+            ),
+          ),
+        ),
+        if (metaRows.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          _EntranceOnce(
+            delayMs: 120,
+            child: _MetaCard(rows: metaRows, pal: pal),
+          ),
+        ],
+        if (isQuestion) ...[
+          const SizedBox(height: 14),
+          for (var i = 0; i < optionList.length; i++)
+            _Stagger(
+              index: i,
+              child: _OptionTile(
+                index: i,
+                text: optionList[i].toString(),
+                answerIndex: answerIndex,
+                revealed: _revealAnswer,
+                pal: pal,
+              ),
+            ),
+          const SizedBox(height: 10),
+          _EntranceOnce(
+            delayMs: 200,
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonalIcon(
+                onPressed: () =>
+                    setState(() => _revealAnswer = !_revealAnswer),
+                icon: Icon(_revealAnswer
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined),
+                label: Text(
+                    _revealAnswer ? 'Hide answer' : 'Reveal answer'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // The explanation is gated on the reveal toggle — it must never
+          // show before the user taps "Reveal answer".
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOut,
+            child: _revealAnswer && explanation.isNotEmpty
+                ? _ExplanationCard(text: explanation, pal: pal)
+                : const SizedBox.shrink(),
+          ),
+        ] else if (isArticle) ...[
+          const SizedBox(height: 14),
+          _EntranceOnce(
+            delayMs: 120,
+            child: _ArticleCard(
+              body: bodyText.isNotEmpty ? bodyText : preview,
+              pal: pal,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Premium track hero: gradient card carrying the track identity.
+class _TrackHero extends StatelessWidget {
+  final BookmarkTrack track;
+  final String sourceLabel;
+  final String savedDate;
+  const _TrackHero(
+      {required this.track,
+      required this.sourceLabel,
+      required this.savedDate});
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            track.color.withValues(alpha: dark ? 0x59 : 0x29),
+            track.color.withValues(alpha: dark ? 0x2E : 0x14),
+          ],
+        ),
+        border: Border.all(
+          color: track.color.withValues(alpha: dark ? 0x66 : 0x40),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: track.color.withValues(alpha: 0x14),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(15),
+              color: track.color.withValues(alpha: dark ? 0x40 : 0x26),
+            ),
+            child: Icon(track.icon, size: 24, color: track.color),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  track.label.toUpperCase(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1.2,
+                    color: track.color,
+                  ),
+                ),
+                if (sourceLabel.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    sourceLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: pal.textPrimary,
+                    ),
+                  ),
+                ],
+                if (savedDate.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Saved on $savedDate',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: pal.textSecondary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Premium meta rows card.
+class _MetaCard extends StatelessWidget {
+  final List rows;
+  final ExpoPalette pal;
+  const _MetaCard({required this.rows, required this.pal});
+
+  @override
+  Widget build(BuildContext context) {
+    final items =
+        rows.whereType<Map>().toList();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: pal.border, width: 1),
+      ),
+      child: Column(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0)
+              Divider(height: 1, color: pal.border),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    label.toUpperCase(),
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 1,
-                        color: color),
-                  ),
-                  if (date.isNotEmpty)
-                    Text(
-                      'Saved on $date',
+                  SizedBox(
+                    width: 100,
+                    child: Text(
+                      (items[i]['label'] ?? '').toString(),
                       style: TextStyle(
-                          fontSize: 11,
-                          color: onSurface.withValues(alpha: 0.5)),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: pal.textSecondary,
+                      ),
                     ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      (items[i]['value'] ?? '').toString(),
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: pal.textPrimary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }
+}
 
-  Widget _optionTile(int index, String text, int answerIndex) {    final isCorrect = _revealAnswer && index == answerIndex;
+/// Premium option tile: letter badge, highlight + check only when revealed.
+class _OptionTile extends StatelessWidget {
+  final int index;
+  final String text;
+  final int answerIndex;
+  final bool revealed;
+  final ExpoPalette pal;
+  const _OptionTile({
+    required this.index,
+    required this.text,
+    required this.answerIndex,
+    required this.revealed,
+    required this.pal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final isCorrect = revealed && index == answerIndex;
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(12),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
       decoration: BoxDecoration(
+        color: isCorrect
+            ? const Color(0xFF16A34A).withValues(alpha: dark ? 0x26 : 0x14)
+            : pal.surface,
         border: Border.all(
-            color: isCorrect ? Colors.green : Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(8),
-        color: isCorrect ? Colors.green.withValues(alpha: 0.08) : null,
+          color: isCorrect
+              ? const Color(0xFF16A34A).withValues(alpha: 0x66)
+              : pal.border,
+          width: 1,
+        ),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('${String.fromCharCode(65 + index)}. ',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          Expanded(child: Text(text)),
-          if (isCorrect)
-            const Icon(Icons.check_circle, color: Colors.green),
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isCorrect
+                  ? const Color(0xFF16A34A)
+                  : pal.primary.withValues(alpha: dark ? 0x2E : 0x14),
+            ),
+            child: Text(
+              String.fromCharCode(65 + index),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: isCorrect ? Colors.white : pal.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: pal.textPrimary,
+              ),
+            ),
+          ),
+          if (isCorrect) ...[
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.check_circle,
+              color: Color(0xFF16A34A),
+              size: 20,
+            ),
+          ],
         ],
+      ),
+    );
+  }
+}
+
+/// Explanation card — only rendered when the answer is revealed.
+class _ExplanationCard extends StatelessWidget {
+  final String text;
+  final ExpoPalette pal;
+  const _ExplanationCard({required this.text, required this.pal});
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2563EB)
+            .withValues(alpha: dark ? 0x22 : 0x0D),
+        border: Border.all(
+          color: const Color(0xFF2563EB)
+              .withValues(alpha: dark ? 0x55 : 0x2E),
+          width: 1,
+        ),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(
+                Icons.lightbulb_outline,
+                size: 16,
+                color: Color(0xFF2563EB),
+              ),
+              SizedBox(width: 6),
+              Text(
+                'Explanation',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.8,
+                  color: Color(0xFF2563EB),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 14,
+              height: 1.55,
+              color: pal.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Premium article layout for article/Gorkhapatra bookmarks: readable
+/// long-form typography inside a soft card.
+class _ArticleCard extends StatelessWidget {
+  final String body;
+  final ExpoPalette pal;
+  const _ArticleCard({required this.body, required this.pal});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: pal.border, width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0x08),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            body,
+            style: TextStyle(
+              fontSize: 15,
+              height: 1.7,
+              color: pal.textPrimary,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One-shot staggered entrance: fade + rise, finite (no loops).
+class _Stagger extends StatefulWidget {
+  final int index;
+  final Widget child;
+  const _Stagger({required this.index, required this.child});
+
+  @override
+  State<_Stagger> createState() => _StaggerState();
+}
+
+class _StaggerState extends State<_Stagger>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 280),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.index * 70), () {
+      if (mounted) _controller.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final t = Curves.easeOut.transform(_controller.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - t)),
+            child: child,
+          ),
+        );
+      },
+      child: widget.child,
+    );
+  }
+}
+
+/// One-shot entrance wrapper: fade + slight rise on first build.
+class _EntranceOnce extends StatefulWidget {
+  final int delayMs;
+  final Widget child;
+  const _EntranceOnce({required this.delayMs, required this.child});
+
+  @override
+  State<_EntranceOnce> createState() => _EntranceOnceState();
+}
+
+class _EntranceOnceState extends State<_EntranceOnce> {
+  bool _go = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(Duration(milliseconds: widget.delayMs), () {
+      if (mounted) setState(() => _go = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _go ? 1 : 0,
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _go ? Offset.zero : const Offset(0, 0.06),
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOut,
+        child: widget.child,
       ),
     );
   }

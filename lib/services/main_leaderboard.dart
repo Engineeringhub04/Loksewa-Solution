@@ -725,6 +725,109 @@ Future<MainLeaderboardRow?> publishMainLeaderboardScore({
   }
 }
 
+// ---------- canonical stats (single source of truth) ----------
+//
+// THE CONSISTENCY RULE (2026-10-02): the points and coverage percent shown on
+// the Analytics hero, the Leaderboard board, and the Profile stats card ALL
+// derive from [computeMainLeaderboardScore] plus the 50pt signup bonus
+// ([kLeaderboardSignupBonus]). The once-a-day snapshot document
+// (users/{uid}/app_analytics/{subcourseId}) is kept ONLY for history charts
+// and windowed stats (active days, study time, per-day deltas) — it is never
+// a source for hero / leaderboard / profile numbers, because it goes stale
+// the moment any intraday activity happens (the "Analytics says 594, profile
+// says much more" bug).
+//
+// The 50pt signup bonus is counted EVERYWHERE: it is baked into the
+// aggregate's `points` at publish time (see [publishMainLeaderboardScore]),
+// so every surface reading the aggregate — or a freshly published row —
+// includes it. No surface ever shows activity-points-only.
+
+/// Canonical live stats for one user+subcourse: the numbers the Analytics
+/// hero, the Leaderboard board and the Profile stats card all display.
+class CanonicalStats {
+  /// Coverage percent, 0..100.
+  final double percent;
+
+  /// Effort points INCLUDING the 50pt signup bonus.
+  final int points;
+  final int activityCount;
+
+  /// The leaderboard breakdown snapshot (qotd/exam/dailyTest/practice/gkPm/
+  /// reading/usage/coverage sub-maps), for the analytics "where the points
+  /// came from" section.
+  final Map<String, dynamic> breakdown;
+
+  const CanonicalStats({
+    required this.percent,
+    required this.points,
+    required this.activityCount,
+    required this.breakdown,
+  });
+}
+
+CanonicalStats? _canonicalFromMap(Map<String, dynamic>? m) {
+  if (m == null) return null;
+  num n(dynamic v) => v is num && v.isFinite ? v : 0;
+  final b = m['breakdown'];
+  return CanonicalStats(
+    percent: n(m['percent']).toDouble().clamp(0.0, 100.0),
+    points: max(0, n(m['points']).round()),
+    activityCount: max(0, n(m['activityCount']).round()),
+    breakdown: b is Map ? Map<String, dynamic>.from(b) : <String, dynamic>{},
+  );
+}
+
+/// Loads the canonical stats: the stored aggregate
+/// (users/{uid}/app_mainleaderboard/{subcourseId}), refreshed first when the
+/// publish throttle allows. Returns null when no aggregate exists and no
+/// refresh was possible — callers fall back to degraded mode (never zeros).
+/// Never throws.
+///
+/// [name]/[photoURL]/[isPro] feed the public row only when a refresh publish
+/// actually runs. Pass [allowRefresh] false when the profile is not loaded, so
+/// a refresh can never write the public row as "Anonymous".
+Future<CanonicalStats?> loadCanonicalStats({
+  required String uid,
+  required String courseId,
+  required String subcourseId,
+  String name = '',
+  String? photoURL,
+  bool isPro = false,
+  bool allowRefresh = true,
+}) async {
+  if (uid.isEmpty || subcourseId.isEmpty) return null;
+  try {
+    if (allowRefresh && shouldPublishMainLeaderboardScore(uid, subcourseId)) {
+      final row = await publishMainLeaderboardScore(
+        uid: uid,
+        courseId: courseId,
+        subcourseId: subcourseId,
+        name: name,
+        photoURL: photoURL,
+        isPro: isPro,
+      );
+      if (row != null) {
+        // The public row omits the breakdown — re-read the private aggregate
+        // (one extra read, only on a refresh) so the breakdown stays whole.
+        final agg = await _guardDoc(
+            ExamRest.getDoc('users/$uid/app_mainleaderboard/$subcourseId'));
+        return _canonicalFromMap(agg) ??
+            CanonicalStats(
+              percent: row.percent,
+              points: row.points,
+              activityCount: row.activityCount,
+              breakdown: const <String, dynamic>{},
+            );
+      }
+    }
+    final agg = await _guardDoc(
+        ExamRest.getDoc('users/$uid/app_mainleaderboard/$subcourseId'));
+    return _canonicalFromMap(agg);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Guarantees the user has a public leaderboard row for this subcourse,
 /// granting the 50-point signup bonus exactly once. Returns the existing row
 /// when one is already there; otherwise creates BOTH documents fresh with

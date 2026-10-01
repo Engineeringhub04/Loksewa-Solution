@@ -22,8 +22,12 @@ KeepNote _note(String id, String title, {bool pinned = false}) => KeepNote(
 
 Future<void> _pumpList(WidgetTester tester, KeepNotesStore store) async {
   await tester.pumpWidget(MaterialApp(home: NotesScreen(store: store)));
-  await tester.pump(const Duration(milliseconds: 100));
-  await tester.pump(const Duration(milliseconds: 100));
+  // Premium preloading shimmer: the list appears only after the minimum
+  // ~1.5s shimmer. Small pumps only (the shimmer's animation is infinite,
+  // so never pumpAndSettle).
+  for (int i = 0; i < 16; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
 }
 
 /// Stubs the path_provider channels used by export so the backup lands in

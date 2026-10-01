@@ -230,4 +230,89 @@ void main() {
       expect(record.submittedAt, isNull);
     });
   });
+
+  group('currentActiveRecord', () {
+    SubscriptionRecord rec(
+      String id,
+      SubscriptionStatus status, {
+      DateTime? submittedAt,
+      DateTime? reviewedAt,
+      DateTime? startDate,
+    }) =>
+        SubscriptionRecord(
+          id: id,
+          uid: 'u1',
+          planId: 'p1',
+          planName: id,
+          billingCycle: BillingCycle.monthly,
+          amount: 199,
+          currency: 'NPR',
+          method: 'qr',
+          status: status,
+          transactionRef: null,
+          screenshotUrl: '',
+          customerMessage: null,
+          adminMessage: null,
+          submittedAt: submittedAt,
+          reviewedAt: reviewedAt,
+          rejectionReason: null,
+          startDate: startDate,
+          expiryDate: null,
+          couponCode: null,
+          userName: null,
+          userEmail: null,
+        );
+
+    test('returns null when nothing is active', () {
+      final records = [
+        rec('a', SubscriptionStatus.pending,
+            submittedAt: DateTime(2026, 9, 1)),
+        rec('b', SubscriptionStatus.rejected,
+            submittedAt: DateTime(2026, 9, 2)),
+      ];
+      expect(SubscriptionService.currentActiveRecord(records), isNull);
+      expect(SubscriptionService.currentActiveRecord([]), isNull);
+    });
+
+    test('single active record wins regardless of others', () {
+      final records = [
+        rec('pending-new', SubscriptionStatus.pending,
+            submittedAt: DateTime(2026, 10, 1)),
+        rec('active-old', SubscriptionStatus.active,
+            submittedAt: DateTime(2026, 8, 1),
+            startDate: DateTime(2026, 8, 2)),
+      ];
+      expect(
+          SubscriptionService.currentActiveRecord(records)!.id, 'active-old');
+    });
+
+    test('with several actives picks the last-approved, not the last-submitted',
+        () {
+      // The mirror on users/{uid} is written at approval time, so the
+      // last-approved active is the record the profile pill describes.
+      final records = [
+        rec('monthly', SubscriptionStatus.active,
+            submittedAt: DateTime(2026, 10, 1, 12),
+            startDate: DateTime(2026, 9, 20)),
+        rec('yearly', SubscriptionStatus.active,
+            submittedAt: DateTime(2026, 9, 25),
+            startDate: DateTime(2026, 9, 30)),
+      ];
+      expect(
+          SubscriptionService.currentActiveRecord(records)!.id, 'yearly');
+    });
+
+    test('falls back to reviewedAt then submittedAt when startDate is missing',
+        () {
+      final records = [
+        rec('a', SubscriptionStatus.active,
+            submittedAt: DateTime(2026, 10, 1),
+            reviewedAt: DateTime(2026, 9, 5)),
+        rec('b', SubscriptionStatus.active,
+            submittedAt: DateTime(2026, 9, 1),
+            reviewedAt: DateTime(2026, 9, 20)),
+      ];
+      expect(SubscriptionService.currentActiveRecord(records)!.id, 'b');
+    });
+  });
 }

@@ -1270,8 +1270,14 @@ class _ProfileField extends StatefulWidget {
 }
 
 class _ProfileFieldState extends State<_ProfileField>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _anim;
+    with TickerProviderStateMixin {
+  // Two independent drivers, matching React's FloatingLabelField (focusAnim /
+  // colorAnim): the POSITION anim floats the label up when the field has
+  // focus OR a value; the COLOR anim tints the label + border when the field
+  // has focus ONLY. Driving both off one anim made every pre-filled field
+  // sit permanently at the blue "focused" tint.
+  late final AnimationController _posAnim;
+  late final AnimationController _colorAnim;
   late final FocusNode _focusNode;
   bool _focused = false;
 
@@ -1281,12 +1287,17 @@ class _ProfileFieldState extends State<_ProfileField>
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(
+    _posAnim = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 200),
     );
+    // Slightly slower colour wash, like React's 240ms colorAnim.
+    _colorAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 240),
+    );
     _focusNode = FocusNode();
-    if (_hasValue) _anim.value = 1.0;
+    if (_hasValue) _posAnim.value = 1.0;
     _focusNode.addListener(_onFocusChange);
     widget.controller.addListener(_onTextChange);
   }
@@ -1304,10 +1315,17 @@ class _ProfileFieldState extends State<_ProfileField>
   }
 
   void _drive() {
+    // Position: label floats when focused OR carrying a value.
     if (_focused || _hasValue) {
-      _anim.animateTo(1.0, curve: Curves.easeOutCubic);
+      _posAnim.animateTo(1.0, curve: Curves.easeOutCubic);
     } else {
-      _anim.animateTo(0.0, curve: Curves.easeOutCubic);
+      _posAnim.animateTo(0.0, curve: Curves.easeOutCubic);
+    }
+    // Colour: label + border tint follows focus ONLY.
+    if (_focused) {
+      _colorAnim.animateTo(1.0, curve: Curves.easeOutCubic);
+    } else {
+      _colorAnim.animateTo(0.0, curve: Curves.easeOutCubic);
     }
   }
 
@@ -1316,7 +1334,8 @@ class _ProfileFieldState extends State<_ProfileField>
     _focusNode.removeListener(_onFocusChange);
     widget.controller.removeListener(_onTextChange);
     _focusNode.dispose();
-    _anim.dispose();
+    _posAnim.dispose();
+    _colorAnim.dispose();
     super.dispose();
   }
 
@@ -1333,15 +1352,19 @@ class _ProfileFieldState extends State<_ProfileField>
     final focusMix =
         Color.lerp(palette.primary, palette.textSecondary, 0.6)!;
     return AnimatedBuilder(
-      animation: _anim,
+      animation: Listenable.merge([_posAnim, _colorAnim]),
       builder: (context, _) {
-        final t = _anim.value;
+        final t = _posAnim.value;
+        final c = _colorAnim.value;
+        // Unfocused (even with a value) = neutral textSecondary label +
+        // neutral border — React parity. The softened focus mix applies
+        // only while focused; the harsh full-strength blue stays gone.
         final borderColor = _hasError
             ? palette.danger
-            : Color.lerp(palette.border, focusMix, t)!;
+            : Color.lerp(palette.border, focusMix, c)!;
         final labelColor = _hasError
             ? palette.danger
-            : Color.lerp(palette.textSecondary, focusMix, t)!;
+            : Color.lerp(palette.textSecondary, focusMix, c)!;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,

@@ -251,8 +251,8 @@ class PrivacyPolicyScreen extends StatelessWidget {
                         icon: Icons.check_circle_outline,
                       ),
                       StatusPill(
-                        label: AppLanguage.tr('You can delete it all',
-                            'सबै मेट्न सक्नुहुन्छ'),
+                        label: AppLanguage.tr(
+                            'You can delete it all', 'सबै मेट्न सक्नुहुन्छ'),
                         color: const Color(0xFF7DD3FC),
                         icon: Icons.delete_outline,
                       ),
@@ -302,85 +302,89 @@ class PrivacyPolicyScreen extends StatelessWidget {
         borderRadius: BorderRadius.circular(ExpoRadius.lg),
         border: Border.all(color: palette.border),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 5,
-              decoration: const BoxDecoration(
-                color: tone,
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(ExpoRadius.lg),
-                  bottomLeft: Radius.circular(ExpoRadius.lg),
+      // Clip the spine to the card's curve: the spine's square inner
+      // corners would otherwise poke ~2px past the rounded corners.
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 5,
+                decoration: const BoxDecoration(
+                  color: tone,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(ExpoRadius.lg),
+                    bottomLeft: Radius.circular(ExpoRadius.lg),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(14),
-                            color: tone.withValues(alpha: 0.12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              color: tone.withValues(alpha: 0.12),
+                            ),
+                            child: const Icon(Icons.language_outlined,
+                                size: 20, color: tone),
                           ),
-                          child: const Icon(Icons.language_outlined,
-                              size: 20, color: tone),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          AppLanguage.tr('Full policy', 'पूर्ण नीति'),
-                          style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: palette.textPrimary),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      decoration: BoxDecoration(
-                        color: palette.surfaceAlt,
-                        borderRadius: BorderRadius.circular(12),
+                          const SizedBox(width: 12),
+                          Text(
+                            AppLanguage.tr('Full policy', 'पूर्ण नीति'),
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: palette.textPrimary),
+                          ),
+                        ],
                       ),
-                      child: SelectableText(
-                        _policyUrl,
-                        style: TextStyle(color: palette.info, fontSize: 14),
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: palette.surfaceAlt,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: SelectableText(
+                          _policyUrl,
+                          style: TextStyle(color: palette.info, fontSize: 14),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () => _copyPolicyUrl(context),
-                        icon: const Icon(Icons.copy_outlined, size: 18),
-                        label: Text(AppLanguage.tr(
-                            'Read the full policy online',
-                            'पूर्ण नीति अनलाइन पढ्नुहोस्')),
-                        style: OutlinedButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 13),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () => _copyPolicyUrl(context),
+                          icon: const Icon(Icons.copy_outlined, size: 18),
+                          label: Text(AppLanguage.tr(
+                              'Read the full policy online',
+                              'पूर्ण नीति अनलाइन पढ्नुहोस्')),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

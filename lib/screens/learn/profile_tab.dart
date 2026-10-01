@@ -439,12 +439,19 @@ class _ProfileTabState extends State<ProfileTab> {
               ? profile!.email
               : user?.email;
 
-          final planLabel = profile?.isPremium == true
-              ? (profile!.premiumPlanName ??
-                  (profile.premiumBillingCycle == 'yearly'
-                      ? 'Premium Yearly'
-                      : 'Premium Monthly'))
-              : AppLanguage.tr('Free Plan', 'निःशुल्क योजना');
+          // Single source of truth with the Subscription Details page: once
+          // the ledger lookup has settled, the active app_subscriptions
+          // record's plan name wins. Before that, the mirrored users/{uid}
+          // fields show (no flicker; in the common case they already agree).
+          final planLabel = store.activePlanLoaded
+              ? (store.activePlanName ??
+                  AppLanguage.tr('Free Plan', 'निःशुल्क योजना'))
+              : (profile?.isPremium == true
+                  ? (profile!.premiumPlanName ??
+                      (profile.premiumBillingCycle == 'yearly'
+                          ? 'Premium Yearly'
+                          : 'Premium Monthly'))
+                  : AppLanguage.tr('Free Plan', 'निःशुल्क योजना'));
 
           return ValueListenableBuilder<double>(
             valueListenable: _scrollOffset,

@@ -4,18 +4,24 @@ import 'package:flutter/services.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../services/app_language.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
+import '../../widgets/x_logo_icon.dart';
 
 /// Contact Us — mirrors app/contact-us.tsx.
 ///
 /// Gradient hero (with "Replies within 1 working day" pill), Reach us rows,
-/// Follow us brand circles, and a message form. External links are
-/// display-only (no url_launcher): tapping a channel or social copies its
-/// value/URL to the clipboard. The message posts to the team's Google Form
-/// via [ReportService.submitContactMessage] — the same pipeline as React.
+/// Follow us brand circles, and a message form. Tapping a channel row opens
+/// a confirm popup (shared AppModalShell) that launches the channel through
+/// the native "loksewa_solution/media" channel's openUrl branch
+/// (ACTION_VIEW; no url_launcher): mailto: for Email, tel: for Call, https:
+/// for Website. Tapping a social copies its URL to the clipboard. The message
+/// posts to the team's Google Form via [ReportService.submitContactMessage]
+/// — the same pipeline as React.
 class ContactUsScreen extends StatefulWidget {
   const ContactUsScreen({super.key});
 
@@ -27,16 +33,34 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
   final _message = TextEditingController();
   bool _sending = false;
   bool? _offline;
+  bool _ready = false;
 
   static const _email = 'contact@kbr.com.np';
   static const _phone = '+977-9810768297';
   static const _websiteUrl = 'https://kbr.com.np';
   static const _websiteDisplay = 'kbr.com.np';
 
+  /// The native "loksewa_solution/media" channel's openUrl branch
+  /// (ACTION_VIEW). No url_launcher in this app on purpose.
+  static const _mediaChannel = MethodChannel('loksewa_solution/media');
+
+  /// Tones picked to stay clearly visible on BOTH themes — saturated
+  /// mid-tones, never near-black (AppColors.navy is 0xFF03145C: dark-on-dark).
+  /// The 'Reach us' section head shares the hero's saturated blue.
+  static const _reachTone = Color(0xFF2563EB);
+  static const _mailTone = Color(0xFF3B82F6);
+  static const _callTone = Color(0xFF22C55E);
+  static const _webTone = Color(0xFF0EA5E9);
+
   @override
   void initState() {
     super.initState();
     _checkOnline();
+    // Premium reveal: the shimmer shows for ~1.2s before the content
+    // builds, so the page never pops in half-painted.
+    Future.delayed(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _ready = true);
+    });
   }
 
   Future<void> _checkOnline() async {
@@ -100,7 +124,7 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
     final palette = ExpoPalette.of(context);
     final socials = [
       for (final s in _socials)
-        s.$2 == 'X (Twitter)'
+        s.$1 == 'x'
             ? (s.$1, s.$2, isDark ? const Color(0xFFE7E9EA) : s.$3, s.$4)
             : s,
     ];
@@ -110,9 +134,10 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
           SubpageHeader(
               title: AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्')),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-              children: [
+            child: _ready
+                ? ListView(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                    children: [
                 SyllabusEntrance(
                   delayMs: 0,
                   child: _hero(),
@@ -128,38 +153,44 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                         _sectionHead(
                           context,
                           icon: Icons.headset_mic_outlined,
-                          tone: AppColors.navy,
+                          tone: _reachTone,
                           title: AppLanguage.tr('Reach us', 'सम्पर्क'),
                         ),
                         const SizedBox(height: 8),
                         _channelRow(
                           context,
                           icon: Icons.mail_outline,
-                          tone: AppColors.navy,
+                          tone: _mailTone,
                           label:
                               AppLanguage.tr('Email us', 'इमेल गर्नुहोस्'),
                           value: _email,
-                          copyValue: _email,
+                          openUrl: 'mailto:$_email',
+                          confirmTitle: AppLanguage.tr(
+                              'Send an email?', 'इमेल पठाउने?'),
                         ),
                         Divider(
                             height: 1, color: palette.divider, indent: 54),
                         _channelRow(
                           context,
                           icon: Icons.call_outlined,
-                          tone: const Color(0xFF16A34A),
+                          tone: _callTone,
                           label: AppLanguage.tr('Call us', 'फोन गर्नुहोस्'),
                           value: _phone,
-                          copyValue: _phone,
+                          openUrl: 'tel:$_phone',
+                          confirmTitle: AppLanguage.tr(
+                              'Make a call?', 'फोन गर्ने?'),
                         ),
                         Divider(
                             height: 1, color: palette.divider, indent: 54),
                         _channelRow(
                           context,
                           icon: Icons.language_outlined,
-                          tone: const Color(0xFF0EA5E9),
+                          tone: _webTone,
                           label: AppLanguage.tr('Website', 'वेबसाइट'),
                           value: _websiteDisplay,
-                          copyValue: _websiteUrl,
+                          openUrl: _websiteUrl,
+                          confirmTitle: AppLanguage.tr(
+                              'Open the website?', 'वेबसाइट खोल्ने?'),
                         ),
                       ],
                     ),
@@ -187,7 +218,7 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                             for (final s in socials)
                               Expanded(
                                 child: _socialItem(
-                                  icon: s.$1,
+                                  icon: _brandIcon(s.$1, s.$3),
                                   label: s.$2,
                                   color: s.$3,
                                   url: s.$4,
@@ -279,8 +310,13 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                       ),
                     ),
                   ),
-              ],
-            ),
+                    ],
+                  )
+                : PreloadingWidget(
+                    tinted: false,
+                    label: AppLanguage.tr('Loading contact details…',
+                        'सम्पर्क विवरण लोड हुँदैछ…'),
+                  ),
           ),
         ],
       ),
@@ -463,19 +499,28 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
     );
   }
 
-  /// One contact channel — display-only (no url_launcher); tapping copies
-  /// the value to the clipboard.
+  /// One contact channel — tone-coded icon box (coloured translucent box +
+  /// coloured icon, visible in both themes). Tapping opens the confirm
+  /// popup, which launches the channel through the native openUrl branch.
   Widget _channelRow(
     BuildContext context, {
     required IconData icon,
     required Color tone,
     required String label,
     required String value,
-    required String copyValue,
+    required String openUrl,
+    required String confirmTitle,
   }) {
     final palette = ExpoPalette.of(context);
     return InkWell(
-      onTap: () => _copy(copyValue),
+      onTap: () => _confirmOpenChannel(
+        context,
+        icon: icon,
+        tone: tone,
+        title: confirmTitle,
+        displayValue: value,
+        url: openUrl,
+      ),
       borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
@@ -507,17 +552,201 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                 ],
               ),
             ),
-            Icon(Icons.copy_outlined,
-                size: 18, color: palette.textDisabled),
           ],
         ),
       ),
     );
   }
 
+  /// Channel confirm popup (standing popup-action pattern): tap → shared
+  /// AppModalShell confirm showing the value → Confirm shows loading on the
+  /// button → native openUrl (ACTION_VIEW) → success closes the popup. If the
+  /// native side reports failure, the value is copied with a toast instead.
+  Future<void> _confirmOpenChannel(
+    BuildContext context, {
+    required IconData icon,
+    required Color tone,
+    required String title,
+    required String displayValue,
+    required String url,
+  }) async {
+    var opening = false;
+    Future<void> confirm(
+        BuildContext modalContext, void Function(void Function()) setModalState) async {
+      if (opening) return;
+      setModalState(() => opening = true);
+      final opened = await _openExternal(url);
+      if (!mounted) return;
+      if (modalContext.mounted) Navigator.of(modalContext).pop();
+      if (opened) return;
+      await Clipboard.setData(ClipboardData(text: displayValue));
+      if (context.mounted) {
+        showToast(
+          context,
+          AppLanguage.tr('Could not open — value copied',
+              'खोल्न सकिएन — मान प्रतिलिपि भयो'),
+          ToastVariant.warning,
+        );
+      }
+    }
+
+    await AppModalShell.show(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (modalContext, setModalState) => AppModalShell(
+          maxWidth: 360,
+          tagLabel: AppLanguage.tr('Contact', 'सम्पर्क'),
+          accent: tone,
+          accentMid: tone,
+          accentLight: tone.withValues(alpha: 0.25),
+          tagColor: tone,
+          onClose:
+              opening ? null : () => Navigator.of(modalContext).pop(),
+          icon: Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              color: tone,
+            ),
+            child: Icon(icon, size: 28, color: Colors.white),
+          ),
+          title: Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+              height: 1.3,
+              decoration: TextDecoration.none,
+            ),
+          ),
+          body: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                AppLanguage.tr('This will open:', 'यो खुल्नेछ:'),
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF64748B),
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  color: tone.withValues(alpha: 0.08),
+                ),
+                child: Text(
+                  displayValue,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    color: tone,
+                    decoration: TextDecoration.none,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          footer: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: opening
+                      ? null
+                      : () => Navigator.of(modalContext).pop(),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: opening
+                      ? null
+                      : () => confirm(modalContext, setModalState),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: tone,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: opening
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(AppLanguage.tr(
+                                'Opening…', 'खोल्दैछ…')),
+                          ],
+                        )
+                      : Text(
+                          AppLanguage.tr('Confirm', 'पुष्टि गर्नुहोस्')),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Opens [url] through the native "loksewa_solution/media" channel
+  /// (ACTION_VIEW). The native branch handles mailto:, tel: and https:
+  /// schemes via Intent resolution. Returns false on any failure.
+  Future<bool> _openExternal(String url) async {
+    try {
+      final ok = await _mediaChannel.invokeMethod<bool>('openUrl', {'url': url});
+      return ok == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Brand glyph for a social key. X renders the real X logo via
+  /// [XLogoIcon] (Material's Icons.close looks like a close button, not the
+  /// X brand mark); the rest are the app's Material brand icons.
+  Widget _brandIcon(String key, Color color) {
+    switch (key) {
+      case 'x':
+        return XLogoIcon(size: 25, color: color);
+      case 'facebook':
+        return Icon(Icons.facebook, size: 25, color: color);
+      case 'instagram':
+        return Icon(Icons.camera_alt_outlined, size: 25, color: color);
+      case 'youtube':
+        return Icon(Icons.play_circle_outline, size: 25, color: color);
+      default:
+        return Icon(Icons.link, size: 25, color: color);
+    }
+  }
+
   /// One social in its brand colour — display-only; tapping copies the URL.
   Widget _socialItem({
-    required IconData icon,
+    required Widget icon,
     required String label,
     required Color color,
     required String url,
@@ -545,7 +774,7 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                   ),
                 ],
               ),
-              child: Icon(icon, size: 25, color: color),
+              child: Center(child: icon),
             ),
             const SizedBox(height: 8),
             Text(
@@ -612,30 +841,30 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
   }
 }
 
-/// (icon, label, brand colour, url) — mirrors the React socials list.
+/// (iconKey, label, brand colour, url) — mirrors the React socials list.
 /// X flips with the theme in React; Flutter's Material theme handles the
 /// same case via brightness.
 const _socials = [
   (
-    Icons.facebook,
+    'facebook',
     'Facebook',
     Color(0xFF1877F2),
     'https://www.facebook.com/profile.php?id=61580182268110',
   ),
   (
-    Icons.camera_alt_outlined,
+    'instagram',
     'Instagram',
     Color(0xFFE4405F),
     'https://www.instagram.com/loksewasolution?igsh=dmtlc3Zza2F1Y2xr&utm_source=qr',
   ),
   (
-    Icons.play_circle_outline,
+    'youtube',
     'YouTube',
     Color(0xFFFF0000),
     'https://www.youtube.com/loksewasolution0',
   ),
   (
-    Icons.close,
+    'x',
     'X (Twitter)',
     Color(0xFF0F1419),
     'https://x.com/loksewa_soln',

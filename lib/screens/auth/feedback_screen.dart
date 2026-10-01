@@ -6,6 +6,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../services/app_language.dart';
 import '../../widgets/animated_star_rating.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -41,11 +42,17 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
   final _message = TextEditingController();
   bool _sending = false;
   bool? _offline;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
     _checkOnline();
+    // Premium preloading shimmer (~1.5s): this page has no database fetch,
+    // so without it the content would pop in instantly and look cheap.
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   Future<void> _checkOnline() async {
@@ -368,6 +375,18 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
     );
   }
 
+  /// Premium preloading shimmer shown for ~1.5s on first build, before the
+  /// page content is revealed.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
   Widget _offlineCard(BuildContext context) {
     return SyllabusEntrance(
       delayMs: 120,
@@ -422,16 +441,18 @@ class _FeedbackScreenState extends State<FeedbackScreen> {
         children: [
           SubpageHeader(title: AppLanguage.tr('Feedback', 'प्रतिक्रिया')),
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _hero(context),
-                const SizedBox(height: 14),
-                _ratingCard(context),
-                const SizedBox(height: 14),
-                if (offline) _offlineCard(context) else _messageCard(context),
-              ],
-            ),
+            child: _preloading
+                ? _preloadingBody()
+                : ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      _hero(context),
+                      const SizedBox(height: 14),
+                      _ratingCard(context),
+                      const SizedBox(height: 14),
+                      if (offline) _offlineCard(context) else _messageCard(context),
+                    ],
+                  ),
           ),
         ],
       ),

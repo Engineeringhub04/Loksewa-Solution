@@ -8,6 +8,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/x_logo_icon.dart';
 
 /// App Info — mirrors app/app-info.tsx.
 /// Identity block, About section, "What you get" highlights, Reach us,
@@ -20,7 +21,7 @@ class AppInfoScreen extends StatelessWidget {
   const AppInfoScreen({super.key});
 
   /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
-  static const _appVersion = '1.0.32';
+  static const _appVersion = '1.0.33';
 
   static String _devanagariDigits(String s) => s.replaceAllMapped(
         RegExp(r'[0-9]'),
@@ -541,6 +542,9 @@ class _SocialRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    // X's mark flips with the theme (same as Contact Us): the dark mark is
+    // all but invisible on a dark surface.
+    final xColor = isDark ? const Color(0xFFE7E9EA) : const Color(0xFF0F1419);
     final socials = [
       const _Social('Facebook', Color(0xFF1877F2),
           Icon(Icons.facebook, size: 24, color: Color(0xFF1877F2))),
@@ -548,9 +552,9 @@ class _SocialRow extends StatelessWidget {
           CustomPaint(size: Size(24, 24), painter: _YouTubePainter())),
       const _Social('Instagram', Color(0xFFE4405F),
           CustomPaint(size: Size(24, 24), painter: _InstagramPainter())),
-      _Social('X',
-          isDark ? const Color(0xFFE7E9EA) : const Color(0xFF0F1419),
-          _XPainterIcon(color: isDark ? const Color(0xFFE7E9EA) : const Color(0xFF0F1419))),
+      // The real X brand mark via the shared XLogoIcon (same widget as
+      // Contact Us) — a plain two-stroke X reads as a close button.
+      _Social('X', xColor, XLogoIcon(size: 24, color: xColor)),
     ];
     return Row(
       children: [
@@ -639,39 +643,6 @@ class _InstagramPainter extends CustomPainter {
       1.6,
       Paint()..color = const Color(0xFFE4405F),
     );
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _XPainterIcon extends StatelessWidget {
-  final Color color;
-
-  const _XPainterIcon({required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return CustomPaint(
-        size: const Size(24, 24), painter: _XPainter(color: color));
-  }
-}
-
-/// X glyph: bold X letterform — two crossing strokes.
-class _XPainter extends CustomPainter {
-  final Color color;
-
-  const _XPainter({required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final p = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.5
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(const Offset(5, 5), Offset(size.width - 5, size.height - 5), p);
-    canvas.drawLine(Offset(size.width - 5, 5), Offset(5, size.height - 5), p);
   }
 
   @override

@@ -13,6 +13,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/user/edit_profile_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/profile_avatar.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -601,6 +602,108 @@ void main() {
       expect(ProfileStore.instance.profile?.firstName, 'New');
       expect(notified, 1);
       ProfileStore.instance.removeListener(listener);
+    });
+
+    group('floating label colour parity (React focusAnim/colorAnim split)',
+        () {
+      /// Exact-equality is brittle across Color.lerp's float rounding, so
+      /// compare channel-wise with a tight tolerance.
+      void expectColor(Color actual, Color expected) {
+        final diffs = [
+          (actual.r - expected.r).abs(),
+          (actual.g - expected.g).abs(),
+          (actual.b - expected.b).abs(),
+          (actual.a - expected.a).abs(),
+        ];
+        expect(diffs.every((d) => d < 0.01), isTrue,
+            reason: 'actual $actual differs from expected $expected');
+      }
+
+      Color labelColorOf(WidgetTester tester, String label) {
+        final text = tester.widget<Text>(find.text(label));
+        expect(text.style?.color, isNotNull);
+        return text.style!.color!;
+      }
+
+      /// The field's outer bordered Container, found by walking up from its
+      /// floating label.
+      Border fieldBorder(WidgetTester tester, String label) {
+        final box = find.ancestor(
+          of: find.text(label),
+          matching: find.byWidgetPredicate((w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).border is Border),
+        );
+        expect(box, findsOneWidget);
+        final decoration = (tester.widget<Container>(box).decoration
+            as BoxDecoration);
+        return decoration.border as Border;
+      }
+
+      testWidgets(
+          'unfocused field WITH a value keeps a neutral label and border',
+          (tester) async {
+        await _pumpScreen(
+            tester,
+            EditProfileScreen(
+                debugUid: 'u1', loadProfile: (_) async => _doc));
+
+        final palette =
+            ExpoPalette.of(tester.element(find.text('First Name')));
+        final focusMix =
+            Color.lerp(palette.primary, palette.textSecondary, 0.6)!;
+
+        // The First Name field holds 'Ram' but has no focus: the label
+        // floats (position anim) yet keeps the neutral tone — NOT the blue
+        // focus mix that the old single-anim logic rendered for every
+        // pre-filled field.
+        expectColor(labelColorOf(tester, 'First Name'),
+            palette.textSecondary);
+        expect(
+            (labelColorOf(tester, 'First Name').r - focusMix.r).abs() < 0.01 &&
+                (labelColorOf(tester, 'First Name').g - focusMix.g).abs() <
+                    0.01,
+            isFalse,
+            reason: 'label must not sit at the focus tint while unfocused');
+        expectColor(fieldBorder(tester, 'First Name').top.color,
+            palette.border);
+      });
+
+      testWidgets('focus tints the label to the softened focus mix',
+          (tester) async {
+        await _pumpScreen(
+            tester,
+            EditProfileScreen(
+                debugUid: 'u1', loadProfile: (_) async => _doc));
+
+        final palette =
+            ExpoPalette.of(tester.element(find.text('First Name')));
+        final focusMix =
+            Color.lerp(palette.primary, palette.textSecondary, 0.6)!;
+
+        // Sanity: starts neutral.
+        expectColor(labelColorOf(tester, 'First Name'),
+            palette.textSecondary);
+
+        await tester.tap(find.byType(TextField).at(0));
+        // Small pumps so the tap registers and the 240ms colour wash runs
+        // to completion.
+        for (var i = 0; i < 8; i++) {
+          await tester.pump(const Duration(milliseconds: 50));
+        }
+
+        final after = labelColorOf(tester, 'First Name');
+        expectColor(after, focusMix);
+        expectColor(fieldBorder(tester, 'First Name').top.color, focusMix);
+        // The harsh full-strength blue stays gone.
+        expect(
+            (after.r - palette.primary.r).abs() < 0.01 &&
+                (after.g - palette.primary.g).abs() < 0.01 &&
+                (after.b - palette.primary.b).abs() < 0.01,
+            isFalse,
+            reason: 'label must use the softened mix, not full primary');
+      });
     });
   });
 }

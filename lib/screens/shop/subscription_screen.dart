@@ -129,13 +129,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                   );
                 }
                 final data = snap.data!;
-                SubscriptionRecord? activeRecord;
-                for (final r in data.history) {
-                  if (r.status == SubscriptionStatus.active) {
-                    activeRecord = r;
-                    break;
-                  }
-                }
+                // The current plan is the last-APPROVED active record — the
+                // one the users/{uid} premium mirror (and the profile pill)
+                // describes — not merely the most recently submitted one.
+                final activeRecord =
+                    SubscriptionService.currentActiveRecord(data.history);
                 final pendingCount = data.history
                     .where((r) => r.status == SubscriptionStatus.pending)
                     .length;

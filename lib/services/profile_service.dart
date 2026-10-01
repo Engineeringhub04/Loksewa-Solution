@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/subscription_service.dart';
 
 /// User profile service + shared profile store.
 ///
@@ -573,6 +574,22 @@ class ProfileStore extends ChangeNotifier {
   /// The whole-app aggregate behind the stats card.
   MainLeaderboardScore? score;
 
+  /// Plan name of the user's active app_subscriptions record — the SAME
+  /// source the Subscription Details page reads
+  /// ([SubscriptionService.currentActiveRecord]: the last-approved active
+  /// record, which is also what the users/{uid} premium mirror describes).
+  /// The mirror is only written at approval time and can disagree with the
+  /// ledger (stale/manual data, approvals that predate the mirror); the
+  /// ledger wins for display. Null while the lookup hasn't settled — see
+  /// [activePlanLoaded].
+  String? activePlanName;
+
+  /// True once the active-subscription lookup has settled, even when there
+  /// is no active record. Distinguishes "still loading" (show the mirrored
+  /// fields) from "no active plan" (show Free Plan, like Subscription
+  /// Details does).
+  bool activePlanLoaded = false;
+
   /// Starts true: until the first attempt settles we genuinely do not know the
   /// numbers, and a skeleton is more honest than zeroes that silently become
   /// real data a moment later.
@@ -629,6 +646,10 @@ class ProfileStore extends ChangeNotifier {
         // the header only needs the profile, and making it wait on a
         // stats-card read would slow down what the user sees first.
         unawaited(loadScore(uid, fetchedCourse?.subcourseId));
+        // Same treatment for the plan label: the mirrored users/{uid}
+        // fields show immediately, then the ledger (the Subscription
+        // Details page's source) corrects the label if they disagree.
+        unawaited(_loadActivePlan(uid));
       } catch (_) {
         loading = false;
         refreshing = false;
@@ -703,6 +724,26 @@ class ProfileStore extends ChangeNotifier {
 
   /// Reads the stored aggregate. Pass a null subcourse for a user who has not
   /// enrolled.
+  /// Best-effort fetch of the active subscription record's plan name, using
+  /// the exact same pick as the Subscription Details page
+  /// ([SubscriptionService.currentActiveRecord]: the last-approved active
+  /// record, which is also what the users/{uid} premium mirror describes).
+  /// Never throws: on failure the mirrored user-doc fields stay as the
+  /// label fallback, and a later refresh retries.
+  Future<void> _loadActivePlan(String uid) async {
+    try {
+      final history = await SubscriptionService.fetchMySubscriptionHistory(uid);
+      final active = SubscriptionService.currentActiveRecord(history);
+      // The user may have signed out / switched while the read was away.
+      if (loadedUid != uid) return;
+      activePlanName = active?.planName;
+      activePlanLoaded = true;
+      notifyListeners();
+    } catch (_) {
+      // Keep the mirrored fallback.
+    }
+  }
+
   Future<void> loadScore(String uid, String? subcourseId) async {
     final token = ++_scoreRequestToken;
     if (uid.isEmpty || subcourseId == null || subcourseId.isEmpty) {
@@ -757,6 +798,8 @@ class ProfileStore extends ChangeNotifier {
     refreshing = false;
     error = false;
     score = null;
+    activePlanName = null;
+    activePlanLoaded = false;
     // Back to "not known yet", not "known to be empty" — the next account's
     // card should open on a skeleton, not on somebody else's blank slate.
     scoreLoading = true;

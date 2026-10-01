@@ -45,6 +45,8 @@ SubscriptionRecord _record({
   String planId = 'monthly',
   String planName = 'Monthly Pro',
   DateTime? submittedAt,
+  DateTime? reviewedAt,
+  DateTime? startDate,
   DateTime? expiryDate,
   String? rejectionReason,
 }) =>
@@ -63,9 +65,9 @@ SubscriptionRecord _record({
       customerMessage: null,
       adminMessage: null,
       submittedAt: submittedAt,
-      reviewedAt: null,
+      reviewedAt: reviewedAt,
       rejectionReason: rejectionReason,
-      startDate: null,
+      startDate: startDate,
       expiryDate: expiryDate,
       couponCode: null,
       userName: null,
@@ -198,6 +200,50 @@ void main() {
     expect(find.textContaining('Active until'), findsOneWidget);
     expect(find.text('5 days left'), findsOneWidget);
     expect(find.text('Pending Review · 1'), findsOneWidget);
+  });
+
+  testWidgets(
+      'with two active records the hero shows the last-approved plan, '
+      'matching the users/{uid} premium mirror the profile pill reads',
+      (tester) async {
+    final now = DateTime.now();
+    // Out-of-order approval: the monthly request was submitted most
+    // recently but the yearly one was approved last, so the mirror (and the
+    // profile pill) describe the yearly plan.
+    final data = SubscriptionScreenData(
+      plans: const [],
+      history: [
+        _record(
+          id: 'r-monthly',
+          status: SubscriptionStatus.active,
+          planId: 'monthly',
+          planName: 'Monthly Entitlement',
+          submittedAt: now.subtract(const Duration(hours: 1)),
+          startDate: now.subtract(const Duration(days: 5)),
+          expiryDate: now.add(const Duration(days: 25)),
+        ),
+        _record(
+          id: 'r-yearly',
+          status: SubscriptionStatus.active,
+          planId: 'yearly',
+          planName: 'Yearly Entitlement',
+          submittedAt: now.subtract(const Duration(days: 10)),
+          startDate: now.subtract(const Duration(days: 1)),
+          expiryDate: now.add(const Duration(days: 364)),
+        ),
+      ],
+    );
+    await _pump(tester, _router(() async => data));
+    await _settle(tester);
+
+    expect(find.text('YOUR PLAN'), findsOneWidget);
+    // The hero wears the yearly record's expiry (364 days), not the monthly
+    // one's (25 days) — the request rows never render a days-left chip, so
+    // this pins the hero's choice unambiguously.
+    expect(find.text('364 days left'), findsOneWidget);
+    expect(find.text('25 days left'), findsNothing);
+    expect(find.text('Yearly Entitlement'), findsWidgets);
+    expect(find.text('Monthly Entitlement'), findsOneWidget);
   });
 
   testWidgets('request rows show status pills and the rejection reason',

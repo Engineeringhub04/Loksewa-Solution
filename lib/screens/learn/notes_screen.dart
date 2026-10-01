@@ -44,8 +44,16 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   Future<void> _boot() async {
-    await _store.ensureInit();
-    await _store.migrateLegacyOnce();
+    // Premium preloading shimmer: the note store is local and inits nearly
+    // instantly, so without this minimum delay the page would pop in cheaply.
+    // The shimmer (PreloadingWidget) stays up for at least ~1.5s.
+    await Future.wait([
+      () async {
+        await _store.ensureInit();
+        await _store.migrateLegacyOnce();
+      }(),
+      Future.delayed(const Duration(milliseconds: 1500)),
+    ]);
     if (!mounted) return;
     setState(() {
       _notes = KeepNote.sortedForList(_store.loadAll());
@@ -459,6 +467,8 @@ class _NotesScreenState extends State<NotesScreen> {
             child: _loading
                 ? Center(
                     child: PreloadingWidget(
+                        // Theme-coloured page: theme-grey spokes, not white.
+                        tinted: false,
                         label: AppLanguage.tr(
                             'Loading notes...', 'नोटहरू लोड हुँदैछन्...')))
                 : RefreshIndicator(

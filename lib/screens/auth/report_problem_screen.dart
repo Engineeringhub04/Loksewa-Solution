@@ -8,6 +8,7 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../services/app_language.dart';
+import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/trash_icon.dart';
@@ -88,11 +89,17 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
   int _uploadPct = 0;
   bool? _offline;
   bool _attachPressed = false;
+  bool _preloading = true;
 
   @override
   void initState() {
     super.initState();
     _checkOnline();
+    // Premium preloading shimmer (~1.5s): this page has no database fetch,
+    // so without it the content would pop in instantly and look cheap.
+    Future.delayed(const Duration(milliseconds: 1500), () {
+      if (mounted) setState(() => _preloading = false);
+    });
   }
 
   Future<void> _checkOnline() async {
@@ -184,15 +191,28 @@ class _ReportProblemScreenState extends State<ReportProblemScreen> {
               title: AppLanguage.tr(
                   'Report a Problem', 'समस्या रिपोर्ट गर्नुहोस्')),
           Expanded(
-            child: _offline == true ? _offlineBody(pal) : _formBody(pal),
+            child: _preloading
+                ? _preloadingBody()
+                : (_offline == true ? _offlineBody(pal) : _formBody(pal)),
           ),
         ],
       ),
     );
   }
 
-  Widget _offlineBody(ExpoPalette pal) {
-    return SingleChildScrollView(
+  /// Premium preloading shimmer shown for ~1.5s on first build, before the
+  /// form content is revealed.
+  Widget _preloadingBody() {
+    return Center(
+      child: PreloadingWidget(
+        // Theme-coloured page: theme-grey spokes, not white.
+        tinted: false,
+        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
+      ),
+    );
+  }
+
+  Widget _offlineBody(ExpoPalette pal) {    return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [

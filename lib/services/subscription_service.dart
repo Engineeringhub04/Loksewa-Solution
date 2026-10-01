@@ -438,37 +438,102 @@ class SubscriptionService {
   static Future<SubscriptionRecord?> fetchMySubscription(String uid) async {
     final history = await fetchMySubscriptionHistory(uid);
     if (history.isEmpty) return null;
-    for (final record in history) {
-      if (record.status == SubscriptionStatus.active) return record;
-    }
+    final current = currentActiveRecord(history);
+    if (current != null) return current;
     return history.first;
   }
 
-  /// Sweeps an expired active subscription back to 'expired' + clears the
-  /// user's premium flag. Called opportunistically from the Subscription
-  /// page's load. Mirrors expireIfPastDue().
+  /// The ACTIVE record the users/{uid} premium mirror describes.
+  ///
+  /// Approving a request never retires previously-active records, so several
+  /// `status == 'active'` records can coexist (out-of-order or concurrent
+  /// approvals, re-approvals). The mirror (isPremium / premiumPlanName /
+  /// premiumBillingCycle / premiumExpiryDate) is written atomically with
+  /// each approval, so it always describes the LAST-APPROVED request — which
+  /// is also what every premium gate and the profile plan pill read. Picking
+  /// the active record with the latest approval (startDate, else reviewedAt,
+  /// else submittedAt) keeps this page's hero and "currently active" plan
+  /// card on that same record, instead of on whichever active request was
+  /// submitted most recently (the old first-active-by-submittedAt pick that
+  /// disagreed with the profile page).
+  static SubscriptionRecord? currentActiveRecord(
+      List<SubscriptionRecord> records) {
+    SubscriptionRecord? best;
+    DateTime? bestTime;
+    for (final r in records) {
+      if (r.status != SubscriptionStatus.active) continue;
+      final t = r.startDate ?? r.reviewedAt ?? r.submittedAt;
+      if (best == null ||
+          (t != null && (bestTime == null || t.isAfter(bestTime)))) {
+        best = r;
+        bestTime = t;
+      }
+    }
+    return best;
+  }
+
+  /// Sweeps expired active subscriptions and re-derives the users/{uid}
+  /// premium mirror from whatever is still valid. Called opportunistically
+  /// from the Subscription page's load. Mirrors expireIfPastDue().
+  ///
+  /// Multiple `status == 'active'` records can coexist (approvals never
+  /// retire the previous one), so this expires EVERY past-due active — not
+  /// just the first one found — and then mirrors the last-approved remaining
+  /// active (the same record [currentActiveRecord] picks, and the one the
+  /// profile pill reads through the user doc). With no valid active left,
+  /// the premium flag is cleared. When nothing is past due, nothing is
+  /// written.
   static Future<void> expireIfPastDue(String uid) async {
-    final record = await fetchMySubscription(uid);
-    if (record == null || record.status != SubscriptionStatus.active) return;
-    final expiry = record.expiryDate;
-    if (expiry == null || expiry.isAfter(DateTime.now())) return;
+    final history = await fetchMySubscriptionHistory(uid);
+    if (history.isEmpty) return;
+    final now = DateTime.now();
+    final expiredIds = <String>[];
+    for (final r in history) {
+      if (r.status != SubscriptionStatus.active) continue;
+      final expiry = r.expiryDate;
+      if (expiry != null && !expiry.isAfter(now)) expiredIds.add(r.id);
+    }
+    if (expiredIds.isEmpty) return;
+    final remaining = history
+        .where((r) =>
+            r.status == SubscriptionStatus.active &&
+            !expiredIds.contains(r.id))
+        .toList();
+    final current = currentActiveRecord(remaining);
     final token = await AuthService.getValidIdToken();
-    await FirestoreRest.setDocument(
-      'app_subscriptions/${record.id}',
-      {
-        'status': 'expired',
-        'updatedAt': FirestoreRest.serverTimestamp(),
-      },
-      merge: true,
-      idToken: token,
-    );
-    await FirestoreRest.setDocument(
-      'users/$uid',
-      {
-        'isPremium': false,
-        'updatedAt': FirestoreRest.serverTimestamp(),
-      },
-      merge: true,
+    await FirestoreRest.commitWrites(
+      [
+        for (final id in expiredIds)
+          FirestoreWrite(
+            'app_subscriptions/$id',
+            {
+              'status': 'expired',
+              'updatedAt': FirestoreRest.serverTimestamp(),
+            },
+            merge: true,
+          ),
+        if (current != null)
+          FirestoreWrite(
+            'users/$uid',
+            {
+              'isPremium': true,
+              'premiumPlanName': current.planName,
+              'premiumBillingCycle': current.billingCycle.name,
+              'premiumExpiryDate': current.expiryDate?.toIso8601String(),
+              'updatedAt': FirestoreRest.serverTimestamp(),
+            },
+            merge: true,
+          )
+        else
+          FirestoreWrite(
+            'users/$uid',
+            {
+              'isPremium': false,
+              'updatedAt': FirestoreRest.serverTimestamp(),
+            },
+            merge: true,
+          ),
+      ],
       idToken: token,
     );
   }

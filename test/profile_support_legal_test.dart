@@ -7,6 +7,7 @@ import 'package:loksewa_solution/screens/auth/privacy_policy_screen.dart';
 import 'package:loksewa_solution/screens/auth/report_problem_screen.dart';
 import 'package:loksewa_solution/screens/auth/terms_conditions_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 
 // Every screen below carries SyllabusEntrance (delayed AnimationController +
 // Future.delayed), so: very tall test surface (all sections build at once,
@@ -357,6 +358,57 @@ void main() {
           find.text('तपाईंलाई के मन पर्यो? हामीले के सुधार्नुपर्छ?'),
           findsOneWidget);
       expect(find.text('पेश गर्नुहोस्'), findsOneWidget);
+    });
+  });
+
+  group('premium preloading shimmer', () {
+    // Pump one frame with no settle, so the ~1.5s shimmer is still up.
+    Future<void> pumpBare(WidgetTester tester, Widget screen) async {
+      tester.view.physicalSize = const Size(800, 4000);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(MaterialApp(home: screen));
+      await tester.pump();
+    }
+
+    // Small pumps only (never pumpAndSettle — the shimmer's animation is
+    // infinite). 2.0s: shimmer ends at ~1.5s, revealed SyllabusEntrance
+    // delays (up to 240ms) must also fire before the test ends.
+    Future<void> pumpPastShimmer(WidgetTester tester) async {
+      for (int i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+    }
+
+    testWidgets('ReportProblemScreen shows the shimmer first, then the form',
+        (WidgetTester tester) async {
+      await pumpBare(tester, const ReportProblemScreen());
+
+      // Shimmer first: the header frame is up, the form not yet built.
+      expect(find.byType(PreloadingWidget), findsOneWidget);
+      expect(find.text('Report a Problem'), findsOneWidget);
+      expect(find.text('Bug or error'), findsNothing);
+
+      await pumpPastShimmer(tester);
+
+      expect(find.byType(PreloadingWidget), findsNothing);
+      expect(find.text('Bug or error'), findsOneWidget);
+      expect(find.text('Submit'), findsOneWidget);
+    });
+
+    testWidgets('FeedbackScreen shows the shimmer first, then the content',
+        (WidgetTester tester) async {
+      await pumpBare(tester, const FeedbackScreen());
+
+      expect(find.byType(PreloadingWidget), findsOneWidget);
+      expect(find.text('Feedback'), findsWidgets);
+      expect(find.text('How would you rate the app?'), findsNothing);
+
+      await pumpPastShimmer(tester);
+
+      expect(find.byType(PreloadingWidget), findsNothing);
+      expect(find.text('How would you rate the app?'), findsOneWidget);
     });
   });
 }

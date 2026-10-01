@@ -14,8 +14,9 @@ import java.io.File
 
 /// Hosts the tiny "loksewa_solution/media" channel used by
 /// [ScreenshotPicker.pickImage] (report-a-problem screenshot attach),
-/// [ScreenshotPicker.captureImage] (edit-profile photo capture) and the
-/// profile tab's Rate Us popup.
+/// [ScreenshotPicker.captureImage] (edit-profile photo capture), the
+/// profile tab's Rate Us popup, and Contact Us channel rows (openUrl:
+/// mailto:/tel:/https: links all launch through this branch).
 ///
 /// No `image_picker`/`url_launcher` plugins are used on purpose
 /// (dependency-free build), so this wires the system intents directly:

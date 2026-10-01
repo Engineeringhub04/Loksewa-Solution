@@ -268,8 +268,12 @@ void main() {
 
       await tester.pumpWidget(
           MaterialApp(home: NotesScreen(store: store)));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+      // Premium preloading shimmer: the list appears only after the
+      // minimum ~1.5s shimmer. Advance with small pumps (the shimmer's
+      // animation is infinite, so never pumpAndSettle).
+      for (int i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
 
       expect(find.text('Keep Notes'), findsOneWidget);
       expect(find.text('PINNED'), findsOneWidget);
@@ -290,8 +294,10 @@ void main() {
       final store = KeepNotesStore.forTest(tmp);
       await tester.pumpWidget(
           MaterialApp(home: NotesScreen(store: store)));
-      await tester.pump(const Duration(milliseconds: 100));
-      await tester.pump(const Duration(milliseconds: 100));
+      // Premium preloading shimmer: pump past the ~1.5s minimum.
+      for (int i = 0; i < 16; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       expect(find.text('No notes yet'), findsOneWidget);
       tmp.deleteSync(recursive: true);
     });

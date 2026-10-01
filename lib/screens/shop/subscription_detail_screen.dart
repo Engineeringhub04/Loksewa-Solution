@@ -21,7 +21,7 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
-import '../../widgets/app_modal_shell.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -474,80 +474,16 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   }
 
   void _openZoom() {
-    final controller = TransformationController();
-    var scale = 1.0;
-    Widget image;
+    // Global image viewer: pinch-to-zoom only (no +/- zoom buttons).
+    final ImageProvider provider;
     if (_pickedBytes != null) {
-      image = Image.memory(_pickedBytes!, fit: BoxFit.contain);
+      provider = MemoryImage(_pickedBytes!);
     } else if (_screenshotUri.startsWith('http')) {
-      image = Image.network(
-        _screenshotUri,
-        fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined,
-            size: 48, color: Colors.white),
-      );
+      provider = NetworkImage(_screenshotUri);
     } else {
       return;
     }
-    AppModalShell.show(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModalState) {
-          void apply(double next) {
-            scale = next.clamp(1.0, 4.0);
-            controller.value = Matrix4.diagonal3Values(scale, scale, 1);
-            setModalState(() {});
-          }
-
-          return AppModalShell(
-            icon: Container(
-              width: 52,
-              height: 52,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0x33 / 0xFF),
-                borderRadius: BorderRadius.circular(16),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(Icons.zoom_in, size: 26, color: Colors.white),
-            ),
-            tagLabel: AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
-            title: Text(
-              AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
-              style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white),
-            ),
-            body: SizedBox(
-              height: 420,
-              child: InteractiveViewer(
-                transformationController: controller,
-                minScale: 1,
-                maxScale: 4,
-                child: Center(child: image),
-              ),
-            ),
-            footer: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _ZoomButton(
-                    icon: Icons.remove, onTap: () => apply(scale - 0.25)),
-                Container(
-                  width: 64,
-                  alignment: Alignment.center,
-                  child: Text(
-                    '${(scale * 100).round()}%',
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                _ZoomButton(icon: Icons.add, onTap: () => apply(scale + 0.25)),
-              ],
-            ),
-            onClose: () => Navigator.of(ctx).pop(),
-          );
-        },
-      ),
-    );
+    showImageViewer(context, provider);
   }
 }
 
@@ -1460,32 +1396,6 @@ class _ReceiptPreview extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ZoomButton extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _ZoomButton({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(21),
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: ExpoPalette.of(context)
-              .textPrimary
-              .withValues(alpha: 0x14 / 0xFF),
-          shape: BoxShape.circle,
-        ),
-        alignment: Alignment.center,
-        child: Icon(icon, size: 22),
       ),
     );
   }

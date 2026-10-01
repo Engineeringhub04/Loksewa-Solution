@@ -16,6 +16,7 @@ import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 class MySubmissionsScreen extends StatefulWidget {
   const MySubmissionsScreen({super.key});
@@ -117,20 +118,26 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
                     onRefresh: () => _load(refresh: true),
                     color: pal.primary,
                     child: _items.isEmpty
-                        ? _emptyBody(pal)
+                        ? SyllabusEntrance(
+                            delayMs: 100, child: _emptyBody(pal))
                         : ListView(
                             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
                             children: [
-                              _hero(pal),
+                              SyllabusEntrance(
+                                  delayMs: 0, child: _hero(pal)),
                               const SizedBox(height: 12),
                               for (var i = 0; i < _items.length; i++) ...[
                                 if (i > 0) const SizedBox(height: 10),
-                                _SubmissionCard(
-                                  answer: _items[i],
-                                  pal: pal,
-                                  timeAgo: _timeAgo(_items[i]['createdAt']),
-                                  onTap: () => context.push(
-                                      '/exam-answer/${_docId(_items[i])}'),
+                                SyllabusEntrance(
+                                  delayMs: (i.clamp(0, 8) + 1) * 60,
+                                  child: _SubmissionCard(
+                                    key: ValueKey(_docId(_items[i])),
+                                    answer: _items[i],
+                                    pal: pal,
+                                    timeAgo: _timeAgo(_items[i]['createdAt']),
+                                    onTap: () => context.push(
+                                        '/exam-answer/${_docId(_items[i])}'),
+                                  ),
                                 ),
                               ],
                             ],
@@ -159,82 +166,112 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
         ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0x1A / 0xFF),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
+            color: pal.primary.withValues(alpha: 0.35),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 44,
-                height: 44,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -34,
+              top: -34,
+              child: Container(
+                width: 120,
+                height: 120,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(14),
-                  color: Colors.white.withValues(alpha: 0x29 / 0xFF),
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.10),
                 ),
-                child: const Icon(Icons.cloud_done_outlined,
-                    size: 22, color: Colors.white),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            Positioned(
+              right: 24,
+              bottom: -48,
+              child: Container(
+                width: 92,
+                height: 92,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(
-                      AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू'),
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(15),
+                        color: Colors.white.withValues(alpha: 0.16),
                       ),
+                      child: const Icon(Icons.cloud_done_outlined,
+                          size: 23, color: Colors.white),
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      AppLanguage.tr(
-                          'Every Theory answer you have uploaded, newest first.',
-                          'तपाईंले अपलोड गर्नुभएका सबै थ्योरी उत्तरहरू, नयाँ पहिले।'),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color:
-                            Colors.white.withValues(alpha: 0xCC / 0xFF),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू'),
+                            style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            AppLanguage.tr(
+                                'Every Theory answer you have uploaded, newest first.',
+                                'तपाईंले अपलोड गर्नुभएका सबै थ्योरी उत्तरहरू, नयाँ पहिले।'),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.white.withValues(alpha: 0.80),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _StatTile(
-                value: '${_items.length}',
-                label: AppLanguage.tr('Submitted', 'पेश गरिएको'),
-                icon: Icons.description_outlined,
-                color: Colors.white,
-              ),
-              const SizedBox(width: 8),
-              _StatTile(
-                value: '$pending',
-                label: AppLanguage.tr('Pending', 'बाँकी'),
-                icon: Icons.schedule_outlined,
-                color: const Color(0xFFFCD34D),
-              ),
-              const SizedBox(width: 8),
-              _StatTile(
-                value: '$passed',
-                label: AppLanguage.tr('Passed', 'उत्तीर्ण'),
-                icon: Icons.emoji_events_outlined,
-                color: const Color(0xFF6EE7B7),
-              ),
-            ],
-          ),
-        ],
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    _StatTile(
+                      value: '${_items.length}',
+                      label: AppLanguage.tr('Submitted', 'पेश गरिएको'),
+                      icon: Icons.description_outlined,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(width: 8),
+                    _StatTile(
+                      value: '$pending',
+                      label: AppLanguage.tr('Pending', 'बाँकी'),
+                      icon: Icons.schedule_outlined,
+                      color: const Color(0xFFFCD34D),
+                    ),
+                    const SizedBox(width: 8),
+                    _StatTile(
+                      value: '$passed',
+                      label: AppLanguage.tr('Passed', 'उत्तीर्ण'),
+                      icon: Icons.emoji_events_outlined,
+                      color: const Color(0xFF6EE7B7),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -246,16 +283,18 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
         Column(
           children: [
             Container(
-              width: 72,
-              height: 72,
+              width: 76,
+              height: 76,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: pal.primary.withValues(alpha: 0x14 / 0xFF),
+                color: pal.primary.withValues(alpha: 0.08),
+                border: Border.all(
+                    color: pal.primary.withValues(alpha: 0.20), width: 1),
               ),
               child: Icon(Icons.cloud_upload_outlined,
                   size: 32, color: pal.primary),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             Text(
               AppLanguage.tr('No submissions yet', 'अहिलेसम्म कुनै उत्तर छैन'),
               style: TextStyle(
@@ -293,10 +332,10 @@ class _StatTile extends StatelessWidget {
   Widget build(BuildContext context) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 11),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(14),
-          color: Colors.white.withValues(alpha: 0x1F / 0xFF),
+          color: Colors.white.withValues(alpha: 0.12),
         ),
         child: Column(
           children: [
@@ -316,7 +355,7 @@ class _StatTile extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.white.withValues(alpha: 0xCC / 0xFF),
+                color: Colors.white.withValues(alpha: 0.80),
               ),
             ),
           ],
@@ -332,7 +371,8 @@ class _SubmissionCard extends StatefulWidget {
   final String timeAgo;
   final VoidCallback onTap;
   const _SubmissionCard(
-      {required this.answer,
+      {super.key,
+      required this.answer,
       required this.pal,
       required this.timeAgo,
       required this.onTap});
@@ -358,7 +398,7 @@ class _SubmissionCardState extends State<_SubmissionCard> {
     final tone =
         reviewed ? (passed ? pal.success : pal.danger) : pal.warning;
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final tint = dark ? 0x26 / 0xFF : 0x14 / 0xFF;
+    final tint = dark ? 0.15 : 0.08;
     final courseLine = [
       (a['courseName'] ?? '').toString(),
       (a['subcourseName'] ?? '').toString()
@@ -369,17 +409,20 @@ class _SubmissionCardState extends State<_SubmissionCard> {
       onTapDown: (_) => setState(() => _pressed = true),
       onTapUp: (_) => setState(() => _pressed = false),
       onTapCancel: () => setState(() => _pressed = false),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: _pressed
-              ? tone.withValues(alpha: tint)
-              : pal.surface,
-          border: Border.all(color: pal.border, width: 0.75),
+          color: _pressed ? tone.withValues(alpha: tint) : pal.surface,
+          border: Border.all(
+              color: _pressed
+                  ? tone.withValues(alpha: dark ? 0.35 : 0.25)
+                  : pal.border,
+              width: 0.75),
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0x0F / 0xFF),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 3,
               offset: const Offset(0, 1),
             ),
@@ -390,14 +433,20 @@ class _SubmissionCardState extends State<_SubmissionCard> {
             Row(
               children: [
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(13),
-                    color: tone.withValues(alpha: tint),
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        tone.withValues(alpha: tint + 0.06),
+                        tone.withValues(alpha: tint),
+                      ],
+                    ),
                     border: Border.all(
-                      color: tone.withValues(
-                          alpha: dark ? 0x55 / 0xFF : 0x33 / 0xFF),
+                      color: tone.withValues(alpha: dark ? 0.33 : 0.20),
                       width: 0.75,
                     ),
                   ),
@@ -407,7 +456,7 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                             ? Icons.done_all_outlined
                             : Icons.error_outline)
                         : Icons.hourglass_top_outlined,
-                    size: 20,
+                    size: 21,
                     color: tone,
                   ),
                 ),

@@ -33,6 +33,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -805,11 +806,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   // -------------------------------------------------------------- preview
 
   void _openPreview({Uint8List? bytes, String? url}) {
-    showDialog(
-      context: context,
-      barrierColor: const Color(0xFA030712), // rgba(3, 7, 18, 0.98)
-      builder: (ctx) => _ImagePreviewDialog(bytes: bytes, url: url),
-    );
+    // Global image viewer: pinch-to-zoom only (no +/- zoom buttons).
+    final ImageProvider provider;
+    if (bytes != null) {
+      provider = MemoryImage(bytes);
+    } else if (url != null && url.isNotEmpty) {
+      provider = NetworkImage(url);
+    } else {
+      return;
+    }
+    showImageViewer(context, provider);
   }
 
   // ----------------------------------------------------------------- build
@@ -1898,110 +1904,6 @@ class _QrImageState extends State<_QrImage> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Full-screen image preview with 1x–4x zoom controls — mirrors the preview
-/// Modal in checkout.tsx (header + stage + - % + controls).
-class _ImagePreviewDialog extends StatefulWidget {
-  final Uint8List? bytes;
-  final String? url;
-  const _ImagePreviewDialog({this.bytes, this.url});
-
-  @override
-  State<_ImagePreviewDialog> createState() => _ImagePreviewDialogState();
-}
-
-class _ImagePreviewDialogState extends State<_ImagePreviewDialog> {
-  double _scale = 1;
-
-  @override
-  Widget build(BuildContext context) {
-    final image = widget.bytes != null
-        ? Image.memory(widget.bytes!, fit: BoxFit.contain)
-        : Image.network(widget.url ?? '', fit: BoxFit.contain);
-    return Material(
-      color: Colors.transparent,
-      child: Column(
-        children: [
-          SizedBox(
-            height: 62,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    AppLanguage.tr(
-                        'Payment Screenshot', 'भुक्तानी स्क्रिनसट'),
-                    style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        decoration: TextDecoration.none),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close,
-                        size: 28, color: Colors.white),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          Expanded(
-            child: Center(
-              child: Transform.scale(
-                scale: _scale,
-                child: image,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(bottom: 28),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _zoomButton(
-                    Icons.remove,
-                    () => setState(
-                        () => _scale = (_scale - 0.25).clamp(1.0, 4.0))),
-                const SizedBox(width: 22),
-                Text(
-                  '${(_scale * 100).round()}%',
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      decoration: TextDecoration.none),
-                ),
-                const SizedBox(width: 22),
-                _zoomButton(
-                    Icons.add,
-                    () => setState(
-                        () => _scale = (_scale + 0.25).clamp(1.0, 4.0))),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _zoomButton(IconData icon, VoidCallback onTap) {
-    return InkWell(
-      onTap: onTap,
-      customBorder: const CircleBorder(),
-      child: Container(
-        width: 42,
-        height: 42,
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0x29 / 0xFF),
-          borderRadius: BorderRadius.circular(21),
-        ),
-        child: Icon(icon, size: 24, color: Colors.white),
       ),
     );
   }

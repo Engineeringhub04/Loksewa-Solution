@@ -420,8 +420,10 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
     );
   }
 
-  /// Premium segmented filter control: one surface track, the active filter
-  /// fills with its tone colour + glow, the rest sit quiet.
+  /// Premium sliding segmented filter: a fixed track with a tone-colored
+  /// thumb that slides to the active filter (AnimatedPositioned). Each
+  /// segment stacks its label over its count, so Total / New / Approved /
+  /// Rejected all fit comfortably in one row in both languages and themes.
   Widget _filterTrack(int total, int pending, int active, int rejected) {
     final items = [
       _FilterItem('all', AppLanguage.tr('Total', 'जम्मा'), total,
@@ -434,64 +436,100 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
           rejected, ExpoPalette.of(context).danger),
     ];
     final palette = ExpoPalette.of(context);
+    final selectedIndex =
+        items.indexWhere((i) => i.value == _filter).clamp(0, items.length - 1);
+    final activeColor = items[selectedIndex].color;
     return SyllabusEntrance(
       delayMs: 60,
-      child: Container(
-        padding: const EdgeInsets.all(4),
-        decoration: BoxDecoration(
-          color: palette.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: palette.border),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const pad = 4.0;
+          final segW = (constraints.maxWidth - pad * 2) / items.length;
+          return Container(
+            padding: const EdgeInsets.all(pad),
+            decoration: BoxDecoration(
+              color: palette.surface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: palette.border),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.04),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Row(
-          children: [
-            for (final item in items) Expanded(child: _segment(item)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _segment(_FilterItem item) {
-    final selected = _filter == item.value;
-    final palette = ExpoPalette.of(context);
-    return GestureDetector(
-      onTap: () => setState(() => _filter = item.value),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOut,
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          color: selected ? item.color : Colors.transparent,
-          boxShadow: selected
-              ? [
-                  BoxShadow(
-                    color: item.color.withValues(alpha: 0.35),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
+            child: SizedBox(
+              height: 56,
+              child: Stack(
+                children: [
+                  // The thumb slides between segments — one motion, no jump.
+                  AnimatedPositioned(
+                    duration: const Duration(milliseconds: 220),
+                    curve: Curves.easeOut,
+                    left: segW * selectedIndex,
+                    top: 0,
+                    bottom: 0,
+                    width: segW,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        color: activeColor,
+                        boxShadow: [
+                          BoxShadow(
+                            color: activeColor.withValues(alpha: 0.35),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ]
-              : null,
-        ),
-        child: Text(
-          '${item.label} (${item.count})',
-          textAlign: TextAlign.center,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: selected ? Colors.white : palette.textSecondary,
-            fontSize: 13,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+                  Row(
+                    children: [
+                      for (var i = 0; i < items.length; i++)
+                        Expanded(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () =>
+                                setState(() => _filter = items[i].value),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  items[i].label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: i == selectedIndex
+                                        ? Colors.white
+                                        : palette.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${items[i].count}',
+                                  style: TextStyle(
+                                    color: i == selectedIndex
+                                        ? Colors.white
+                                        : palette.textPrimary,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }

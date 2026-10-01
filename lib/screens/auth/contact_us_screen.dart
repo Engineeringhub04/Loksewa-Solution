@@ -11,7 +11,7 @@ import '../../widgets/syllabus_entrance.dart';
 
 /// Contact Us — mirrors app/contact-us.tsx.
 ///
-/// Hero (with "Replies within 1 working day" pill), Reach us rows,
+/// Gradient hero (with "Replies within 1 working day" pill), Reach us rows,
 /// Follow us brand circles, and a message form. External links are
 /// display-only (no url_launcher): tapping a channel or social copies its
 /// value/URL to the clipboard. The message posts to the team's Google Form
@@ -97,6 +97,7 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
     // X's mark has no single usable colour: the dark mark is all but
     // invisible on a dark surface, so it flips with the theme (React parity).
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = ExpoPalette.of(context);
     final socials = [
       for (final s in _socials)
         s.$2 == 'X (Twitter)'
@@ -110,226 +111,172 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
               title: AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्')),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
                 SyllabusEntrance(
                   delayMs: 0,
-                  child: Card(
-                    color: AppColors.navy,
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white
-                                      .withValues(alpha: 0x1F / 0xFF),
-                                ),
-                                child: const Icon(Icons.chat_bubble_outline,
-                                    color: Colors.white, size: 20),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  AppLanguage.tr(
-                                      'Contact Us', 'सम्पर्क गर्नुहोस्'),
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            AppLanguage.tr(
-                              'We usually reply within one working day. Pick whichever channel suits you.',
-                              'हामी सामान्यतया एक कार्यदिनभित्र जवाफ दिन्छौं। तपाईंलाई उपयुक्त च्यानल छान्नुहोस्।',
-                            ),
-                            style: const TextStyle(
-                                color: Color(0xFFD7E3FF), height: 1.5),
-                          ),
-                          const SizedBox(height: 12),
-                          StatusPill(
-                            label: AppLanguage.tr(
-                                'Replies within 1 working day',
-                                '१ कार्यदिनभित्र जवाफ'),
-                            color: const Color(0xFF4ADE80),
-                            icon: Icons.schedule_outlined,
-                          ),
-                        ],
-                      ),
+                  child: _hero(),
+                ),
+                const SizedBox(height: 16),
+                SyllabusEntrance(
+                  delayMs: 60,
+                  child: _surfaceCard(
+                    context,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sectionHead(
+                          context,
+                          icon: Icons.headset_mic_outlined,
+                          tone: AppColors.navy,
+                          title: AppLanguage.tr('Reach us', 'सम्पर्क'),
+                        ),
+                        const SizedBox(height: 8),
+                        _channelRow(
+                          context,
+                          icon: Icons.mail_outline,
+                          tone: AppColors.navy,
+                          label:
+                              AppLanguage.tr('Email us', 'इमेल गर्नुहोस्'),
+                          value: _email,
+                          copyValue: _email,
+                        ),
+                        Divider(
+                            height: 1, color: palette.divider, indent: 54),
+                        _channelRow(
+                          context,
+                          icon: Icons.call_outlined,
+                          tone: const Color(0xFF16A34A),
+                          label: AppLanguage.tr('Call us', 'फोन गर्नुहोस्'),
+                          value: _phone,
+                          copyValue: _phone,
+                        ),
+                        Divider(
+                            height: 1, color: palette.divider, indent: 54),
+                        _channelRow(
+                          context,
+                          icon: Icons.language_outlined,
+                          tone: const Color(0xFF0EA5E9),
+                          label: AppLanguage.tr('Website', 'वेबसाइट'),
+                          value: _websiteDisplay,
+                          copyValue: _websiteUrl,
+                        ),
+                      ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 12),
-                SyllabusEntrance(
-                  delayMs: 60,
-                  child: _sectionCard(
-                    icon: Icons.headset_mic_outlined,
-                    tone: AppColors.navy,
-                    title: AppLanguage.tr('Reach us', 'सम्पर्क'),
-                    children: [
-                      _channelRow(
-                        icon: Icons.mail_outline,
-                        tone: AppColors.navy,
-                        label: AppLanguage.tr('Email us', 'इमेल गर्नुहोस्'),
-                        value: _email,
-                        copyValue: _email,
-                      ),
-                      _channelRow(
-                        icon: Icons.call_outlined,
-                        tone: const Color(0xFF16A34A),
-                        label: AppLanguage.tr('Call us', 'फोन गर्नुहोस्'),
-                        value: _phone,
-                        copyValue: _phone,
-                      ),
-                      _channelRow(
-                        icon: Icons.language_outlined,
-                        tone: const Color(0xFF0EA5E9),
-                        label: AppLanguage.tr('Website', 'वेबसाइट'),
-                        value: _websiteDisplay,
-                        copyValue: _websiteUrl,
-                        last: true,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 SyllabusEntrance(
                   delayMs: 120,
-                  child: _sectionCard(
-                    icon: Icons.share_outlined,
-                    tone: const Color(0xFF8B5CF6),
-                    title: AppLanguage.tr(
-                        'Follow us', 'हामीलाई फलो गर्नुहोस्'),
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          for (final s in socials)
-                            Expanded(
-                              child: _socialItem(
-                                icon: s.$1,
-                                label: s.$2,
-                                color: s.$3,
-                                url: s.$4,
+                  child: _surfaceCard(
+                    context,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sectionHead(
+                          context,
+                          icon: Icons.share_outlined,
+                          tone: const Color(0xFF8B5CF6),
+                          title: AppLanguage.tr(
+                              'Follow us', 'हामीलाई फलो गर्नुहोस्'),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            for (final s in socials)
+                              Expanded(
+                                child: _socialItem(
+                                  icon: s.$1,
+                                  label: s.$2,
+                                  color: s.$3,
+                                  url: s.$4,
+                                ),
                               ),
-                            ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 if (offline)
                   SyllabusEntrance(
                     delayMs: 180,
-                    child: Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.withValues(alpha: 0x14 / 0xFF),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                            color: Colors.orange
-                                .withValues(alpha: 0x55 / 0xFF)),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.cloud_off_outlined,
-                              size: 22, color: Colors.orange),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  AppLanguage.tr(
-                                      'You are offline. Check your connection and try again.',
-                                      'तपाईं अफलाइन हुनुहुन्छ। जडान जाँचेर फेरि प्रयास गर्नुहोस्।'),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 13,
-                                      color: Colors.orange),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  AppLanguage.tr(
-                                      'This requires an internet connection',
-                                      'यसका लागि इन्टरनेट जडान आवश्यक छ'),
-                                  style: const TextStyle(
-                                      fontSize: 13, color: Colors.orange),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    child: _offlineCard(context),
                   )
                 else
                   SyllabusEntrance(
                     delayMs: 180,
-                    child: _sectionCard(
-                      icon: Icons.send_outlined,
-                      tone: const Color(0xFF0EA5E9),
-                      title: AppLanguage.tr('Send Message', 'सन्देश पठाउनुहोस्'),
-                      subtitle: AppLanguage.tr(
-                          'Reach out to our support team',
-                          'हाम्रो सहायता टोलीलाई सम्पर्क गर्नुहोस्'),
-                      children: [
-                        TextField(
-                          controller: _message,
-                          maxLines: 4,
-                          minLines: 4,
-                          textAlignVertical: TextAlignVertical.top,
-                          decoration: InputDecoration(
-                            hintText: AppLanguage.tr(
-                                'Write your message…', 'आफ्नो सन्देश लेख्नुहोस्…'),
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                    child: _surfaceCard(
+                      context,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _sectionHead(
+                            context,
+                            icon: Icons.send_outlined,
+                            tone: const Color(0xFF0EA5E9),
+                            title: AppLanguage.tr(
+                                'Send Message', 'सन्देश पठाउनुहोस्'),
+                            subtitle: AppLanguage.tr(
+                                'Reach out to our support team',
+                                'हाम्रो सहायता टोलीलाई सम्पर्क गर्नुहोस्'),
                           ),
-                          onChanged: (_) => setState(() {}),
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: (_message.text.trim().isEmpty ||
-                                    _sending)
-                                ? null
-                                : _send,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.navy,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                  vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          const SizedBox(height: 14),
+                          TextField(
+                            controller: _message,
+                            maxLines: 5,
+                            minLines: 4,
+                            textAlignVertical: TextAlignVertical.top,
+                            decoration: InputDecoration(
+                              hintText: AppLanguage.tr(
+                                  'Write your message…',
+                                  'आफ्नो सन्देश लेख्नुहोस्…'),
+                              filled: true,
+                              fillColor: palette.surfaceAlt,
+                              contentPadding: const EdgeInsets.all(14),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(14),
+                                borderSide: BorderSide.none,
                               ),
                             ),
-                            child: _sending
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white),
-                                  )
-                                : Text(AppLanguage.tr(
-                                    'Send Message', 'सन्देश पठाउनुहोस्')),
+                            onChanged: (_) => setState(() {}),
                           ),
-                        ),
-                      ],
+                          const SizedBox(height: 14),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton(
+                              onPressed: (_message.text.trim().isEmpty ||
+                                      _sending)
+                                  ? null
+                                  : _send,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.navy,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                textStyle: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w600),
+                              ),
+                              child: _sending
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white),
+                                    )
+                                  : Text(AppLanguage.tr(
+                                      'Send Message', 'सन्देश पठाउनुहोस्')),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
               ],
@@ -340,84 +287,208 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
     );
   }
 
-  Widget _sectionCard({
-    required IconData icon,
-    required Color tone,
-    required String title,
-    String? subtitle,
-    required List<Widget> children,
-  }) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+  /// Gradient hero with decorative rings, glass icon tile, subtitle and the
+  /// reply-time pill.
+  Widget _hero() {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF1D4ED8),
+            Color(0xFF2563EB),
+            Color(0xFF3B82F6),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
           children: [
-            Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: tone.withValues(alpha: 0x14 / 0xFF),
-                  ),
-                  child: Icon(icon, size: 18, color: tone),
+            Positioned(
+              right: -36,
+              top: -36,
+              child: Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.10),
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+              ),
+            ),
+            Positioned(
+              right: 58,
+              bottom: -48,
+              child: Container(
+                width: 104,
+                height: 104,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.07),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(title,
-                          style: const TextStyle(
-                              fontSize: 16, fontWeight: FontWeight.bold)),
-                      if (subtitle != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(subtitle,
-                              style: const TextStyle(
-                                  color: Colors.grey, fontSize: 13)),
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.18),
                         ),
+                        child: const Icon(Icons.chat_bubble_outline,
+                            color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्'),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 21,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 10),
+                  Text(
+                    AppLanguage.tr(
+                      'We usually reply within one working day. Pick whichever channel suits you.',
+                      'हामी सामान्यतया एक कार्यदिनभित्र जवाफ दिन्छौं। तपाईंलाई उपयुक्त च्यानल छान्नुहोस्।',
+                    ),
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.88),
+                        height: 1.55,
+                        fontSize: 14),
+                  ),
+                  const SizedBox(height: 14),
+                  StatusPill(
+                    label: AppLanguage.tr('Replies within 1 working day',
+                        '१ कार्यदिनभित्र जवाफ'),
+                    color: const Color(0xFF4ADE80),
+                    icon: Icons.schedule_outlined,
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 12),
-            ...children,
           ],
         ),
       ),
     );
   }
 
+  /// Theme-aware surface card: white + hairline border + soft shadow in
+  /// light, raised surface + border in dark.
+  Widget _surfaceCard(BuildContext context, {required Widget child}) {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        border: Border.all(color: palette.border),
+        boxShadow: isDark
+            ? null
+            : [
+                BoxShadow(
+                  color: const Color(0xFF0F172A).withValues(alpha: 0.05),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+      ),
+      child: child,
+    );
+  }
+
+  /// Tone-coded section heading: rounded icon tile + bold title (+ subtitle).
+  Widget _sectionHead(
+    BuildContext context, {
+    required IconData icon,
+    required Color tone,
+    required String title,
+    String? subtitle,
+  }) {
+    final palette = ExpoPalette.of(context);
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: tone.withValues(alpha: 0.12),
+          ),
+          child: Icon(icon, size: 20, color: tone),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title,
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: palette.textPrimary)),
+              if (subtitle != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(subtitle,
+                      style: TextStyle(
+                          color: palette.textSecondary, fontSize: 13)),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   /// One contact channel — display-only (no url_launcher); tapping copies
   /// the value to the clipboard.
-  Widget _channelRow({
+  Widget _channelRow(
+    BuildContext context, {
     required IconData icon,
     required Color tone,
     required String label,
     required String value,
     required String copyValue,
-    bool last = false,
   }) {
+    final palette = ExpoPalette.of(context);
     return InkWell(
       onTap: () => _copy(copyValue),
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: EdgeInsets.only(
-            top: 8, bottom: last ? 4 : 8, left: 4, right: 4),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
         child: Row(
           children: [
             Container(
-              width: 38,
-              height: 38,
+              width: 42,
+              height: 42,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: tone.withValues(alpha: 0x14 / 0xFF),
+                color: tone.withValues(alpha: 0.12),
               ),
-              child: Icon(icon, size: 19, color: tone),
+              child: Icon(icon, size: 20, color: tone),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -425,17 +496,19 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(label,
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.w600)),
+                      style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: palette.textPrimary)),
                   const SizedBox(height: 2),
                   Text(value,
-                      style:
-                          const TextStyle(color: Colors.grey, fontSize: 13)),
+                      style: TextStyle(
+                          color: palette.textSecondary, fontSize: 13)),
                 ],
               ),
             ),
-            const Icon(Icons.copy_outlined,
-                size: 18, color: Colors.grey),
+            Icon(Icons.copy_outlined,
+                size: 18, color: palette.textDisabled),
           ],
         ),
       ),
@@ -451,23 +524,30 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
   }) {
     return InkWell(
       onTap: () => _copy(url),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Column(
           children: [
             Container(
-              width: 54,
-              height: 54,
+              width: 56,
+              height: 56,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: color.withValues(alpha: 0x1A / 0xFF),
-                border: Border.all(
-                    color: color.withValues(alpha: 0x55 / 0xFF)),
+                color: color.withValues(alpha: 0.10),
+                border:
+                    Border.all(color: color.withValues(alpha: 0.33)),
+                boxShadow: [
+                  BoxShadow(
+                    color: color.withValues(alpha: 0.18),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
               ),
-              child: Icon(icon, size: 24, color: color),
+              child: Icon(icon, size: 25, color: color),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               label,
               maxLines: 1,
@@ -476,6 +556,57 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Offline warning panel shown in place of the message form.
+  Widget _offlineCard(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        border: Border.all(color: Colors.orange.withValues(alpha: 0.33)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.orange.withValues(alpha: 0.14),
+            ),
+            child: const Icon(Icons.cloud_off_outlined,
+                size: 20, color: Colors.orange),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLanguage.tr(
+                      'You are offline. Check your connection and try again.',
+                      'तपाईं अफलाइन हुनुहुन्छ। जडान जाँचेर फेरि प्रयास गर्नुहोस्।'),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                      color: Colors.orange),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  AppLanguage.tr('This requires an internet connection',
+                      'यसका लागि इन्टरनेट जडान आवश्यक छ'),
+                  style:
+                      const TextStyle(fontSize: 13, color: Colors.orange),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

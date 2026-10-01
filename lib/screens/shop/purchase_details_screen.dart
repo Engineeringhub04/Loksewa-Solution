@@ -171,26 +171,21 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _heroBand(palette, total, pending, active),
+            SyllabusEntrance(
+              delayMs: 0,
+              child: _heroBand(palette, total, pending, active),
+            ),
             const SizedBox(height: 12),
-            // Track filter with counts (React's FilterTrack).
-            SegmentedButton<String>(
-              segments: [
-                ButtonSegment(
-                    value: 'all',
-                    label: Text(
-                        '${_t('All', 'सबै')} (${p.exams.length + p.contents.length})')),
-                ButtonSegment(
-                    value: 'exam',
-                    label: Text(
-                        '${_t('Exam Details', 'परीक्षा विवरण')} (${p.exams.length})')),
-                ButtonSegment(
-                    value: 'content',
-                    label: Text(
-                        '${_t('Content Details', 'सामग्री विवरण')} (${p.contents.length})')),
-              ],
-              selected: {_filter},
-              onSelectionChanged: (s) => setState(() => _filter = s.first),
+            // Premium track selector with counts (React's FilterTrack).
+            SyllabusEntrance(
+              delayMs: 60,
+              child: _TrackFilter(
+                value: _filter,
+                onChanged: (v) => setState(() => _filter = v),
+                allCount: p.exams.length + p.contents.length,
+                examCount: p.exams.length,
+                contentCount: p.contents.length,
+              ),
             ),
             const SizedBox(height: 12),
             if (exams.isEmpty && contents.isEmpty)
@@ -231,7 +226,9 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
   }
 
   // Mirrors React's HeroBand: surface card, tone gradient wash from the top,
-  // 54px medallion + title + subtitle, footer row of stat tiles.
+  // 54px medallion + title + subtitle, footer row of stat tiles. The wash is
+  // a diagonal brand gradient with a soft off-canvas glow for depth in both
+  // themes (all tones resolve through the palette, never hardcoded).
   Widget _heroBand(ExpoPalette palette, int total, int pending, int active) {
     final primary = palette.primary;
     return Container(
@@ -247,16 +244,35 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
       ),
       child: Stack(
         children: [
+          // Diagonal brand wash, fading to the bottom-right.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   colors: [
-                    primary.withValues(alpha: 0x14 / 0xFF),
-                    primary.withValues(alpha: 0x00 / 0xFF),
+                    primary.withValues(alpha: 0.10),
+                    primary.withValues(alpha: 0.0),
                   ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+            ),
+          ),
+          // Soft glow bleeding off the top-right corner.
+          Positioned(
+            top: -48,
+            right: -48,
+            child: Container(
+              width: 160,
+              height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(
+                  colors: [
+                    primary.withValues(alpha: 0.16),
+                    primary.withValues(alpha: 0.0),
+                  ],
                 ),
               ),
             ),
@@ -273,10 +289,16 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                       height: 54,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: primary.withValues(alpha: 0x14 / 0xFF),
+                        gradient: LinearGradient(
+                          colors: [
+                            primary.withValues(alpha: 0.18),
+                            primary.withValues(alpha: 0.06),
+                          ],
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
                         border: Border.all(
-                            color: primary.withValues(alpha: 0x33 / 0xFF),
-                            width: 0.5),
+                            color: primary.withValues(alpha: 0.20), width: 0.5),
                         borderRadius: BorderRadius.circular(ExpoRadius.lg),
                       ),
                       child: Icon(Icons.receipt_outlined,
@@ -299,7 +321,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                           const SizedBox(height: 3),
                           Text(
                             _t('View and track your individual exam, subject, unit, and chapter purchases.',
-                                'तपाईंका exam, subject, unit र chapter purchase हरू हेर्नुहोस् र track गर्नुहोस्।'),
+                                'तपाईंका परीक्षा, विषय, युनिट र अध्यायका खरिदहरू हेर्नुहोस् र ट्र्याक गर्नुहोस्।'),
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -349,9 +371,8 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
       decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0x14 / 0xFF),
-        border:
-            Border.all(color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+        color: tone.withValues(alpha: 0.08),
+        border: Border.all(color: tone.withValues(alpha: 0.20), width: 0.5),
         borderRadius: BorderRadius.circular(ExpoRadius.md),
       ),
       child: Column(
@@ -409,9 +430,16 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
             height: 64,
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: primary.withValues(alpha: 0x14 / 0xFF),
+              gradient: LinearGradient(
+                colors: [
+                  primary.withValues(alpha: 0.18),
+                  primary.withValues(alpha: 0.06),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
               border: Border.all(
-                  color: primary.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+                  color: primary.withValues(alpha: 0.20), width: 0.5),
               borderRadius: BorderRadius.circular(ExpoRadius.lg),
             ),
             child: Icon(Icons.receipt_outlined, size: 30, color: primary),
@@ -424,7 +452,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                   ? _t('No content purchase requests yet.',
                       'अहिलेसम्म सामग्री खरिद अनुरोध छैन।')
                   : _t('No exam purchase requests yet.',
-                      'अहिलेसम्म exam purchase request छैन।'),
+                      'अहिलेसम्म परीक्षा खरिद अनुरोध छैन।'),
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: ExpoType.bodyLarge,
@@ -434,7 +462,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
           ),
           Text(
             _t('Your exam purchase requests will appear here.',
-                'तपाईंका exam purchase requests यहाँ देखिनेछन्।'),
+                'तपाईंका परीक्षा खरिद अनुरोधहरू यहाँ देखिनेछन्।'),
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: ExpoType.bodySmall,
@@ -451,6 +479,128 @@ class _Purchases {
   final List<ExamPurchaseRecord> exams;
   final List<ContentPurchaseRecord> contents;
   _Purchases(this.exams, this.contents);
+}
+
+// ===================== Premium track selector =====================
+
+// Mirrors React's FilterTrack: a horizontally scrollable row of pill chips,
+// each with an icon, a label, and a count. The selected chip is a solid
+// primary pill with a soft brand glow; the others are surface pills with a
+// hairline border. Padding and weight never change on selection, so the
+// track never shifts when a tab is tapped. All tones resolve through the
+// palette, so it fits light and dark themes.
+class _TrackFilter extends StatelessWidget {
+  final String value;
+  final ValueChanged<String> onChanged;
+  final int allCount;
+  final int examCount;
+  final int contentCount;
+
+  const _TrackFilter({
+    required this.value,
+    required this.onChanged,
+    required this.allCount,
+    required this.examCount,
+    required this.contentCount,
+  });
+
+  String _t(String en, String ne) => AppLanguage.tr(en, ne);
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      _TrackItemData('all', _t('All', 'सबै'), allCount, Icons.layers_outlined),
+      _TrackItemData('exam', _t('Exam Details', 'परीक्षा विवरण'), examCount,
+          Icons.description_outlined),
+      _TrackItemData('content', _t('Content Details', 'सामग्री विवरण'),
+          contentCount, Icons.book_outlined),
+    ];
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _chip(ExpoPalette.of(context), items[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _chip(ExpoPalette palette, _TrackItemData item) {
+    final selected = item.value == value;
+    final primary = palette.primary;
+    return GestureDetector(
+      onTap: () {
+        if (item.value != value) onChanged(item.value);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected ? primary : palette.surface,
+          borderRadius: BorderRadius.circular(ExpoRadius.pill),
+          border: Border.all(
+            color: selected ? primary : palette.border,
+            width: 0.5,
+          ),
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: primary.withValues(alpha: 0.30),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ]
+              : const [
+                  BoxShadow(
+                      color: Color(0x0A000000),
+                      blurRadius: 6,
+                      offset: Offset(0, 2)),
+                ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(item.icon,
+                size: 16, color: selected ? Colors.white : primary),
+            const SizedBox(width: 7),
+            // One Text so "Label (count)" stays searchable as a single unit.
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: '${item.label} '),
+                  TextSpan(
+                    text: '(${item.count})',
+                    style: TextStyle(
+                      color: selected
+                          ? Colors.white.withValues(alpha: 0.85)
+                          : palette.textDisabled,
+                    ),
+                  ),
+                ],
+              ),
+              style: TextStyle(
+                fontSize: ExpoType.bodySmall,
+                fontWeight: FontWeight.w600,
+                color: selected ? Colors.white : palette.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TrackItemData {
+  final String value;
+  final String label;
+  final int count;
+  final IconData icon;
+  _TrackItemData(this.value, this.label, this.count, this.icon);
 }
 
 // ===================== One card shell, two record shapes =====================
@@ -524,10 +674,13 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           // Tint on press rather than fade — React's PurchaseCardShell.
-          color:
-              _pressed ? tone.withValues(alpha: 0x14 / 0xFF) : palette.surface,
+          color: _pressed ? tone.withValues(alpha: 0.08) : palette.surface,
           border: Border.all(color: palette.border, width: 0.5),
           borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x0A000000), blurRadius: 8, offset: Offset(0, 2)),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -539,9 +692,16 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
                   height: 42,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: tone.withValues(alpha: 0x14 / 0xFF),
+                    gradient: LinearGradient(
+                      colors: [
+                        tone.withValues(alpha: 0.18),
+                        tone.withValues(alpha: 0.06),
+                      ],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
                     border: Border.all(
-                        color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+                        color: tone.withValues(alpha: 0.20), width: 0.5),
                     borderRadius: BorderRadius.circular(ExpoRadius.md),
                   ),
                   child: Icon(widget.icon, size: 20, color: tone),
@@ -617,9 +777,9 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
               const SizedBox(height: 11),
               Container(
                 decoration: BoxDecoration(
-                  color: _statusColor().withValues(alpha: 0x14 / 0xFF),
+                  color: _statusColor().withValues(alpha: 0.08),
                   border: Border.all(
-                    color: _statusColor().withValues(alpha: 0x33 / 0xFF),
+                    color: _statusColor().withValues(alpha: 0.20),
                     width: 0.5,
                   ),
                   borderRadius: BorderRadius.circular(ExpoRadius.md),

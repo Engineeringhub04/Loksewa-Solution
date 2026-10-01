@@ -13,17 +13,19 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 
 /// Hosts the tiny "loksewa_solution/media" channel used by
-/// [ScreenshotPicker.pickImage] (report-a-problem screenshot attach) and
-/// [ScreenshotPicker.captureImage] (edit-profile photo capture).
+/// [ScreenshotPicker.pickImage] (report-a-problem screenshot attach),
+/// [ScreenshotPicker.captureImage] (edit-profile photo capture) and the
+/// profile tab's Rate Us popup.
 ///
-/// No `image_picker` plugin is used on purpose (dependency-free build), so
-/// this wires the system pickers directly:
+/// No `image_picker`/`url_launcher` plugins are used on purpose
+/// (dependency-free build), so this wires the system intents directly:
 /// - "pickImage": ACTION_OPEN_DOCUMENT with `image/*`.
 /// - "captureImage": ACTION_IMAGE_CAPTURE writing to a FileProvider URI in the
 ///   app cache (no CAMERA permission needed — the camera app writes to our
 ///   URI; the FileProvider is declared in AndroidManifest.xml).
-/// Both return the image downscaled to ≤1600px as JPEG bytes (or null when
-/// the user cancels).
+/// - "openUrl": ACTION_VIEW with the `url` argument string.
+/// Both pickers return the image downscaled to ≤1600px as JPEG bytes (or null
+/// when the user cancels); openUrl answers true on success.
 class MainActivity : FlutterActivity() {
 
     private var pendingPickResult: MethodChannel.Result? = null
@@ -73,6 +75,22 @@ class MainActivity : FlutterActivity() {
                                 pendingPickResult = null
                                 photoFile.delete()
                                 result.error("NO_CAMERA", "Could not launch the camera", null)
+                            }
+                        }
+                    }
+                    "openUrl" -> {
+                        val url = call.argument<String>("url")
+                        if (url.isNullOrBlank()) {
+                            result.error("BAD_URL", "Missing url argument", null)
+                        } else {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                startActivity(intent)
+                                result.success(true)
+                            } catch (_: Exception) {
+                                result.error("NO_HANDLER", "No app can open this link", null)
                             }
                         }
                     }

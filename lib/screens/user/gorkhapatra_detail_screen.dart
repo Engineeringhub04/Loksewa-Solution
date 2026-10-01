@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../services/exam_service.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -47,11 +48,7 @@ class _GorkhapatraDetailScreenState extends State<GorkhapatraDetailScreen> {
   }
 
   void _openFullscreen(String url, {String? caption}) {
-    showDialog(
-      context: context,
-      barrierColor: Colors.black.withValues(alpha: 0.95),
-      builder: (_) => _FullscreenImage(url: url, caption: caption),
-    );
+    showImageViewer(context, NetworkImage(url));
   }
 
   void _showSourceDialog(String url) {
@@ -331,47 +328,4 @@ class _GorkhapatraDetailScreenState extends State<GorkhapatraDetailScreen> {
   }
 }
 
-class _FullscreenImage extends StatelessWidget {
-  final String url;
-  final String? caption;
 
-  const _FullscreenImage({required this.url, this.caption});
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      child: Stack(
-        children: [
-          Center(
-            child: InteractiveViewer(
-              child: Image.network(url,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Icon(
-                      Icons.broken_image,
-                      size: 48,
-                      color: Colors.white54)),
-            ),
-          ),
-          Positioned(
-            top: MediaQuery.of(context).padding.top + 12,
-            right: 16,
-            child: GestureDetector(
-              onTap: () => Navigator.of(context).pop(),
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  color: Color(0xD9000000),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.close,
-                    size: 22, color: Colors.white),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

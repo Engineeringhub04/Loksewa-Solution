@@ -14,6 +14,7 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 
@@ -476,25 +477,33 @@ class _ContentPurchaseDetailScreenState
                   ),
                   const SizedBox(height: 4),
                   if (_screenshotBytes != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.memory(_screenshotBytes!,
-                          height: 160,
-                          width: double.infinity,
-                          fit: BoxFit.cover),
+                    GestureDetector(
+                      onTap: () => showImageViewer(
+                          context, MemoryImage(_screenshotBytes!)),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.memory(_screenshotBytes!,
+                            height: 160,
+                            width: double.infinity,
+                            fit: BoxFit.cover),
+                      ),
                     )
                   else if (_screenshotUrl != null)
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(12),
-                      child: Image.network(_screenshotUrl!,
-                          height: 160,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
-                              height: 120,
-                              color: Colors.black12,
-                              child: const Center(
-                                  child: Icon(Icons.broken_image)))),
+                    GestureDetector(
+                      onTap: () => showImageViewer(
+                          context, NetworkImage(_screenshotUrl!)),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(12),
+                        child: Image.network(_screenshotUrl!,
+                            height: 160,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                                height: 120,
+                                color: Colors.black12,
+                                child: const Center(
+                                    child: Icon(Icons.broken_image)))),
+                      ),
                     ),
                   const SizedBox(height: 4),
                   OutlinedButton(
@@ -578,17 +587,21 @@ class _ContentPurchaseDetailScreenState
               ),
             ),
             const SizedBox(height: 4),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(record.screenshotUrl,
-                  height: 220,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                      height: 120,
-                      color: Colors.black12,
-                      child: const Center(
-                          child: Icon(Icons.broken_image)))),
+            GestureDetector(
+              onTap: () => showImageViewer(
+                  context, NetworkImage(record.screenshotUrl)),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: Image.network(record.screenshotUrl,
+                    height: 220,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                        height: 120,
+                        color: Colors.black12,
+                        child: const Center(
+                            child: Icon(Icons.broken_image)))),
+              ),
             ),
           ],
           const SizedBox(height: 8),

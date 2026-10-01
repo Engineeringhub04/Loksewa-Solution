@@ -5,6 +5,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
 import 'admin_review_dialogs.dart' show adminContentTitle;
@@ -12,6 +13,16 @@ import 'admin_review_dialogs.dart' show adminContentTitle;
 /// Admin → Purchase Request Control: every exam + content purchase request in
 /// one list. Mirrors app/admin/purchase-details/index.tsx. Each request
 /// carries its requester's profile (photo/name/email), fetched best-effort.
+///
+/// PREMIUM layout (same treatment as the v1.0.31 Subscription Requests
+/// redesign): gradient stat hero (Total / Awaiting / Approved) with
+/// divider-separated numbers, a segmented All / Exam / Content filter, then
+/// modern request cards — gradient avatar ring, name + item line, status
+/// pill + date, and a bold amount on the right edge.
+///
+/// Logic is untouched: same fetch (exam + content purchases, best-effort
+/// profiles) + newest-first sort, same three tracks, same card tap routes,
+/// same loading / denied / error / empty states.
 class AdminPurchaseDetailsScreen extends StatefulWidget {
   const AdminPurchaseDetailsScreen({super.key});
 
@@ -97,14 +108,17 @@ class _AdminPurchaseDetailsScreenState
 
   void _refresh() => setState(() => _future = _load());
 
-  static Color _statusColor(String status) {
+  /// Status tone through the theme palette (lifted variants in dark mode),
+  /// so pills / avatars / glows stay legible in both themes.
+  Color _tone(String status) {
+    final palette = ExpoPalette.of(context);
     switch (status) {
       case 'active':
-        return Colors.green;
+        return palette.success;
       case 'rejected':
-        return Colors.red;
+        return palette.danger;
       default:
-        return Colors.orange;
+        return palette.warning;
     }
   }
 
@@ -126,7 +140,7 @@ class _AdminPurchaseDetailsScreenState
       case 'rejected':
         return Icons.cancel;
       default:
-        return Icons.schedule;
+        return Icons.auto_awesome;
     }
   }
 
@@ -143,12 +157,12 @@ class _AdminPurchaseDetailsScreenState
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
-                  // Intro banner + track filter are part of the data view,
-                  // so the whole body waits behind the loader together.
+                  // The hero counts fetched records, so it stays behind the
+                  // loader gate with everything else.
                   return PreloadingWidget(
                     tinted: false,
-                    label: AppLanguage.tr('Loading Subscription...',
-                        'सदस्यता लोड हुँदैछ...'),
+                    label: AppLanguage.tr(
+                        'Loading purchases...', 'खरिदहरू लोड हुँदैछ...'),
                     hint: AppLanguage.tr('Fetching your purchase history',
                         'खरिद इतिहास ल्याउँदै'),
                   );
@@ -159,14 +173,19 @@ class _AdminPurchaseDetailsScreenState
                         child: Text(AppLanguage.tr(
                             'Access denied', 'पहुँच अस्वीकृत')));
                   }
-                  return Center(
-                    child: ElevatedButton(
-                        onPressed: _refresh,
-                        child: Text(
-                            AppLanguage.tr('Retry', 'पुनः प्रयास'))),
-                  );
+                  return _errorState();
                 }
                 final items = snap.data ?? [];
+                final pending = items
+                    .where((i) => '${i.record['status'] ?? 'pending'}' == 'pending')
+                    .length;
+                final approved = items
+                    .where((i) => '${i.record['status'] ?? ''}' == 'active')
+                    .length;
+                final exams =
+                    items.where((i) => i.kind == 'exam').length;
+                final contents =
+                    items.where((i) => i.kind == 'content').length;
                 final visible = _track == 'all'
                     ? items
                     : items.where((i) => i.kind == _track).toList();
@@ -175,9 +194,10 @@ class _AdminPurchaseDetailsScreenState
                   child: ListView(
                     padding: const EdgeInsets.all(16),
                     children: [
-                      _introBanner(),
+                      _heroBand(items.length, pending, approved),
                       const SizedBox(height: 12),
-                      _trackSelector(),
+                      _filterTrack(
+                          items.length, exams, contents),
                       const SizedBox(height: 12),
                       if (visible.isEmpty)
                         _emptyState()
@@ -185,10 +205,10 @@ class _AdminPurchaseDetailsScreenState
                         for (var i = 0; i < visible.length; i++)
                           SyllabusEntrance(
                             delayMs: (i < 8 ? i : 8) * 60,
-                            child: visible[i].kind == 'content'
-                                ? _contentCard(visible[i])
-                                : _examCard(visible[i]),
+                            child: _card(visible[i]),
                           ),
+                      // Breathing room so the last card clears the bottom.
+                      const SizedBox(height: 8),
                     ],
                   ),
                 );
@@ -200,330 +220,534 @@ class _AdminPurchaseDetailsScreenState
     );
   }
 
-  Widget _introBanner() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.navy.withValues(alpha: 0x12 / 0xFF),
-        border: Border.all(
-            color: AppColors.navy.withValues(alpha: 0x30 / 0xFF)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.shield_outlined,
-              color: AppColors.navy, size: 24),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              AppLanguage.tr(
-                  'Review and manage individual exam purchase requests.',
-                  'Individual exam purchase requests समीक्षा र व्यवस्थापन गर्नुहोस्।'),
-              style:
-                  const TextStyle(fontSize: 13, color: Colors.black87),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _trackSelector() {
-    final tracks = [
-      (
-        'all',
-        AppLanguage.tr('All', 'सबै'),
-        Icons.layers_outlined,
-      ),
-      (
-        'exam',
-        AppLanguage.tr('Exam Details', 'परीक्षा विवरण'),
-        Icons.description_outlined,
-      ),
-      (
-        'content',
-        AppLanguage.tr('Content Details', 'सामग्री विवरण'),
-        Icons.description_outlined,
-      ),
-    ];
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        border: Border.all(
-            color: Theme.of(context).dividerColor, width: 0.5),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < tracks.length; i++) ...[
-            if (i > 0) const SizedBox(width: 4),
-            Expanded(child: _trackItem(tracks[i])),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _trackItem((String, String, IconData) track) {
-    final active = _track == track.$1;
-    return GestureDetector(
-      onTap: () => setState(() => _track = track.$1),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 42),
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: active ? AppColors.navy : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
+  Widget _errorState() {
+    final palette = ExpoPalette.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(track.$3,
-                size: 15,
-                color: active ? Colors.white : Colors.grey),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(track.$2,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight:
-                          active ? FontWeight.bold : FontWeight.w600,
-                      color: active ? Colors.white : Colors.grey)),
+            Container(
+              width: 72,
+              height: 72,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: palette.danger.withValues(alpha: 0.1),
+              ),
+              child: Icon(Icons.cloud_off_outlined,
+                  size: 30, color: palette.danger),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              AppLanguage.tr('Could not load purchase requests.',
+                  'खरिद अनुरोधहरू लोड गर्न सकिएन।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: palette.textPrimary),
+            ),
+            const SizedBox(height: 16),
+            Material(
+              color: Colors.transparent,
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: palette.info,
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                  boxShadow: [
+                    BoxShadow(
+                      color: palette.info.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: InkWell(
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                  onTap: _refresh,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 12),
+                    child: Text(
+                      AppLanguage.tr('Retry', 'पुनः प्रयास'),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Premium stat hero: deep blue gradient, decorative glass circles, shield
+  /// badge + title, then Total / Awaiting / Approved separated by hairline
+  /// dividers instead of boxed tiles.
+  Widget _heroBand(int total, int pending, int approved) {
+    return SyllabusEntrance(
+      delayMs: 0,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1D4ED8), Color(0xFF2563EB), Color(0xFF60A5FA)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          child: Stack(
+            children: [
+              Positioned(
+                top: -56,
+                right: -40,
+                child: Container(
+                  width: 160,
+                  height: 160,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: -70,
+                left: -30,
+                child: Container(
+                  width: 170,
+                  height: 170,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.06),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color:
+                                Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                                color: Colors.white
+                                    .withValues(alpha: 0.35)),
+                          ),
+                          child: const Icon(Icons.shield_outlined,
+                              color: Colors.white, size: 26),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLanguage.tr('Purchase Request Control',
+                                    'खरिद अनुरोध नियन्त्रण'),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.2),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                AppLanguage.tr(
+                                    'Review and manage exam and content purchase requests.',
+                                    'परीक्षा र सामग्री खरिद अनुरोधहरू समीक्षा र व्यवस्थापन गर्नुहोस्।'),
+                                style: TextStyle(
+                                    color: Colors.white
+                                        .withValues(alpha: 0.82),
+                                    fontSize: 13,
+                                    height: 1.35),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                            child: _heroStat('$total',
+                                AppLanguage.tr('Total', 'जम्मा'),
+                                Icons.layers_outlined)),
+                        _heroDivider(),
+                        Expanded(
+                            child: _heroStat('$pending',
+                                AppLanguage.tr('Awaiting', 'प्रतीक्षामा'),
+                                Icons.schedule_outlined)),
+                        _heroDivider(),
+                        Expanded(
+                            child: _heroStat('$approved',
+                                AppLanguage.tr('Approved', 'स्वीकृत'),
+                                Icons.check_circle_outlined)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _heroDivider() {
+    return Container(
+      width: 1,
+      height: 52,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      color: Colors.white.withValues(alpha: 0.25),
+    );
+  }
+
+  Widget _heroStat(String value, String label, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon,
+            size: 19, color: Colors.white.withValues(alpha: 0.9)),
+        const SizedBox(height: 6),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 23,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 11,
+                letterSpacing: 0.6)),
+      ],
+    );
+  }
+
+  /// Premium segmented filter control: one surface track, the active track
+  /// fills with its tone colour + glow, the rest sit quiet.
+  Widget _filterTrack(int total, int exams, int contents) {
+    final palette = ExpoPalette.of(context);
+    final items = [
+      _FilterItem('all', AppLanguage.tr('All', 'सबै'), total,
+          const Color(0xFF2563EB)),
+      _FilterItem('exam', AppLanguage.tr('Exam', 'परीक्षा'), exams,
+          palette.info),
+      _FilterItem('content', AppLanguage.tr('Content', 'सामग्री'), contents,
+          palette.success),
+    ];
+    return SyllabusEntrance(
+      delayMs: 60,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: palette.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            for (final item in items) Expanded(child: _segment(item)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _segment(_FilterItem item) {
+    final selected = _track == item.value;
+    final palette = ExpoPalette.of(context);
+    return GestureDetector(
+      onTap: () => setState(() => _track = item.value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? item.color : Colors.transparent,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: item.color.withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Text(
+          '${item.label} (${item.count})',
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: selected ? Colors.white : palette.textSecondary,
+            fontSize: 13,
+            fontWeight: FontWeight.bold,
+          ),
         ),
       ),
     );
   }
 
   Widget _emptyState() {
-    final isContent = _track == 'content';
-    return Container(
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        border: Border.all(
-            color: Theme.of(context).dividerColor, width: 0.5),
-        borderRadius: BorderRadius.circular(14),
-      ),
+    final palette = ExpoPalette.of(context);
+    final message = _track == 'content'
+        ? AppLanguage.tr('No content purchase requests yet.',
+            'अहिलेसम्म सामग्री खरिद अनुरोध छैन।')
+        : _track == 'exam'
+            ? AppLanguage.tr('No exam purchase requests yet.',
+                'अहिलेसम्म परीक्षा खरिद अनुरोध छैन।')
+            : AppLanguage.tr('No purchase requests yet.',
+                'अहिलेसम्म कुनै खरिद अनुरोध छैन।');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 32),
       child: Column(
         children: [
-          const Icon(Icons.receipt_outlined,
-              size: 32, color: Colors.grey),
-          const SizedBox(height: 8),
+          Container(
+            width: 72,
+            height: 72,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: palette.info.withValues(alpha: 0.1),
+            ),
+            child:
+                Icon(Icons.done_all_outlined, size: 30, color: palette.info),
+          ),
+          const SizedBox(height: 14),
           Text(
-            isContent
-                ? AppLanguage.tr('No content purchase requests yet.',
-                    'अहिलेसम्म सामग्री खरिद अनुरोध छैन।')
-                : AppLanguage.tr('No exam purchase requests yet.',
-                    'अहिलेसम्म exam purchase request छैन।'),
+            message,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: palette.textPrimary),
           ),
         ],
       ),
     );
   }
 
-  Widget _avatar(_Item item, Color fallbackTint) {
-    final photoUrl = item.profile?['photoURL'] as String?;
-    if (photoUrl?.isNotEmpty == true) {
-      return CircleAvatar(
-          radius: 24, backgroundImage: NetworkImage(photoUrl!));
+  /// Modern request card: gradient avatar (photo when available) with the
+  /// requester's initial, requester + item line, then a bottom row of status
+  /// pill + date … and the amount standing bold on the right edge.
+  Widget _card(_Item item) {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final r = item.record;
+    final status = '${r['status'] ?? 'pending'}';
+    final tone = _tone(status);
+    final photoUrl = (item.profile?['photoURL'] as String?) ?? '';
+    final name =
+        '${item.profile?['name'] ?? r['userName'] ?? r['userEmail'] ?? '—'}';
+    final initial =
+        name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    final String title;
+    final String sub;
+    if (item.kind == 'exam') {
+      title = '${r['examTitle'] ?? '—'}';
+      sub =
+          '${r['courseName'] ?? '—'} · ${r['subcourseName'] ?? '—'}';
+    } else {
+      var t = adminContentTitle(r);
+      if (t.isEmpty) {
+        t = AppLanguage.tr('Content Purchase', 'सामग्री खरिद');
+      }
+      title = t;
+      sub =
+          '${r['contentType'] ?? '—'} · ${r['courseId'] ?? '—'} · ${r['subcourseId'] ?? '—'}';
     }
+    final date = _fmtDate(r['submittedAt']);
+    final amount = '${r['amount'] ?? '—'}';
+
     return Container(
-      width: 48,
-      height: 48,
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        border: Border.all(color: palette.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          onTap: () => context.push(item.kind == 'content'
+              ? '/admin/content-purchases/${r['id'] ?? ''}'
+              : '/admin/exam-purchases/${r['id'] ?? ''}'),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    _avatar(photoUrl, initial, tone),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: palette.textPrimary)),
+                          const SizedBox(height: 3),
+                          Text(
+                            '$title · $sub',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: ExpoType.bodySmall,
+                                color: palette.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right,
+                        size: 20, color: palette.textDisabled),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    StatusPill(
+                        label: _statusLabel(status),
+                        color: tone,
+                        icon: _statusIcon(status)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Icon(Icons.schedule_outlined,
+                              size: 13,
+                              color: palette.textDisabled),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(date,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: ExpoType.bodySmall,
+                                    color: palette.textSecondary)),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text('Rs. $amount',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: palette.info)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _avatar(String photoUrl, String initial, Color tone) {
+    if (photoUrl.isNotEmpty) {
+      return Container(
+        width: 54,
+        height: 54,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          border: Border.all(
+              color: tone.withValues(alpha: 0.4), width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: tone.withValues(alpha: 0.25),
+              blurRadius: 12,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: CircleAvatar(
+            radius: 25, backgroundImage: NetworkImage(photoUrl)),
+      );
+    }
+    final deep = Color.lerp(tone, Colors.black, 0.25) ?? tone;
+    return Container(
+      width: 54,
+      height: 54,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: fallbackTint.withValues(alpha: 0x15 / 0xFF),
-      ),
-      child: Icon(Icons.person, size: 20, color: fallbackTint),
-    );
-  }
-
-  Widget _statusPill(String status) {
-    final color = _statusColor(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0x18 / 0xFF),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(_statusIcon(status), size: 12, color: color),
-          const SizedBox(width: 4),
-          Text(_statusLabel(status),
-              style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold)),
+        gradient: LinearGradient(
+          colors: [tone, deep],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: tone.withValues(alpha: 0.35),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
         ],
       ),
+      child: Text(initial,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold)),
     );
   }
+}
 
-  Widget _examCard(_Item item) {
-    final r = item.record;
-    final status = '${r['status'] ?? 'pending'}';
-    final name =
-        '${item.profile?['name'] ?? r['userName'] ?? '—'}';
-    final email =
-        '${item.profile?['email'] ?? r['userEmail'] ?? '—'}';
-
-    return GestureDetector(
-      onTap: () =>
-          context.push('/admin/exam-purchases/${r['id'] ?? ''}'),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: Theme.of(context).dividerColor, width: 0.5),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _avatar(item, AppColors.navy),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('${r['examTitle'] ?? '—'}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 3),
-                      Text(name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, color: Colors.grey)),
-                      Text(email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.grey)),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right,
-                    size: 19, color: Colors.grey),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                      '${r['courseName'] ?? '—'} · ${r['subcourseName'] ?? '—'}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          const TextStyle(fontSize: 12, color: Colors.grey)),
-                ),
-                _statusPill(status),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-                'Rs. ${r['amount'] ?? '—'} · ${_fmtDate(r['submittedAt'])}',
-                style:
-                    const TextStyle(fontSize: 12, color: Colors.grey)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _contentCard(_Item item) {
-    final r = item.record;
-    final status = '${r['status'] ?? 'pending'}';
-    final name =
-        '${item.profile?['name'] ?? r['userName'] ?? '—'}';
-    var title = adminContentTitle(r);
-    if (title.isEmpty) {
-      title =
-          AppLanguage.tr('Content Purchase', 'सामग्री खरिद');
-    }
-
-    return GestureDetector(
-      onTap: () =>
-          context.push('/admin/content-purchases/${r['id'] ?? ''}'),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: Theme.of(context).dividerColor, width: 0.5),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _avatar(item, Colors.teal),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 3),
-                      Text(name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 13, color: Colors.grey)),
-                      Text(
-                          '${r['contentType'] ?? '—'} · ${r['courseId'] ?? '—'} · ${r['subcourseId'] ?? '—'}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              fontSize: 12, color: Colors.grey)),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right,
-                    size: 19, color: Colors.grey),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                    'Rs. ${r['amount'] ?? '—'} · ${_fmtDate(r['submittedAt'])}',
-                    style: const TextStyle(
-                        fontSize: 12, color: Colors.grey)),
-                _statusPill(status),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+class _FilterItem {
+  final String value;
+  final String label;
+  final int count;
+  final Color color;
+  const _FilterItem(this.value, this.label, this.count, this.color);
 }

@@ -8,12 +8,13 @@ import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
 
 /// Terms & Conditions — mirrors app/terms-conditions.tsx.
-/// Eight numbered clauses (each with its own icon + tone and a §n pill),
-/// plus the online-version URL.
+/// Premium redesign: gradient hero, numbered clause cards (each with its own
+/// icon + tone and a §n pill) and the online-version URL. The eight clauses
+/// and the outbound link are unchanged.
 ///
 /// NOTE: the clause copy stays English-only on purpose — React's documented
 /// decision, because the hosted terms it mirrors are English. Only the
-/// screen title is localised (React uses t('profile.termsConditions')).
+/// screen title and UI chrome (subtitle, pills, buttons) are localised.
 /// The outbound link is display-only (no url_launcher): the button copies
 /// the URL to the clipboard.
 class TermsConditionsScreen extends StatelessWidget {
@@ -74,11 +75,16 @@ class TermsConditionsScreen extends StatelessWidget {
 
   void _copyTermsUrl(BuildContext context) {
     Clipboard.setData(const ClipboardData(text: _termsUrl));
-    showToast(context, 'Link copied', ToastVariant.success);
+    showToast(
+      context,
+      AppLanguage.tr('Link copied', 'लिङ्क प्रतिलिपि भयो'),
+      ToastVariant.success,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Scaffold(
       body: Column(
         children: [
@@ -87,63 +93,13 @@ class TermsConditionsScreen extends StatelessWidget {
                   AppLanguage.tr('Terms & Conditions', 'नियम र सर्तहरू')),
           Expanded(
             child: ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               children: [
                 SyllabusEntrance(
                   delayMs: 0,
-                  child: Card(
-                    color: AppColors.navy,
-                    child: Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white
-                                      .withValues(alpha: 0x1F / 0xFF),
-                                ),
-                                child: const Icon(
-                                    Icons.description_outlined,
-                                    color: Colors.white,
-                                    size: 20),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Text(
-                                  AppLanguage.tr('Terms & Conditions',
-                                      'नियम र सर्तहरू'),
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 20,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Please read these terms before continuing to use Loksewa Solution.',
-                            style: TextStyle(
-                                color: Color(0xFFD7E3FF), height: 1.5),
-                          ),
-                          const SizedBox(height: 12),
-                          const StatusPill(
-                            label: '8 clauses',
-                            color: Color(0xFF7DD3FC),
-                            icon: Icons.list_outlined,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                  child: _hero(),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 ..._terms.asMap().entries.map((e) {
                   final i = e.key;
                   final t = e.value;
@@ -151,60 +107,60 @@ class TermsConditionsScreen extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 12),
                     child: SyllabusEntrance(
                       delayMs: (i + 1) * 60,
-                      child: Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 38,
-                                height: 38,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: t.$2.withValues(
-                                      alpha: 0x14 / 0xFF),
-                                ),
-                                child: Icon(t.$1, size: 19, color: t.$2),
+                      child: _surfaceCard(
+                        context,
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(15),
+                                color: t.$2.withValues(alpha: 0.12),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            t.$3,
-                                            style: const TextStyle(
-                                                fontSize: 16,
-                                                fontWeight:
-                                                    FontWeight.bold),
-                                          ),
+                              child: Icon(t.$1, size: 21, color: t.$2),
+                            ),
+                            const SizedBox(width: 14),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          // English-only by React's
+                                          // documented decision (the hosted
+                                          // terms are English).
+                                          AppLanguage.tr(t.$3, t.$3),
+                                          style: TextStyle(
+                                              fontSize: 16,
+                                              fontWeight: FontWeight.bold,
+                                              color: palette.textPrimary),
                                         ),
-                                        const SizedBox(width: 8),
-                                        StatusPill(
-                                          label: '§${i + 1}',
-                                          color: t.$2,
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      t.$4,
-                                      style: const TextStyle(
-                                          color: Colors.grey,
-                                          height: 1.5),
-                                    ),
-                                  ],
-                                ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      StatusPill(
+                                        label: '§${i + 1}',
+                                        color: t.$2,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    AppLanguage.tr(t.$4, t.$4),
+                                    style: TextStyle(
+                                        color: palette.textSecondary,
+                                        height: 1.55,
+                                        fontSize: 14),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -212,20 +168,46 @@ class TermsConditionsScreen extends StatelessWidget {
                 }),
                 SyllabusEntrance(
                   delayMs: 9 * 60,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () => _copyTermsUrl(context),
-                      icon:
-                          const Icon(Icons.copy_outlined, size: 18),
-                      label: const Text('View online version'),
-                      style: OutlinedButton.styleFrom(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: palette.surface,
+                      borderRadius:
+                          BorderRadius.circular(ExpoRadius.lg),
+                      border: Border.all(color: palette.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: palette.surfaceAlt,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: SelectableText(
+                            _termsUrl,
+                            textAlign: TextAlign.center,
+                            style:
+                                TextStyle(color: palette.info, fontSize: 14),
+                          ),
                         ),
-                      ),
+                        const SizedBox(height: 12),
+                        OutlinedButton.icon(
+                          onPressed: () => _copyTermsUrl(context),
+                          icon: const Icon(Icons.copy_outlined, size: 18),
+                          label: Text(AppLanguage.tr('View online version',
+                              'अनलाइन संस्करण हेर्नुहोस्')),
+                          style: OutlinedButton.styleFrom(
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -234,6 +216,138 @@ class TermsConditionsScreen extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  /// Gradient hero with decorative rings, glass document tile, subtitle and
+  /// the clause-count pill.
+  Widget _hero() {
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        gradient: const LinearGradient(
+          colors: [
+            Color(0xFF1D4ED8),
+            Color(0xFF2563EB),
+            Color(0xFF3B82F6),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF2563EB).withValues(alpha: 0.28),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: Stack(
+          children: [
+            Positioned(
+              right: -36,
+              top: -36,
+              child: Container(
+                width: 132,
+                height: 132,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.10),
+                ),
+              ),
+            ),
+            Positioned(
+              right: 58,
+              bottom: -48,
+              child: Container(
+                width: 104,
+                height: 104,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.07),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.white.withValues(alpha: 0.18),
+                        ),
+                        child: const Icon(Icons.description_outlined,
+                            color: Colors.white, size: 24),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Text(
+                          AppLanguage.tr(
+                              'Terms & Conditions', 'नियम र सर्तहरू'),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 21,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    AppLanguage.tr(
+                      'Please read these terms before continuing to use Loksewa Solution.',
+                      'Loksewa Solution प्रयोग जारी राख्नुअघि यी सर्तहरू पढ्नुहोस्।',
+                    ),
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.88),
+                        height: 1.55,
+                        fontSize: 14),
+                  ),
+                  const SizedBox(height: 14),
+                  StatusPill(
+                    label: AppLanguage.tr('8 clauses', '८ वटा बुँदा'),
+                    color: const Color(0xFF7DD3FC),
+                    icon: Icons.list_outlined,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Theme-aware surface card: white + hairline border + soft shadow in
+  /// light, raised surface + border in dark.
+  Widget _surfaceCard(BuildContext context, {required Widget child}) {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        border: Border.all(color: palette.border),
+        boxShadow: isDark
+            ? null
+            : [
+                BoxShadow(
+                  color: const Color(0xFF0F172A).withValues(alpha: 0.05),
+                  blurRadius: 16,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+      ),
+      child: child,
     );
   }
 }

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -414,13 +415,17 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 style: const TextStyle(height: 1.5)),
             if ((post['imageUrl'] ?? '').toString().isNotEmpty) ...[
               const SizedBox(height: 10),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                child: Image.network(
-                    (post['imageUrl'] ?? '').toString(),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) =>
-                        const SizedBox.shrink()),
+              GestureDetector(
+                onTap: () => showImageViewer(context,
+                    NetworkImage((post['imageUrl'] ?? '').toString())),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Image.network(
+                      (post['imageUrl'] ?? '').toString(),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) =>
+                          const SizedBox.shrink()),
+                ),
               ),
             ],
             if ((post['linkUrl'] ?? '').toString().isNotEmpty) ...[

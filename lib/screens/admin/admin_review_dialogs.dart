@@ -178,3 +178,208 @@ Future<String?> showAdminReviewRejectDialog(BuildContext context) {
     ),
   );
 }
+
+/// Decision confirm popup for the purchase-request review flow (Reject /
+/// Approve / Other): an AppModalShell whose footer Save button flips into a
+/// loading spinner while [onConfirm] runs the Firestore write — the global
+/// popup-action pattern (confirm → loading on the popup's action button →
+/// success → caller reloads).
+///
+/// Pops `true` when the write succeeded, `false` when it threw (caller shows
+/// the error toast), null on Cancel / X / barrier tap.
+Future<bool?> showAdminDecisionConfirmDialog(
+  BuildContext context, {
+  required String titleText,
+  required String questionText,
+  required List<(String, String)> summary,
+  required String confirmText,
+  required Color accent,
+  required Color accentMid,
+  required Color accentLight,
+  required Widget icon,
+  required Future<void> Function() onConfirm,
+}) {
+  var settled = false;
+  return AppModalShell.show<bool?>(
+    context: context,
+    builder: (c) => _DecisionConfirmBody(
+      titleText: titleText,
+      questionText: questionText,
+      summary: summary,
+      confirmText: confirmText,
+      accent: accent,
+      accentMid: accentMid,
+      accentLight: accentLight,
+      icon: icon,
+      onClose: () {
+        if (!settled) Navigator.of(c).pop(null);
+      },
+      onConfirm: () async {
+        settled = true;
+        try {
+          await onConfirm();
+          if (c.mounted) Navigator.of(c).pop(true);
+        } catch (_) {
+          if (c.mounted) Navigator.of(c).pop(false);
+        }
+      },
+    ),
+  );
+}
+
+class _DecisionConfirmBody extends StatefulWidget {
+  final String titleText;
+  final String questionText;
+  final List<(String, String)> summary;
+  final String confirmText;
+  final Color accent;
+  final Color accentMid;
+  final Color accentLight;
+  final Widget icon;
+  final VoidCallback onClose;
+  final Future<void> Function() onConfirm;
+
+  const _DecisionConfirmBody({
+    required this.titleText,
+    required this.questionText,
+    required this.summary,
+    required this.confirmText,
+    required this.accent,
+    required this.accentMid,
+    required this.accentLight,
+    required this.icon,
+    required this.onClose,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_DecisionConfirmBody> createState() => _DecisionConfirmBodyState();
+}
+
+class _DecisionConfirmBodyState extends State<_DecisionConfirmBody> {
+  bool _saving = false;
+
+  Future<void> _save() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    await widget.onConfirm();
+    // onConfirm always pops (true/false); this state is only still mounted
+    // if something unexpected happened.
+    if (mounted) setState(() => _saving = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AppModalShell(
+      maxWidth: 360,
+      tagLabel: AppLanguage.tr('Review', 'समीक्षा'),
+      accent: widget.accent,
+      accentMid: widget.accentMid,
+      accentLight: widget.accentLight,
+      tagColor: widget.accent,
+      onClose: widget.onClose,
+      icon: widget.icon,
+      title: Text(
+        widget.titleText,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF0F172A),
+          height: 1.3,
+          decoration: TextDecoration.none,
+        ),
+      ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            widget.questionText,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF475569),
+              height: 1.5,
+              decoration: TextDecoration.none,
+            ),
+          ),
+          for (final row in widget.summary) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    row.$1,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF64748B),
+                      letterSpacing: 0.4,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    row.$2,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF0F172A),
+                      height: 1.4,
+                      decoration: TextDecoration.none,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _saving ? null : widget.onClose,
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton(
+              onPressed: _saving ? null : _save,
+              style: FilledButton.styleFrom(
+                backgroundColor: widget.accent,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: _saving
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(Colors.white),
+                      ),
+                    )
+                  : Text(widget.confirmText),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}

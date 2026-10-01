@@ -350,7 +350,9 @@ void main() {
     // Tap the receipt preview (the tappable image inside the receipt card).
     await tester.tap(find.byType(ClipRRect).last);
     await _settle(tester);
-    expect(find.text('100%'), findsOneWidget);
+    // The global image viewer opens: pinch-to-zoom hint + close button.
+    expect(find.text('Pinch to zoom'), findsOneWidget);
+    expect(find.byIcon(Icons.close), findsOneWidget);
   });
 
   testWidgets('action buttons navigate to plans and contact pages',

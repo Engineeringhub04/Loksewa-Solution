@@ -6,11 +6,13 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
 import 'package:loksewa_solution/screens/tabs_screen.dart';
+import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/animated_star_rating.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
@@ -42,6 +44,13 @@ class _ProfileTabState extends State<ProfileTab> {
   final _scrollOffset = ValueNotifier<double>(0);
   String? _uid;
 
+  /// Analytics snapshot's coverage percent for the enrolled subcourse, used
+  /// as the stats card's ring value when the leaderboard aggregate has none
+  /// of its own yet (see [_onStoreChanged] / [_effectiveScore]).
+  String? _analyticsUid;
+  String? _analyticsKey;
+  double? _analyticsPercent;
+
   /// Minimum time the Logout button shows its spinner, so the press is visibly
   /// acknowledged even when the sign-out is instant.
   static const _logoutSpinnerFloor = Duration(milliseconds: 550);
@@ -68,19 +77,75 @@ class _ProfileTabState extends State<ProfileTab> {
       if (_scrollOffset.value != clamped) _scrollOffset.value = clamped;
     });
     _uid = AuthService.currentUser?.uid;
+    ProfileStore.instance.addListener(_onStoreChanged);
     if (_uid != null) {
       final uid = _uid!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) ProfileStore.instance.load(uid);
       });
     }
+    // The store may already be loaded (e.g. coming back from Edit Profile).
+    _onStoreChanged();
   }
 
   @override
   void dispose() {
+    ProfileStore.instance.removeListener(_onStoreChanged);
     _scrollController.dispose();
     _scrollOffset.dispose();
     super.dispose();
+  }
+
+  /// Keeps the stats card's ring percent in agreement with the Analytics
+  /// hero's. The profile ring reads users/{uid}/app_mainleaderboard/{sub}
+  /// (the leaderboard aggregate, republished only when the leaderboard
+  /// screen opens), while the Analytics hero reads
+  /// users/{uid}/app_analytics/{sub} (the snapshot's copy of that same
+  /// percent). A fresh aggregate sits at the 50pt-bonus create values with
+  /// percent 0 — and the card's `hasData` is true on the bonus points alone —
+  /// so the ring read "0%" while Analytics read the snapshot's 1%.
+  ///
+  /// When the aggregate has no percent of its own but the snapshot does, the
+  /// snapshot's percent stands in for the ring. Never throws; a missing
+  /// snapshot simply leaves the card on the store's value.
+  void _onStoreChanged() {
+    final uid = _uid;
+    if (uid != _analyticsUid) {
+      _analyticsUid = uid;
+      _analyticsKey = null;
+      _analyticsPercent = null;
+    }
+    final subcourseId = ProfileStore.instance.courseInfo?.subcourseId;
+    if (uid == null ||
+        uid.isEmpty ||
+        subcourseId == null ||
+        subcourseId.isEmpty) {
+      return;
+    }
+    final key = '$uid::$subcourseId';
+    if (_analyticsKey == key) return;
+    _analyticsKey = key;
+    fetchAnalyticsDocument(uid, subcourseId).then((doc) {
+      if (!mounted || _analyticsKey != key) return;
+      final p = doc?.percent ?? 0;
+      setState(() => _analyticsPercent = p > 0 ? p : null);
+    }).catchError((_) => null);
+  }
+
+  /// The score the stats card renders. Prefers the store's leaderboard
+  /// aggregate; falls back to the analytics snapshot's percent (same number
+  /// the Analytics hero shows) when the aggregate carries no percent.
+  MainLeaderboardScore? _effectiveScore(
+      MainLeaderboardScore? score, UserStats? stats) {
+    final snapshotPercent = _analyticsPercent;
+    if (snapshotPercent == null || snapshotPercent <= 0) return score;
+    if (score != null && score.percent > 0) return score;
+    return MainLeaderboardScore(
+      percent: snapshotPercent,
+      points: score?.points ?? stats?.points ?? 0,
+      activityCount: score?.activityCount ?? 0,
+      breakdown: score?.breakdown ?? const {},
+    );
   }
 
   /// Reload when the signed-in account changes (login/logout while mounted).
@@ -136,16 +201,17 @@ class _ProfileTabState extends State<ProfileTab> {
     }
   }
 
-  /// No url_launcher in this app — the Play Store link is display-only with a
-  /// copy affordance (mirrors the error-toast-on-failure with a toast here).
+  /// Rate Us — star-rating popup. "Rate Us" opens the Play Store listing via
+  /// the native "loksewa_solution/media" channel (ACTION_VIEW); there is no
+  /// url_launcher in this app on purpose. If the channel throws or reports
+  /// failure, the link is copied to the clipboard and a toast confirms it.
   Future<void> _rateUs() async {
-    const url =
-        'https://play.google.com/store/apps/details?id=com.loksewasolutionnp.hub';
+    const url = 'https://play.google.com/store';
+    var rating = 0;
     await AppModalShell.show(
       context: context,
-      builder: (dialogContext) {
-        final palette = ExpoPalette.of(dialogContext);
-        return AppModalShell(
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (modalContext, setModalState) => AppModalShell(
           icon: Container(
             width: 56,
             height: 56,
@@ -153,77 +219,80 @@ class _ProfileTabState extends State<ProfileTab> {
               color: const Color(0xFFFBBF24).withValues(alpha: 0.25),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.star, color: Color(0xFFB45309), size: 28),
+            child:
+                const Icon(Icons.star, color: Color(0xFFB45309), size: 28),
           ),
           tagLabel: AppLanguage.tr('Rate Us', 'रेटिङ दिनुहोस्'),
           title: Text(
             AppLanguage.tr('Rate Us', 'रेटिङ दिनुहोस्'),
-            style: const TextStyle(
-                fontSize: 20, fontWeight: FontWeight.bold),
+            style:
+                const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
           ),
           body: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
                 AppLanguage.tr(
-                  'Copy the link below to open it in the Play Store and leave a rating.',
-                  'प्ले स्टोरमा खोलेर रेटिङ दिन तलको लिङ्क कपी गर्नुहोस्।',
+                  'How would you rate Loksewa Solution?',
+                  'Loksewa Solution लाई तपाईं कति रेटिङ दिनुहुन्छ?',
                 ),
+                textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 14),
               ),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: palette.surfaceAlt,
-                  borderRadius: BorderRadius.circular(12),
+              const SizedBox(height: 16),
+              AnimatedStarRating(
+                value: rating,
+                onChanged: (v) => setModalState(() => rating = v),
+              ),
+            ],
+          ),
+          footer: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(modalContext).pop(),
+                  child:
+                      Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
                 ),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: SelectableText(
-                        url,
-                        style: TextStyle(fontSize: 13),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(
-                      tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपी'),
-                      icon: const Icon(Icons.copy, size: 20),
-                      onPressed: () async {
-                        await Clipboard.setData(
-                            const ClipboardData(text: url));
-                        if (dialogContext.mounted) {
-                          Navigator.of(dialogContext).pop();
-                        }
-                        if (mounted) {
-                          showToast(
-                            context,
-                            AppLanguage.tr(
-                                'Link copied', 'लिङ्क कपी भयो'),
-                            ToastVariant.success,
-                          );
-                        }
-                      },
-                    ),
-                  ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => _openRateLink(modalContext, url),
+                  child:
+                      Text(AppLanguage.tr('Rate Us', 'रेटिङ दिनुहोस्')),
                 ),
               ),
             ],
           ),
-          footer: SizedBox(
-            width: double.infinity,
-            child: TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(AppLanguage.tr('Close', 'बन्द गर्नुहोस्')),
-            ),
-          ),
-          onClose: () => Navigator.of(dialogContext).pop(),
-        );
-      },
+          onClose: () => Navigator.of(modalContext).pop(),
+        ),
+      ),
     );
+  }
+
+  /// Opens the rating link through the native channel; falls back to copying
+  /// the link + a toast when the channel throws or reports failure.
+  Future<void> _openRateLink(BuildContext dialogContext, String url) async {
+    var opened = false;
+    try {
+      final ok = await const MethodChannel('loksewa_solution/media')
+          .invokeMethod<bool>('openUrl', {'url': url});
+      opened = ok == true;
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted) return;
+    if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+    if (opened) return;
+    await Clipboard.setData(ClipboardData(text: url));
+    if (mounted) {
+      showToast(
+        context,
+        AppLanguage.tr('Link copied', 'लिङ्क कपी भयो'),
+        ToastVariant.success,
+      );
+    }
   }
 
   Future<void> _performLogout() async {
@@ -422,7 +491,8 @@ class _ProfileTabState extends State<ProfileTab> {
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16),
                               child: ProfileStatsCard(
-                                score: store.score,
+                                score: _effectiveScore(
+                                    store.score, profile?.stats),
                                 stats: profile?.stats,
                                 loading: store.scoreLoading,
                                 subcourseName:

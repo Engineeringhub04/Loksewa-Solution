@@ -1125,11 +1125,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     const options = ['male', 'female', 'other'];
     // A muted per-theme tone instead of the harsh full-strength blue: the
     // primary mixed 60% toward the neutral text tone stays on-brand in both
-    // light and dark without shouting.
+    // light and dark without shouting. (lerp moves from the first arg to the
+    // second — primary first, like the fields above.)
     final selectedBorder =
-        Color.lerp(colors.border, colors.primary, 0.55)!;
+        Color.lerp(colors.primary, colors.textSecondary, 0.6)!;
     final selectedIcon =
-        Color.lerp(colors.textSecondary, colors.primary, 0.6)!;
+        Color.lerp(colors.primary, colors.textSecondary, 0.6)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1323,10 +1324,14 @@ class _ProfileFieldState extends State<_ProfileField>
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     // Softened focus tone: full-strength primary is the harsh blue the user
-    // flagged; mixing it 60% toward the neutral text tone keeps the brand
-    // readable in light AND dark without the sharp edge.
+    // flagged (React animates the border all the way to it on focus). Mixing
+    // the primary 60% toward the neutral text tone keeps the brand readable
+    // in light AND dark without the sharp edge. NOTE: Color.lerp(a, b, t)
+    // moves FROM a TO b — the primary must be the FIRST argument; the old
+    // order (textSecondary, primary, 0.6) was 60% blue and the "softening"
+    // never showed up.
     final focusMix =
-        Color.lerp(palette.textSecondary, palette.primary, 0.6)!;
+        Color.lerp(palette.primary, palette.textSecondary, 0.6)!;
     return AnimatedBuilder(
       animation: _anim,
       builder: (context, _) {
@@ -1411,6 +1416,10 @@ class _ProfileFieldState extends State<_ProfileField>
                             textInputAction: widget.textInputAction,
                             maxLength: widget.maxLength,
                             onChanged: widget.onChanged,
+                            // The caret defaults to full-strength primary —
+                            // the same harsh blue inside the field. It wears
+                            // the softened focus tone instead.
+                            cursorColor: focusMix,
                             style: TextStyle(
                               fontSize: 16,
                               color: palette.textPrimary,

@@ -4,8 +4,9 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
-import 'admin_review_dialogs.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -19,15 +20,18 @@ import '../../widgets/syllabus_entrance.dart';
 /// app_subscriptions, app_subscription_plans, users, app_courses.
 ///
 /// PREMIUM layout: a status-tinted gradient hero, a user card with a course
-/// chip, an icon-led payment-details card, the screenshot card, a premium
-/// message field, and a sticky bottom action zone — gradient Approve as the
-/// primary action, danger-tinted Reject as secondary.
+/// chip, an icon-led payment-details card, the screenshot card, the decision
+/// section (Reject / Approve / Other toggle), a required message field, and a
+/// sticky bottom zone with ONE Save button — disabled until every required
+/// field is filled. Save opens an AppModalShell confirm whose own Save button
+/// carries the loading state; on success the page reloads.
 ///
 /// Logic is untouched: same load (record + plans + profile + course info),
-/// same approve atomic batch, same reject flow, same copy-url, same
-/// fullscreen viewer, same loading / denied / error / not-found states, and
-/// the Scaffold > Stack [Column[header, body], busy-barrier] structure is
-/// preserved so the busy dim still covers the header's curved corners.
+/// same approve atomic batch, same reject write (same collections, status
+/// values, fields), same copy-url, same loading / denied / error / not-found
+/// states, and the Scaffold > Stack [Column[header, body]] structure is
+/// preserved. The payment-proof image now opens with the global
+/// showImageViewer.
 class AdminSubscriptionDetailScreen extends StatefulWidget {
   final String id;
   const AdminSubscriptionDetailScreen({super.key, required this.id});
@@ -43,18 +47,42 @@ class _AdminSubscriptionDetailScreenState
     extends State<AdminSubscriptionDetailScreen> {
   Future<Map<String, dynamic>?>? _future;
   final _adminMessage = TextEditingController();
-  bool _busy = false;
+  final _customReason = TextEditingController();
+
+  /// null = nothing chosen yet; 'approve' | 'reject' | 'other'.
+  String? _decision;
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+    _adminMessage.addListener(_onReviewFieldsChanged);
+    _customReason.addListener(_onReviewFieldsChanged);
   }
 
   @override
   void dispose() {
+    _adminMessage.removeListener(_onReviewFieldsChanged);
+    _customReason.removeListener(_onReviewFieldsChanged);
     _adminMessage.dispose();
+    _customReason.dispose();
     super.dispose();
+  }
+
+  /// Rebuild so the Save button's enabled state tracks the inputs.
+  void _onReviewFieldsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The single Save button stays disabled until every required field is
+  /// filled: a decision is chosen, Other brings its custom text, and the
+  /// message is non-empty.
+  bool get _canSave {
+    if (_decision == null) return false;
+    if (_decision == 'other' && _customReason.text.trim().isEmpty) {
+      return false;
+    }
+    return _adminMessage.text.trim().isNotEmpty;
   }
 
   Future<Map<String, dynamic>?> _load() async {
@@ -151,115 +179,117 @@ class _AdminSubscriptionDetailScreenState
     return 30;
   }
 
-  Future<void> _approve(Map<String, dynamic> record) async {
+  /// Approve write — the exact two-write batch the old Approve button ran
+  /// (status 'active', expiry window from the plan, premium flags mirrored
+  /// onto the user doc). Throws on failure so the confirm dialog can stay
+  /// open with an error toast.
+  Future<void> _writeApprove(Map<String, dynamic> record) async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null || _busy) return;
-    if (!await showAdminReviewApproveDialog(context,
-        approveMessage: AppLanguage.tr(
-            'Approve this subscription? The user will be upgraded to Premium immediately.',
-            'यो सदस्यता स्वीकृत गर्ने हो? प्रयोगकर्ता तुरुन्तै प्रिमियममा अपग्रेड हुनेछ।'))) {
-      return;
+    if (reviewer == null) {
+      throw Exception(
+          AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
     }
-    setState(() => _busy = true);
-    try {
-      final token = await AuthService.getValidIdToken();
-      final days = _durationDays(record);
-      final now = DateTime.now();
-      final expiry = now.add(Duration(days: days));
-      final adminMessage =
-          _adminMessage.text.trim().isEmpty ? null : _adminMessage.text.trim();
-      // Atomic two-write batch, like approveSubscription()'s commitWrites:
-      // activate the request AND mirror premium flags onto the user doc.
-      await FirestoreRest.commitWrites(
-        [
+    final token = await AuthService.getValidIdToken();
+    final days = _durationDays(record);
+    final now = DateTime.now();
+    final expiry = now.add(Duration(days: days));
+    final adminMessage =
+        _adminMessage.text.trim().isEmpty ? null : _adminMessage.text.trim();
+    // Atomic two-write batch, like approveSubscription()'s commitWrites:
+    // activate the request AND mirror premium flags onto the user doc.
+    await FirestoreRest.commitWrites(
+      [
+        FirestoreWrite(
+          'app_subscriptions/${widget.id}',
+          {
+            'status': 'active',
+            'reviewedAt': now.toIso8601String(),
+            'reviewedBy': reviewer.uid,
+            'adminMessage': adminMessage,
+            'rejectionReason': null,
+            'startDate': now.toIso8601String(),
+            'expiryDate': expiry.toIso8601String(),
+            'updatedAt': FirestoreRest.serverTimestamp(),
+          },
+          merge: true,
+        ),
+        if (record['uid'] is String && (record['uid'] as String).isNotEmpty)
           FirestoreWrite(
-            'app_subscriptions/${widget.id}',
+            'users/${record['uid']}',
             {
-              'status': 'active',
-              'reviewedAt': now.toIso8601String(),
-              'reviewedBy': reviewer.uid,
-              'adminMessage': adminMessage,
-              'rejectionReason': null,
-              'startDate': now.toIso8601String(),
-              'expiryDate': expiry.toIso8601String(),
+              'isPremium': true,
+              'premiumPlanName': record['planName'],
+              'premiumBillingCycle': record['billingCycle'],
+              'premiumExpiryDate': expiry.toIso8601String(),
               'updatedAt': FirestoreRest.serverTimestamp(),
             },
             merge: true,
           ),
-          if (record['uid'] is String && (record['uid'] as String).isNotEmpty)
-            FirestoreWrite(
-              'users/${record['uid']}',
-              {
-                'isPremium': true,
-                'premiumPlanName': record['planName'],
-                'premiumBillingCycle': record['billingCycle'],
-                'premiumExpiryDate': expiry.toIso8601String(),
-                'updatedAt': FirestoreRest.serverTimestamp(),
-              },
-              merge: true,
-            ),
-          ],
-        idToken: token,
-      );
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Subscription approved.', 'सदस्यता स्वीकृत भयो।'),
-            ToastVariant.success);
-        _refresh();
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
-            ToastVariant.error);
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+      ],
+      idToken: token,
+    );
   }
 
-  Future<void> _reject() async {
+  /// Reject write — the exact updateDocument the old Reject button ran:
+  /// status 'rejected' + rejectionReason. [reason] is the default
+  /// verification text for a plain Reject, or the admin's custom text for
+  /// Other. Throws on failure.
+  Future<void> _writeReject(String reason) async {
     final reviewer = AuthService.currentUser;
-    if (reviewer == null || _busy) return;
-    final reason = await showAdminReviewRejectDialog(context);
-    if (reason == null) return;
-    setState(() => _busy = true);
-    try {
-      final token = await AuthService.getValidIdToken();
-      await FirestoreRest.updateDocument(
-        'app_subscriptions/${widget.id}',
-        {
-          'status': 'rejected',
-          'reviewedAt': DateTime.now().toIso8601String(),
-          'reviewedBy': reviewer.uid,
-          'rejectionReason':
-              reason.isEmpty ? 'Payment could not be verified.' : reason,
-          'adminMessage': _adminMessage.text.trim().isEmpty
-              ? null
-              : _adminMessage.text.trim(),
-          'updatedAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: token,
-      );
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
-            ToastVariant.success);
-        _refresh();
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
-            ToastVariant.error);
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    if (reviewer == null) {
+      throw Exception(
+          AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
     }
+    final token = await AuthService.getValidIdToken();
+    await FirestoreRest.updateDocument(
+      'app_subscriptions/${widget.id}',
+      {
+        'status': 'rejected',
+        'reviewedAt': DateTime.now().toIso8601String(),
+        'reviewedBy': reviewer.uid,
+        'rejectionReason':
+            reason.isEmpty ? 'Payment could not be verified.' : reason,
+        'adminMessage': _adminMessage.text.trim().isEmpty
+            ? null
+            : _adminMessage.text.trim(),
+        'updatedAt': FirestoreRest.serverTimestamp(),
+      },
+      idToken: token,
+    );
+  }
+
+  /// Save → AppModalShell CONFIRM popup → the popup's Save button shows the
+  /// loading state while the write runs → success pops, toasts, and the
+  /// page reloads.
+  Future<void> _onSave(Map<String, dynamic> record) async {
+    if (!_canSave) return;
+    final decision = _decision!;
+    final saved = await AppModalShell.show<bool>(
+      context: context,
+      builder: (c) => _DecisionConfirmDialog(
+        decision: decision,
+        customReason: _customReason.text.trim(),
+        message: _adminMessage.text.trim(),
+        onConfirm: () async {
+          if (decision == 'approve') {
+            await _writeApprove(record);
+          } else {
+            await _writeReject(
+                decision == 'other' ? _customReason.text.trim() : '');
+          }
+        },
+      ),
+    );
+    if (saved != true || !mounted) return;
+    showToast(
+        context,
+        decision == 'approve'
+            ? AppLanguage.tr(
+                'Subscription approved.', 'सदस्यता स्वीकृत भयो।')
+            : AppLanguage.tr(
+                'Subscription rejected.', 'सदस्यता अस्वीकृत भयो।'),
+        ToastVariant.success);
+    _refresh();
   }
 
   Future<void> _copyUrl(String url) async {
@@ -331,9 +361,8 @@ class _AdminSubscriptionDetailScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Stack (not Column): the busy dim barrier below sits ABOVE everything
-      // including the header, so it never leaves white slivers at the
-      // header's curved corners — same pattern as the chapter/units pages.
+      // Stack (not Column): kept as a single-child Stack so the structure
+      // stays identical to the chapter/units pages' pattern.
       body: Stack(
         children: [
           Column(
@@ -380,21 +409,15 @@ class _AdminSubscriptionDetailScreenState
               ),
             ],
           ),
-          if (_busy)
-            Container(
-              color: Colors.black45,
-              child: PreloadingWidget(
-                label: AppLanguage.tr(
-                    'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
-              ),
-            ),
         ],
       ),
     );
   }
 
-  /// Scrolling review content above a sticky bottom action zone — the
-  /// Approve / Reject decision is always one thumb-tap away.
+  /// Scrolling review content above a sticky bottom Save zone — the
+  /// decision (Reject / Approve / Other) sits just above the message field,
+  /// and the single Save button stays enabled only when every required
+  /// field is filled.
   Widget _body(Map<String, dynamic> record) {
     final status = '${record['status'] ?? 'pending'}';
     final tone = _statusTone(status);
@@ -426,6 +449,9 @@ class _AdminSubscriptionDetailScreenState
                     delayMs: 180,
                     child: _screenshotCard(screenshotUrl)),
               ],
+              const SizedBox(height: 12),
+              SyllabusEntrance(
+                  delayMs: 220, child: _decisionCard()),
               const SizedBox(height: 12),
               SyllabusEntrance(
                   delayMs: 240, child: _messageCard()),
@@ -869,7 +895,170 @@ class _AdminSubscriptionDetailScreenState
     );
   }
 
-  /// Optional note back to the user, sent along with the decision.
+  /// The review decision section: a Reject / Approve / Other segmented
+  /// toggle. Choosing Other reveals a free-text input whose content is saved
+  /// as the rejection reason (the same field the old reject flow wrote).
+  Widget _decisionCard() {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: palette.info.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.how_to_vote_outlined,
+                    size: 18, color: palette.info),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  AppLanguage.tr('Your decision', 'तपाईंको निर्णय'),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: palette.textPrimary),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: palette.surfaceAlt,
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                ),
+                child: Text(
+                  AppLanguage.tr('Required', 'आवश्यक'),
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: palette.textSecondary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          _decisionToggle(),
+          if (_decision == 'other') ...[
+            const SizedBox(height: 12),
+            TextField(
+              controller: _customReason,
+              style: TextStyle(
+                  color: palette.textPrimary, fontSize: 14),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: palette.surfaceAlt,
+                hintText: AppLanguage.tr(
+                    'Type the reason — e.g. Duplicate, Fake…',
+                    'कारण लेख्नुहोस्'),
+                hintStyle: TextStyle(
+                    color: palette.textDisabled, fontSize: 13),
+                contentPadding: const EdgeInsets.all(14),
+                border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none),
+                enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide: BorderSide.none),
+                focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(14),
+                    borderSide:
+                        BorderSide(color: palette.info, width: 1.5)),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _decisionToggle() {
+    final palette = ExpoPalette.of(context);
+    final options = [
+      _DecisionOption('reject', AppLanguage.tr('Reject', 'अस्वीकृत'),
+          Icons.cancel_outlined, palette.danger),
+      _DecisionOption('approve', AppLanguage.tr('Approve', 'स्वीकृत'),
+          Icons.check_circle_outlined, palette.success),
+      _DecisionOption('other', AppLanguage.tr('Other', 'अन्य'),
+          Icons.edit_outlined, palette.info),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.border),
+      ),
+      child: Row(
+        children: [
+          for (final o in options)
+            Expanded(
+              child: _decisionSegment(o),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _decisionSegment(_DecisionOption option) {
+    final selected = _decision == option.value;
+    final palette = ExpoPalette.of(context);
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => setState(() => _decision = option.value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(vertical: 11),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(10),
+          color: selected ? option.color : Colors.transparent,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: option.color.withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(option.icon,
+                size: 17,
+                color: selected ? Colors.white : palette.textSecondary),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                option.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected ? Colors.white : palette.textSecondary,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Required note back to the user, sent along with the decision.
   Widget _messageCard() {
     final palette = ExpoPalette.of(context);
     return Container(
@@ -911,7 +1100,7 @@ class _AdminSubscriptionDetailScreenState
                       BorderRadius.circular(ExpoRadius.pill),
                 ),
                 child: Text(
-                  AppLanguage.tr('Optional', 'वैकल्पिक'),
+                  AppLanguage.tr('Required', 'आवश्यक'),
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -963,11 +1152,17 @@ class _AdminSubscriptionDetailScreenState
     );
   }
 
-  /// Sticky bottom decision zone: gradient Approve as the primary action,
-  /// danger-tinted Reject as the secondary. Same approve/reject behaviour.
+  /// Sticky bottom zone: ONE Save button, enabled only when the decision,
+  /// the Other custom text (when chosen), and the message are all filled.
+  /// Save opens the AppModalShell confirm; the write's loading state lives
+  /// on the popup's Save button.
   Widget _actionZone(
       Map<String, dynamic> record, bool alreadyReviewed) {
     final palette = ExpoPalette.of(context);
+    final enabled = _canSave;
+    final info = palette.info;
+    final deep = Color.lerp(info, Colors.black, 0.18) ?? info;
+    final disabledText = palette.textDisabled;
     return Container(
       decoration: BoxDecoration(
         color: palette.surface,
@@ -987,12 +1182,62 @@ class _AdminSubscriptionDetailScreenState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Row(
-                children: [
-                  Expanded(child: _rejectButton()),
-                  const SizedBox(width: 12),
-                  Expanded(flex: 2, child: _approveButton(record)),
-                ],
+              Opacity(
+                opacity: enabled ? 1 : 0.5,
+                child: Material(
+                  color: Colors.transparent,
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      gradient: enabled
+                          ? LinearGradient(
+                              colors: [info, deep],
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                            )
+                          : null,
+                      color: enabled ? null : palette.surfaceAlt,
+                      borderRadius: BorderRadius.circular(16),
+                      boxShadow: enabled
+                          ? [
+                              BoxShadow(
+                                color: info.withValues(alpha: 0.4),
+                                blurRadius: 16,
+                                offset: const Offset(0, 8),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(16),
+                      onTap: enabled ? () => _onSave(record) : null,
+                      child: Container(
+                        height: 56,
+                        alignment: Alignment.center,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.save_outlined,
+                                color:
+                                    enabled ? Colors.white : disabledText,
+                                size: 21),
+                            const SizedBox(width: 8),
+                            Text(
+                              AppLanguage.tr(
+                                  'Save decision', 'निर्णय सेभ गर्नुहोस्'),
+                              style: TextStyle(
+                                  color: enabled
+                                      ? Colors.white
+                                      : disabledText,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  letterSpacing: 0.3),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ),
               if (alreadyReviewed) ...[
                 const SizedBox(height: 10),
@@ -1008,100 +1253,6 @@ class _AdminSubscriptionDetailScreenState
                 ),
               ],
             ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _approveButton(Map<String, dynamic> record) {
-    final success = ExpoPalette.of(context).success;
-    final deep = Color.lerp(success, Colors.black, 0.18) ?? success;
-    return Opacity(
-      opacity: _busy ? 0.55 : 1,
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [success, deep],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: success.withValues(alpha: 0.4),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: _busy ? null : () => _approve(record),
-            child: Container(
-              height: 56,
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.check_circle,
-                      color: Colors.white, size: 21),
-                  const SizedBox(width: 8),
-                  Text(
-                    AppLanguage.tr('Approve', 'स्वीकृत गर्नुहोस्'),
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.3),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _rejectButton() {
-    final danger = ExpoPalette.of(context).danger;
-    return Opacity(
-      opacity: _busy ? 0.55 : 1,
-      child: Material(
-        color: Colors.transparent,
-        child: Ink(
-          decoration: BoxDecoration(
-            color: danger.withValues(alpha: 0.1),
-            borderRadius: BorderRadius.circular(16),
-            border:
-                Border.all(color: danger.withValues(alpha: 0.4)),
-          ),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: _busy ? null : _reject,
-            child: Container(
-              height: 56,
-              alignment: Alignment.center,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.cancel_outlined,
-                      color: danger, size: 21),
-                  const SizedBox(width: 8),
-                  Text(
-                    AppLanguage.tr('Reject', 'अस्वीकार गर्नुहोस्'),
-                    style: TextStyle(
-                        color: danger,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.3),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ),
@@ -1134,16 +1285,224 @@ class _AdminSubscriptionDetailScreenState
     return '${l.day.toString().padLeft(2, '0')}/${l.month.toString().padLeft(2, '0')}/${l.year} ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
   }
 
-  void _fullscreen(String url) {
-    showDialog(
-      context: context,
-      builder: (c) => Dialog(
-        insetPadding: EdgeInsets.zero,
-        backgroundColor: Colors.black,
-        child: GestureDetector(
-          onTap: () => Navigator.pop(c),
-          child: InteractiveViewer(child: Image.network(url)),
+  /// Payment-proof image → the global dimmed viewer (pinch-zoom,
+  /// black-circle X close), the same viewer the rest of the app uses.
+  void _fullscreen(String url) =>
+      showImageViewer(context, NetworkImage(url));
+}
+
+class _DecisionOption {
+  final String value;
+  final String label;
+  final IconData icon;
+  final Color color;
+  const _DecisionOption(this.value, this.label, this.icon, this.color);
+}
+
+/// Confirm card for the subscription decision — the shared AppModalShell
+/// global modal (same modal as the daily-limit popup; only the content
+/// differs). Shown via `AppModalShell.show<bool>`; pops `true` on a
+/// completed save, `false`/null on Cancel or X.
+///
+/// The write runs on the popup's own Save button with a loading state
+/// (spinner swaps into the header tile in place + "Saving…" on the button,
+/// Cancel/X blocked meanwhile). On success the dialog pops `true` and the
+/// caller refreshes; on error the spinner morphs back, the dialog stays
+/// open, and an error toast is shown.
+class _DecisionConfirmDialog extends StatefulWidget {
+  /// 'approve' | 'reject' | 'other'
+  final String decision;
+  final String customReason;
+  final String message;
+
+  /// Runs the actual Firestore write (the caller's approve/reject path —
+  /// the dialog never touches storage itself). Throw on failure.
+  final Future<void> Function() onConfirm;
+
+  const _DecisionConfirmDialog({
+    required this.decision,
+    required this.customReason,
+    required this.message,
+    required this.onConfirm,
+  });
+
+  @override
+  State<_DecisionConfirmDialog> createState() => _DecisionConfirmDialogState();
+}
+
+class _DecisionConfirmDialogState extends State<_DecisionConfirmDialog> {
+  bool _saving = false;
+
+  Future<void> _confirmSave() async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.onConfirm();
+      if (!mounted) return;
+      // Pop through the shell: AppModalShell.show's reverse transition
+      // fades + scales the card out over 200ms.
+      Navigator.of(context).pop(true);
+    } catch (_) {
+      if (!mounted) return;
+      // Spinner morphs back; the dialog STAYS OPEN with an error toast.
+      setState(() => _saving = false);
+      showToast(
+        context,
+        AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+        ToastVariant.error,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    final isApprove = widget.decision == 'approve';
+    final accent = isApprove ? palette.success : palette.danger;
+    final accentMid = Color.lerp(accent, Colors.white, 0.45) ?? accent;
+    final accentLight = Color.lerp(accent, Colors.white, 0.8) ?? accent;
+    final decisionLabel = isApprove
+        ? AppLanguage.tr('Approve', 'स्वीकृत')
+        : widget.decision == 'other'
+            ? AppLanguage.tr('Other', 'अन्य')
+            : AppLanguage.tr('Reject', 'अस्वीकृत');
+    final summaryIcon =
+        isApprove ? Icons.check_circle : Icons.cancel_outlined;
+    return AppModalShell(
+      maxWidth: 340,
+      tagLabel: AppLanguage.tr('Review decision', 'निर्णय समीक्षा'),
+      accent: accent,
+      accentMid: accentMid,
+      accentLight: accentLight,
+      tagColor: accent,
+      // Cancel and the X are blocked while the write runs; the spinner
+      // below is the progress signal.
+      onClose: _saving ? null : () => Navigator.of(context).pop(false),
+      icon: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: accent,
         ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          transitionBuilder: (child, animation) => FadeTransition(
+            opacity: animation,
+            child: child,
+          ),
+          child: _saving
+              ? const SizedBox(
+                  key: ValueKey('saving'),
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Colors.white,
+                  ),
+                )
+              : Icon(
+                  key: const ValueKey('decision'),
+                  summaryIcon,
+                  size: 28,
+                  color: Colors.white,
+                ),
+        ),
+      ),
+      title: Text(
+        isApprove
+            ? AppLanguage.tr(
+                'Approve this subscription?', 'यो सदस्यता स्वीकृत गर्ने?')
+            : AppLanguage.tr(
+                'Reject this subscription?', 'यो सदस्यता अस्वीकृत गर्ने?'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF0F172A),
+          height: 1.3,
+          decoration: TextDecoration.none,
+        ),
+      ),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _summaryRow(AppLanguage.tr('Decision', 'निर्णय'), decisionLabel),
+          if (widget.decision == 'other' && widget.customReason.isNotEmpty)
+            _summaryRow(
+                AppLanguage.tr('Reason', 'कारण'), widget.customReason),
+          _summaryRow(AppLanguage.tr('Message to user', 'प्रयोगकर्तालाई सन्देश'),
+              widget.message),
+        ],
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed:
+                  _saving ? null : () => Navigator.of(context).pop(false),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton(
+              onPressed: _saving ? null : _confirmSave,
+              style: FilledButton.styleFrom(
+                backgroundColor: accent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(_saving
+                  ? AppLanguage.tr('Saving…', 'सेभ हुँदैछ…')
+                  : AppLanguage.tr('Save', 'सेभ गर्नुहोस्')),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.4,
+              color: Color(0xFF64748B),
+              decoration: TextDecoration.none,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            value,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF0F172A),
+              height: 1.4,
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ],
       ),
     );
   }

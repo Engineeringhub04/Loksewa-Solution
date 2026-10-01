@@ -6,6 +6,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/notice_visual.dart';
 import 'package:loksewa_solution/widgets/status_pill.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -65,35 +66,7 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
   }
 
   void _showImage(String url, String caption) {
-    showDialog(
-      context: context,
-      builder: (c) => Dialog(
-        insetPadding: const EdgeInsets.all(12),
-        backgroundColor: Colors.black,
-        child: Stack(
-          children: [
-            InteractiveViewer(
-              child: Image.network(
-                url,
-                errorBuilder: (_, __, ___) => const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Text('Image failed to load.',
-                      style: TextStyle(color: Colors.white)),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(c),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    showImageViewer(context, NetworkImage(url));
   }
 
   @override

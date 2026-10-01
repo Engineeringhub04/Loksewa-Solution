@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Notification detail — mirrors app/notification/[id].tsx.
@@ -203,35 +204,7 @@ class NotificationDetailScreen extends StatelessWidget {
   }
 
   void _openViewer(BuildContext context, String url) {
-    showDialog(
-      context: context,
-      builder: (c) => Dialog(
-        insetPadding: const EdgeInsets.all(12),
-        backgroundColor: Colors.black,
-        child: Stack(
-          children: [
-            InteractiveViewer(
-              child: Image.network(
-                url,
-                errorBuilder: (_, __, ___) => const Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Text('Image failed to load.',
-                      style: TextStyle(color: Colors.white)),
-                ),
-              ),
-            ),
-            Positioned(
-              top: 8,
-              right: 8,
-              child: IconButton(
-                icon: const Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(c),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    showImageViewer(context, NetworkImage(url));
   }
 }
 

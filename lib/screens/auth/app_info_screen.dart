@@ -20,7 +20,7 @@ class AppInfoScreen extends StatelessWidget {
   const AppInfoScreen({super.key});
 
   /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
-  static const _appVersion = '1.0.30';
+  static const _appVersion = '1.0.31';
 
   static String _devanagariDigits(String s) => s.replaceAllMapped(
         RegExp(r'[0-9]'),

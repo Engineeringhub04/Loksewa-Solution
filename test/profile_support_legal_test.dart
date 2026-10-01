@@ -34,69 +34,60 @@ void main() {
   tearDown(() => AppLanguage.current.value = 'en');
 
   group('DeleteAccountScreen', () {
-    testWidgets('renders warning, losses, confirm field and cancel',
+    testWidgets('renders warning, losses, request form and cancel',
         (WidgetTester tester) async {
       await _pump(tester, const DeleteAccountScreen());
 
       expect(find.text('Delete Account'), findsOneWidget);
       expect(find.text('This cannot be undone'), findsOneWidget);
-      expect(
-          find.text(
-              'Deleting your account permanently removes your profile and study data.'),
-          findsOneWidget);
       expect(find.text('What you will lose'), findsOneWidget);
       expect(find.text('Your profile, name, photo and course selection'),
           findsOneWidget);
-      expect(find.text('All quiz and mock test results and analytics'),
-          findsOneWidget);
-      expect(find.text('Saved bookmarks, notes and downloads'),
-          findsOneWidget);
-      expect(
-          find.text('Access to your discussion posts and comments'),
-          findsOneWidget);
-      expect(find.text('Type DELETE to confirm'), findsOneWidget);
+      expect(find.text('Reason (required)'), findsOneWidget);
+      expect(find.text('Full Message (required)'), findsOneWidget);
       expect(find.text('Cancel'), findsOneWidget);
 
-      // Danger button is disabled until DELETE is typed.
-      final deleteBtn = find.widgetWithText(
-          ElevatedButton, 'Delete My Account');
-      expect(deleteBtn, findsOneWidget);
-      expect(tester.widget<ElevatedButton>(deleteBtn).onPressed, isNull);
+      // Submit stays disabled until both fields are filled.
+      final submitBtn =
+          find.widgetWithText(ElevatedButton, 'Submit Request');
+      expect(submitBtn, findsOneWidget);
+      expect(tester.widget<ElevatedButton>(submitBtn).onPressed, isNull);
     });
 
-    testWidgets('typing DELETE enables the danger button',
+    testWidgets('filling both fields enables the submit button',
         (WidgetTester tester) async {
       await _pump(tester, const DeleteAccountScreen());
 
-      await tester.enterText(
-          find.byType(TextField), 'delete');
+      await tester.enterText(find.byType(TextField).at(0), 'Too many emails');
       await tester.pump();
-      final deleteBtn = find.widgetWithText(
-          ElevatedButton, 'Delete My Account');
-      expect(tester.widget<ElevatedButton>(deleteBtn).onPressed,
+      await tester.enterText(
+          find.byType(TextField).at(1), 'Please delete my account. Thanks.');
+      await tester.pump();
+      final submitBtn =
+          find.widgetWithText(ElevatedButton, 'Submit Request');
+      expect(tester.widget<ElevatedButton>(submitBtn).onPressed,
           isNotNull);
     });
 
-    testWidgets('danger button opens the destructive confirm dialog',
+    testWidgets('submit opens the confirm dialog, cancel dismisses it',
         (WidgetTester tester) async {
       await _pump(tester, const DeleteAccountScreen());
 
-      await tester.enterText(find.byType(TextField), 'DELETE');
+      await tester.enterText(find.byType(TextField).at(0), 'Too many emails');
       await tester.pump();
-      await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Delete My Account'));
+      await tester.enterText(
+          find.byType(TextField).at(1), 'Please delete my account. Thanks.');
+      await tester.pump();
+      await tester.tap(find.widgetWithText(ElevatedButton, 'Submit Request'));
       await _settle(tester);
 
-      expect(find.text('Delete account permanently?'), findsOneWidget);
-      expect(
-          find.text(
-              'This is your last chance to cancel. Your account and data will be deleted immediately.'),
-          findsOneWidget);
+      expect(find.text('Submit deletion request?'), findsOneWidget);
 
-      // Cancelling dismisses the dialog without deleting.
-      await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+      // Cancelling dismisses the dialog without submitting.
+      await tester
+          .tap(find.widgetWithText(OutlinedButton, 'Cancel').first);
       await _settle(tester);
-      expect(find.text('Delete account permanently?'), findsNothing);
+      expect(find.text('Submit deletion request?'), findsNothing);
     });
 
     testWidgets('renders Nepali copy when the app language is Nepali',
@@ -107,9 +98,9 @@ void main() {
       expect(find.text('खाता मेट्नुहोस्'), findsWidgets);
       expect(find.text('यो फिर्ता गर्न मिल्दैन'), findsOneWidget);
       expect(find.text('तपाईंले गुमाउने कुराहरू'), findsOneWidget);
-      expect(
-          find.text('पुष्टि गर्न DELETE टाइप गर्नुहोस्'), findsOneWidget);
-      expect(find.text('मेरो खाता मेट्नुहोस्'), findsOneWidget);
+      expect(find.text('कारण (आवश्यक)'), findsOneWidget);
+      expect(find.text('पूर्ण सन्देश (आवश्यक)'), findsOneWidget);
+      expect(find.text('अनुरोध पठाउनुहोस्'), findsOneWidget);
       expect(find.text('रद्द गर्नुहोस्'), findsOneWidget);
     });
   });

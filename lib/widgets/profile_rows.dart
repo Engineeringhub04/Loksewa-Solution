@@ -183,13 +183,16 @@ class ProfileInfoRow extends StatelessWidget {
 
 /// A tappable settings/support row. Set [destructive] for Delete Account-style
 /// rows; [trailingText] renders small secondary text before the chevron
-/// (e.g. the current course name).
+/// (e.g. the current course name); [subtitle] renders a small gray
+/// explainer under the bold title (the double-label pattern from the
+/// reference settings design).
 class ProfileMenuRow extends StatelessWidget {
   final Widget icon;
   final String label;
   final VoidCallback onPress;
   final bool destructive;
   final String? trailingText;
+  final String? subtitle;
 
   const ProfileMenuRow({
     super.key,
@@ -198,6 +201,7 @@ class ProfileMenuRow extends StatelessWidget {
     required this.onPress,
     this.destructive = false,
     this.trailingText,
+    this.subtitle,
   });
 
   @override
@@ -227,15 +231,35 @@ class ProfileMenuRow extends StatelessWidget {
               ),
               const SizedBox(width: 16),
               Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: destructive ? palette.danger : palette.textPrimary,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: destructive
+                            ? palette.danger
+                            : palette.textPrimary,
+                      ),
+                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: palette.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               if (trailingText != null && trailingText!.isNotEmpty)

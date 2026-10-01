@@ -47,6 +47,18 @@ class ScreenshotPicker {
       throw ScreenshotPickerUnavailable();
     }
   }
+
+  /// Launches the system camera app. Returns downscaled JPEG bytes, or `null`
+  /// when the user cancels. Throws [ScreenshotPickerUnavailable] when the
+  /// native side is not wired yet, so the UI can explain instead of hanging.
+  static Future<Uint8List?> captureImage() async {
+    try {
+      final bytes = await _channel.invokeMethod<Uint8List>('captureImage');
+      return (bytes == null || bytes.isEmpty) ? null : bytes;
+    } on MissingPluginException {
+      throw ScreenshotPickerUnavailable();
+    }
+  }
 }
 
 class ScreenshotPickerUnavailable implements Exception {

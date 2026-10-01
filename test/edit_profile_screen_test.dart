@@ -3,7 +3,7 @@
 //
 // The screen is exercised through its constructor seams (debugUid, loadProfile,
 // saveProfile, uploadPhoto, pickPhoto) so no test touches AuthService,
-// Firestore, Cloudinary or the real file picker.
+// Firestore, Cloudinary or the real photo picker.
 import 'dart:async';
 import 'dart:convert';
 
@@ -23,6 +23,18 @@ const _doc = <String, dynamic>{
   'gender': 'male',
   'photoURL': null,
 };
+
+const _docWithPhoto = <String, dynamic>{
+  'firstName': 'Ram',
+  'lastName': 'Bahadur',
+  'dob': '2001-05-09',
+  'gender': 'male',
+  'photoURL': 'https://res.cloudinary.com/x/old.jpg',
+};
+
+/// A real 1x1 PNG — the image codec rejects arbitrary bytes.
+final _pngBytes = base64Decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
 
 GoRouter _router(EditProfileScreen screen) {
   return GoRouter(
@@ -50,6 +62,12 @@ Future<void> _pumpScreen(WidgetTester tester, EditProfileScreen screen) async {
   for (var i = 0; i < 12; i++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
+}
+
+/// Opens the photo sheet via the camera badge on the photo.
+Future<void> _openPhotoSheet(WidgetTester tester) async {
+  await tester.tap(find.byIcon(Icons.camera_alt));
+  await tester.pump(const Duration(milliseconds: 300));
 }
 
 void main() {
@@ -256,27 +274,280 @@ void main() {
       expect(find.text('home-marker'), findsOneWidget);
     });
 
-    testWidgets('photo sheet picks from gallery and previews', (tester) async {
-      // A real 1x1 PNG — the image codec rejects arbitrary bytes.
-      final bytes = base64Decode(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+    testWidgets('photo sheet offers camera and gallery', (tester) async {
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1', loadProfile: (_) async => _doc));
+
+      await _openPhotoSheet(tester);
+      expect(find.text('Change Photo'), findsWidgets);
+      expect(find.text('Camera'), findsOneWidget);
+      expect(find.text('Gallery'), findsOneWidget);
+      expect(find.text('Cancel'), findsOneWidget);
+      // No photo yet → no Remove option.
+      expect(find.text('Remove Photo'), findsNothing);
+    });
+
+    testWidgets('picking a photo uploads IMMEDIATELY with a progress ring',
+        (tester) async {
+      const uploadedUrl = 'https://res.cloudinary.com/x/photo.jpg';
+      final progressSeen = <double>[];
+      final uploadGate = Completer<String>();
+      var uploadCalls = 0;
       await _pumpScreen(
           tester,
           EditProfileScreen(
               debugUid: 'u1',
               loadProfile: (_) async => _doc,
-              pickPhoto: () async => bytes));
+              pickPhoto: () async => _pngBytes,
+              uploadPhoto: (picked, onProgress) {
+                uploadCalls++;
+                expect(picked, _pngBytes);
+                onProgress(0.5);
+                progressSeen.add(0.5);
+                return uploadGate.future;
+              }));
 
-      await tester.tap(find.byIcon(Icons.camera_alt));
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.text('Gallery'), findsOneWidget);
-
+      await _openPhotoSheet(tester);
       await tester.tap(find.text('Gallery'));
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
-      // The freshly picked photo previews from memory.
+
+      // The upload started at pick time — no save was ever pressed.
+      expect(uploadCalls, 1);
+      expect(progressSeen, isNotEmpty);
+      // The determinate ring is drawn on the photo's border (no full-screen
+      // overlay covers it), with the live percent caption.
+      expect(find.byType(AvatarProgressRing), findsOneWidget);
+      expect(find.textContaining('Uploading your photo...'), findsOneWidget);
+      expect(find.text('Saving your profile...'), findsNothing);
+      // The picked photo previews from memory inside the ring.
       expect(find.byType(Image), findsWidgets);
+
+      // The done beat: full green ring + "Photo uploaded" caption, the face
+      // fully visible (no checkmark overlay covering it).
+      uploadGate.complete(uploadedUrl);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('Photo uploaded'), findsOneWidget);
+      expect(find.byIcon(Icons.check), findsNothing);
+
+      // The completed upload makes the form dirty → save enables.
+      await tester.pump(const Duration(milliseconds: 900));
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNotNull);
+
+      // Let the toast's auto-dismiss timer fire so no Timer is pending at
+      // teardown.
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('save is disabled while an upload is in flight',
+        (tester) async {
+      final uploadGate = Completer<String>();
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1',
+              loadProfile: (_) async => _doc,
+              pickPhoto: () async => _pngBytes,
+              uploadPhoto: (picked, onProgress) => uploadGate.future));
+
+      await _openPhotoSheet(tester);
+      await tester.tap(find.text('Gallery'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Bytes still going out: saving now would risk persisting a half-known
+      // photoURL, so the button stays inert.
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNull);
+
+      uploadGate.complete('https://res.cloudinary.com/x/photo.jpg');
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(milliseconds: 300));
+      }
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNotNull);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('failed upload toasts and reverts to the previous photo',
+        (tester) async {
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1',
+              loadProfile: (_) async => _docWithPhoto,
+              pickPhoto: () async => _pngBytes,
+              uploadPhoto: (picked, onProgress) async {
+                throw Exception('CLOUDINARY_UPLOAD_FAILED_500');
+              }));
+
+      await _openPhotoSheet(tester);
+      // A photo exists → the Remove option is offered too.
+      expect(find.text('Remove Photo'), findsOneWidget);
+      await tester.tap(find.text('Gallery'));
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // Error toast; the photoURL was never assigned so the old photo is
+      // back on its own and the ring is gone.
+      expect(
+          find.text('Photo upload failed. Please try again.'), findsOneWidget);
+      expect(find.byType(AvatarProgressRing), findsNothing);
+      expect(find.text('Click On Photo To Change'), findsOneWidget);
+      // Nothing changed → save stays disabled.
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNull);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('save after an immediate upload persists the hosted URL and '
+        'patches the shared store', (tester) async {
+      const uploadedUrl = 'https://res.cloudinary.com/x/photo.jpg';
+      final saveGate = Completer<void>();
+      String? savedPhotoURL;
+      String? savedSource;
+
+      // Seed the shared store so the post-save patch has something to merge
+      // into (and so we can observe it).
+      ProfileStore.instance.profile = const UserProfile(
+        uid: 'u1',
+        name: 'Ram Bahadur',
+        firstName: 'Ram',
+        lastName: 'Bahadur',
+        photoURLSource: 'none',
+      );
+      addTearDown(ProfileStore.instance.clear);
+
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1',
+              loadProfile: (_) async => _doc,
+              pickPhoto: () async => _pngBytes,
+              uploadPhoto: (picked, onProgress) async {
+                onProgress(1);
+                return uploadedUrl;
+              },
+              saveProfile: (
+                      {required uid,
+                      required firstName,
+                      required lastName,
+                      dob,
+                      gender,
+                      photoURL,
+                      photoURLSource}) async {
+                savedPhotoURL = photoURL;
+                savedSource = photoURLSource;
+                await saveGate.future;
+              }));
+
+      // Pick → the upload completes immediately (before any save). The form
+      // is dirty because the new photoURL landed, so save is enabled.
+      await _openPhotoSheet(tester);
+      await tester.tap(find.text('Gallery'));
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNotNull);
+
+      // Save now only does the Firestore write — no second upload. The
+      // "Photo uploaded" toast floats over the save button, so let it
+      // auto-dismiss first. Small pumps here: one big pump leaves the
+      // SnackBar in the tree and the tap misses (AGENTS.md test lesson).
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 500));
+      }
+      await tester.tap(find.text('Save Changes'));
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(find.text('Saving your profile...'), findsOneWidget);
+
+      saveGate.complete();
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      // The hosted URL was persisted and the shared store patched, so Home
+      // and Profile re-render with the new photo without any refresh.
+      expect(savedPhotoURL, uploadedUrl);
+      expect(savedSource, 'manual');
+      expect(ProfileStore.instance.profile?.photoURL, uploadedUrl);
+      expect(ProfileStore.instance.profile?.name, 'Ram Bahadur');
+      expect(find.text('Profile updated successfully'), findsOneWidget);
+      expect(find.text('home-marker'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('remove photo marks the form dirty and saves null',
+        (tester) async {
+      String? savedPhotoURL = 'sentinel';
+      String? savedSource = 'sentinel';
+      await _pumpScreen(
+          tester,
+          EditProfileScreen(
+              debugUid: 'u1',
+              loadProfile: (_) async => _docWithPhoto,
+              saveProfile: (
+                      {required uid,
+                      required firstName,
+                      required lastName,
+                      dob,
+                      gender,
+                      photoURL,
+                      photoURLSource}) async {
+                savedPhotoURL = photoURL;
+                savedSource = photoURLSource;
+              }));
+
+      await _openPhotoSheet(tester);
+      await tester.tap(find.text('Remove Photo'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(
+          tester
+              .widget<FilledButton>(
+                  find.widgetWithText(FilledButton, 'Save Changes'))
+              .onPressed,
+          isNotNull);
+
+      await tester.tap(find.text('Save Changes'));
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(savedPhotoURL, isNull);
+      expect(savedSource, 'none');
+      expect(find.text('home-marker'), findsOneWidget);
+
+      await tester.pump(const Duration(seconds: 4));
     });
 
     testWidgets('renders Nepali strings after language switch', (tester) async {
@@ -310,110 +581,6 @@ void main() {
       await tester.enterText(find.byType(TextField).at(0), 'Shyam');
       await tester.pump(const Duration(milliseconds: 100));
       expect(tester.widget<FilledButton>(saveButton).onPressed, isNotNull);
-    });
-
-    testWidgets('save uploads the picked photo with a progress ring, '
-        'flashes done, then patches the shared store', (tester) async {
-      // A real 1x1 PNG — the image codec rejects arbitrary bytes.
-      final bytes = base64Decode(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
-      const uploadedUrl = 'https://res.cloudinary.com/x/photo.jpg';
-      final progressSeen = <double>[];
-      final uploadGate = Completer<String>();
-      final saveGate = Completer<void>();
-      String? savedPhotoURL;
-      String? savedSource;
-
-      // Seed the shared store so the post-save patch has something to merge
-      // into (and so we can observe it).
-      ProfileStore.instance.profile = const UserProfile(
-        uid: 'u1',
-        name: 'Ram Bahadur',
-        firstName: 'Ram',
-        lastName: 'Bahadur',
-        photoURLSource: 'none',
-      );
-      addTearDown(ProfileStore.instance.clear);
-
-      await _pumpScreen(
-          tester,
-          EditProfileScreen(
-              debugUid: 'u1',
-              loadProfile: (_) async => _doc,
-              pickPhoto: () async => bytes,
-              uploadPhoto: (picked, onProgress) async {
-                onProgress(0.5);
-                progressSeen.add(0.5);
-                return uploadGate.future;
-              },
-              saveProfile: (
-                      {required uid,
-                      required firstName,
-                      required lastName,
-                      dob,
-                      gender,
-                      photoURL,
-                      photoURLSource}) async {
-                savedPhotoURL = photoURL;
-                savedSource = photoURLSource;
-                await saveGate.future;
-              }));
-
-      // Picking previews from memory but must NOT upload yet.
-      await tester.tap(find.byIcon(Icons.camera_alt));
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.text('Gallery'));
-      for (var i = 0; i < 6; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-      expect(progressSeen, isEmpty);
-      expect(find.byType(Image), findsWidgets);
-
-      // The picked (unsaved) photo makes the form dirty → save enables.
-      expect(
-          tester
-              .widget<FilledButton>(
-                  find.widgetWithText(FilledButton, 'Save Changes'))
-              .onPressed,
-          isNotNull);
-
-      await tester.tap(find.text('Save Changes'));
-      await tester.pump(const Duration(milliseconds: 100));
-
-      // Upload in flight: the progress ring is drawn on the photo's border
-      // (no full-screen overlay covers it), with the live caption.
-      expect(progressSeen, isNotEmpty);
-      expect(find.byType(AvatarProgressRing), findsOneWidget);
-      expect(find.textContaining('Uploading your photo...'), findsOneWidget);
-      expect(find.text('Saving your profile...'), findsNothing);
-
-      // The done beat: green full ring + checkmark flash, then the write
-      // phase's overlay.
-      uploadGate.complete(uploadedUrl);
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(find.byIcon(Icons.check), findsOneWidget);
-      await tester.pump(const Duration(milliseconds: 900));
-      // The 900ms done beat elapsed: now the write-phase overlay blocks the
-      // screen while saveProfile is in flight.
-      expect(find.text('Saving your profile...'), findsOneWidget);
-
-      saveGate.complete();
-      for (var i = 0; i < 8; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-
-      // The hosted URL was persisted and the shared store patched, so Home
-      // and Profile re-render with the new photo without any refresh.
-      expect(savedPhotoURL, uploadedUrl);
-      expect(savedSource, 'manual');
-      expect(ProfileStore.instance.profile?.photoURL, uploadedUrl);
-      expect(ProfileStore.instance.profile?.name, 'Ram Bahadur');
-      expect(find.text('Profile updated successfully'), findsOneWidget);
-      expect(find.text('home-marker'), findsOneWidget);
-
-      // Let the toast's auto-dismiss timer fire so no Timer is pending at
-      // teardown.
-      await tester.pump(const Duration(seconds: 4));
     });
 
     testWidgets('ProfileStore.applyLocalPatch notifies listeners',

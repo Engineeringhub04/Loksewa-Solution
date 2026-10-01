@@ -3,10 +3,12 @@ import 'package:flutter/services.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import 'admin_review_dialogs.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Admin → review one subscription request. Approve activates the subscription
 /// immediately (writes isPremium + premiumPlanName + premiumExpiryDate onto
@@ -15,6 +17,17 @@ import '../../widgets/subpage_header.dart';
 /// visible in the admin list — this screen just updates its status/tag, never
 /// deletes it. Mirrors app/admin/subscriptions/[id].tsx. Collections:
 /// app_subscriptions, app_subscription_plans, users, app_courses.
+///
+/// PREMIUM layout: a status-tinted gradient hero, a user card with a course
+/// chip, an icon-led payment-details card, the screenshot card, a premium
+/// message field, and a sticky bottom action zone — gradient Approve as the
+/// primary action, danger-tinted Reject as secondary.
+///
+/// Logic is untouched: same load (record + plans + profile + course info),
+/// same approve atomic batch, same reject flow, same copy-url, same
+/// fullscreen viewer, same loading / denied / error / not-found states, and
+/// the Scaffold > Stack [Column[header, body], busy-barrier] structure is
+/// preserved so the busy dim still covers the header's curved corners.
 class AdminSubscriptionDetailScreen extends StatefulWidget {
   final String id;
   const AdminSubscriptionDetailScreen({super.key, required this.id});
@@ -185,7 +198,7 @@ class _AdminSubscriptionDetailScreenState
               },
               merge: true,
             ),
-        ],
+          ],
         idToken: token,
       );
       if (mounted) {
@@ -257,6 +270,64 @@ class _AdminSubscriptionDetailScreenState
     }
   }
 
+  /// Status tone through the theme palette (lifted variants in dark mode).
+  Color _statusTone(String status) {
+    final palette = ExpoPalette.of(context);
+    switch (status) {
+      case 'active':
+        return palette.success;
+      case 'rejected':
+        return palette.danger;
+      case 'expired':
+        return palette.textDisabled;
+      default:
+        return palette.warning;
+    }
+  }
+
+  static String _statusLabel(String status) {
+    switch (status) {
+      case 'active':
+        return AppLanguage.tr('Approved', 'स्वीकृत');
+      case 'rejected':
+        return AppLanguage.tr('Rejected', 'अस्वीकृत');
+      case 'expired':
+        return AppLanguage.tr('Expired', 'म्याद सकिएको');
+      default:
+        return AppLanguage.tr('New', 'नयाँ');
+    }
+  }
+
+  static String _statusSubtitle(String status) {
+    switch (status) {
+      case 'active':
+        return AppLanguage.tr(
+            'Premium activated', 'प्रिमियम सक्रिय भयो');
+      case 'rejected':
+        return AppLanguage.tr(
+            'Payment not approved', 'भुक्तानी स्वीकृत भएन');
+      case 'expired':
+        return AppLanguage.tr(
+            'Request expired', 'अनुरोधको म्याद सकियो');
+      default:
+        return AppLanguage.tr(
+            'Awaiting your review', 'तपाईंको समीक्षाको प्रतीक्षामा');
+    }
+  }
+
+  static IconData _statusIcon(String status) {
+    switch (status) {
+      case 'active':
+        return Icons.check_circle;
+      case 'rejected':
+        return Icons.cancel;
+      case 'expired':
+        return Icons.schedule;
+      default:
+        return Icons.auto_awesome;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -322,200 +393,734 @@ class _AdminSubscriptionDetailScreenState
     );
   }
 
+  /// Scrolling review content above a sticky bottom action zone — the
+  /// Approve / Reject decision is always one thumb-tap away.
   Widget _body(Map<String, dynamic> record) {
     final status = '${record['status'] ?? 'pending'}';
-    final Color color = status == 'active'
-        ? Colors.green
-        : status == 'rejected'
-            ? Colors.red
-            : status == 'expired'
-                ? Colors.grey
-                : Colors.orange;
-    final label = status == 'active'
-        ? AppLanguage.tr('Approved', 'स्वीकृत')
-        : status == 'rejected'
-            ? AppLanguage.tr('Rejected', 'अस्वीकृत')
-            : status == 'expired'
-                ? AppLanguage.tr('Expired', 'म्याद सकिएको')
-                : AppLanguage.tr('New', 'नयाँ');
+    final tone = _statusTone(status);
+    final label = _statusLabel(status);
     final profile = record['_profile'] as Map<String, dynamic>?;
     final courseInfo = record['_courseInfo'] as Map<String, String?>?;
     final alreadyReviewed = status == 'active' || status == 'rejected';
     final screenshotUrl = (record['screenshotUrl'] as String?) ?? '';
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    return Column(
       children: [
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0x14 / 0xFF),
-            border: Border.all(color: color),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
             children: [
-              Text(label,
-                  style: TextStyle(
-                      color: color, fontSize: 18, fontWeight: FontWeight.bold)),
-              if (record['adminMessage'] != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4),
-                  child: Text('${record['adminMessage']}',
-                      style: TextStyle(color: color, fontSize: 13)),
-                ),
+              SyllabusEntrance(
+                  delayMs: 0,
+                  child: _statusHero(record, status, tone, label)),
+              const SizedBox(height: 12),
+              SyllabusEntrance(
+                  delayMs: 60,
+                  child: _userCard(profile, record, courseInfo)),
+              const SizedBox(height: 12),
+              SyllabusEntrance(
+                  delayMs: 120, child: _detailsCard(record)),
+              if (screenshotUrl.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SyllabusEntrance(
+                    delayMs: 180,
+                    child: _screenshotCard(screenshotUrl)),
+              ],
+              const SizedBox(height: 12),
+              SyllabusEntrance(
+                  delayMs: 240, child: _messageCard()),
+              const SizedBox(height: 16),
             ],
           ),
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: ListTile(
-            leading: (profile?['photoURL'] as String?)?.isNotEmpty == true
-                ? CircleAvatar(
-                    backgroundImage:
-                        NetworkImage(profile!['photoURL'] as String))
-                : const CircleAvatar(child: Icon(Icons.person)),
-            title: Text('${profile?['name'] ?? record['userName'] ?? '—'}',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('${profile?['email'] ?? record['userEmail'] ?? '—'}'),
-                Text(
-                  '${courseInfo?['courseName'] ?? '—'} · ${courseInfo?['subcourseName'] ?? '—'}',
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
-            isThreeLine: true,
-          ),
+        _actionZone(record, alreadyReviewed),
+      ],
+    );
+  }
+
+  /// Status hero: the request's state as a full-bleed gradient banner with
+  /// a glass icon tile and the admin's message on it when present.
+  Widget _statusHero(Map<String, dynamic> record, String status, Color tone,
+      String label) {
+    final deep = Color.lerp(tone, Colors.black, 0.35) ?? tone;
+    final adminMessage = record['adminMessage'];
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        gradient: LinearGradient(
+          colors: [tone, deep],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextField(
-                  controller: _adminMessage,
-                  maxLines: 3,
-                  decoration: InputDecoration(
-                    labelText: AppLanguage.tr('Message to user (optional)',
-                        'प्रयोगकर्तालाई सन्देश (वैकल्पिक)'),
-                    helperText: AppLanguage.tr(
-                        'Shown back to the user alongside the approval/rejection.',
-                        'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
-                    hintText: AppLanguage.tr(
-                        'e.g. Thanks! Your payment matched perfectly.',
-                        'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
-                    border: const OutlineInputBorder(),
+        boxShadow: [
+          BoxShadow(
+            color: tone.withValues(alpha: 0.35),
+            blurRadius: 24,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        child: Stack(
+          children: [
+            Positioned(
+              top: -48,
+              right: -32,
+              child: Container(
+                width: 140,
+                height: 140,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.1),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -56,
+              left: 40,
+              child: Container(
+                width: 120,
+                height: 120,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withValues(alpha: 0.07),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Row(
+                children: [
+                  Container(
+                    width: 58,
+                    height: 58,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                          color:
+                              Colors.white.withValues(alpha: 0.35)),
+                    ),
+                    child: Icon(_statusIcon(status),
+                        color: Colors.white, size: 30),
                   ),
-                ),
-                const SizedBox(height: 12),
-                ElevatedButton(
-                  onPressed: _busy ? null : () => _approve(record),
-                  child: Text(AppLanguage.tr('Approve', 'स्वीकृत गर्नुहोस्')),
-                ),
-                const SizedBox(height: 8),
-                ElevatedButton(
-                  onPressed: _busy ? null : _reject,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.red,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: Text(AppLanguage.tr('Reject', 'अस्वीकार गर्नुहोस्')),
-                ),
-                if (alreadyReviewed)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      AppLanguage.tr(
-                          'You can change this decision any time — approving/rejecting again updates the status.',
-                          'तपाईं यो निर्णय जुनसुकै बेला परिवर्तन गर्न सक्नुहुन्छ — फेरि स्वीकृत/अस्वीकार गर्दा स्थिति अपडेट हुन्छ।'),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 21,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.2)),
+                        const SizedBox(height: 3),
+                        Text(_statusSubtitle(status),
+                            style: TextStyle(
+                                color: Colors.white
+                                    .withValues(alpha: 0.85),
+                                fontSize: 13)),
+                        if (adminMessage != null) ...[
+                          const SizedBox(height: 10),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: Colors.white
+                                  .withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text('$adminMessage',
+                                style: TextStyle(
+                                    color: Colors.white
+                                        .withValues(alpha: 0.95),
+                                    fontSize: 13,
+                                    height: 1.4)),
+                          ),
+                        ],
+                      ],
                     ),
                   ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 12),
-        Card(
-          child: Column(
-            children: [
-              _row(AppLanguage.tr('User', 'प्रयोगकर्ता'),
-                  '${record['userName'] ?? record['userEmail'] ?? record['uid'] ?? '—'}'),
-              _row(AppLanguage.tr('Plan', 'योजना'),
-                  '${record['planName'] ?? '—'}'),
-              _row(AppLanguage.tr('Amount', 'रकम'),
-                  'Rs. ${record['amount'] ?? '—'}'),
-              _row(AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
-                  (record['method'] ?? '').toString().toUpperCase()),
-              _row(AppLanguage.tr('Reference', 'सन्दर्भ'),
-                  '${record['transactionRef'] ?? '—'}'),
-              if (record['couponCode'] != null)
-                _row(
-                    AppLanguage.tr(
-                        'Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
-                    '${record['couponCode']}'),
-              _row(AppLanguage.tr('Submitted', 'पेश गरिएको मिति'),
-                  _fmtDateTime(record['submittedAt'])),
-              if (record['customerMessage'] != null)
-                _row(AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
-                    '${record['customerMessage']}'),
-              if (record['rejectionReason'] != null)
-                _row(AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
-                    '${record['rejectionReason']}'),
-            ],
-          ),
-        ),
-        if (screenshotUrl.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          Text(AppLanguage.tr('Screenshot', 'स्क्रिनसट'),
-              style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          GestureDetector(
-            onTap: () => _fullscreen(screenshotUrl),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.network(screenshotUrl,
-                  height: 220, width: double.infinity, fit: BoxFit.cover),
-            ),
-          ),
-          const SizedBox(height: 8),
-          // URL row: display-only link + copy button (no url_launcher;
-          // external links stay display-only).
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Theme.of(context).dividerColor),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text(screenshotUrl,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style:
-                            const TextStyle(fontSize: 12, color: Colors.grey)),
+      ),
+    );
+  }
+
+  /// Who is asking: photo (or gradient initial), name, email, and a
+  /// course · subcourse chip.
+  Widget _userCard(Map<String, dynamic>? profile,
+      Map<String, dynamic> record, Map<String, String?>? courseInfo) {
+    final palette = ExpoPalette.of(context);
+    final photoUrl = (profile?['photoURL'] as String?) ?? '';
+    final name = '${profile?['name'] ?? record['userName'] ?? '—'}';
+    final email = '${profile?['email'] ?? record['userEmail'] ?? '—'}';
+    final courseLine =
+        '${courseInfo?['courseName'] ?? '—'} · ${courseInfo?['subcourseName'] ?? '—'}';
+    final initial =
+        name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase();
+    final info = palette.info;
+    final infoDeep = Color.lerp(info, Colors.black, 0.25) ?? info;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Row(
+        children: [
+          if (photoUrl.isNotEmpty)
+            Container(
+              width: 60,
+              height: 60,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                    color: info.withValues(alpha: 0.4), width: 2),
+                boxShadow: [
+                  BoxShadow(
+                    color: info.withValues(alpha: 0.25),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
                   ),
+                ],
+              ),
+              child: CircleAvatar(
+                  radius: 28,
+                  backgroundImage: NetworkImage(photoUrl)),
+            )
+          else
+            Container(
+              width: 60,
+              height: 60,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [info, infoDeep],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
                 ),
-                IconButton(
-                  tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपि'),
-                  onPressed: () => _copyUrl(screenshotUrl),
-                  icon: const Icon(Icons.copy_outlined,
-                      size: 18, color: Colors.blue),
+                boxShadow: [
+                  BoxShadow(
+                    color: info.withValues(alpha: 0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Text(initial,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold)),
+            ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                        color: palette.textPrimary)),
+                const SizedBox(height: 3),
+                Text(email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 13, color: palette.textSecondary)),
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: info.withValues(alpha: 0.1),
+                    borderRadius:
+                        BorderRadius.circular(ExpoRadius.pill),
+                    border: Border.all(
+                        color: info.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.school_outlined,
+                          size: 13, color: info),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(courseLine,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: info)),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
           ),
         ],
-        const SizedBox(height: 24),
+      ),
+    );
+  }
+
+  /// Payment facts as icon-led rows with indented hairline dividers.
+  Widget _detailsCard(Map<String, dynamic> record) {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: palette.info.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.receipt_long_outlined,
+                      size: 18, color: palette.info),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  AppLanguage.tr(
+                      'Payment details', 'भुक्तानी विवरण'),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: palette.textPrimary),
+                ),
+              ],
+            ),
+          ),
+          _infoRow(Icons.card_membership_outlined,
+              AppLanguage.tr('Plan', 'योजना'), '${record['planName'] ?? '—'}'),
+          _infoRow(Icons.payments_outlined,
+              AppLanguage.tr('Amount', 'रकम'), 'Rs. ${record['amount'] ?? '—'}',
+              valueColor: palette.success),
+          _infoRow(Icons.account_balance_wallet_outlined,
+              AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
+              (record['method'] ?? '').toString().toUpperCase()),
+          _infoRow(Icons.tag_outlined, AppLanguage.tr('Reference', 'सन्दर्भ'),
+              '${record['transactionRef'] ?? '—'}'),
+          if (record['couponCode'] != null)
+            _infoRow(
+                Icons.percent_outlined,
+                AppLanguage.tr(
+                    'Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
+                '${record['couponCode']}'),
+          _infoRow(Icons.schedule_outlined,
+              AppLanguage.tr('Submitted', 'पेश गरिएको मिति'),
+              _fmtDateTime(record['submittedAt'])),
+          if (record['customerMessage'] != null)
+            _infoRow(
+                Icons.message_outlined,
+                AppLanguage.tr(
+                    'Message (optional)', 'सन्देश (वैकल्पिक)'),
+                '${record['customerMessage']}'),
+          if (record['rejectionReason'] != null)
+            _infoRow(Icons.report_outlined,
+                AppLanguage.tr('Reject reason', 'अस्वीकारको कारण'),
+                '${record['rejectionReason']}',
+                iconColor: palette.danger),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value,
+      {Color? iconColor, Color? valueColor}) {
+    final palette = ExpoPalette.of(context);
+    final ic = iconColor ?? palette.info;
+    return Column(
+      children: [
+        Divider(
+            height: 1,
+            indent: 64,
+            endIndent: 16,
+            color: palette.divider),
+        Padding(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: ic.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, size: 19, color: ic),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: palette.textSecondary,
+                            letterSpacing: 0.4)),
+                    const SizedBox(height: 2),
+                    Text(value,
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            color: valueColor ?? palette.textPrimary)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _screenshotCard(String url) {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 8),
+          child: Text(AppLanguage.tr('Screenshot', 'स्क्रिनसट'),
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: palette.textPrimary)),
+        ),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black
+                    .withValues(alpha: isDark ? 0.28 : 0.08),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: GestureDetector(
+            onTap: () => _fullscreen(url),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: Image.network(url,
+                  height: 220, width: double.infinity, fit: BoxFit.cover),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        // URL row: display-only link + copy button (no url_launcher;
+        // external links stay display-only).
+        Container(
+          decoration: BoxDecoration(
+            color: palette.surface,
+            border: Border.all(color: palette.border),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Text(url,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 12, color: palette.textSecondary)),
+                ),
+              ),
+              IconButton(
+                tooltip: AppLanguage.tr('Copy link', 'लिङ्क कपि'),
+                onPressed: () => _copyUrl(url),
+                icon: Icon(Icons.copy_outlined,
+                    size: 18, color: palette.info),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Optional note back to the user, sent along with the decision.
+  Widget _messageCard() {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: palette.info.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.edit_note_outlined,
+                    size: 18, color: palette.info),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  AppLanguage.tr(
+                      'Message to user', 'प्रयोगकर्तालाई सन्देश'),
+                  style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: palette.textPrimary),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: palette.surfaceAlt,
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                ),
+                child: Text(
+                  AppLanguage.tr('Optional', 'वैकल्पिक'),
+                  style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: palette.textSecondary),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _adminMessage,
+            maxLines: 3,
+            minLines: 3,
+            style:
+                TextStyle(color: palette.textPrimary, fontSize: 14),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: palette.surfaceAlt,
+              hintText: AppLanguage.tr(
+                  'e.g. Thanks! Your payment matched perfectly.',
+                  'जस्तै धन्यवाद! तपाईंको भुक्तानी सही मिल्यो।'),
+              hintStyle: TextStyle(
+                  color: palette.textDisabled, fontSize: 13),
+              contentPadding: const EdgeInsets.all(14),
+              border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide:
+                      BorderSide(color: palette.info, width: 1.5)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppLanguage.tr(
+                'Shown back to the user alongside the approval/rejection.',
+                'स्वीकृति/अस्वीकृतिसँगै प्रयोगकर्तालाई देखाइनेछ।'),
+            style: TextStyle(
+                fontSize: 12,
+                color: palette.textSecondary,
+                height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Sticky bottom decision zone: gradient Approve as the primary action,
+  /// danger-tinted Reject as the secondary. Same approve/reject behaviour.
+  Widget _actionZone(
+      Map<String, dynamic> record, bool alreadyReviewed) {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: palette.surface,
+        border: Border(top: BorderSide(color: palette.border)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 20,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(child: _rejectButton()),
+                  const SizedBox(width: 12),
+                  Expanded(flex: 2, child: _approveButton(record)),
+                ],
+              ),
+              if (alreadyReviewed) ...[
+                const SizedBox(height: 10),
+                Text(
+                  AppLanguage.tr(
+                      'You can change this decision any time — approving/rejecting again updates the status.',
+                      'तपाईं यो निर्णय जुनसुकै बेला परिवर्तन गर्न सक्नुहुन्छ — फेरि स्वीकृत/अस्वीकार गर्दा स्थिति अपडेट हुन्छ।'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 12,
+                      color: palette.textSecondary,
+                      height: 1.4),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _approveButton(Map<String, dynamic> record) {
+    final success = ExpoPalette.of(context).success;
+    final deep = Color.lerp(success, Colors.black, 0.18) ?? success;
+    return Opacity(
+      opacity: _busy ? 0.55 : 1,
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [success, deep],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: success.withValues(alpha: 0.4),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _busy ? null : () => _approve(record),
+            child: Container(
+              height: 56,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.check_circle,
+                      color: Colors.white, size: 21),
+                  const SizedBox(width: 8),
+                  Text(
+                    AppLanguage.tr('Approve', 'स्वीकृत गर्नुहोस्'),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.3),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _rejectButton() {
+    final danger = ExpoPalette.of(context).danger;
+    return Opacity(
+      opacity: _busy ? 0.55 : 1,
+      child: Material(
+        color: Colors.transparent,
+        child: Ink(
+          decoration: BoxDecoration(
+            color: danger.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(16),
+            border:
+                Border.all(color: danger.withValues(alpha: 0.4)),
+          ),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _busy ? null : _reject,
+            child: Container(
+              height: 56,
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.cancel_outlined,
+                      color: danger, size: 21),
+                  const SizedBox(width: 8),
+                  Text(
+                    AppLanguage.tr('Reject', 'अस्वीकार गर्नुहोस्'),
+                    style: TextStyle(
+                        color: danger,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.3),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  BoxDecoration _cardDecoration() {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return BoxDecoration(
+      color: palette.surface,
+      borderRadius: BorderRadius.circular(ExpoRadius.lg),
+      border: Border.all(color: palette.border),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.05),
+          blurRadius: 18,
+          offset: const Offset(0, 8),
+        ),
       ],
     );
   }
@@ -527,26 +1132,6 @@ class _AdminSubscriptionDetailScreenState
     if (d == null) return '—';
     final l = d.toLocal();
     return '${l.day.toString().padLeft(2, '0')}/${l.month.toString().padLeft(2, '0')}/${l.year} ${l.hour.toString().padLeft(2, '0')}:${l.minute.toString().padLeft(2, '0')}';
-  }
-
-  Widget _row(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-              width: 100,
-              child: Text(label,
-                  style: const TextStyle(fontSize: 13, color: Colors.grey))),
-          Expanded(
-              child: Text(value,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600))),
-        ],
-      ),
-    );
   }
 
   void _fullscreen(String url) {

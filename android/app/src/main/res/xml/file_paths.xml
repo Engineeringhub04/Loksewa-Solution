@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths for the camera capture flow ("captureImage" on the
+     loksewa_solution/media channel in MainActivity): the camera app writes the
+     photo into our cache dir, which we then read, downscale and delete. -->
+<paths>
+    <cache-path name="camera_captures" path="." />
+</paths>

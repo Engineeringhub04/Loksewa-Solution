@@ -4,21 +4,30 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
+import java.io.File
 
 /// Hosts the tiny "loksewa_solution/media" channel used by
-/// [ScreenshotPicker.pickImage] (report-a-problem screenshot attach).
+/// [ScreenshotPicker.pickImage] (report-a-problem screenshot attach) and
+/// [ScreenshotPicker.captureImage] (edit-profile photo capture).
 ///
 /// No `image_picker` plugin is used on purpose (dependency-free build), so
-/// this wires the system document picker directly: ACTION_OPEN_DOCUMENT with
-/// `image/*`, then the picked image is downscaled to ≤1600px and returned to
-/// Dart as JPEG bytes (or null when the user cancels).
+/// this wires the system pickers directly:
+/// - "pickImage": ACTION_OPEN_DOCUMENT with `image/*`.
+/// - "captureImage": ACTION_IMAGE_CAPTURE writing to a FileProvider URI in the
+///   app cache (no CAMERA permission needed — the camera app writes to our
+///   URI; the FileProvider is declared in AndroidManifest.xml).
+/// Both return the image downscaled to ≤1600px as JPEG bytes (or null when
+/// the user cancels).
 class MainActivity : FlutterActivity() {
 
     private var pendingPickResult: MethodChannel.Result? = null
+    private var pendingCaptureFile: File? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -38,6 +47,35 @@ class MainActivity : FlutterActivity() {
                             startActivityForResult(intent, PICK_IMAGE_REQUEST)
                         }
                     }
+                    "captureImage" -> {
+                        if (pendingPickResult != null) {
+                            result.error("BUSY", "Another pick is already in progress", null)
+                        } else {
+                            val photoFile = try {
+                                File.createTempFile("capture_", ".jpg", cacheDir)
+                            } catch (_: Exception) {
+                                result.error("NO_CACHE", "Could not create a temp file", null)
+                                return@setMethodCallHandler
+                            }
+                            try {
+                                val uri = FileProvider.getUriForFile(
+                                    this, "$packageName.fileprovider", photoFile)
+                                pendingCaptureFile = photoFile
+                                pendingPickResult = result
+                                val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
+                                    putExtra(MediaStore.EXTRA_OUTPUT, uri)
+                                    addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+                                }
+                                startActivityForResult(intent, CAPTURE_IMAGE_REQUEST)
+                            } catch (_: Exception) {
+                                // No camera app, or the FileProvider is misconfigured.
+                                pendingCaptureFile = null
+                                pendingPickResult = null
+                                photoFile.delete()
+                                result.error("NO_CAMERA", "Could not launch the camera", null)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -46,9 +84,20 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Kept for the framework-Activity picker flow")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode != PICK_IMAGE_REQUEST) return
+        if (requestCode != PICK_IMAGE_REQUEST && requestCode != CAPTURE_IMAGE_REQUEST) return
         val result = pendingPickResult
         pendingPickResult = null
+        if (requestCode == CAPTURE_IMAGE_REQUEST) {
+            val file = pendingCaptureFile
+            pendingCaptureFile = null
+            if (resultCode == RESULT_OK && file != null && file.exists()) {
+                result?.success(readDownscaledJpegFile(file))
+            } else {
+                result?.success(null)
+            }
+            file?.delete()
+            return
+        }
         val uri: Uri? = if (resultCode == RESULT_OK) data?.data else null
         if (uri == null) {
             result?.success(null)
@@ -63,24 +112,50 @@ class MainActivity : FlutterActivity() {
             contentResolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, bounds)
             }
-            var sample = 1
-            while (bounds.outWidth / sample > MAX_DIM || bounds.outHeight / sample > MAX_DIM) {
-                sample *= 2
-            }
-            val opts = BitmapFactory.Options().apply { inSampleSize = sample }
-            val bmp = contentResolver.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, opts)
+            val bmp = decodeDownscaled(bounds) { opts ->
+                contentResolver.openInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, opts)
+                }
             } ?: return null
-            val out = ByteArrayOutputStream()
-            bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
-            out.toByteArray()
+            jpegBytes(bmp)
         } catch (_: Exception) {
             null
         }
     }
 
+    private fun readDownscaledJpegFile(file: File): ByteArray? {
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            val bmp = decodeDownscaled(bounds) { opts ->
+                BitmapFactory.decodeFile(file.absolutePath, opts)
+            } ?: return null
+            jpegBytes(bmp)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun decodeDownscaled(
+        bounds: BitmapFactory.Options,
+        decode: (BitmapFactory.Options) -> Bitmap?,
+    ): Bitmap? {
+        var sample = 1
+        while (bounds.outWidth / sample > MAX_DIM || bounds.outHeight / sample > MAX_DIM) {
+            sample *= 2
+        }
+        return decode(BitmapFactory.Options().apply { inSampleSize = sample })
+    }
+
+    private fun jpegBytes(bmp: Bitmap): ByteArray {
+        val out = ByteArrayOutputStream()
+        bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        return out.toByteArray()
+    }
+
     companion object {
         private const val PICK_IMAGE_REQUEST = 0x10C4
+        private const val CAPTURE_IMAGE_REQUEST = 0x10C5
         private const val MAX_DIM = 1600
         private const val JPEG_QUALITY = 85
     }

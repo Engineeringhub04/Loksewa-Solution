@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
@@ -13,10 +14,13 @@ import '../../widgets/subpage_header.dart';
 /// / Rejected), so the admin always has a full audit trail here. Mirrors
 /// app/admin/subscriptions/index.tsx. Collection: app_subscriptions.
 ///
-/// Layout hierarchy mirrors React: hero band with the numbers the admin came
-/// for (total / awaiting / approved), the shared filter track with counts,
-/// then request cards that lead with WHO is asking (tone spine on the left
-/// edge reads the status at a glance).
+/// PREMIUM layout: gradient stat hero (Total / Awaiting / Approved) with
+/// divider-separated numbers, a segmented filter control, then modern
+/// request cards — gradient avatar ring, name + plan line, status pill +
+/// date, and a bold amount on the right edge.
+///
+/// Logic is untouched: same fetch + newest-first sort, same four filters,
+/// same card tap route, same loading / denied / error / empty states.
 class AdminSubscriptionsScreen extends StatefulWidget {
   const AdminSubscriptionsScreen({super.key});
 
@@ -71,16 +75,19 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
 
   void _refresh() => setState(() => _future = _load());
 
-  static Color _tone(String status) {
+  /// Status tone through the theme palette (lifted variants in dark mode),
+  /// so pills / avatars / glows stay legible in both themes.
+  Color _tone(String status) {
+    final palette = ExpoPalette.of(context);
     switch (status) {
       case 'active':
-        return Colors.green;
+        return palette.success;
       case 'rejected':
-        return Colors.red;
+        return palette.danger;
       case 'expired':
-        return Colors.grey;
+        return palette.textDisabled;
       default:
-        return Colors.orange;
+        return palette.warning;
     }
   }
 
@@ -168,6 +175,8 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
                             delayMs: (i < 8 ? i : 8) * 60,
                             child: _card(filtered[i]),
                           ),
+                      // Breathing room so the last card clears the bottom.
+                      const SizedBox(height: 8),
                     ],
                   ),
                 );
@@ -180,171 +189,305 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
   }
 
   Widget _errorState() {
+    final palette = ExpoPalette.of(context);
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.cloud_off_outlined, size: 48, color: Colors.grey),
-          const SizedBox(height: 12),
-          Text(AppLanguage.tr(
-              'Could not load subscription requests.',
-              'सदस्यता अनुरोधहरू लोड गर्न सकिएन।')),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: _refresh,
-            child: Text(AppLanguage.tr('Retry', 'पुनः प्रयास')),
-          ),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: palette.danger.withValues(alpha: 0.1),
+              ),
+              child: Icon(Icons.cloud_off_outlined,
+                  size: 30, color: palette.danger),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              AppLanguage.tr('Could not load subscription requests.',
+                  'सदस्यता अनुरोधहरू लोड गर्न सकिएन।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: palette.textPrimary),
+            ),
+            const SizedBox(height: 16),
+            Material(
+              color: Colors.transparent,
+              child: Ink(
+                decoration: BoxDecoration(
+                  color: palette.info,
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                  boxShadow: [
+                    BoxShadow(
+                      color: palette.info.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: InkWell(
+                  borderRadius:
+                      BorderRadius.circular(ExpoRadius.pill),
+                  onTap: _refresh,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 12),
+                    child: Text(
+                      AppLanguage.tr('Retry', 'पुनः प्रयास'),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
+  /// Premium stat hero: deep blue gradient, decorative glass circles, shield
+  /// badge + title, then Total / Awaiting / Approved separated by hairline
+  /// dividers instead of boxed tiles.
   Widget _heroBand(int total, int pending, int active) {
-    return Container(
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF2563EB), Color(0xFF3B82F6), Color(0xFF93C5FD)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
+    return SyllabusEntrance(
+      delayMs: 0,
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          gradient: const LinearGradient(
+            colors: [Color(0xFF1D4ED8), Color(0xFF2563EB), Color(0xFF60A5FA)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
         ),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          child: Stack(
             children: [
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0x33 / 0xFF),
-                  borderRadius: BorderRadius.circular(14),
+              Positioned(
+                top: -56,
+                right: -40,
+                child: Container(
+                  width: 160,
+                  height: 160,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
                 ),
-                child: const Icon(Icons.shield_outlined,
-                    color: Colors.white, size: 24),
               ),
-              const SizedBox(width: 12),
-              Expanded(
+              Positioned(
+                bottom: -70,
+                left: -30,
+                child: Container(
+                  width: 170,
+                  height: 170,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.white.withValues(alpha: 0.06),
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      AppLanguage.tr('Subscription Requests',
-                          'सदस्यता अनुरोधहरू'),
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
+                    Row(
+                      children: [
+                        Container(
+                          width: 48,
+                          height: 48,
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color:
+                                Colors.white.withValues(alpha: 0.2),
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(
+                                color: Colors.white
+                                    .withValues(alpha: 0.35)),
+                          ),
+                          child: const Icon(Icons.shield_outlined,
+                              color: Colors.white, size: 26),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLanguage.tr('Subscription Requests',
+                                    'सदस्यता अनुरोधहरू'),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 19,
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 0.2),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                AppLanguage.tr(
+                                    'Approve or reject premium subscription payments.',
+                                    'प्रिमियम सदस्यता भुक्तानी स्वीकृत वा अस्वीकृत गर्नुहोस्।'),
+                                style: TextStyle(
+                                    color: Colors.white
+                                        .withValues(alpha: 0.82),
+                                    fontSize: 13,
+                                    height: 1.35),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 2),
-                    Text(
-                      AppLanguage.tr(
-                          'Approve or reject premium subscription payments.',
-                          'प्रिमियम सदस्यता भुक्तानी स्वीकृत वा अस्वीकृत गर्नुहोस्।'),
-                      style: TextStyle(
-                          color:
-                              Colors.white.withValues(alpha: 0xCC / 0xFF),
-                          fontSize: 13),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Expanded(
+                            child: _heroStat('$total',
+                                AppLanguage.tr('Total', 'जम्मा'),
+                                Icons.layers_outlined)),
+                        _heroDivider(),
+                        Expanded(
+                            child: _heroStat('$pending',
+                                AppLanguage.tr('Awaiting', 'प्रतीक्षामा'),
+                                Icons.schedule_outlined)),
+                        _heroDivider(),
+                        Expanded(
+                            child: _heroStat('$active',
+                                AppLanguage.tr('Approved', 'स्वीकृत'),
+                                Icons.check_circle_outlined)),
+                      ],
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              _statTile('$total',
-                  AppLanguage.tr('Total', 'जम्मा'), Icons.layers_outlined),
-              const SizedBox(width: 8),
-              _statTile('$pending',
-                  AppLanguage.tr('Awaiting', 'प्रतीक्षामा'), Icons.schedule,
-                  tint: Colors.orange),
-              const SizedBox(width: 8),
-              _statTile('$active',
-                  AppLanguage.tr('Approved', 'स्वीकृत'), Icons.check_circle,
-                  tint: Colors.green),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _statTile(String value, String label, IconData icon,
-      {Color? tint}) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0x26 / 0xFF),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          children: [
-            Icon(icon,
-                size: 18, color: tint ?? Colors.white),
-            const SizedBox(height: 4),
-            Text(value,
-                style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold)),
-            Text(label,
-                style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0xCC / 0xFF),
-                    fontSize: 12)),
-          ],
         ),
       ),
     );
   }
 
+  Widget _heroDivider() {
+    return Container(
+      width: 1,
+      height: 52,
+      margin: const EdgeInsets.symmetric(horizontal: 4),
+      color: Colors.white.withValues(alpha: 0.25),
+    );
+  }
+
+  Widget _heroStat(String value, String label, IconData icon) {
+    return Column(
+      children: [
+        Icon(icon,
+            size: 19, color: Colors.white.withValues(alpha: 0.9)),
+        const SizedBox(height: 6),
+        Text(value,
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 23,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 0.3)),
+        const SizedBox(height: 2),
+        Text(label,
+            style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.78),
+                fontSize: 11,
+                letterSpacing: 0.6)),
+      ],
+    );
+  }
+
+  /// Premium segmented filter control: one surface track, the active filter
+  /// fills with its tone colour + glow, the rest sit quiet.
   Widget _filterTrack(int total, int pending, int active, int rejected) {
     final items = [
       _FilterItem('all', AppLanguage.tr('Total', 'जम्मा'), total,
           const Color(0xFF2563EB)),
       _FilterItem('pending', AppLanguage.tr('New', 'नयाँ'), pending,
-          Colors.orange),
+          ExpoPalette.of(context).warning),
       _FilterItem('active', AppLanguage.tr('Approved', 'स्वीकृत'), active,
-          Colors.green),
+          ExpoPalette.of(context).success),
       _FilterItem('rejected', AppLanguage.tr('Rejected', 'अस्वीकृत'),
-          rejected, Colors.red),
+          rejected, ExpoPalette.of(context).danger),
     ];
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            if (i > 0) const SizedBox(width: 8),
-            _filterChip(items[i]),
+    final palette = ExpoPalette.of(context);
+    return SyllabusEntrance(
+      delayMs: 60,
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: palette.border),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
           ],
-        ],
+        ),
+        child: Row(
+          children: [
+            for (final item in items) Expanded(child: _segment(item)),
+          ],
+        ),
       ),
     );
   }
 
-  Widget _filterChip(_FilterItem item) {
-    final active = _filter == item.value;
+  Widget _segment(_FilterItem item) {
+    final selected = _filter == item.value;
+    final palette = ExpoPalette.of(context);
     return GestureDetector(
       onTap: () => setState(() => _filter = item.value),
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          color: active
-              ? item.color
-              : item.color.withValues(alpha: 0x14 / 0xFF),
-          border: Border.all(
-              color: item.color.withValues(alpha: 0x66 / 0xFF), width: 1.2),
+          borderRadius: BorderRadius.circular(12),
+          color: selected ? item.color : Colors.transparent,
+          boxShadow: selected
+              ? [
+                  BoxShadow(
+                    color: item.color.withValues(alpha: 0.35),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ]
+              : null,
         ),
         child: Text(
           '${item.label} (${item.count})',
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
-            color: active ? Colors.white : item.color,
+            color: selected ? Colors.white : palette.textSecondary,
             fontSize: 13,
             fontWeight: FontWeight.bold,
           ),
@@ -354,18 +497,31 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
   }
 
   Widget _emptyState() {
+    final palette = ExpoPalette.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 32),
       child: Column(
         children: [
-          const Icon(Icons.done_all_outlined, size: 56, color: Colors.grey),
-          const SizedBox(height: 12),
+          Container(
+            width: 72,
+            height: 72,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: palette.info.withValues(alpha: 0.1),
+            ),
+            child:
+                Icon(Icons.done_all_outlined, size: 30, color: palette.info),
+          ),
+          const SizedBox(height: 14),
           Text(
             AppLanguage.tr('No requests in this filter yet.',
                 'यो फिल्टरमा कुनै अनुरोध छैन।'),
             textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 16, fontWeight: FontWeight.bold),
+            style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: palette.textPrimary),
           ),
           if (_filter != 'all') ...[
             const SizedBox(height: 6),
@@ -375,7 +531,7 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
                   'प्रिमियम सदस्यता भुक्तानी स्वीकृत वा अस्वीकृत गर्नुहोस्।'),
               textAlign: TextAlign.center,
               style:
-                  const TextStyle(fontSize: 13, color: Colors.grey),
+                  TextStyle(fontSize: 13, color: palette.textSecondary),
             ),
           ],
         ],
@@ -383,57 +539,49 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
     );
   }
 
+  /// Modern request card: gradient avatar with the user's initial, name +
+  /// plan line, then a bottom row of status pill + date … and the amount
+  /// standing bold on the right edge.
   Widget _card(Map<String, dynamic> r) {
+    final palette = ExpoPalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final status = '${r['status'] ?? 'pending'}';
     final tone = _tone(status);
     final who = '${r['userName'] ?? r['userEmail'] ?? r['uid'] ?? '—'}';
     final initial =
         who.trim().isEmpty ? '?' : who.trim()[0].toUpperCase();
     final date = _fmtDate(r['submittedAt']);
+    final plan = '${r['planName'] ?? '—'}';
+    final method = '${r['method'] ?? ''}'.toUpperCase();
+    final amount = '${r['amount'] ?? '—'}';
 
-    return GestureDetector(
-      onTap: () => context.push('/admin/subscriptions/${r['id'] ?? ''}'),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-              color: Theme.of(context).dividerColor, width: 0.5),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(14),
-          child: Stack(
-            children: [
-              // Tone spine: status reads at a glance down the left edge.
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 4,
-                child: Container(color: tone),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(18, 12, 12, 12),
-                child: Row(
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+        border: Border.all(color: palette.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: isDark ? 0.28 : 0.05),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          onTap: () =>
+              context.push('/admin/subscriptions/${r['id'] ?? ''}'),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
                   children: [
-                    Container(
-                      width: 42,
-                      height: 42,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: tone.withValues(alpha: 0x14 / 0xFF),
-                        border: Border.all(
-                            color: tone.withValues(alpha: 0x33 / 0xFF),
-                            width: 0.5),
-                      ),
-                      child: Text(initial,
-                          style: TextStyle(
-                              color: tone,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold)),
-                    ),
+                    _avatar(initial, tone),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -442,49 +590,96 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
                           Text(who,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                   fontSize: 16,
-                                  fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 2),
+                                  fontWeight: FontWeight.bold,
+                                  color: palette.textPrimary)),
+                          const SizedBox(height: 3),
                           Text(
-                            '${r['planName'] ?? '—'} · Rs. ${r['amount'] ?? '—'} · ${'${r['method'] ?? ''}'.toUpperCase()}',
+                            '$plan · $method',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: Colors.grey),
-                          ),
-                          const SizedBox(height: 6),
-                          Row(
-                            children: [
-                              StatusPill(
-                                  label: _statusLabel(status),
-                                  color: tone,
-                                  icon: _statusIcon(status)),
-                              if (date.isNotEmpty) ...[
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(date,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontSize: 12,
-                                          color: Colors.grey)),
-                                ),
-                              ],
-                            ],
+                            style: TextStyle(
+                                fontSize: ExpoType.bodySmall,
+                                color: palette.textSecondary),
                           ),
                         ],
                       ),
                     ),
-                    const Icon(Icons.chevron_right,
-                        size: 18, color: Colors.grey),
+                    Icon(Icons.chevron_right,
+                        size: 20, color: palette.textDisabled),
                   ],
                 ),
-              ),
-            ],
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    StatusPill(
+                        label: _statusLabel(status),
+                        color: tone,
+                        icon: _statusIcon(status)),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: date.isNotEmpty
+                          ? Row(
+                              children: [
+                                Icon(Icons.schedule_outlined,
+                                    size: 13,
+                                    color: palette.textDisabled),
+                                const SizedBox(width: 4),
+                                Flexible(
+                                  child: Text(date,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                          fontSize:
+                                              ExpoType.bodySmall,
+                                          color: palette.textSecondary)),
+                                ),
+                              ],
+                            )
+                          : const SizedBox.shrink(),
+                    ),
+                    Text('Rs. $amount',
+                        style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: palette.info)),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _avatar(String initial, Color tone) {
+    final deep = Color.lerp(tone, Colors.black, 0.25) ?? tone;
+    return Container(
+      width: 54,
+      height: 54,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: LinearGradient(
+          colors: [tone, deep],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: tone.withValues(alpha: 0.35),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Text(initial,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold)),
     );
   }
 }

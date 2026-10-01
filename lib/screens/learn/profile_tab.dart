@@ -52,6 +52,13 @@ class _ProfileTabState extends State<ProfileTab> {
   /// connection.
   static const _logoutWaitCeiling = Duration(milliseconds: 1400);
 
+  /// dark theme's `palette.danger` (0xFFF87171) is a lightened tint meant for
+  /// text/icons on dark surfaces — as a filled background it renders
+  /// washed-out pink and white text on it fails contrast, which is why the
+  /// danger styling was lost in dark mode. (Same value as
+  /// `ExpoPalette.light.danger`.)
+  static const _dangerFill = Color(0xFFDC2626);
+
   @override
   void initState() {
     super.initState();
@@ -240,16 +247,22 @@ class _ProfileTabState extends State<ProfileTab> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
-          final palette = ExpoPalette.of(dialogContext);
           return AppModalShell(
+            // White tile + strong red glyph: the old tinted tile
+            // (danger @12% with a danger glyph) washed out against the
+            // header gradient — in dark mode the light-red dark danger
+            // made icon and chip nearly identical. The modal card is
+            // white in both themes, so a solid white tile with the
+            // strong-red icon reads clearly in both.
             icon: Container(
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                color: palette.danger.withValues(alpha: 0.12),
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Icon(Icons.logout, color: palette.danger, size: 28),
+              child: const Icon(Icons.logout,
+                  color: _dangerFill, size: 28),
             ),
             tagLabel:
                 AppLanguage.tr('Please confirm', 'कृपया पुष्टि गर्नुहोस्'),
@@ -279,7 +292,7 @@ class _ProfileTabState extends State<ProfileTab> {
                 Expanded(
                   child: FilledButton(
                     style: FilledButton.styleFrom(
-                      backgroundColor: palette.danger,
+                      backgroundColor: _dangerFill,
                       foregroundColor: Colors.white,
                     ),
                     onPressed: loggingOut
@@ -310,10 +323,12 @@ class _ProfileTabState extends State<ProfileTab> {
             onClose: loggingOut
                 ? null
                 : () => Navigator.of(dialogContext).pop(false),
-            accent: palette.danger,
-            accentMid: palette.danger.withValues(alpha: 0.65),
-            accentLight: palette.danger.withValues(alpha: 0.25),
-            tagColor: palette.danger,
+            // Strong red in both themes — the dark theme's lightened danger
+            // would wash the header gradient out to pastel pink.
+            accent: _dangerFill,
+            accentMid: _dangerFill.withValues(alpha: 0.65),
+            accentLight: _dangerFill.withValues(alpha: 0.25),
+            tagColor: _dangerFill,
           );
         },
       ),
@@ -434,7 +449,11 @@ class _ProfileTabState extends State<ProfileTab> {
                                   width: double.infinity,
                                   child: FilledButton(
                                     style: FilledButton.styleFrom(
-                                      backgroundColor: palette.danger,
+                                      // Strong red in both themes (see
+                                      // _dangerFill): palette.danger is a
+                                      // lightened tint in dark mode and the
+                                      // button rendered washed-out pink.
+                                      backgroundColor: _dangerFill,
                                       foregroundColor: Colors.white,
                                       minimumSize: const Size(
                                           double.infinity, 52),
@@ -587,6 +606,8 @@ class _ProfileTabState extends State<ProfileTab> {
             ProfileMenuRow(
               icon: const Icon(Icons.check_box_outlined),
               label: 'Answer Review',
+              subtitle: AppLanguage.tr('Review submitted exam answers',
+                  'पेस गरिएका परीक्षा उत्तरहरू समीक्षा गर्नुहोस्'),
               trailingText: 'Exams > Theory Desk',
               onPress: () => TabsScreen.tabIndex.value = 1,
             ),
@@ -594,12 +615,16 @@ class _ProfileTabState extends State<ProfileTab> {
               icon: const Icon(Icons.diamond_outlined),
               label: AppLanguage.tr(
                   'Subscription Requests', 'सदस्यता अनुरोधहरू'),
+              subtitle: AppLanguage.tr('Approve or reject plan requests',
+                  'योजना अनुरोधहरू स्वीकृत वा अस्वीकृत गर्नुहोस्'),
               onPress: () => context.push('/admin/subscriptions'),
             ),
             ProfileMenuRow(
               icon: const Icon(Icons.receipt_outlined),
               label: AppLanguage.tr(
                   'Purchase Request Control', 'खरिद अनुरोध नियन्त्रण'),
+              subtitle: AppLanguage.tr('Verify payment proofs & purchases',
+                  'भुक्तानी प्रमाण र खरिदहरू प्रमाणित गर्नुहोस्'),
               onPress: () => context.push('/admin/purchase-details'),
             ),
           ],
@@ -618,6 +643,8 @@ class _ProfileTabState extends State<ProfileTab> {
           ProfileMenuRow(
             icon: const Icon(Icons.school_outlined),
             label: AppLanguage.tr('Course Details', 'कोर्स विवरण'),
+            subtitle: AppLanguage.tr('Your enrolled course & subjects',
+                'तपाईंको भर्ना कोर्स र विषयहरू'),
             trailingText: courseInfo?.courseName,
             onPress: () => context.push('/course-details'),
           ),
@@ -625,42 +652,58 @@ class _ProfileTabState extends State<ProfileTab> {
             icon: const Icon(Icons.diamond_outlined),
             label: AppLanguage.tr(
                 'Subscription Details', 'सदस्यता विवरण'),
+            subtitle: AppLanguage.tr('Your plan, payments & request status',
+                'तपाईंको योजना, भुक्तानी र अनुरोध स्थिति'),
             onPress: () => context.push('/subscription'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.receipt_outlined),
             label: AppLanguage.tr('Purchase Details', 'खरिद विवरण'),
+            subtitle: AppLanguage.tr('Receipts for your purchases',
+                'तपाईंका खरिदका रसिदहरू'),
             onPress: () => context.push('/purchase-details'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.cloud_upload_outlined),
             label: 'My Answer Submissions',
+            subtitle: AppLanguage.tr('Answers you sent for review',
+                'समीक्षाका लागि पठाइएका तपाईंका उत्तरहरू'),
             onPress: () => context.push('/exam-answer/my-submissions'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.help_outline),
             label: AppLanguage.tr('Report Question', 'प्रश्न रिपोर्ट'),
+            subtitle: AppLanguage.tr('Flag a wrong or unclear question',
+                'गलत वा अस्पष्ट प्रश्न रिपोर्ट गर्नुहोस्'),
             onPress: () => context.push('/report-question'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.flag_outlined),
             label: AppLanguage.tr(
                 'Your Report History', 'तपाईंका रिपोर्टहरूको इतिहास'),
+            subtitle: AppLanguage.tr('Status of your past reports',
+                'तपाईंका विगतका रिपोर्टहरूको स्थिति'),
             onPress: () => context.push('/report-history'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.bookmark_outline),
             label: AppLanguage.tr('Bookmarks', 'बुकमार्कहरू'),
+            subtitle: AppLanguage.tr('Your saved questions & notes',
+                'तपाईंले सेभ गरेका प्रश्न र नोटहरू'),
             onPress: () => context.push('/bookmarks'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.analytics_outlined),
             label: AppLanguage.tr('Analytics', 'विश्लेषण'),
+            subtitle: AppLanguage.tr('Study stats, trends & progress',
+                'अध्ययन तथ्याङ्क, प्रवृत्ति र प्रगति'),
             onPress: () => context.push('/analytics'),
           ),
           ProfileMenuRow(
             icon: const TrashIcon(),
             label: AppLanguage.tr('Delete Account', 'खाता मेट्नुहोस्'),
+            subtitle: AppLanguage.tr('Permanently remove your account',
+                'तपाईंको खाता स्थायी रूपमा हटाउनुहोस्'),
             destructive: true,
             onPress: () => context.push('/delete-account'),
           ),
@@ -679,26 +722,36 @@ class _ProfileTabState extends State<ProfileTab> {
           ProfileMenuRow(
             icon: const Icon(Icons.chat_bubble_outline),
             label: AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्'),
+            subtitle: AppLanguage.tr('Get in touch with our team',
+                'हाम्रो टोलीसँग सम्पर्क गर्नुहोस्'),
             onPress: () => context.push('/contact-us'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.warning_amber_outlined),
             label: AppLanguage.tr('Report a Problem', 'समस्या रिपोर्ट गर्नुहोस्'),
+            subtitle: AppLanguage.tr('Tell us about an app issue',
+                'एपको समस्या बारे हामीलाई बताउनुहोस्'),
             onPress: () => context.push('/settings/report-problem'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.verified_user_outlined),
             label: AppLanguage.tr('Privacy Policy', 'गोपनीयता नीति'),
+            subtitle: AppLanguage.tr('How we handle your data',
+                'हामी तपाईंको डाटा कसरी सम्हाल्छौं'),
             onPress: () => context.push('/privacy-policy'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.description_outlined),
             label: AppLanguage.tr('Terms and Conditions', 'नियम र सर्तहरू'),
+            subtitle: AppLanguage.tr('Rules for using the app',
+                'एप प्रयोग गर्ने नियमहरू'),
             onPress: () => context.push('/terms-conditions'),
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.star_outline),
             label: AppLanguage.tr('Feedback', 'प्रतिक्रिया'),
+            subtitle: AppLanguage.tr('Share suggestions & ideas',
+                'सुझाव र विचारहरू साझा गर्नुहोस्'),
             onPress: () => context.push('/feedback'),
           ),
         ],
@@ -716,17 +769,23 @@ class _ProfileTabState extends State<ProfileTab> {
           ProfileMenuRow(
             icon: const Icon(Icons.share_outlined),
             label: AppLanguage.tr('Share App', 'एप सेयर गर्नुहोस्'),
+            subtitle: AppLanguage.tr('Invite friends to join',
+                'साथीहरूलाई जोइन हुन निम्तो दिनुहोस्'),
             onPress: _shareApp,
           ),
           ProfileMenuRow(
             icon: const Icon(Icons.thumb_up_outlined),
             label: AppLanguage.tr('Rate Us', 'रेटिङ दिनुहोस्'),
+            subtitle: AppLanguage.tr('Leave a rating on the Play Store',
+                'प्ले स्टोरमा रेटिङ दिनुहोस्'),
             onPress: _rateUs,
           ),
           // App Info moved here out of Support, as requested.
           ProfileMenuRow(
             icon: const Icon(Icons.info_outline),
             label: AppLanguage.tr('App Info', 'एप जानकारी'),
+            subtitle: AppLanguage.tr('Version & app details',
+                'संस्करण र एप विवरणहरू'),
             onPress: () => context.push('/app-info'),
           ),
         ],

@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
@@ -13,6 +12,7 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/disk_cached_image.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/profile_avatar.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
@@ -33,18 +33,33 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// with unsaved changes asks for confirmation (header back button and the
 /// Android system back button alike).
 ///
-/// Photo flow: picking a photo does NOT upload it (mirrors React, which only
-/// uploads at save). The upload starts when Save is pressed: a progress ring
-/// sweeps around the photo's border showing the real upload fraction, then a
-/// brief "done" beat (green full ring + checkmark flash) before the Firestore
-/// write. No full-screen overlay covers the ring while it is in flight.
+/// Photo upload state machine — the upload starts IMMEDIATELY when a photo is
+/// picked, not at Save:
+///
+///   idle →(tap photo → sheet → pick)→ uploading →(Cloudinary done)→ done
+///     →(900ms beat)→ idle
+///
+/// - While uploading, the photo's border wears a determinate ring driven by
+///   real byte-counted progress events; the picked photo previews from memory
+///   inside it. No full-screen overlay covers the ring while it is in flight.
+/// - When the upload completes the new photo is set and shown at once; a
+///   brief full-green-ring "done" beat follows, then the normal identity ring.
+/// - Pick-then-back-out without saving: the screen is disposed without a
+///   Firestore write, so the old photoURL stands. The uploaded-but-unused
+///   Cloudinary image is an accepted orphan — unsigned presets cannot delete.
+/// - Upload failure: error toast, and the photo reverts to the previous one
+///   (`_photoURL` is only ever assigned on success).
+/// - Save is disabled while an upload is in flight — racing the write against
+///   the upload would risk persisting a half-known photoURL.
+/// - Offline at pick time: a warning toast and the old photo is kept; there
+///   is no silent queue (the user sees exactly what will be saved).
+/// - Upload destination matches the React app exactly: Cloudinary unsigned
+///   upload, cloud `dw7gg0fhc`, preset `lsphotos`, folder `profile-photos`
+///   (see [CloudinaryUploader], mirroring AppConfig.media.cloudinary).
 ///
 /// After a successful save the values are pushed into the shared
 /// [ProfileStore] so Home and Profile update in real time — no refresh
 /// needed anywhere.
-///
-/// Camera capture is not offered: this project may not add new dependencies,
-/// so the photo sheet offers Gallery (via file_picker) and Remove only.
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
     super.key,
@@ -76,17 +91,16 @@ class EditProfileScreen extends StatefulWidget {
   /// Test seam: replaces the Cloudinary upload. Reports 0..1 progress.
   final Future<String> Function(Uint8List bytes, void Function(double))? uploadPhoto;
 
-  /// Test seam: replaces the file picker. Returns the picked bytes or null.
+  /// Test seam: replaces the photo picker (gallery or camera). Returns the
+  /// picked bytes or null.
   final Future<Uint8List?> Function()? pickPhoto;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
 }
 
-/// Save phases. The upload phase deliberately shows NO full-screen overlay:
-/// the photo's own progress ring is the feedback — covering it with an
-/// overlay is what made the upload invisible before.
-enum _SavePhase { idle, uploading, settling, writing }
+/// Where the photo bytes come from.
+enum _PhotoSource { gallery, camera }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final _firstCtrl = TextEditingController();
@@ -95,7 +109,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   String? _gender; // 'male' | 'female' | 'other'
   String? _photoURL; // hosted https URL (or null)
-  Uint8List? _pickedBytes; // freshly picked local photo, not yet uploaded
+  Uint8List? _pendingPhotoBytes; // picked photo, previewed while uploading
   String _email = '';
   bool _pro = false;
 
@@ -109,12 +123,22 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   bool _hydrated = false;
   bool _minLoaderElapsed = false;
   bool _saving = false;
-  _SavePhase _phase = _SavePhase.idle;
   bool _refreshing = false;
   bool _offline = false;
   String? _dobError;
+
+  // Photo upload state (see the state machine in the class doc).
+  bool _uploading = false;
   double _uploadProgress = 0;
   UploadState _uploadState = UploadState.idle;
+
+  // Photo geometry: the face is a clean 92px circle, the ring slot is a
+  // fixed 106px so the identity ring and the progress ring never shift the
+  // layout when they swap, and the outer box leaves breathing room so no
+  // ring or badge is ever clipped by its container.
+  static const double _faceSize = 92;
+  static const double _ringSlot = 106;
+  static const double _photoBox = 118;
 
   Timer? _minLoaderTimer;
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
@@ -226,21 +250,23 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (mounted) setState(() => _refreshing = false);
   }
 
+  /// A photo counts as changed the moment its upload completes (the upload
+  /// starts at pick time, so there is no "picked but not uploaded" state).
   bool get _isDirty =>
       _firstCtrl.text != _initFirst ||
       _lastCtrl.text != _initLast ||
       _dobCtrl.text != _initDob ||
       _gender != _initGender ||
-      _photoURL != _initPhotoURL ||
-      _pickedBytes != null;
+      _photoURL != _initPhotoURL;
 
-  /// Mirrors React's `disabled={!isDirty || isOffline || saving}` exactly:
-  /// the button is inert until something actually changed, while online, and
-  /// while no save is in flight.
-  bool get _canSave => _isDirty && !_offline && !_saving;
+  /// Mirrors React's `disabled={!isDirty || isOffline || saving}`, plus the
+  /// in-flight upload: saving while bytes are still going out would risk
+  /// persisting a half-known photoURL, so the button stays inert until the
+  /// upload lands or fails.
+  bool get _canSave => _isDirty && !_offline && !_saving && !_uploading;
 
   void _attemptLeave() {
-    if (_isDirty) {
+    if (_isDirty || _uploading) {
       _showDiscardDialog();
       return;
     }
@@ -327,7 +353,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   Future<void> _openPhotoOptions() async {
-    final hasPhoto = _pickedBytes != null || _photoURL != null;
+    if (_uploading) return;
+    final hasPhoto = _pendingPhotoBytes != null || _photoURL != null;
     final action = await AppModalShell.show<String>(
       context: context,
       builder: (ctx) => AppModalShell(
@@ -361,6 +388,24 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             FilledButton.tonal(
+              onPressed: () => Navigator.of(ctx).pop('camera'),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(22),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.photo_camera_outlined, size: 20),
+                  const SizedBox(width: 8),
+                  Text(_Strings.camera),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            FilledButton.tonal(
               onPressed: () => Navigator.of(ctx).pop('gallery'),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 13),
@@ -368,7 +413,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   borderRadius: BorderRadius.circular(22),
                 ),
               ),
-              child: Text(_Strings.gallery),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.photo_library_outlined, size: 20),
+                  const SizedBox(width: 8),
+                  Text(_Strings.gallery),
+                ],
+              ),
             ),
             if (hasPhoto) ...[
               const SizedBox(height: 10),
@@ -399,36 +451,97 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       ),
     );
     if (!mounted) return;
-    if (action == 'gallery') {
-      await _pickImage();
-    } else if (action == 'remove') {
-      setState(() {
-        _pickedBytes = null;
-        _photoURL = null;
-      });
+    switch (action) {
+      case 'camera':
+        await _startPhotoUpload(_PhotoSource.camera);
+      case 'gallery':
+        await _startPhotoUpload(_PhotoSource.gallery);
+      case 'remove':
+        setState(() {
+          _pendingPhotoBytes = null;
+          _photoURL = null;
+        });
     }
   }
 
-  /// Picking only previews the photo from memory — the upload happens at
-  /// save time (mirrors React, which uploads the local URI in handleSave),
-  /// so tapping a photo never fires a network request by itself.
-  Future<void> _pickImage() async {
+  /// Picks a photo and uploads it IMMEDIATELY — the upload does not wait for
+  /// Save. While the bytes are in flight the picked photo previews from
+  /// memory inside the progress ring; `_photoURL` is only assigned when the
+  /// upload succeeds, so a failure reverts to the previous photo by itself.
+  Future<void> _startPhotoUpload(_PhotoSource source) async {
+    if (_uploading) return;
+    Uint8List? bytes;
     try {
-      Uint8List? bytes;
       if (widget.pickPhoto != null) {
         bytes = await widget.pickPhoto!();
+      } else if (source == _PhotoSource.gallery) {
+        // System picker via the native channel (no new dependencies).
+        // Bytes come back downscaled to ≤1600px JPEG — small, fast uploads.
+        bytes = await ScreenshotPicker.pickImage();
       } else {
-        final result = await FilePicker.platform
-            .pickFiles(type: FileType.image, withData: true);
-        bytes = result?.files.firstOrNull?.bytes;
+        // System camera app via the native channel; no CAMERA permission is
+        // needed because the camera writes to our own FileProvider URI.
+        bytes = await ScreenshotPicker.captureImage();
       }
-      if (bytes != null && bytes.isNotEmpty && mounted) {
-        setState(() => _pickedBytes = bytes);
+    } on ScreenshotPickerUnavailable {
+      if (mounted) {
+        showToast(context, _Strings.pickerFailed, ToastVariant.error);
       }
+      return;
     } catch (_) {
       // A silent failure here is what made this look broken on React —
       // surface it instead.
-      if (mounted) showToast(context, _Strings.pickerFailed, ToastVariant.error);
+      if (mounted) {
+        showToast(context, _Strings.pickerFailed, ToastVariant.error);
+      }
+      return;
+    }
+    // Null/empty means the user cancelled the picker — not an error.
+    if (bytes == null || bytes.isEmpty || !mounted) return;
+    if (_offline) {
+      showToast(context, _Strings.photoNeedsInternet, ToastVariant.warning);
+      return;
+    }
+
+    setState(() {
+      _uploading = true;
+      _pendingPhotoBytes = bytes;
+      _uploadState = UploadState.uploading;
+      _uploadProgress = 0;
+    });
+    try {
+      final uploader = widget.uploadPhoto ??
+          (b, onProgress) =>
+              CloudinaryUploader.uploadImage(b, onProgress: onProgress);
+      final url = await uploader(bytes, (p) {
+        if (mounted) setState(() => _uploadProgress = p);
+      });
+      if (!mounted) return;
+      // The new photo is set and shown the moment the upload completes —
+      // Save only persists what is already visible here.
+      setState(() {
+        _photoURL = url;
+        _pendingPhotoBytes = null;
+        _uploading = false;
+        _uploadState = UploadState.done;
+      });
+      showToast(context, _Strings.photoUploaded, ToastVariant.success);
+      // The "done" beat: a full green ring around the new photo, then back
+      // to the identity ring. The face stays fully visible throughout — no
+      // overlay covers it.
+      await Future.delayed(const Duration(milliseconds: 900));
+      if (mounted) setState(() => _uploadState = UploadState.idle);
+    } catch (_) {
+      // `_photoURL` was never assigned, so the previous photo is back on its
+      // own — just drop the preview and the ring.
+      if (!mounted) return;
+      setState(() {
+        _uploading = false;
+        _pendingPhotoBytes = null;
+        _uploadState = UploadState.idle;
+        _uploadProgress = 0;
+      });
+      showToast(context, _Strings.uploadFailed, ToastVariant.error);
     }
   }
 
@@ -447,9 +560,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     setState(() {});
   }
 
+  /// Persists everything visible on the form — the photo was already
+  /// uploaded at pick time, so this is only the Firestore write (plus the
+  /// auth session and the shared store).
   Future<void> _handleSave() async {
     final uid = widget.debugUid ?? AuthService.currentUser?.uid;
-    if (uid == null || _offline) return;
+    if (uid == null || _offline || _uploading) return;
     if (_firstCtrl.text.trim().isEmpty) {
       showToast(context, _Strings.firstNameRequired, ToastVariant.warning);
       return;
@@ -460,49 +576,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       return;
     }
 
-    final needsUpload = _pickedBytes != null;
-    setState(() {
-      _saving = true;
-      _phase = needsUpload ? _SavePhase.uploading : _SavePhase.writing;
-      _uploadProgress = 0;
-    });
+    setState(() => _saving = true);
     try {
-      // Only a freshly picked local file needs uploading; an existing https
-      // URL (Cloudinary or a Google avatar) is already hosted.
-      final photoWasChanged = needsUpload || _photoURL != _initPhotoURL;
-      String? resolvedPhotoURL = _photoURL;
-      if (needsUpload) {
-        setState(() => _uploadState = UploadState.uploading);
-        final uploader = widget.uploadPhoto ??
-            (bytes, onProgress) => CloudinaryUploader.uploadImage(
-                  bytes,
-                  onProgress: onProgress,
-                );
-        resolvedPhotoURL = await uploader(_pickedBytes!, (p) {
-          if (mounted) setState(() => _uploadProgress = p);
-        });
-        if (!mounted) return;
-        // The "done" beat: the new photo wears the green full ring and a
-        // checkmark flash before the Firestore write begins. The upload must
-        // be SEEN to finish — not just implied by a spinner behind an
-        // overlay (which is why the overlay stays away during upload).
-        setState(() {
-          _photoURL = resolvedPhotoURL;
-          _pickedBytes = null;
-          _uploadState = UploadState.done;
-          _phase = _SavePhase.settling;
-        });
-        showToast(context, _Strings.photoUploaded, ToastVariant.success);
-        await Future.delayed(const Duration(milliseconds: 900));
-        if (!mounted) return;
-        setState(() => _phase = _SavePhase.writing);
-      }
-
       // A photo selected/removed in Edit Profile is always a manual choice.
       // If the photo was not touched, leave its existing source unchanged so
       // a Google re-login cannot replace a manually uploaded Cloudinary photo.
+      final photoWasChanged = _photoURL != _initPhotoURL;
       final photoURLSource =
-          photoWasChanged ? (resolvedPhotoURL != null ? 'manual' : 'none') : null;
+          photoWasChanged ? (_photoURL != null ? 'manual' : 'none') : null;
 
       if (widget.saveProfile != null) {
         await widget.saveProfile!(
@@ -511,7 +592,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           lastName: _lastCtrl.text,
           dob: dob.isEmpty ? null : dob,
           gender: _gender,
-          photoURL: resolvedPhotoURL,
+          photoURL: _photoURL,
           photoURLSource: photoURLSource,
         );
       } else {
@@ -522,7 +603,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           lastName: _lastCtrl.text,
           dob: dob.isEmpty ? null : dob,
           gender: _gender,
-          photoURL: resolvedPhotoURL,
+          photoURL: _photoURL,
           photoURLSource: photoURLSource,
           idToken: token,
         );
@@ -531,7 +612,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         await AuthService.updateCurrentUserProfile(
           displayName: fullNameOf(_firstCtrl.text, _lastCtrl.text),
           photoURL:
-              photoWasChanged ? resolvedPhotoURL : AuthService.keepField,
+              photoWasChanged ? _photoURL : AuthService.keepField,
         ).catchError((_) {});
       }
 
@@ -550,7 +631,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             email: p.email,
             dob: dob.isEmpty ? null : dob,
             gender: _gender,
-            photoURL: resolvedPhotoURL,
+            photoURL: _photoURL,
             photoURLSource: photoURLSource ?? p.photoURLSource,
             courseId: p.courseId,
             subcourseId: p.subcourseId,
@@ -568,28 +649,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         _initLast = _lastCtrl.text;
         _initDob = _dobCtrl.text;
         _initGender = _gender;
-        _initPhotoURL = resolvedPhotoURL;
+        _initPhotoURL = _photoURL;
         _dobError = null;
         _uploadState = UploadState.idle;
-        _phase = _SavePhase.idle;
       });
       showToast(context, _Strings.updated, ToastVariant.success);
       context.pop();
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _uploadState = UploadState.idle;
-          _phase = _SavePhase.idle;
-        });
-      }
-      showToast(context, _Strings.saveFailed, ToastVariant.error);
+      if (mounted) showToast(context, _Strings.saveFailed, ToastVariant.error);
     } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-          _phase = _SavePhase.idle;
-        });
-      }
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -597,9 +666,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget build(BuildContext context) {
     final colors = ExpoPalette.of(context);
     return PopScope(
-      canPop: !_isDirty,
+      canPop: !_isDirty && !_uploading,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && _isDirty) _showDiscardDialog();
+        if (!didPop && (_isDirty || _uploading)) _showDiscardDialog();
       },
       child: Scaffold(
         backgroundColor: colors.background,
@@ -624,7 +693,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           child: ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             padding:
-                                const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                                const EdgeInsets.fromLTRB(16, 12, 16, 24),
                             children: [
                               SyllabusEntrance(
                                 delayMs: 0,
@@ -653,12 +722,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                   ],
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
                               SyllabusEntrance(
                                 delayMs: 120,
                                 child: _emailRow(colors),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
                               SyllabusEntrance(
                                 delayMs: 180,
                                 child: Column(
@@ -745,9 +814,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               ],
             ),
             // Only the Firestore-write phase blocks the screen with an
-            // overlay. The upload phase stays overlay-free so the progress
-            // ring on the photo is always visible.
-            if (_phase == _SavePhase.writing)
+            // overlay. The photo upload never does — its progress ring on the
+            // photo is the feedback, and covering it is what made the upload
+            // invisible before.
+            if (_saving)
               Positioned.fill(
                 child: Container(
                   color: Colors.black.withValues(alpha: 0.45),
@@ -784,41 +854,50 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  /// Photo with the identity ring (pro sweep / green glow + verified tick on
-  /// the name, exactly what Home and Profile show), the upload progress ring
-  /// while a photo is in flight, and the camera badge below the photo.
+  /// The photo: a clean 92px circle, BoxFit.cover, clipped exactly to its
+  /// own circle, wearing exactly ONE ring at a time — the identity ring at
+  /// rest (green for free, the premium sweep for pro, like Home/Profile) or
+  /// the determinate progress ring while a photo uploads. The rings share a
+  /// fixed 106px slot centred in a 118px box with no clipping, so nothing
+  /// ever looks cut and the avatar never shifts when the ring swaps.
   Widget _photoBlock(ExpoPalette colors) {
     final displayName = fullNameOf(_firstCtrl.text, _lastCtrl.text);
     return Column(
       children: [
         GestureDetector(
-          onTap: _openPhotoOptions,
-          // Fixed, not shrink-to-fit: the identity ring and the upload
-          // progress ring are different thicknesses, so a self-sizing box
-          // would shift the avatar and the camera badge by a pixel every
-          // time an upload starts or finishes. 110 is the larger of the two
-          // (96 + 7 + 7).
+          onTap: _uploading ? null : _openPhotoOptions,
           child: SizedBox(
-            width: 110,
-            height: 110,
+            width: _photoBox,
+            height: _photoBox,
             child: Stack(
+              clipBehavior: Clip.none,
               alignment: Alignment.center,
               children: [
                 _avatarFace(displayName),
                 Positioned(
-                  bottom: -4,
-                  right: -2,
+                  bottom: 4,
+                  right: 4,
                   child: Container(
                     width: 32,
                     height: 32,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: colors.primary,
                       border:
                           Border.all(color: colors.background, width: 2),
                     ),
-                    child: const Icon(Icons.camera_alt,
-                        size: 16, color: Colors.white),
+                    child: _uploading
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.camera_alt,
+                            size: 16, color: Colors.white),
                   ),
                 ),
               ],
@@ -842,10 +921,12 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           _photoCaption(),
           style: TextStyle(
             fontSize: 12,
-            color: _phase == _SavePhase.uploading
-                ? colors.primary
-                : colors.textSecondary,
-            fontWeight: _phase == _SavePhase.uploading
+            color: _uploading
+                ? colors.info
+                : _uploadState == UploadState.done
+                    ? colors.success
+                    : colors.textSecondary,
+            fontWeight: _uploading || _uploadState == UploadState.done
                 ? FontWeight.w600
                 : FontWeight.normal,
           ),
@@ -854,103 +935,126 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     );
   }
 
-  /// The caption under the photo: during upload it carries the live upload
-  /// status (the ring shows the fraction), otherwise the change hint.
+  /// The caption under the photo: live upload percent while bytes are in
+  /// flight (the ring shows the fraction), the uploaded confirmation on the
+  /// done beat, otherwise the change hint.
   String _photoCaption() {
-    if (_phase == _SavePhase.uploading) {
+    if (_uploading) {
       return '${_Strings.uploadingPhoto} ${(_uploadProgress * 100).round()}%';
     }
+    if (_uploadState == UploadState.done) return _Strings.photoUploadedShort;
     return _Strings.clickPhotoToChange;
   }
 
-  /// Identity ring at rest, progress ring while uploading. A freshly picked
-  /// (not yet uploaded) photo previews from memory with the same ring
-  /// treatment ProfileAvatar draws; once the upload completes, the new
-  /// hosted photo wears the green "done" ring with a checkmark flash.
+  /// One ring at a time — never stacked. Stacking the identity ring under the
+  /// progress ring (plus the old blurred glow being hard-clipped by a tight
+  /// box) is what produced the glitchy border the user saw.
   Widget _avatarFace(String displayName) {
+    final face = _face(displayName);
     if (_uploadState != UploadState.idle) {
-      final content = _pickedBytes != null
-          ? _pickedFace(96)
-          : ProfileAvatar(
-              uri: _photoURL,
-              name: displayName,
-              size: 96,
-              pro: _pro,
-            );
-      final ring = AvatarProgressRing(
-        size: 96,
-        progress: _uploadProgress,
-        state: _uploadState,
-        child: content,
-      );
-      if (_phase == _SavePhase.settling) {
-        // The brief "done" state: green full ring + checkmark flash.
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            ring,
-            Container(
-              width: 44,
-              height: 44,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                color: Color(0xFF22C55E),
-              ),
-              child: const Icon(Icons.check, size: 26, color: Colors.white),
-            ),
-          ],
-        );
-      }
-      return ring;
-    }
-    if (_pickedBytes != null) return _pickedFaceWithRing(96);
-    return ProfileAvatar(
-      uri: _photoURL,
-      name: displayName,
-      size: 96,
-      pro: _pro,
-    );
-  }
-
-  Widget _pickedFace(double size) => SizedBox(
-        width: size,
-        height: size,
-        child: ClipOval(
-          child: Image.memory(
-            _pickedBytes!,
-            width: size,
-            height: size,
-            fit: BoxFit.cover,
+      return SizedBox(
+        width: _ringSlot,
+        height: _ringSlot,
+        child: Center(
+          child: AvatarProgressRing(
+            size: _faceSize,
+            progress: _uploadProgress,
+            state: _uploadState,
+            child: face,
           ),
         ),
       );
-
-  Widget _pickedFaceWithRing(double size) {
-    final face = _pickedFace(size);
-    if (_pro) return ProAvatarRing(size: size, child: face);
-    // The resting ring ProfileAvatar draws for non-pro users
-    // (lib/widgets/profile_avatar.dart).
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: const Color(0xFF22C55E).withValues(alpha: 0.22),
-        border: Border.all(color: const Color(0xFF22C55E), width: 4),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF22C55E).withValues(alpha: 0.9),
-            blurRadius: 14,
-          ),
-        ],
-      ),
-      child: face,
+    }
+    final ringed = _pro
+        ? ProAvatarRing(size: _faceSize, child: face)
+        : Container(
+            width: _ringSlot,
+            height: _ringSlot,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              // One clean ring: a solid border with a small clear gap to the
+              // photo, no translucent fill and no blurred shadow. The old
+              // glow stacked fill + border + shadow and the shadow was cut
+              // off by the too-tight outer box — the jagged edge that read
+              // as "cut" and "glitchy".
+              border:
+                  Border.all(color: const Color(0xFF22C55E), width: 3),
+            ),
+            child: face,
+          );
+    return SizedBox(
+      width: _ringSlot,
+      height: _ringSlot,
+      child: Center(child: ringed),
     );
   }
 
-  /// Email — displayed, never editable. Dark locked field with the
+  /// The face itself: a 92px circle, clipped exactly to its own bounds so the
+  /// photo can never spill under the ring or look cut. While an upload is in
+  /// flight the freshly picked photo previews from memory; otherwise the
+  /// hosted photo (or initials when there is none).
+  Widget _face(String displayName) {
+    final pending = _pendingPhotoBytes;
+    final Widget inner;
+    if (pending != null) {
+      inner = Image.memory(
+        pending,
+        width: _faceSize,
+        height: _faceSize,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _initialFace(displayName),
+      );
+    } else if (_photoURL != null && _photoURL!.isNotEmpty) {
+      inner = DiskCachedImage(
+        url: _photoURL!,
+        width: _faceSize,
+        height: _faceSize,
+        fit: BoxFit.cover,
+        errorBuilder: (context, _, __) => _initialFace(displayName),
+      );
+    } else {
+      inner = _initialFace(displayName);
+    }
+    return SizedBox(
+      width: _faceSize,
+      height: _faceSize,
+      child: ClipOval(child: inner),
+    );
+  }
+
+  Widget _initialFace(String displayName) {
+    final palette = ExpoPalette.of(context);
+    final parts = displayName.trim().split(RegExp(r'\s+'));
+    final initials = parts
+        .where((p) => p.isNotEmpty)
+        .take(2)
+        .map((p) => p[0].toUpperCase())
+        .join();
+    return Container(
+      width: _faceSize,
+      height: _faceSize,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: palette.surfaceAlt,
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initials.isEmpty ? '?' : initials,
+        style: TextStyle(
+          color: palette.primary,
+          fontWeight: FontWeight.w600,
+          fontSize: 32,
+        ),
+      ),
+    );
+  }
+
+  /// Email — displayed, never editable. Locked field with the
   /// "Coming soon" pill, in the profile design language.
   Widget _emailRow(ExpoPalette colors) {
     return Container(
+      constraints: const BoxConstraints(minHeight: 60),
       decoration: BoxDecoration(
         color: colors.surface,
         border: Border.all(color: colors.border, width: 0.5),
@@ -1019,6 +1123,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
   Widget _genderBlock(ExpoPalette colors) {
     const options = ['male', 'female', 'other'];
+    // A muted per-theme tone instead of the harsh full-strength blue: the
+    // primary mixed 60% toward the neutral text tone stays on-brand in both
+    // light and dark without shouting.
+    final selectedBorder =
+        Color.lerp(colors.border, colors.primary, 0.55)!;
+    final selectedIcon =
+        Color.lerp(colors.textSecondary, colors.primary, 0.6)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1043,16 +1154,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 child: GestureDetector(
                   onTap: () => setState(() => _gender = option),
                   child: Container(
+                    constraints: const BoxConstraints(minHeight: 60),
+                    alignment: Alignment.center,
                     padding: const EdgeInsets.symmetric(
-                        vertical: 10, horizontal: 8),
+                        vertical: 8, horizontal: 8),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: selected ? colors.primary : colors.border,
-                        width: selected ? 1.5 : 0.5,
+                        color: selected ? selectedBorder : colors.border,
+                        width: selected ? 1.25 : 0.5,
                       ),
                       color: selected
-                          ? colors.primary.withValues(alpha: 0x17 / 0xFF)
+                          ? colors.primary.withValues(alpha: 0x14 / 0xFF)
                           : colors.surface,
                     ),
                     child: Row(
@@ -1065,7 +1178,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           decoration: BoxDecoration(
                             color: selected
                                 ? colors.primary
-                                    .withValues(alpha: 0x17 / 0xFF)
+                                    .withValues(alpha: 0x14 / 0xFF)
                                 : colors.surfaceAlt,
                             borderRadius: BorderRadius.circular(10),
                           ),
@@ -1077,7 +1190,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                                     : Icons.transgender,
                             size: 16,
                             color: selected
-                                ? colors.primary
+                                ? selectedIcon
                                 : colors.textSecondary,
                           ),
                         ),
@@ -1092,9 +1205,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                               fontWeight: selected
                                   ? FontWeight.bold
                                   : FontWeight.normal,
-                              color: selected
-                                  ? colors.primary
-                                  : colors.textPrimary,
+                              color: colors.textPrimary,
                             ),
                           ),
                         ),
@@ -1122,9 +1233,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 }
 
-/// Dark floating-label text input in the app's premium design language —
-/// dark surface, hairline border (1.5px primary/danger on focus/error),
-/// tone-coded icon box — instead of the auth screens' always-light fields.
+/// Floating-label text input in the app's premium design language — surface
+/// fill, hairline border, tone-coded icon box.
+///
+/// The focus treatment is deliberately soft: the border and the floating
+/// label ease toward a muted per-theme tone (the primary mixed 60% toward
+/// the neutral text tone) instead of snapping to full-strength blue, so the
+/// fields read premium in both light and dark themes.
 ///
 /// Mirrors FloatingLabelField's motion: the label rests as the placeholder,
 /// then floats up and shrinks to 0.82 on focus/value.
@@ -1207,28 +1322,33 @@ class _ProfileFieldState extends State<_ProfileField>
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
+    // Softened focus tone: full-strength primary is the harsh blue the user
+    // flagged; mixing it 60% toward the neutral text tone keeps the brand
+    // readable in light AND dark without the sharp edge.
+    final focusMix =
+        Color.lerp(palette.textSecondary, palette.primary, 0.6)!;
     return AnimatedBuilder(
       animation: _anim,
       builder: (context, _) {
         final t = _anim.value;
         final borderColor = _hasError
             ? palette.danger
-            : Color.lerp(palette.border, palette.primary, t)!;
+            : Color.lerp(palette.border, focusMix, t)!;
         final labelColor = _hasError
             ? palette.danger
-            : Color.lerp(palette.textSecondary, palette.primary, t)!;
+            : Color.lerp(palette.textSecondary, focusMix, t)!;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              constraints: const BoxConstraints(minHeight: 62),
+              height: 60,
               decoration: BoxDecoration(
                 color: palette.surface,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
                     color: borderColor,
-                    width: (_focused || _hasError) ? 1.5 : 0.5),
+                    width: (_focused || _hasError) ? 1.25 : 0.5),
               ),
               padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(
@@ -1240,10 +1360,10 @@ class _ProfileFieldState extends State<_ProfileField>
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: _hasError
-                          ? palette.danger.withValues(alpha: 0x17 / 0xFF)
+                          ? palette.danger.withValues(alpha: 0x14 / 0xFF)
                           : _focused
                               ? palette.primary
-                                  .withValues(alpha: 0x17 / 0xFF)
+                                  .withValues(alpha: 0x14 / 0xFF)
                               : palette.surfaceAlt,
                       borderRadius: BorderRadius.circular(12),
                     ),
@@ -1253,14 +1373,14 @@ class _ProfileFieldState extends State<_ProfileField>
                       color: _hasError
                           ? palette.danger
                           : _focused
-                              ? palette.primary
+                              ? focusMix
                               : palette.textSecondary,
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: SizedBox(
-                      height: 62,
+                      height: 60,
                       child: Stack(
                         children: [
                           // Floating label — anchored left-center so it never
@@ -1341,6 +1461,7 @@ abstract final class _Strings {
   static String get clickPhotoToChange => AppLanguage.tr(
       'Click On Photo To Change', 'फोटोमा क्लिक गरेर परिवर्तन गर्नुहोस्');
   static String get yourName => AppLanguage.tr('Your Name', 'तपाईंको नाम');
+  static String get camera => AppLanguage.tr('Camera', 'क्यामेरा');
   static String get gallery => AppLanguage.tr('Gallery', 'ग्यालरी');
   static String get remove =>
       AppLanguage.tr('Remove Photo', 'फोटो हटाउनुहोस्');
@@ -1352,6 +1473,9 @@ abstract final class _Strings {
   static String get offlineBlocked => AppLanguage.tr(
       'Connect to the internet to update your profile',
       'प्रोफाइल अपडेट गर्न इन्टरनेटमा जडान गर्नुहोस्');
+  static String get photoNeedsInternet => AppLanguage.tr(
+      'Connect to the internet to upload your photo',
+      'फोटो अपलोड गर्न इन्टरनेटमा जडान गर्नुहोस्');
   static String get firstName => AppLanguage.tr('First Name', 'पहिलो नाम');
   static String get lastName => AppLanguage.tr('Last Name', 'थर');
   static String get emailAddress =>
@@ -1375,6 +1499,11 @@ abstract final class _Strings {
       'प्रोफाइल सेभ भएन। पुनः प्रयास गर्नुहोस्।');
   static String get photoUploaded => AppLanguage.tr(
       'Photo uploaded successfully', 'फोटो सफलतापूर्वक अपलोड भयो');
+  static String get photoUploadedShort =>
+      AppLanguage.tr('Photo uploaded', 'फोटो अपलोड भयो');
+  static String get uploadFailed => AppLanguage.tr(
+      'Photo upload failed. Please try again.',
+      'फोटो अपलोड असफल भयो। पुनः प्रयास गर्नुहोस्।');
   static String get uploadingPhoto =>
       AppLanguage.tr('Uploading your photo...', 'फोटो अपलोड हुँदै...');
   static String get savingProfile =>

@@ -511,8 +511,9 @@ class _ProRingPainter extends CustomPainter {
 // AvatarProgressRing — determinate ring drawn while a photo uploads
 // ---------------------------------------------------------------------------
 
-/// Blue while uploading (driven by real upload-progress events), green once
-/// the upload completes, and a plain themed ring when idle.
+/// Theme-aware determinate ring drawn while a photo uploads: the theme's info
+/// tone while uploading (driven by real upload-progress events), the theme's
+/// success tone once the upload completes, and a plain themed ring when idle.
 enum UploadState { idle, uploading, done }
 
 class AvatarProgressRing extends StatelessWidget {
@@ -524,12 +525,20 @@ class AvatarProgressRing extends StatelessWidget {
   final UploadState state;
   final Widget child;
 
+  /// Overrides the uploading arc colour. Defaults to the theme's info tone.
+  final Color? activeColor;
+
+  /// Overrides the completed arc colour. Defaults to the theme's success tone.
+  final Color? doneColor;
+
   const AvatarProgressRing({
     super.key,
     required this.size,
     required this.progress,
     required this.state,
     required this.child,
+    this.activeColor,
+    this.doneColor,
   });
 
   @override
@@ -550,6 +559,8 @@ class AvatarProgressRing extends StatelessWidget {
               progress: progress,
               state: state,
               trackColor: palette.border,
+              activeColor: activeColor ?? palette.info,
+              doneColor: doneColor ?? palette.success,
             ),
           ),
           child,
@@ -563,20 +574,22 @@ class _UploadRingPainter extends CustomPainter {
   final double progress;
   final UploadState state;
   final Color trackColor;
+  final Color activeColor;
+  final Color doneColor;
 
   const _UploadRingPainter({
     required this.progress,
     required this.state,
     required this.trackColor,
+    required this.activeColor,
+    required this.doneColor,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     const stroke = 4.0;
     final showRing = state != UploadState.idle;
-    final activeColor = state == UploadState.done
-        ? const Color(0xFF22C55E)
-        : const Color(0xFF2563EB);
+    final ringColor = state == UploadState.done ? doneColor : activeColor;
     final center = Offset(size.width / 2, size.height / 2);
     final radius = (size.width - stroke) / 2;
     final rect = Rect.fromCircle(center: center, radius: radius);
@@ -586,7 +599,7 @@ class _UploadRingPainter extends CustomPainter {
       2 * math.pi,
       false,
       Paint()
-        ..color = showRing ? activeColor.withValues(alpha: 0.2) : trackColor
+        ..color = showRing ? ringColor.withValues(alpha: 0.2) : trackColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke,
     );
@@ -602,7 +615,7 @@ class _UploadRingPainter extends CustomPainter {
         2 * math.pi * clamped,
         false,
         Paint()
-          ..color = activeColor
+          ..color = ringColor
           ..style = PaintingStyle.stroke
           ..strokeWidth = stroke
           ..strokeCap = StrokeCap.round,
@@ -614,7 +627,9 @@ class _UploadRingPainter extends CustomPainter {
   bool shouldRepaint(covariant _UploadRingPainter oldDelegate) =>
       oldDelegate.progress != progress ||
       oldDelegate.state != state ||
-      oldDelegate.trackColor != trackColor;
+      oldDelegate.trackColor != trackColor ||
+      oldDelegate.activeColor != activeColor ||
+      oldDelegate.doneColor != doneColor;
 }
 
 // ---------------------------------------------------------------------------

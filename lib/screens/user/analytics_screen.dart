@@ -13,6 +13,7 @@ import 'package:loksewa_solution/services/analytics/analytics_types.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_hero.dart';
 import 'package:loksewa_solution/widgets/analytics/analytics_shared.dart';
@@ -669,6 +670,15 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
 
     final sections = <Widget>[
       // ---------- 2. Hero ----------
+      // The ring shows the SAME stored coverage percent as the profile
+      // stats card (document.percent == the leaderboard aggregate's
+      // percent, written by recordAnalyticsSnapshot as score.percent) —
+      // NOT summary.accuracy. The old value was the newest analytics
+      // day-bucket's pc: a different document, a different pipeline, and
+      // a hybrid metric (coverage for fresh buckets, weighted correctness
+      // for seeded backfill days), so the two rings could never agree.
+      // displayCoveragePercent keeps the sub-10% one-decimal formatting
+      // the profile card uses, so tiny values match there too.
       AnalyticsHero(
         courseName: _identity?.courseName.isNotEmpty == true
             ? _identity!.courseName
@@ -677,7 +687,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
             (_identity?.subcourseName.isNotEmpty == true
                 ? _identity!.subcourseName
                 : AnalyticsStrings.pickerUnnamed),
-        percent: summary.accuracy,
+        percent: displayCoveragePercent(document.percent),
         points: summary.totalPoints.round(),
         streak: streak.current,
         activeDays: summary.activeDays,

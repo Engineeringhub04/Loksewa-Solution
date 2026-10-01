@@ -31,7 +31,9 @@ class AnalyticsHero extends StatelessWidget {
   final String courseName;
   final String subcourseName;
 
-  /// 0..100 — the weighted score the leaderboard ranks on.
+  /// 0..100 — the stored coverage percent, the SAME value the profile stats
+  /// card's ring shows (already through displayCoveragePercent, so sub-10%
+  /// values may carry one decimal).
   final double percent;
   final int points;
 
@@ -310,6 +312,12 @@ class _StripDivider extends StatelessWidget {
   }
 }
 
+/// Matches the profile stats card's ring label: whole numbers print whole,
+/// sub-10% values keep one decimal (displayCoveragePercent's contract).
+String _percentLabel(double percent) => percent == percent.roundToDouble()
+    ? '${percent.round()}%'
+    : '${percent.toStringAsFixed(1)}%';
+
 /// A local ring rather than a shared progress-ring widget: the track and label
 /// colours are fixed white-on-blue, which a theme-driven component cannot do.
 ///
@@ -344,7 +352,9 @@ class _HeroRing extends StatelessWidget {
                 painter: _RingPainter(progress: ratio * progress),
               ),
               Text(
-                '${(ratio * 100).round()}%',
+                // Same label rule as the profile stats card: whole numbers
+                // stay whole, sub-10% values keep one decimal.
+                _percentLabel(ratio * 100),
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,

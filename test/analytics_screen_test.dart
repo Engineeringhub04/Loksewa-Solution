@@ -151,7 +151,7 @@ AnalyticsScreen _screen({
 
 void main() {
   group('AnalyticsScreen', () {
-    testWidgets('hero shows accuracy, points and course names',
+    testWidgets('hero shows the stored coverage percent, points and course names',
         (tester) async {
       await _pumpScreen(tester, _screen());
 

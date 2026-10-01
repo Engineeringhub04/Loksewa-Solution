@@ -86,4 +86,107 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('hello'), findsOneWidget);
   });
+
+  testWidgets('mini card accent spine is clipped to the card radius',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            child: DailyTestMiniCard(
+              model: _model(),
+              slot: DailyTestSlot.missed,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    // The 4px verdict spine with rounded outer corners…
+    final spines = find.byWidgetPredicate((w) =>
+        w is Container &&
+        w.constraints?.maxWidth == 4.0 &&
+        w.decoration is BoxDecoration &&
+        (w.decoration as BoxDecoration).borderRadius ==
+            const BorderRadius.only(
+              topLeft: Radius.circular(12),
+              bottomLeft: Radius.circular(12),
+            ));
+    expect(spines, findsOneWidget);
+    // …must sit under a ClipRRect cut to the card's radius (React clips the
+    // card with overflow: hidden), so the spine's square inner corners can't
+    // poke past the rounded card corners.
+    var clipped = false;
+    spines.evaluate().single.visitAncestorElements((ancestor) {
+      final widget = ancestor.widget;
+      if (widget is ClipRRect &&
+          widget.borderRadius == BorderRadius.circular(12)) {
+        clipped = true;
+        return false;
+      }
+      return true;
+    });
+    expect(clipped, isTrue,
+        reason: 'mini card spine is not clipped to the card radius');
+  });
+
+  testWidgets('history card accent spine is clipped to the card radius',
+      (tester) async {
+    final activity = DailyTestActivity(
+      id: 'a1',
+      modelId: 'm1',
+      modelName: 'Model 1 — Warm Up',
+      score: 80,
+      totalQuestions: 5,
+      correct: 4,
+      incorrect: 1,
+      skipped: 0,
+      timeTakenSeconds: 200,
+      completedAt: DateTime(2026, 9, 29, 10).millisecondsSinceEpoch,
+      passed: true,
+      passPercent: 40,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 360,
+            child: DailyTestHistoryCard(activity: activity),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+
+    // The 4px verdict spine with rounded outer corners…
+    final spines = find.byWidgetPredicate((w) =>
+        w is Container &&
+        w.constraints?.maxWidth == 4.0 &&
+        w.decoration is BoxDecoration &&
+        (w.decoration as BoxDecoration).borderRadius ==
+            const BorderRadius.only(
+              topLeft: Radius.circular(16),
+              bottomLeft: Radius.circular(16),
+            ));
+    expect(spines, findsOneWidget);
+    // …must sit under a ClipRRect cut to the card's radius (React clips the
+    // card with overflow: hidden), so the spine's square inner corners can't
+    // poke past the rounded card corners.
+    var clipped = false;
+    spines.evaluate().single.visitAncestorElements((ancestor) {
+      final widget = ancestor.widget;
+      if (widget is ClipRRect &&
+          widget.borderRadius == BorderRadius.circular(16)) {
+        clipped = true;
+        return false;
+      }
+      return true;
+    });
+    expect(clipped, isTrue,
+        reason: 'history card spine is not clipped to the card radius');
+  });
 }

@@ -81,8 +81,7 @@ class DailyTestCategoryMeta {
 DailyTestCategoryMeta dailyTestCategoryMeta(String category) {
   switch (category.toLowerCase()) {
     case 'easy':
-      return const DailyTestCategoryMeta(
-          'Easy', Color(0xFF86EFAC), Icons.eco);
+      return const DailyTestCategoryMeta('Easy', Color(0xFF86EFAC), Icons.eco);
     case 'hard':
       return const DailyTestCategoryMeta(
           'Hard', Color(0xFFFCA5A5), Icons.warning_amber_rounded);
@@ -155,10 +154,9 @@ class DailyTestCard extends StatelessWidget {
             _MetaChip(Icons.notifications_outlined, 'Unlocks at 12:00 AM'),
           ]
         : [
+            _MetaChip(Icons.help_outline, '${model.questions.length} Qs'),
             _MetaChip(
-                Icons.help_outline, '${model.questions.length} Qs'),
-            _MetaChip(Icons.timer_outlined,
-                '${model.perQuestionTimeSeconds}s / Q'),
+                Icons.timer_outlined, '${model.perQuestionTimeSeconds}s / Q'),
             _MetaChip(Icons.hourglass_empty,
                 formatDailyTestDuration(totalTestSeconds(model))),
             _MetaChip(
@@ -326,14 +324,13 @@ class DailyTestCard extends StatelessWidget {
                               children: [
                                 Icon(m.icon,
                                     size: 13,
-                                    color: Colors.white
-                                        .withValues(alpha: 0.82)),
+                                    color:
+                                        Colors.white.withValues(alpha: 0.82)),
                                 const SizedBox(width: 5),
                                 Text(
                                   m.label,
                                   style: TextStyle(
-                                    color: Colors.white
-                                        .withValues(alpha: 0.82),
+                                    color: Colors.white.withValues(alpha: 0.82),
                                     fontSize: 11,
                                   ),
                                 ),
@@ -375,11 +372,9 @@ class DailyTestCard extends StatelessWidget {
                             elevation: 0,
                             side: cta.muted
                                 ? const BorderSide(
-                                    color:
-                                        Color.fromRGBO(255, 255, 255, 0.5))
+                                    color: Color.fromRGBO(255, 255, 255, 0.5))
                                 : BorderSide.none,
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 14),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(16)),
                           ),
@@ -605,8 +600,7 @@ class _LivePillState extends State<_LivePill> {
           color: widget.bg,
           borderRadius: BorderRadius.circular(999),
           boxShadow: const [
-            BoxShadow(
-                color: Color(0xFFEF4444), blurRadius: 8, spreadRadius: 1)
+            BoxShadow(color: Color(0xFFEF4444), blurRadius: 8, spreadRadius: 1)
           ],
         ),
         child: Row(
@@ -665,9 +659,7 @@ class _Eyebrow extends StatelessWidget {
               size: 11, color: Color.fromRGBO(255, 255, 255, 0.72)),
           Text(dateLabel, style: style),
         ],
-        if (indexInDay != null &&
-            totalInDay != null &&
-            totalInDay! > 1) ...[
+        if (indexInDay != null && totalInDay != null && totalInDay! > 1) ...[
           Container(
               width: 3,
               height: 3,
@@ -737,12 +729,9 @@ class DailyTestMiniCard extends StatelessWidget {
             : formatDateKeyShort(model.testDate))
         : '';
 
-    final surface =
-        isDark ? const Color(0xFF151D2E) : Colors.white;
-    final border =
-        isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
-    final disabled =
-        isDark ? const Color(0xFF64748B) : const Color(0xFF9CA3AF);
+    final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
+    final border = isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
+    final disabled = isDark ? const Color(0xFF64748B) : const Color(0xFF9CA3AF);
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
 
@@ -756,123 +745,127 @@ class DailyTestMiniCard extends StatelessWidget {
           border: Border.all(color: border),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Stack(
-          children: [
-            Positioned(
-              left: -14,
-              top: 0,
-              bottom: 0,
-              child: Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: tone,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    bottomLeft: Radius.circular(12),
+        // Clip the accent spine to the card's curve (React: overflow hidden
+        // on the card) — the spine's square inner corners would otherwise
+        // poke past the rounded corners.
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: Stack(
+            children: [
+              Positioned(
+                left: -14,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: tone,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(12),
+                      bottomLeft: Radius.circular(12),
+                    ),
                   ),
                 ),
               ),
-            ),
-            Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: tone.withValues(alpha: 0.09),
-                    borderRadius: BorderRadius.circular(12),
+              Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: tone.withValues(alpha: 0.09),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, size: 17, color: tone),
                   ),
-                  child: Icon(icon, size: 17, color: tone),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Text(label.toUpperCase(),
-                              style: TextStyle(
-                                  color: tone,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700)),
-                          if (dateLabel.isNotEmpty) ...[
-                            Container(
-                                width: 3,
-                                height: 3,
-                                margin:
-                                    const EdgeInsets.symmetric(horizontal: 5),
-                                decoration: BoxDecoration(
-                                    color: disabled,
-                                    shape: BoxShape.circle)),
-                            Text(dateLabel,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(label.toUpperCase(),
                                 style: TextStyle(
-                                    color: secondary, fontSize: 11)),
+                                    color: tone,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700)),
+                            if (dateLabel.isNotEmpty) ...[
+                              Container(
+                                  width: 3,
+                                  height: 3,
+                                  margin:
+                                      const EdgeInsets.symmetric(horizontal: 5),
+                                  decoration: BoxDecoration(
+                                      color: disabled, shape: BoxShape.circle)),
+                              Text(dateLabel,
+                                  style: TextStyle(
+                                      color: secondary, fontSize: 11)),
+                            ],
                           ],
-                        ],
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        model.modelName.isNotEmpty
-                            ? model.modelName
-                            : model.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 1),
-                      Wrap(
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 5,
-                        children: [
-                          Text('${model.questions.length} Qs',
-                              style: TextStyle(
-                                  color: secondary, fontSize: 11)),
-                          Container(
-                              width: 3,
-                              height: 3,
-                              decoration: BoxDecoration(
-                                  color: disabled, shape: BoxShape.circle)),
-                          Text('Pass ${model.passPercent}%',
-                              style: TextStyle(
-                                  color: secondary, fontSize: 11)),
-                          if (model.isPro) ...[
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          model.modelName.isNotEmpty
+                              ? model.modelName
+                              : model.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              fontSize: 12, fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 1),
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 5,
+                          children: [
+                            Text('${model.questions.length} Qs',
+                                style:
+                                    TextStyle(color: secondary, fontSize: 11)),
                             Container(
                                 width: 3,
                                 height: 3,
                                 decoration: BoxDecoration(
-                                    color: disabled,
-                                    shape: BoxShape.circle)),
-                            Text(
-                              hasPremiumAccess
-                                  ? 'Premium · active'
-                                  : 'Premium',
-                              style: TextStyle(
-                                  color: hasPremiumAccess
-                                      ? const Color(0xFF16A34A)
-                                      : const Color(0xFFC2410C),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700),
-                            ),
+                                    color: disabled, shape: BoxShape.circle)),
+                            Text('Pass ${model.passPercent}%',
+                                style:
+                                    TextStyle(color: secondary, fontSize: 11)),
+                            if (model.isPro) ...[
+                              Container(
+                                  width: 3,
+                                  height: 3,
+                                  decoration: BoxDecoration(
+                                      color: disabled, shape: BoxShape.circle)),
+                              Text(
+                                hasPremiumAccess
+                                    ? 'Premium · active'
+                                    : 'Premium',
+                                style: TextStyle(
+                                    color: hasPremiumAccess
+                                        ? const Color(0xFF16A34A)
+                                        : const Color(0xFFC2410C),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
-                    ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                // One trailing signal only: the score if there is one,
-                // otherwise why the row cannot be opened, otherwise "go".
-                _trailing(
-                    completed: completed,
-                    scorePercent: scorePercent,
-                    locked: locked,
-                    slot: slot,
-                    secondary: secondary),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  // One trailing signal only: the score if there is one,
+                  // otherwise why the row cannot be opened, otherwise "go".
+                  _trailing(
+                      completed: completed,
+                      scorePercent: scorePercent,
+                      locked: locked,
+                      slot: slot,
+                      secondary: secondary),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -900,8 +893,7 @@ class DailyTestMiniCard extends StatelessWidget {
       );
     }
     if (locked) {
-      return const Icon(Icons.diamond,
-          size: 16, color: Color(0xFFC2410C));
+      return const Icon(Icons.diamond, size: 16, color: Color(0xFFC2410C));
     }
     if (slot == DailyTestSlot.missed) {
       return Icon(Icons.lock, size: 15, color: secondary);
@@ -924,15 +916,13 @@ Future<bool> showDailyTestRulesDialog(
   final isDark = Theme.of(context).brightness == Brightness.dark;
   final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
   final text = isDark ? Colors.white : const Color(0xFF0F172A);
-  final secondary =
-      isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
-  final chipBg =
-      isDark ? const Color(0xFF1E293B) : const Color(0xFFEFF6FF);
+  final secondary = isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
+  final chipBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFEFF6FF);
 
   final chips = [
     _RuleChip(Icons.help_outline, '${model.questions.length} questions'),
-    _RuleChip(Icons.timer_outlined,
-        '${model.perQuestionTimeSeconds}s / question'),
+    _RuleChip(
+        Icons.timer_outlined, '${model.perQuestionTimeSeconds}s / question'),
     _RuleChip(Icons.hourglass_empty,
         formatDailyTestDuration(totalTestSeconds(model))),
     _RuleChip(
@@ -948,8 +938,7 @@ Future<bool> showDailyTestRulesDialog(
     context: context,
     barrierDismissible: false,
     builder: (ctx) => Dialog(
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       backgroundColor: surface,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxHeight: 560),
@@ -965,8 +954,7 @@ Future<bool> showDailyTestRulesDialog(
                     width: 40,
                     height: 40,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB)
-                          .withValues(alpha: 0.12),
+                      color: const Color(0xFF2563EB).withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(Icons.rule,
@@ -1017,8 +1005,7 @@ Future<bool> showDailyTestRulesDialog(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(c.icon,
-                                  size: 13,
-                                  color: const Color(0xFF2563EB)),
+                                  size: 13, color: const Color(0xFF2563EB)),
                               const SizedBox(width: 6),
                               Text(c.label,
                                   style: TextStyle(
@@ -1037,17 +1024,14 @@ Future<bool> showDailyTestRulesDialog(
                     children: [
                       for (var i = 0; i < rules.length; i++)
                         Padding(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 6),
+                          padding: const EdgeInsets.symmetric(vertical: 6),
                           child: Row(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Container(
                                 width: 24,
                                 height: 24,
-                                margin:
-                                    const EdgeInsets.only(top: 1),
+                                margin: const EdgeInsets.only(top: 1),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF2563EB)
                                       .withValues(alpha: 0.12),
@@ -1082,11 +1066,9 @@ Future<bool> showDailyTestRulesDialog(
                     child: OutlinedButton(
                       onPressed: () => Navigator.of(ctx).pop(false),
                       style: OutlinedButton.styleFrom(
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 13),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(12)),
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                       child: const Text('Cancel'),
                     ),
@@ -1103,11 +1085,9 @@ Future<bool> showDailyTestRulesDialog(
                               fontWeight: FontWeight.w700)),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2563EB),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 13),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
                         shape: RoundedRectangleBorder(
-                            borderRadius:
-                                BorderRadius.circular(12)),
+                            borderRadius: BorderRadius.circular(12)),
                       ),
                     ),
                   ),
@@ -1176,8 +1156,7 @@ class _DailyTestNoTestStripState extends State<DailyTestNoTestStrip> {
   @override
   void initState() {
     super.initState();
-    _targetMs =
-        dailyTestDateFromKey(widget.nextDateKey).millisecondsSinceEpoch;
+    _targetMs = dailyTestDateFromKey(widget.nextDateKey).millisecondsSinceEpoch;
     _arm();
   }
 
@@ -1221,9 +1200,7 @@ class _DailyTestNoTestStripState extends State<DailyTestNoTestStrip> {
         color: isDark ? const Color(0xFF151D2E) : Colors.white,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-            color: isDark
-                ? const Color(0xFF26314B)
-                : const Color(0xFFE5E7EB)),
+            color: isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB)),
       ),
       child: Row(
         children: [
@@ -1244,8 +1221,7 @@ class _DailyTestNoTestStripState extends State<DailyTestNoTestStrip> {
               children: [
                 const Text(
                   'No test today',
-                  style:
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 1),
                 Text(
@@ -1262,11 +1238,9 @@ class _DailyTestNoTestStripState extends State<DailyTestNoTestStrip> {
             ),
           ),
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
             decoration: BoxDecoration(
-              color:
-                  const Color(0xFF2563EB).withValues(alpha: 0.1),
+              color: const Color(0xFF2563EB).withValues(alpha: 0.1),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
@@ -1291,22 +1265,18 @@ class DailyTestHistoryCard extends StatelessWidget {
   final DailyTestActivity activity;
   final VoidCallback? onTap;
 
-  const DailyTestHistoryCard(
-      {super.key, required this.activity, this.onTap});
+  const DailyTestHistoryCard({super.key, required this.activity, this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final passed = activity.isPassed;
-    final accent =
-        passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    final accent = passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
     final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
-    final border =
-        isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
+    final border = isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB);
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
-    final pillBg =
-        isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
+    final pillBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
     const correctGreen = Color(0xFF16A34A);
     const wrongRed = Color(0xFFDC2626);
 
@@ -1320,117 +1290,119 @@ class DailyTestHistoryCard extends StatelessWidget {
           border: Border.all(color: border),
           borderRadius: BorderRadius.circular(16),
         ),
-        child: Stack(
-          children: [
-            Positioned(
-              left: -14,
-              top: 0,
-              bottom: 0,
-              child: Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: accent,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(16),
-                    bottomLeft: Radius.circular(16),
+        // Clip the accent spine to the card's curve (React: overflow hidden
+        // on the card) — the spine's square inner corners would otherwise
+        // poke past the rounded corners.
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            children: [
+              Positioned(
+                left: -14,
+                top: 0,
+                bottom: 0,
+                child: Container(
+                  width: 4,
+                  decoration: BoxDecoration(
+                    color: accent,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(16),
+                      bottomLeft: Radius.circular(16),
+                    ),
                   ),
                 ),
               ),
-            ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Head: title + relative date under it, score ring at the end.
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            activity.modelName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 15,
-                                fontWeight: FontWeight.w700),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(_formatWhen(activity.completedAt),
-                              style: TextStyle(
-                                  color: secondary, fontSize: 12)),
-                        ],
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Head: title + relative date under it, score ring at the end.
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              activity.modelName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(_formatWhen(activity.completedAt),
+                                style:
+                                    TextStyle(color: secondary, fontSize: 12)),
+                          ],
+                        ),
                       ),
-                    ),
-                    _Ring(percent: activity.score, accent: accent),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Pills: verdict + question count + pass mark.
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: [
-                    _pill(
-                      icon: passed
-                          ? Icons.emoji_events
-                          : Icons.refresh,
-                      label: passed ? 'PASSED' : 'FAILED',
-                      color: accent,
-                      bg: accent.withValues(alpha: 0.09),
-                    ),
-                    _pill(
-                      icon: Icons.layers_outlined,
-                      label: '${activity.totalQuestions} questions',
-                      color: secondary,
-                      bg: pillBg,
-                    ),
-                    if (activity.passPercent != null)
+                      _Ring(percent: activity.score, accent: accent),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Pills: verdict + question count + pass mark.
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
                       _pill(
-                        icon: Icons.flag_outlined,
-                        label: 'Pass ${activity.passPercent}%',
+                        icon: passed ? Icons.emoji_events : Icons.refresh,
+                        label: passed ? 'PASSED' : 'FAILED',
+                        color: accent,
+                        bg: accent.withValues(alpha: 0.09),
+                      ),
+                      _pill(
+                        icon: Icons.layers_outlined,
+                        label: '${activity.totalQuestions} questions',
                         color: secondary,
                         bg: pillBg,
                       ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  height: 1,
-                  color: isDark
-                      ? const Color(0xFF26314B)
-                      : const Color(0xFFF1F5F9),
-                ),
-                const SizedBox(height: 10),
-                // Detail tags with colored icons, chevron at the end.
-                Row(
-                  children: [
-                    Expanded(
-                      child: Wrap(
-                        spacing: 12,
-                        runSpacing: 6,
-                        children: [
-                          _tag(Icons.check_circle,
-                              '${activity.correct} correct', correctGreen),
-                          _tag(Icons.cancel,
-                              '${activity.incorrect} wrong', wrongRed),
-                          _tag(Icons.help,
-                              '${activity.skipped} skipped', secondary),
-                          _tag(
-                              Icons.access_time,
-                              formatDailyTestDuration(
-                                  activity.timeTakenSeconds),
-                              secondary),
-                        ],
+                      if (activity.passPercent != null)
+                        _pill(
+                          icon: Icons.flag_outlined,
+                          label: 'Pass ${activity.passPercent}%',
+                          color: secondary,
+                          bg: pillBg,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    height: 1,
+                    color: isDark
+                        ? const Color(0xFF26314B)
+                        : const Color(0xFFF1F5F9),
+                  ),
+                  const SizedBox(height: 10),
+                  // Detail tags with colored icons, chevron at the end.
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Wrap(
+                          spacing: 12,
+                          runSpacing: 6,
+                          children: [
+                            _tag(Icons.check_circle,
+                                '${activity.correct} correct', correctGreen),
+                            _tag(Icons.cancel, '${activity.incorrect} wrong',
+                                wrongRed),
+                            _tag(Icons.help, '${activity.skipped} skipped',
+                                secondary),
+                            _tag(
+                                Icons.access_time,
+                                formatDailyTestDuration(
+                                    activity.timeTakenSeconds),
+                                secondary),
+                          ],
+                        ),
                       ),
-                    ),
-                    Icon(Icons.chevron_right,
-                        size: 16, color: secondary),
-                  ],
-                ),
-              ],
-            ),
-          ],
+                      Icon(Icons.chevron_right, size: 16, color: secondary),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1445,13 +1417,11 @@ class DailyTestHistoryCard extends StatelessWidget {
     final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
     final mm = d.minute.toString().padLeft(2, '0');
     final time = '$h12:$mm ${d.hour < 12 ? 'AM' : 'PM'}';
-    final sameDay = d.year == now.year &&
-        d.month == now.month &&
-        d.day == now.day;
+    final sameDay =
+        d.year == now.year && d.month == now.month && d.day == now.day;
     if (sameDay) return 'Today, $time';
     final y = now.subtract(const Duration(days: 1));
-    final yesterday =
-        d.year == y.year && d.month == y.month && d.day == y.day;
+    final yesterday = d.year == y.year && d.month == y.month && d.day == y.day;
     if (yesterday) return 'Yesterday, $time';
     return '${d.day} ${_monthName(d.month)} ${d.year}';
   }
@@ -1462,8 +1432,7 @@ class DailyTestHistoryCard extends StatelessWidget {
           required Color color,
           required Color bg}) =>
       Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(999),
@@ -1475,9 +1444,7 @@ class DailyTestHistoryCard extends StatelessWidget {
             const SizedBox(width: 5),
             Text(label,
                 style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700)),
+                    color: color, fontSize: 11, fontWeight: FontWeight.w700)),
           ],
         ),
       );
@@ -1528,9 +1495,8 @@ class _Ring extends StatelessWidget {
             child: CircularProgressIndicator(
               value: (percent.clamp(0, 100)) / 100,
               strokeWidth: 6,
-              backgroundColor: isDark
-                  ? const Color(0xFF26314B)
-                  : const Color(0xFFE5E7EB),
+              backgroundColor:
+                  isDark ? const Color(0xFF26314B) : const Color(0xFFE5E7EB),
               valueColor: AlwaysStoppedAnimation(accent),
             ),
           ),

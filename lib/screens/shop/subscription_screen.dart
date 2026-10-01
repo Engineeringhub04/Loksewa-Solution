@@ -8,7 +8,9 @@
 // stored features render in a trailing "extras" group), a yearly savings
 // percentage computed from the live plans, the free plan card wearing the
 // "Your Free Services" pill (it never claims "Currently Active"), and a
-// "We Accept" payment-methods section with brand logos.
+// "We Accept" payment-methods section with the brand logos rendered as a
+// subtle watermark (no boxes) — plus a memory-only precache of those logos
+// during the page's preloading phase.
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -22,8 +24,9 @@ import '../../widgets/status_pill.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Brand logos — brand marks drawn for a light background, so they sit on a
-/// fixed white chip in both themes.
+/// Brand logos — brand marks drawn for a light background, shown as a
+/// subtle watermark (reduced opacity, no chips or boxes) directly on the
+/// page surface in both themes.
 const List<String> _paymentLogos = [
   'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png',
   'https://i.ibb.co/tMHZRHKQ/Khalti-Logo-New-3.png',
@@ -52,6 +55,27 @@ class SubscriptionScreen extends StatefulWidget {
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
   late Future<SubscriptionScreenData> _future = _load();
 
+  /// Session guard for the logo warmup below: the payment logos live in
+  /// Flutter's in-memory ImageCache only — never on disk — so a cold
+  /// start needs exactly one warmup and a reopened page renders them
+  /// instantly for the rest of the session.
+  static bool _logosPrecached = false;
+
+  /// Warms the in-memory logo cache while the preloading phase is on
+  /// screen. Runs once per app run; on an already-warm cache,
+  /// [precacheImage] is a cheap no-op anyway.
+  void _warmLogoCache(BuildContext context) {
+    if (_logosPrecached) return;
+    _logosPrecached = true;
+    for (final uri in _paymentLogos) {
+      // Swallow load failures — the section's errorBuilder covers them.
+      // Passing onError keeps a failed precache from being reported to
+      // FlutterError (which would trip widget tests that hold the page's
+      // loader open).
+      precacheImage(NetworkImage(uri), context, onError: (_, __) {});
+    }
+  }
+
   Future<SubscriptionScreenData> _load() async {
     if (widget.loader != null) return widget.loader!();
     final uid = AuthService.currentUser?.uid;
@@ -78,13 +102,15 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
       body: Column(
         children: [
           SubpageHeader(
-              title: AppLanguage.tr(
-                  'Subscription Details', 'सदस्यता विवरण')),
+              title: AppLanguage.tr('Subscription Details', 'सदस्यता विवरण')),
           Expanded(
             child: FutureBuilder<SubscriptionScreenData>(
               future: _future,
               builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
+                  // In-memory-only logo warmup: runs during this page's
+                  // preloading phase, once per app run.
+                  _warmLogoCache(context);
                   return PreloadingWidget(
                     tinted: false,
                     label: AppLanguage.tr(
@@ -95,11 +121,11 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 }
                 if (snap.hasError) {
                   return _LoadError(
-                      onRetry: () {
-                        setState(() {
-                          _future = _load();
-                        });
-                      },
+                    onRetry: () {
+                      setState(() {
+                        _future = _load();
+                      });
+                    },
                   );
                 }
                 final data = snap.data!;
@@ -173,8 +199,8 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                                   plan.billingCycle == BillingCycle.yearly
                                       ? savePercent
                                       : null,
-                              onSubscribe: () => context.push(
-                                  '/checkout?planId=${plan.id}'),
+                              onSubscribe: () =>
+                                  context.push('/checkout?planId=${plan.id}'),
                             ),
                           ),
                         );
@@ -209,8 +235,7 @@ class _LoadError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_outlined,
-                size: 44, color: pal.textDisabled),
+            Icon(Icons.cloud_off_outlined, size: 44, color: pal.textDisabled),
             const SizedBox(height: ExpoSpacing.sm),
             Text(
               AppLanguage.tr('Could not load subscription details.',
@@ -221,8 +246,7 @@ class _LoadError extends StatelessWidget {
             const SizedBox(height: ExpoSpacing.md),
             OutlinedButton(
               onPressed: onRetry,
-              child: Text(
-                  AppLanguage.tr('Try again', 'पुनः प्रयास गर्नुहोस्')),
+              child: Text(AppLanguage.tr('Try again', 'पुनः प्रयास गर्नुहोस्')),
             ),
           ],
         ),
@@ -307,15 +331,13 @@ class _PlanStatusHero extends StatelessWidget {
                               fontSize: ExpoType.overline,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.2,
-                              color: _onGradient.withValues(
-                                  alpha: 0x9E / 0xFF),
+                              color: _onGradient.withValues(alpha: 0x9E / 0xFF),
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             record?.planName ??
-                                AppLanguage.tr(
-                                    'Free Plan', 'निःशुल्क योजना'),
+                                AppLanguage.tr('Free Plan', 'निःशुल्क योजना'),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
@@ -499,8 +521,8 @@ class _RequestsSection extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(Icons.receipt_long_outlined,
-                      size: 18, color: tone),
+                  child:
+                      Icon(Icons.receipt_long_outlined, size: 18, color: tone),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -508,8 +530,7 @@ class _RequestsSection extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        AppLanguage.tr(
-                            'Your Requests', 'तपाईंका अनुरोधहरू'),
+                        AppLanguage.tr('Your Requests', 'तपाईंका अनुरोधहरू'),
                         style: const TextStyle(
                             fontSize: ExpoType.body,
                             fontWeight: FontWeight.bold),
@@ -573,13 +594,12 @@ class _RequestRow extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: tone.withValues(alpha: 0x1F / 0xFF),
                     border: Border.all(
-                        color: tone.withValues(alpha: 0x33 / 0xFF),
-                        width: 0.5),
+                        color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
                     borderRadius: BorderRadius.circular(ExpoRadius.md),
                   ),
                   alignment: Alignment.center,
-                  child: Icon(_statusIcon(record.status),
-                      size: 18, color: tone),
+                  child:
+                      Icon(_statusIcon(record.status), size: 18, color: tone),
                 ),
                 const SizedBox(width: 11),
                 Expanded(
@@ -602,13 +622,11 @@ class _RequestRow extends StatelessWidget {
                             color: pal.textSecondary),
                       ),
                       const SizedBox(height: 4),
-                      StatusPill(
-                          label: _statusTag(record.status), color: tone),
+                      StatusPill(label: _statusTag(record.status), color: tone),
                     ],
                   ),
                 ),
-                Icon(Icons.chevron_right,
-                    size: 18, color: pal.textDisabled),
+                Icon(Icons.chevron_right, size: 18, color: pal.textDisabled),
               ],
             ),
             if (record.status == SubscriptionStatus.rejected &&
@@ -688,8 +706,7 @@ class _FeatureRow extends StatelessWidget {
               row.label,
               style: TextStyle(
                 fontSize: ExpoType.body,
-                fontWeight:
-                    row.included ? FontWeight.w500 : FontWeight.normal,
+                fontWeight: row.included ? FontWeight.w500 : FontWeight.normal,
                 color: row.included ? pal.textPrimary : pal.textDisabled,
               ),
             ),
@@ -799,8 +816,7 @@ class _PlanCard extends StatelessWidget {
     final isFree = plan.billingCycle == BillingCycle.free;
     final isYearly = plan.billingCycle == BillingCycle.yearly;
     final gradient = _planGradient(plan);
-    final matrix =
-        buildFeatureMatrix(plan.features, AppLanguage.isNepali);
+    final matrix = buildFeatureMatrix(plan.features, AppLanguage.isNepali);
     final included = matrix.fold<int>(0, (s, g) => s + g.includedCount);
     final total = matrix.fold<int>(0, (s, g) => s + g.rows.length);
     final priceSuffix = plan.billingCycle == BillingCycle.monthly
@@ -885,8 +901,7 @@ class _PlanCard extends StatelessWidget {
                                 '$total मध्ये $included सुविधा'),
                             style: TextStyle(
                               fontSize: ExpoType.caption,
-                              color: _onGradient.withValues(
-                                  alpha: 0x9E / 0xFF),
+                              color: _onGradient.withValues(alpha: 0x9E / 0xFF),
                             ),
                           ),
                         ],
@@ -895,8 +910,7 @@ class _PlanCard extends StatelessWidget {
                     if (isYearly)
                       _CrownBadge(
                           icon: Icons.star,
-                          label: AppLanguage.tr(
-                              'Best Value', 'उत्तम मूल्य'))
+                          label: AppLanguage.tr('Best Value', 'उत्तम मूल्य'))
                     else if (!isFree)
                       _CrownBadge(
                           icon: Icons.local_fire_department_outlined,
@@ -928,8 +942,7 @@ class _PlanCard extends StatelessWidget {
                           priceSuffix,
                           style: TextStyle(
                             fontSize: ExpoType.body,
-                            color: _onGradient.withValues(
-                                alpha: 0xE0 / 0xFF),
+                            color: _onGradient.withValues(alpha: 0xE0 / 0xFF),
                           ),
                         ),
                       ),
@@ -941,12 +954,12 @@ class _PlanCard extends StatelessWidget {
                               horizontal: 9, vertical: 3),
                           decoration: BoxDecoration(
                             color: const Color(0xFFFBBF24),
-                            borderRadius: BorderRadius.circular(
-                                ExpoRadius.pill),
+                            borderRadius:
+                                BorderRadius.circular(ExpoRadius.pill),
                           ),
                           child: Text(
-                            AppLanguage.tr('Save $savePercent%',
-                                '$savePercent% बचत'),
+                            AppLanguage.tr(
+                                'Save $savePercent%', '$savePercent% बचत'),
                             style: const TextStyle(
                               fontSize: ExpoType.caption,
                               fontWeight: FontWeight.bold,
@@ -960,12 +973,10 @@ class _PlanCard extends StatelessWidget {
                 // Progress of the matrix, drawn on the crown.
                 const SizedBox(height: ExpoSpacing.md),
                 ClipRRect(
-                  borderRadius:
-                      BorderRadius.circular(ExpoRadius.pill),
+                  borderRadius: BorderRadius.circular(ExpoRadius.pill),
                   child: Container(
                     height: 5,
-                    color:
-                        _onGradient.withValues(alpha: 0x38 / 0xFF),
+                    color: _onGradient.withValues(alpha: 0x38 / 0xFF),
                     child: FractionallySizedBox(
                       alignment: Alignment.centerLeft,
                       widthFactor: total > 0 ? included / total : 0,
@@ -983,8 +994,7 @@ class _PlanCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 ...matrix.map((group) => Padding(
-                      padding:
-                          const EdgeInsets.only(bottom: ExpoSpacing.md),
+                      padding: const EdgeInsets.only(bottom: ExpoSpacing.md),
                       child: _FeatureGroupBlock(group: group),
                     )),
                 // Three states — and the free card is deliberately NOT one of
@@ -1006,13 +1016,10 @@ class _PlanCard extends StatelessWidget {
                   _StatePill(
                     icon: Icons.check_circle_outline,
                     iconColor: pal.success,
-                    label: AppLanguage.tr(
-                        'Currently Active', 'हाल सक्रिय'),
+                    label: AppLanguage.tr('Currently Active', 'हाल सक्रिय'),
                     labelColor: pal.success,
-                    background:
-                        pal.success.withValues(alpha: 0x1F / 0xFF),
-                    border:
-                        pal.success.withValues(alpha: 0x33 / 0xFF),
+                    background: pal.success.withValues(alpha: 0x1F / 0xFF),
+                    border: pal.success.withValues(alpha: 0x33 / 0xFF),
                     bold: true,
                   )
                 else
@@ -1149,8 +1156,7 @@ class _SubscribeButtonState extends State<_SubscribeButton> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.diamond_outlined,
-                  size: 17, color: _onGradient),
+              const Icon(Icons.diamond_outlined, size: 17, color: _onGradient),
               const SizedBox(width: 7),
               Text(
                 widget.label,
@@ -1176,68 +1182,57 @@ class _WeAcceptSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final pal = ExpoPalette.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: pal.surface,
-        border: Border.all(color: pal.border),
-        borderRadius: BorderRadius.circular(ExpoRadius.lg),
-      ),
-      padding: const EdgeInsets.all(ExpoSpacing.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: pal.success.withValues(alpha: 0x1F / 0xFF),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                alignment: Alignment.center,
-                child: Icon(Icons.credit_card_outlined,
-                    size: 18, color: pal.success),
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    // Watermark-style payment logos: NO boxes, NO borders — the brand
+    // marks sit directly on the page background at reduced opacity so
+    // they read as a subtle watermark in both themes.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: pal.success.withValues(alpha: 0x1F / 0xFF),
+                borderRadius: BorderRadius.circular(10),
               ),
-              const SizedBox(width: 12),
-              Text(
-                AppLanguage.tr('We Accept', 'हामी स्वीकार गर्छौं'),
-                style: const TextStyle(
-                    fontSize: ExpoType.body, fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-          const SizedBox(height: ExpoSpacing.md),
-          Row(
-            children: _paymentLogos
-                .map((uri) => Expanded(
-                      child: Container(
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 12),
-                        // Fixed light chip: these are brand marks drawn for
-                        // a light background.
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          border: Border.all(color: pal.border),
-                          borderRadius:
-                              BorderRadius.circular(ExpoRadius.md),
-                        ),
-                        alignment: Alignment.center,
+              alignment: Alignment.center,
+              child: Icon(Icons.credit_card_outlined,
+                  size: 18, color: pal.success),
+            ),
+            const SizedBox(width: 12),
+            Text(
+              AppLanguage.tr('We Accept', 'हामी स्वीकार गर्छौं'),
+              style: const TextStyle(
+                  fontSize: ExpoType.body, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        const SizedBox(height: ExpoSpacing.sm),
+        Row(
+          children: _paymentLogos
+              .map((uri) => Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Opacity(
+                        // A touch stronger in dark mode so the
+                        // light-background brand marks stay legible.
+                        opacity: isDark ? 0.7 : 0.55,
                         child: Image.network(
                           uri,
-                          width: 56,
-                          height: 30,
+                          height: 34,
                           fit: BoxFit.contain,
                           errorBuilder: (_, __, ___) =>
-                              const SizedBox(width: 56, height: 30),
+                              const SizedBox(height: 34),
                         ),
                       ),
-                    ))
-                .toList(),
-          ),
-        ],
-      ),
+                    ),
+                  ))
+              .toList(),
+        ),
+      ],
     );
   }
 }
@@ -1261,50 +1256,64 @@ class _QuotePanel extends StatelessWidget {
       margin: const EdgeInsets.only(top: ExpoSpacing.sm),
       decoration: BoxDecoration(
         color: tone.withValues(alpha: 0x14 / 0xFF),
-        border: Border.all(
-            color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+        border:
+            Border.all(color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
         borderRadius: BorderRadius.circular(ExpoRadius.md),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: tone,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(ExpoRadius.md),
-                  bottomLeft: Radius.circular(ExpoRadius.md),
+      // Clip the spine to the card's curve: the spine's square inner
+      // corners would otherwise poke ~2px past the rounded corners.
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(ExpoRadius.md),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: tone,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(ExpoRadius.md),
+                    bottomLeft: Radius.circular(ExpoRadius.md),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(ExpoSpacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(icon, size: 15, color: tone),
-                    const SizedBox(height: 6),
-                    child,
-                  ],
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(ExpoSpacing.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(icon, size: 15, color: tone),
+                      const SizedBox(height: 6),
+                      child,
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-String _money(num v) =>
-    v % 1 == 0 ? v.toInt().toString() : v.toString();
+String _money(num v) => v % 1 == 0 ? v.toInt().toString() : v.toString();
 
 const List<String> _monthShort = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
 ];
 
 String _fmtDate(DateTime? dt) {

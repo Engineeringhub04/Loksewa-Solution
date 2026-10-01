@@ -128,8 +128,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   int get _remainingMs {
     final deadline = _editDeadline;
     if (deadline == null) return 0;
-    return maxInt(
-        0, deadline.difference(DateTime.now()).inMilliseconds);
+    return maxInt(0, deadline.difference(DateTime.now()).inMilliseconds);
   }
 
   /// Mirrors the React canEdit: any non-active request still inside the
@@ -224,23 +223,21 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       } else {
         var screenshotUrl = _screenshotUri;
         if (_pickedBytes != null) {
-          screenshotUrl =
-              await CloudinaryUploader.uploadImage(_pickedBytes!);
+          screenshotUrl = await CloudinaryUploader.uploadImage(_pickedBytes!);
         }
         await SubscriptionService.updateMySubscriptionDetails(
           record.id,
           transactionRef: _refCtrl.text.trim(),
           screenshotUrl: screenshotUrl,
-          customerMessage: _msgCtrl.text.trim().isEmpty
-              ? null
-              : _msgCtrl.text.trim(),
+          customerMessage:
+              _msgCtrl.text.trim().isEmpty ? null : _msgCtrl.text.trim(),
         );
       }
       if (!mounted) return;
       showToast(
           context,
-          AppLanguage.tr('Subscription request updated.',
-              'सदस्यता अनुरोध अपडेट भयो।'),
+          AppLanguage.tr(
+              'Subscription request updated.', 'सदस्यता अनुरोध अपडेट भयो।'),
           ToastVariant.success);
       setState(() {
         _editing = false;
@@ -295,8 +292,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           Column(
             children: [
               SubpageHeader(
-                  title: AppLanguage.tr(
-                      'View Details', 'विवरण हेर्नुहोस्')),
+                  title: AppLanguage.tr('View Details', 'विवरण हेर्नुहोस्')),
               Expanded(child: _body()),
             ],
           ),
@@ -312,8 +308,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                     const CircularProgressIndicator(color: Colors.white),
                     const SizedBox(height: 12),
                     Text(
-                      AppLanguage.tr('Loading Subscription...',
-                          'सदस्यता लोड हुँदैछ...'),
+                      AppLanguage.tr(
+                          'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
                       style: const TextStyle(color: Colors.white),
                     ),
                   ],
@@ -329,10 +325,10 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
     if (_loading) {
       return PreloadingWidget(
         tinted: false,
-        label: AppLanguage.tr(
-            'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
-        hint: AppLanguage.tr('Fetching your purchase history',
-            'खरिद इतिहास ल्याउँदै'),
+        label:
+            AppLanguage.tr('Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+        hint: AppLanguage.tr(
+            'Fetching your purchase history', 'खरिद इतिहास ल्याउँदै'),
       );
     }
     if (_loadingError || _record == null) {
@@ -346,8 +342,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       child: ListView(
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
         children: [
-          SyllabusEntrance(
-              delayMs: 0, child: _StatusCrown(record: record)),
+          SyllabusEntrance(delayMs: 0, child: _StatusCrown(record: record)),
           if (showEditBar) ...[
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
@@ -370,8 +365,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               child: _QuotePanel(
                 tone: ExpoPalette.of(context).info,
                 icon: Icons.chat_bubble_outline,
-                caption: AppLanguage.tr(
-                    'Message from Admin', 'एड्मिनको सन्देश'),
+                caption:
+                    AppLanguage.tr('Message from Admin', 'एड्मिनको सन्देश'),
                 child: Text(record.adminMessage!,
                     style: const TextStyle(fontSize: ExpoType.body)),
               ),
@@ -385,8 +380,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               child: _QuotePanel(
                 tone: ExpoPalette.of(context).danger,
                 icon: Icons.error_outline,
-                caption:
-                    AppLanguage.tr('Rejected', 'अस्वीकृत'),
+                caption: AppLanguage.tr('Rejected', 'अस्वीकृत'),
                 child: Text(record.rejectionReason!,
                     style: const TextStyle(fontSize: ExpoType.body)),
               ),
@@ -398,8 +392,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             child: _SectionCard(
               icon: Icons.commit_outlined,
               tone: ExpoPalette.of(context).info,
-              title: AppLanguage.tr(
-                  'Request Timeline', 'अनुरोधको क्रम'),
+              title: AppLanguage.tr('Request Timeline', 'अनुरोधको क्रम'),
               child: _RequestTimeline(record: record),
             ),
           ),
@@ -415,9 +408,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 saving: _saving,
                 onPickScreenshot: _pickScreenshot,
                 onPreview: _openZoom,
-                onCancel: _saving
-                    ? null
-                    : () => setState(() => _editing = false),
+                onCancel:
+                    _saving ? null : () => setState(() => _editing = false),
               ),
             ),
           ],
@@ -427,8 +419,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             child: _SectionCard(
               icon: Icons.receipt_long_outlined,
               tone: ExpoPalette.of(context).primary,
-              title: AppLanguage.tr(
-                  'Payment Summary', 'भुक्तानी विवरण'),
+              title: AppLanguage.tr('Payment Summary', 'भुक्तानी विवरण'),
               child: _PaymentSummary(record: record),
             ),
           ),
@@ -439,8 +430,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               child: _SectionCard(
                 icon: Icons.image_outlined,
                 tone: ExpoPalette.of(context).accent,
-                title: AppLanguage.tr(
-                    'Payment Receipt', 'भुक्तानी रसिद'),
+                title: AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
                 trailing: StatusPill(
                   label: AppLanguage.tr('Tap to view full screen and zoom',
                       'पूर्ण स्क्रिनमा हेर्न तथा जुम गर्न थिच्नुहोस्'),
@@ -493,10 +483,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       image = Image.network(
         _screenshotUri,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const Icon(
-            Icons.broken_image_outlined,
-            size: 48,
-            color: Colors.white),
+        errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined,
+            size: 48, color: Colors.white),
       );
     } else {
       return;
@@ -507,8 +495,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
         builder: (ctx, setModalState) {
           void apply(double next) {
             scale = next.clamp(1.0, 4.0);
-            controller.value =
-                Matrix4.diagonal3Values(scale, scale, 1);
+            controller.value = Matrix4.diagonal3Values(scale, scale, 1);
             setModalState(() {});
           }
 
@@ -521,11 +508,9 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 borderRadius: BorderRadius.circular(16),
               ),
               alignment: Alignment.center,
-              child: const Icon(Icons.zoom_in,
-                  size: 26, color: Colors.white),
+              child: const Icon(Icons.zoom_in, size: 26, color: Colors.white),
             ),
-            tagLabel:
-                AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
+            tagLabel: AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
             title: Text(
               AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
               style: const TextStyle(
@@ -546,8 +531,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 _ZoomButton(
-                    icon: Icons.remove,
-                    onTap: () => apply(scale - 0.25)),
+                    icon: Icons.remove, onTap: () => apply(scale - 0.25)),
                 Container(
                   width: 64,
                   alignment: Alignment.center,
@@ -556,8 +540,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-                _ZoomButton(
-                    icon: Icons.add, onTap: () => apply(scale + 0.25)),
+                _ZoomButton(icon: Icons.add, onTap: () => apply(scale + 0.25)),
               ],
             ),
             onClose: () => Navigator.of(ctx).pop(),
@@ -612,8 +595,7 @@ class _StatusCrown extends StatelessWidget {
                       width: 46,
                       height: 46,
                       decoration: BoxDecoration(
-                        color:
-                            _onGradient.withValues(alpha: 0x33 / 0xFF),
+                        color: _onGradient.withValues(alpha: 0x33 / 0xFF),
                         borderRadius: BorderRadius.circular(15),
                       ),
                       alignment: Alignment.center,
@@ -631,8 +613,7 @@ class _StatusCrown extends StatelessWidget {
                               fontSize: ExpoType.overline,
                               fontWeight: FontWeight.bold,
                               letterSpacing: 1.2,
-                              color: _onGradient.withValues(
-                                  alpha: 0x99 / 0xFF),
+                              color: _onGradient.withValues(alpha: 0x99 / 0xFF),
                             ),
                           ),
                           const SizedBox(height: 3),
@@ -671,8 +652,7 @@ class _StatusCrown extends StatelessWidget {
                         record.method.toUpperCase(),
                         style: TextStyle(
                           fontSize: ExpoType.bodySmall,
-                          color: _onGradient.withValues(
-                              alpha: 0xDB / 0xFF),
+                          color: _onGradient.withValues(alpha: 0xDB / 0xFF),
                         ),
                       ),
                     ),
@@ -686,10 +666,8 @@ class _StatusCrown extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
-                        color:
-                            _onGradient.withValues(alpha: 0x33 / 0xFF),
-                        borderRadius:
-                            BorderRadius.circular(ExpoRadius.pill),
+                        color: _onGradient.withValues(alpha: 0x33 / 0xFF),
+                        borderRadius: BorderRadius.circular(ExpoRadius.pill),
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -723,8 +701,7 @@ class _StatusCrown extends StatelessWidget {
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(ExpoRadius.lg),
                   border: Border.all(
-                    color:
-                        _onGradient.withValues(alpha: 0x38 / 0xFF),
+                    color: _onGradient.withValues(alpha: 0x38 / 0xFF),
                     width: 0.5,
                   ),
                 ),
@@ -779,14 +756,13 @@ class _EditWindowBarState extends State<_EditWindowBar> {
   @override
   Widget build(BuildContext context) {
     final pal = ExpoPalette.of(context);
-    final tone =
-        widget.canEdit ? pal.warning : pal.textDisabled;
+    final tone = widget.canEdit ? pal.warning : pal.textDisabled;
     return Container(
       padding: const EdgeInsets.all(ExpoSpacing.md),
       decoration: BoxDecoration(
         color: pal.surface,
-        border: Border.all(
-            color: tone.withValues(alpha: 0x55 / 0xFF), width: 0.5),
+        border:
+            Border.all(color: tone.withValues(alpha: 0x55 / 0xFF), width: 0.5),
         borderRadius: BorderRadius.circular(ExpoRadius.lg),
       ),
       child: Column(
@@ -800,8 +776,7 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                 decoration: BoxDecoration(
                   color: tone.withValues(alpha: 0x1F / 0xFF),
                   border: Border.all(
-                      color: tone.withValues(alpha: 0x33 / 0xFF),
-                      width: 0.5),
+                      color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
                   borderRadius: BorderRadius.circular(ExpoRadius.md),
                 ),
                 alignment: Alignment.center,
@@ -819,8 +794,7 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                   children: [
                     Text(
                       widget.canEdit
-                          ? AppLanguage.tr(
-                              'You can still edit this request',
+                          ? AppLanguage.tr('You can still edit this request',
                               'तपाईं अझै यो अनुरोध सम्पादन गर्न सक्नुहुन्छ')
                           : AppLanguage.tr(
                               'The 30-minute edit window has expired.',
@@ -839,21 +813,19 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
-                          fontSize: ExpoType.caption,
-                          color: pal.textSecondary),
+                          fontSize: ExpoType.caption, color: pal.textSecondary),
                     ),
                   ],
                 ),
               ),
               if (widget.canEdit)
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 5),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
                     color: tone.withValues(alpha: 0x1F / 0xFF),
                     border: Border.all(
-                        color: tone.withValues(alpha: 0x33 / 0xFF),
-                        width: 0.5),
+                        color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
                     borderRadius: BorderRadius.circular(ExpoRadius.md),
                   ),
                   child: Text(
@@ -862,9 +834,7 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                       fontSize: ExpoType.bodySmall,
                       fontWeight: FontWeight.bold,
                       color: tone,
-                      fontFeatures: const [
-                        FontFeature.tabularFigures()
-                      ],
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ),
@@ -876,8 +846,7 @@ class _EditWindowBarState extends State<_EditWindowBar> {
               tween: Tween<double>(begin: _from, end: _to),
               duration: const Duration(milliseconds: 950),
               builder: (context, value, _) => ClipRRect(
-                borderRadius:
-                    BorderRadius.circular(ExpoRadius.pill),
+                borderRadius: BorderRadius.circular(ExpoRadius.pill),
                 child: Container(
                   height: 6,
                   color: pal.surfaceAlt,
@@ -901,8 +870,7 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                   pal.textDisabled.withValues(alpha: 0x33 / 0xFF),
               padding: const EdgeInsets.symmetric(vertical: 13),
               shape: RoundedRectangleBorder(
-                borderRadius:
-                    BorderRadius.circular(ExpoRadius.md),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
               ),
             ),
             icon: widget.saving
@@ -913,15 +881,11 @@ class _EditWindowBarState extends State<_EditWindowBar> {
                         strokeWidth: 2, color: Colors.white),
                   )
                 : Icon(
-                    widget.editing
-                        ? Icons.check_outlined
-                        : Icons.edit_outlined,
+                    widget.editing ? Icons.check_outlined : Icons.edit_outlined,
                     size: 17),
             label: Text(widget.editing
-                ? AppLanguage.tr(
-                    'Save Request', 'अनुरोध सुरक्षित गर्नुहोस्')
-                : AppLanguage.tr(
-                    'Edit Request', 'अनुरोध सम्पादन गर्नुहोस्')),
+                ? AppLanguage.tr('Save Request', 'अनुरोध सुरक्षित गर्नुहोस्')
+                : AppLanguage.tr('Edit Request', 'अनुरोध सम्पादन गर्नुहोस्')),
           ),
         ],
       ),
@@ -950,17 +914,15 @@ class _TimelineStep {
   });
 }
 
-List<_TimelineStep> _buildSteps(
-    SubscriptionRecord record, ExpoPalette pal) {
-  final reviewed = record.reviewedAt != null ||
-      record.status != SubscriptionStatus.pending;
+List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
+  final reviewed =
+      record.reviewedAt != null || record.status != SubscriptionStatus.pending;
   late final _TimelineStep finalStep;
   switch (record.status) {
     case SubscriptionStatus.active:
       finalStep = _TimelineStep(
         key: 'approved',
-        title: AppLanguage.tr(
-            'Approved & activated', 'स्वीकृत तथा सक्रिय'),
+        title: AppLanguage.tr('Approved & activated', 'स्वीकृत तथा सक्रिय'),
         timestamp: record.startDate ?? record.reviewedAt,
         icon: Icons.check_circle_outline,
         state: _StepState.done,
@@ -969,8 +931,7 @@ List<_TimelineStep> _buildSteps(
     case SubscriptionStatus.rejected:
       finalStep = _TimelineStep(
         key: 'rejected',
-        title:
-            AppLanguage.tr('Rejected by admin', 'एड्मिनद्वारा अस्वीकृत'),
+        title: AppLanguage.tr('Rejected by admin', 'एड्मिनद्वारा अस्वीकृत'),
         timestamp: record.reviewedAt,
         icon: Icons.cancel_outlined,
         state: _StepState.failed,
@@ -979,8 +940,7 @@ List<_TimelineStep> _buildSteps(
     case SubscriptionStatus.expired:
       finalStep = _TimelineStep(
         key: 'expired',
-        title: AppLanguage.tr(
-            'Subscription expired', 'सदस्यता समाप्त भयो'),
+        title: AppLanguage.tr('Subscription expired', 'सदस्यता समाप्त भयो'),
         timestamp: record.expiryDate,
         icon: Icons.schedule_outlined,
         state: _StepState.done,
@@ -989,8 +949,7 @@ List<_TimelineStep> _buildSteps(
     case SubscriptionStatus.pending:
       finalStep = _TimelineStep(
         key: 'approved',
-        title: AppLanguage.tr(
-            'Approved & activated', 'स्वीकृत तथा सक्रिय'),
+        title: AppLanguage.tr('Approved & activated', 'स्वीकृत तथा सक्रिय'),
         timestamp: null,
         icon: Icons.check_circle_outline,
         state: _StepState.upcoming,
@@ -1000,8 +959,7 @@ List<_TimelineStep> _buildSteps(
   return [
     _TimelineStep(
       key: 'submitted',
-      title:
-          AppLanguage.tr('Payment submitted', 'भुक्तानी पेस भयो'),
+      title: AppLanguage.tr('Payment submitted', 'भुक्तानी पेस भयो'),
       timestamp: record.submittedAt,
       icon: Icons.send_outlined,
       state: _StepState.done,
@@ -1051,20 +1009,16 @@ class _TimelineRow extends StatelessWidget {
       width: 30,
       height: 30,
       decoration: BoxDecoration(
-        color: dim
-            ? pal.surfaceAlt
-            : step.tone.withValues(alpha: 0x1F / 0xFF),
+        color: dim ? pal.surfaceAlt : step.tone.withValues(alpha: 0x1F / 0xFF),
         border: Border.all(
-          color: dim
-              ? pal.border
-              : step.tone.withValues(alpha: 0x33 / 0xFF),
+          color: dim ? pal.border : step.tone.withValues(alpha: 0x33 / 0xFF),
           width: 0.5,
         ),
         shape: BoxShape.circle,
       ),
       alignment: Alignment.center,
-      child: Icon(step.icon,
-          size: 15, color: dim ? pal.textDisabled : step.tone),
+      child:
+          Icon(step.icon, size: 15, color: dim ? pal.textDisabled : step.tone),
     );
     return IntrinsicHeight(
       child: Row(
@@ -1074,9 +1028,7 @@ class _TimelineRow extends StatelessWidget {
             width: 30,
             child: Column(
               children: [
-                step.state == _StepState.current
-                    ? _Pulse(child: node)
-                    : node,
+                step.state == _StepState.current ? _Pulse(child: node) : node,
                 if (!last)
                   Expanded(
                     child: Container(
@@ -1089,39 +1041,36 @@ class _TimelineRow extends StatelessWidget {
                     ),
                   ),
               ],
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Padding(
-            padding: EdgeInsets.only(
-                bottom: last ? 0 : ExpoSpacing.md),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  step.title,
-                  style: TextStyle(
-                    fontSize: ExpoType.body,
-                    fontWeight: dim ? FontWeight.normal : FontWeight.w600,
-                    color: dim ? pal.textDisabled : pal.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 3),
-                if (step.timestamp != null)
-                  Text(
-                    _fmtDateTime(step.timestamp),
-                    style: TextStyle(
-                        fontSize: ExpoType.caption,
-                        color: pal.textSecondary),
-                  )
-                else if (step.state == _StepState.current)
-                  StatusPill(
-                      label: '•••', color: pal.warning),
-              ],
             ),
           ),
-        ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: last ? 0 : ExpoSpacing.md),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    step.title,
+                    style: TextStyle(
+                      fontSize: ExpoType.body,
+                      fontWeight: dim ? FontWeight.normal : FontWeight.w600,
+                      color: dim ? pal.textDisabled : pal.textPrimary,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  if (step.timestamp != null)
+                    Text(
+                      _fmtDateTime(step.timestamp),
+                      style: TextStyle(
+                          fontSize: ExpoType.caption, color: pal.textSecondary),
+                    )
+                  else if (step.state == _StepState.current)
+                    StatusPill(label: '•••', color: pal.warning),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1138,8 +1087,7 @@ class _Pulse extends StatefulWidget {
   State<_Pulse> createState() => _PulseState();
 }
 
-class _PulseState extends State<_Pulse>
-    with SingleTickerProviderStateMixin {
+class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
   late final Animation<double> _scale;
 
@@ -1216,8 +1164,7 @@ class _EditForm extends StatelessWidget {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 alignment: Alignment.center,
-                child:
-                    Icon(Icons.edit_outlined, size: 18, color: tone),
+                child: Icon(Icons.edit_outlined, size: 18, color: tone),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -1228,16 +1175,14 @@ class _EditForm extends StatelessWidget {
                       AppLanguage.tr(
                           'Edit Request', 'अनुरोध सम्पादन गर्नुहोस्'),
                       style: const TextStyle(
-                          fontSize: ExpoType.body,
-                          fontWeight: FontWeight.bold),
+                          fontSize: ExpoType.body, fontWeight: FontWeight.bold),
                     ),
                     Text(
                       AppLanguage.tr(
                           'Approve or reject premium subscription payments.',
                           'प्रिमियम सदस्यता भुक्तानी स्वीकृत वा अस्वीकृत गर्नुहोस्।'),
                       style: TextStyle(
-                          fontSize: ExpoType.caption,
-                          color: pal.textSecondary),
+                          fontSize: ExpoType.caption, color: pal.textSecondary),
                     ),
                   ],
                 ),
@@ -1249,45 +1194,39 @@ class _EditForm extends StatelessWidget {
             controller: refCtrl,
             textCapitalization: TextCapitalization.characters,
             decoration: InputDecoration(
-              labelText: AppLanguage.tr('Transaction ID / Reference',
-                  'ट्रान्जेक्सन आईडी / सन्दर्भ'),
+              labelText: AppLanguage.tr(
+                  'Transaction ID / Reference', 'ट्रान्जेक्सन आईडी / सन्दर्भ'),
               helperText: AppLanguage.tr(
                   'Enter the transaction ID or remarks shown after your payment.',
                   'तपाईंको भुक्तानी पछि देखिएको ट्रान्जेक्सन आईडी वा रिमार्क्स प्रविष्ट गर्नुहोस्।'),
-              hintText: AppLanguage.tr(
-                  'e.g. TXN123456789', 'जस्तै TXN123456789'),
+              hintText:
+                  AppLanguage.tr('e.g. TXN123456789', 'जस्तै TXN123456789'),
               border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: ExpoSpacing.md),
           Text(
-            AppLanguage.tr(
-                'Payment Screenshot', 'भुक्तानी स्क्रिनसट'),
+            AppLanguage.tr('Payment Screenshot', 'भुक्तानी स्क्रिनसट'),
             style: const TextStyle(
-                fontSize: ExpoType.bodySmall,
-                fontWeight: FontWeight.w600),
+                fontSize: ExpoType.bodySmall, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 2),
           Text(
             AppLanguage.tr(
                 'Attach a screenshot of your payment as proof — required.',
                 'प्रमाणको रूपमा आफ्नो भुक्तानीको स्क्रिनसट संलग्न गर्नुहोस् — आवश्यक।'),
-            style: TextStyle(
-                fontSize: ExpoType.caption,
-                color: pal.textSecondary),
+            style:
+                TextStyle(fontSize: ExpoType.caption, color: pal.textSecondary),
           ),
           if (_hasPreview) ...[
             const SizedBox(height: ExpoSpacing.xs),
             GestureDetector(
               onTap: onPreview,
               child: ClipRRect(
-                borderRadius:
-                    BorderRadius.circular(ExpoRadius.md),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
                 child: pickedBytes != null
                     ? Image.memory(pickedBytes!,
-                        height: 200,
-                        width: double.infinity,
-                        fit: BoxFit.cover)
+                        height: 200, width: double.infinity, fit: BoxFit.cover)
                     : Image.network(screenshotUri,
                         height: 200,
                         width: double.infinity,
@@ -1307,16 +1246,15 @@ class _EditForm extends StatelessWidget {
             icon: const Icon(Icons.image_outlined, size: 17),
             label: Text(_hasPreview
                 ? AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्')
-                : AppLanguage.tr(
-                    'Payment Screenshot', 'भुक्तानी स्क्रिनसट')),
+                : AppLanguage.tr('Payment Screenshot', 'भुक्तानी स्क्रिनसट')),
           ),
           const SizedBox(height: ExpoSpacing.md),
           TextField(
             controller: msgCtrl,
             maxLines: 3,
             decoration: InputDecoration(
-              labelText: AppLanguage.tr(
-                  'Message (optional)', 'सन्देश (वैकल्पिक)'),
+              labelText:
+                  AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
               hintText: AppLanguage.tr(
                   'Add a note for the admin, e.g. paid from a family member\'s account',
                   'एड्मिनको लागि नोट थप्नुहोस्, जस्तै परिवारको सदस्यको खाताबाट तिरेको'),
@@ -1328,8 +1266,7 @@ class _EditForm extends StatelessWidget {
             width: double.infinity,
             child: OutlinedButton(
               onPressed: saving ? null : onCancel,
-              child: Text(
-                  AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
             ),
           ),
         ],
@@ -1360,13 +1297,12 @@ class _PaymentSummary extends StatelessWidget {
           label: AppLanguage.tr('Amount', 'रकम'),
           tone: pal.success,
           value: Text('Rs. ${_money(record.amount)}',
-              style: TextStyle(
-                  fontWeight: FontWeight.w600, color: pal.success)),
+              style:
+                  TextStyle(fontWeight: FontWeight.w600, color: pal.success)),
         ),
         _InfoRow(
           icon: Icons.credit_card_outlined,
-          label: AppLanguage.tr(
-              'Payment Method', 'भुक्तानी विधि'),
+          label: AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
           value: Text(record.method.toUpperCase(),
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
@@ -1375,14 +1311,13 @@ class _PaymentSummary extends StatelessWidget {
           label: AppLanguage.tr('Reference', 'सन्दर्भ'),
           value: Text(record.transactionRef ?? '—',
               style: const TextStyle(fontWeight: FontWeight.w600)),
-          last: record.couponCode == null &&
-              record.customerMessage == null,
+          last: record.couponCode == null && record.customerMessage == null,
         ),
         if (record.couponCode != null)
           _InfoRow(
             icon: Icons.local_offer_outlined,
-            label: AppLanguage.tr(
-                'Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
+            label:
+                AppLanguage.tr('Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
             value: StatusPill(
               label: record.couponCode!,
               color: pal.accent,
@@ -1393,8 +1328,7 @@ class _PaymentSummary extends StatelessWidget {
         if (record.customerMessage != null)
           _InfoRow(
             icon: Icons.chat_bubble_outline,
-            label: AppLanguage.tr(
-                'Message (optional)', 'सन्देश (वैकल्पिक)'),
+            label: AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
             stacked: true,
             last: true,
             value: Text(record.customerMessage!),
@@ -1430,8 +1364,7 @@ class _InfoRow extends StatelessWidget {
             children: [
               Text(label,
                   style: TextStyle(
-                      fontSize: ExpoType.caption,
-                      color: pal.textSecondary)),
+                      fontSize: ExpoType.caption, color: pal.textSecondary)),
               const SizedBox(height: 4),
               value,
             ],
@@ -1447,8 +1380,7 @@ class _InfoRow extends StatelessWidget {
               Flexible(
                 child: DefaultTextStyle(
                   style: TextStyle(
-                      fontSize: ExpoType.bodySmall,
-                      color: pal.textPrimary),
+                      fontSize: ExpoType.bodySmall, color: pal.textPrimary),
                   textAlign: TextAlign.end,
                   child: value,
                 ),
@@ -1492,13 +1424,11 @@ class _ReceiptPreview extends StatelessWidget {
       child: Stack(
         children: [
           ClipRRect(
-            borderRadius:
-                BorderRadius.circular(ExpoRadius.md),
+            borderRadius: BorderRadius.circular(ExpoRadius.md),
             child: Container(
               decoration: BoxDecoration(
                 border: Border.all(color: pal.border, width: 0.5),
-                borderRadius:
-                    BorderRadius.circular(ExpoRadius.md),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
               ),
               child: Image.network(
                 url,
@@ -1521,13 +1451,12 @@ class _ReceiptPreview extends StatelessWidget {
               width: 30,
               height: 30,
               decoration: BoxDecoration(
-                color: const Color(0xFF0F172A)
-                    .withValues(alpha: 0x99 / 0xFF),
+                color: const Color(0xFF0F172A).withValues(alpha: 0x99 / 0xFF),
                 borderRadius: BorderRadius.circular(10),
               ),
               alignment: Alignment.center,
-              child: const Icon(Icons.open_in_full,
-                  size: 16, color: Colors.white),
+              child:
+                  const Icon(Icons.open_in_full, size: 16, color: Colors.white),
             ),
           ),
         ],
@@ -1582,53 +1511,58 @@ class _QuotePanel extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         color: tone.withValues(alpha: 0x14 / 0xFF),
-        border: Border.all(
-            color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+        border:
+            Border.all(color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
         borderRadius: BorderRadius.circular(ExpoRadius.md),
       ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: tone,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(ExpoRadius.md),
-                  bottomLeft: Radius.circular(ExpoRadius.md),
+      // Clip the spine to the card's curve: the spine's square inner
+      // corners would otherwise poke ~2px past the rounded corners.
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(ExpoRadius.md),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: tone,
+                  borderRadius: const BorderRadius.only(
+                    topLeft: Radius.circular(ExpoRadius.md),
+                    bottomLeft: Radius.circular(ExpoRadius.md),
+                  ),
                 ),
               ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(ExpoSpacing.sm),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(icon, size: 15, color: tone),
-                        if (caption != null) ...[
-                          const SizedBox(width: 6),
-                          Text(
-                            caption!,
-                            style: TextStyle(
-                              fontSize: ExpoType.caption,
-                              fontWeight: FontWeight.bold,
-                              color: tone,
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(ExpoSpacing.sm),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(icon, size: 15, color: tone),
+                          if (caption != null) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              caption!,
+                              style: TextStyle(
+                                fontSize: ExpoType.caption,
+                                fontWeight: FontWeight.bold,
+                                color: tone,
+                              ),
                             ),
-                          ),
+                          ],
                         ],
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    child,
-                  ],
+                      ),
+                      const SizedBox(height: 6),
+                      child,
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1681,8 +1615,7 @@ class _SectionCard extends StatelessWidget {
                 child: Text(
                   title,
                   style: const TextStyle(
-                      fontSize: ExpoType.body,
-                      fontWeight: FontWeight.bold),
+                      fontSize: ExpoType.body, fontWeight: FontWeight.bold),
                 ),
               ),
               if (trailing != null) trailing!,
@@ -1709,20 +1642,18 @@ class _LoadError extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.cloud_off_outlined,
-                size: 44, color: pal.textDisabled),
+            Icon(Icons.cloud_off_outlined, size: 44, color: pal.textDisabled),
             const SizedBox(height: ExpoSpacing.sm),
             Text(
-              AppLanguage.tr('Could not load this request.',
-                  'यो अनुरोध लोड गर्न सकिएन।'),
+              AppLanguage.tr(
+                  'Could not load this request.', 'यो अनुरोध लोड गर्न सकिएन।'),
               textAlign: TextAlign.center,
               style: TextStyle(color: pal.textSecondary),
             ),
             const SizedBox(height: ExpoSpacing.md),
             OutlinedButton(
               onPressed: onRetry,
-              child: Text(
-                  AppLanguage.tr('Try again', 'पुनः प्रयास गर्नुहोस्')),
+              child: Text(AppLanguage.tr('Try again', 'पुनः प्रयास गर्नुहोस्')),
             ),
           ],
         ),
@@ -1757,12 +1688,21 @@ IconData _statusIcon(SubscriptionStatus status) {
   }
 }
 
-String _money(num v) =>
-    v % 1 == 0 ? v.toInt().toString() : v.toString();
+String _money(num v) => v % 1 == 0 ? v.toInt().toString() : v.toString();
 
 const List<String> _monthShort = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec'
 ];
 
 String _fmtDate(DateTime? dt) {

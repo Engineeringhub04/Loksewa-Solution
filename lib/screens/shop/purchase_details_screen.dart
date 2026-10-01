@@ -47,8 +47,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
       fetchMyExamPurchases(uid),
       fetchMyContentPurchases(uid),
     ]);
-    return _Purchases(
-        results[0] as List<ExamPurchaseRecord>,
+    return _Purchases(results[0] as List<ExamPurchaseRecord>,
         results[1] as List<ContentPurchaseRecord>);
   }
 
@@ -71,8 +70,18 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
     final dt = DateTime.tryParse(iso);
     if (dt == null) return iso;
     const m = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
     ];
     return '${dt.day.toString().padLeft(2, '0')} ${m[dt.month - 1]} ${dt.year}';
   }
@@ -83,8 +92,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
     return Scaffold(
       body: Column(
         children: [
-          SubpageHeader(
-              title: _t('Purchase Details', 'खरिद विवरण')),
+          SubpageHeader(title: _t('Purchase Details', 'खरिद विवरण')),
           Expanded(
             child: FutureBuilder<_Purchases>(
               future: _future,
@@ -104,8 +112,8 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                   if (_error != null) return _errorBody(palette);
                   return PreloadingWidget(
                     tinted: false,
-                    label: _t('Loading Subscription...',
-                        'सदस्यता लोड हुँदैछ...'),
+                    label:
+                        _t('Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
                     hint: _t('Fetching your purchase history',
                         'खरिद इतिहास ल्याउँदै'),
                   );
@@ -134,8 +142,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
             ),
             const SizedBox(height: 12),
             ElevatedButton(
-              onPressed: () =>
-                  setState(() => _future = _load()),
+              onPressed: () => setState(() => _future = _load()),
               child: Text(_t('Retry', 'पुनः प्रयास गर्नुहोस्')),
             ),
           ],
@@ -146,8 +153,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
 
   Widget _contentBody(ExpoPalette palette, _Purchases p) {
     final exams = _filter == 'content' ? <ExamPurchaseRecord>[] : p.exams;
-    final contents =
-        _filter == 'exam' ? <ContentPurchaseRecord>[] : p.contents;
+    final contents = _filter == 'exam' ? <ContentPurchaseRecord>[] : p.contents;
 
     final statuses = [
       ...p.exams.map((r) => r.status),
@@ -184,8 +190,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                         '${_t('Content Details', 'सामग्री विवरण')} (${p.contents.length})')),
               ],
               selected: {_filter},
-              onSelectionChanged: (s) =>
-                  setState(() => _filter = s.first),
+              onSelectionChanged: (s) => setState(() => _filter = s.first),
             ),
             const SizedBox(height: 12),
             if (exams.isEmpty && contents.isEmpty)
@@ -227,8 +232,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
 
   // Mirrors React's HeroBand: surface card, tone gradient wash from the top,
   // 54px medallion + title + subtitle, footer row of stat tiles.
-  Widget _heroBand(
-      ExpoPalette palette, int total, int pending, int active) {
+  Widget _heroBand(ExpoPalette palette, int total, int pending, int active) {
     final primary = palette.primary;
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -238,9 +242,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
         borderRadius: BorderRadius.circular(ExpoRadius.lg),
         boxShadow: const [
           BoxShadow(
-              color: Color(0x0A000000),
-              blurRadius: 8,
-              offset: Offset(0, 2)),
+              color: Color(0x0A000000), blurRadius: 8, offset: Offset(0, 2)),
         ],
       ),
       child: Stack(
@@ -273,11 +275,9 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                       decoration: BoxDecoration(
                         color: primary.withValues(alpha: 0x14 / 0xFF),
                         border: Border.all(
-                            color: primary
-                                .withValues(alpha: 0x33 / 0xFF),
+                            color: primary.withValues(alpha: 0x33 / 0xFF),
                             width: 0.5),
-                        borderRadius:
-                            BorderRadius.circular(ExpoRadius.lg),
+                        borderRadius: BorderRadius.circular(ExpoRadius.lg),
                       ),
                       child: Icon(Icons.receipt_outlined,
                           size: 26, color: primary),
@@ -285,8 +285,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                     const SizedBox(width: 13),
                     Expanded(
                       child: Column(
-                        crossAxisAlignment:
-                            CrossAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             _t('Purchase Details', 'खरिद विवरण'),
@@ -299,8 +298,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            _t(
-                                'View and track your individual exam, subject, unit, and chapter purchases.',
+                            _t('View and track your individual exam, subject, unit, and chapter purchases.',
                                 'तपाईंका exam, subject, unit र chapter purchase हरू हेर्नुहोस् र track गर्नुहोस्।'),
                             maxLines: 3,
                             overflow: TextOverflow.ellipsis,
@@ -319,12 +317,8 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: _statTile(
-                          palette,
-                          primary,
-                          '$total',
-                          _t('All', 'सबै'),
-                          Icons.layers_outlined),
+                      child: _statTile(palette, primary, '$total',
+                          _t('All', 'सबै'), Icons.layers_outlined),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -337,12 +331,8 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _statTile(
-                          palette,
-                          palette.success,
-                          '$active',
-                          _t('Approved', 'स्वीकृत'),
-                          Icons.check_circle),
+                      child: _statTile(palette, palette.success, '$active',
+                          _t('Approved', 'स्वीकृत'), Icons.check_circle),
                     ),
                   ],
                 ),
@@ -354,14 +344,14 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
     );
   }
 
-  Widget _statTile(ExpoPalette palette, Color tone, String value,
-      String label, IconData icon) {
+  Widget _statTile(ExpoPalette palette, Color tone, String value, String label,
+      IconData icon) {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
       decoration: BoxDecoration(
         color: tone.withValues(alpha: 0x14 / 0xFF),
-        border: Border.all(
-            color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+        border:
+            Border.all(color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
         borderRadius: BorderRadius.circular(ExpoRadius.md),
       ),
       child: Column(
@@ -421,13 +411,10 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
             decoration: BoxDecoration(
               color: primary.withValues(alpha: 0x14 / 0xFF),
               border: Border.all(
-                  color:
-                      primary.withValues(alpha: 0x33 / 0xFF),
-                  width: 0.5),
+                  color: primary.withValues(alpha: 0x33 / 0xFF), width: 0.5),
               borderRadius: BorderRadius.circular(ExpoRadius.lg),
             ),
-            child: Icon(Icons.receipt_outlined,
-                size: 30, color: primary),
+            child: Icon(Icons.receipt_outlined, size: 30, color: primary),
           ),
           const SizedBox(height: 8),
           Padding(
@@ -537,9 +524,8 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           // Tint on press rather than fade — React's PurchaseCardShell.
-          color: _pressed
-              ? tone.withValues(alpha: 0x14 / 0xFF)
-              : palette.surface,
+          color:
+              _pressed ? tone.withValues(alpha: 0x14 / 0xFF) : palette.surface,
           border: Border.all(color: palette.border, width: 0.5),
           borderRadius: BorderRadius.circular(ExpoRadius.lg),
         ),
@@ -555,10 +541,8 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
                   decoration: BoxDecoration(
                     color: tone.withValues(alpha: 0x14 / 0xFF),
                     border: Border.all(
-                        color: tone.withValues(alpha: 0x33 / 0xFF),
-                        width: 0.5),
-                    borderRadius:
-                        BorderRadius.circular(ExpoRadius.md),
+                        color: tone.withValues(alpha: 0x33 / 0xFF), width: 0.5),
+                    borderRadius: BorderRadius.circular(ExpoRadius.md),
                   ),
                   child: Icon(widget.icon, size: 20, color: tone),
                 ),
@@ -632,43 +616,53 @@ class _PurchaseCardShellState extends State<_PurchaseCardShell> {
                 widget.adminMessage!.isNotEmpty) ...[
               const SizedBox(height: 11),
               Container(
-                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: _statusColor()
-                      .withValues(alpha: 0x14 / 0xFF),
-                  border: Border(
-                    left: BorderSide(
-                        color: _statusColor(), width: 3),
-                    top: BorderSide(
-                        color: _statusColor().withValues(
-                            alpha: 0x33 / 0xFF),
-                        width: 0.5),
-                    right: BorderSide(
-                        color: _statusColor().withValues(
-                            alpha: 0x33 / 0xFF),
-                        width: 0.5),
-                    bottom: BorderSide(
-                        color: _statusColor().withValues(
-                            alpha: 0x33 / 0xFF),
-                        width: 0.5),
+                  color: _statusColor().withValues(alpha: 0x14 / 0xFF),
+                  border: Border.all(
+                    color: _statusColor().withValues(alpha: 0x33 / 0xFF),
+                    width: 0.5,
                   ),
-                  borderRadius:
-                      BorderRadius.circular(ExpoRadius.md),
+                  borderRadius: BorderRadius.circular(ExpoRadius.md),
                 ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.chat_bubble_outline,
-                        size: 14, color: _statusColor()),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        widget.adminMessage!,
-                        style:
-                            const TextStyle(fontSize: ExpoType.bodySmall),
-                      ),
+                // Clip the spine to the card's curve: a Border with two
+                // visible colours cannot share a BoxDecoration with a
+                // borderRadius (Flutter drops the radius in release and
+                // throws in debug), so the spine is a separate strip.
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(ExpoRadius.md),
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          width: 3,
+                          color: _statusColor(),
+                        ),
+                        Expanded(
+                          child: Padding(
+                            // 3px spine + 13px = the original 16px text
+                            // inset.
+                            padding: const EdgeInsets.fromLTRB(13, 16, 16, 16),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(Icons.chat_bubble_outline,
+                                    size: 14, color: _statusColor()),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    widget.adminMessage!,
+                                    style: const TextStyle(
+                                        fontSize: ExpoType.bodySmall),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ],
@@ -756,9 +750,7 @@ class _ContentPurchaseCard extends StatelessWidget {
     return _PurchaseCardShell(
       icon: Icons.book_outlined,
       tone: palette.accent,
-      title: title.isNotEmpty
-          ? title
-          : _t('Content Purchase', 'सामग्री खरिद'),
+      title: title.isNotEmpty ? title : _t('Content Purchase', 'सामग्री खरिद'),
       meta: '',
       badge: StatusPill(
         label: typeLabel,

@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/shop/subscription_detail_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 SubscriptionRecord _record({
@@ -282,6 +283,52 @@ void main() {
     expect(find.text('Message from Admin'), findsOneWidget);
     expect(find.text('Please resend a clearer photo'), findsOneWidget);
     expect(find.text('Rejected by admin'), findsOneWidget);
+  });
+
+  testWidgets('quote-panel spines are clipped to the card radius',
+      (tester) async {
+    await _pump(
+        tester,
+        _router(
+            loader: (_) async => _record(
+                  status: SubscriptionStatus.rejected,
+                  reviewedAt: DateTime.now()
+                      .subtract(const Duration(hours: 1)),
+                  rejectionReason: 'Receipt did not match',
+                  adminMessage: 'Please resend a clearer photo',
+                )));
+    await _settle(tester);
+
+    // Both quote panels (admin message + rejection reason) carry the 4px
+    // tone spine with rounded outer corners.
+    final spines = find.byWidgetPredicate((w) =>
+        w is Container &&
+        w.constraints?.maxWidth == 4.0 &&
+        w.decoration is BoxDecoration &&
+        (w.decoration as BoxDecoration).borderRadius ==
+            const BorderRadius.only(
+              topLeft: Radius.circular(ExpoRadius.md),
+              bottomLeft: Radius.circular(ExpoRadius.md),
+            ));
+    expect(spines, findsNWidgets(2));
+    // Each spine must sit under a ClipRRect cut to the card's radius, so
+    // the spine's square inner corners can't poke past the rounded card
+    // corners (the reported defect).
+    for (final element in spines.evaluate()) {
+      var clipped = false;
+      element.visitAncestorElements((ancestor) {
+        final widget = ancestor.widget;
+        if (widget is ClipRRect &&
+            widget.borderRadius ==
+                BorderRadius.circular(ExpoRadius.md)) {
+          clipped = true;
+          return false;
+        }
+        return true;
+      });
+      expect(clipped, isTrue,
+          reason: 'quote-panel spine is not clipped to the card radius');
+    }
   });
 
   testWidgets('coupon renders as a pill in the payment summary',

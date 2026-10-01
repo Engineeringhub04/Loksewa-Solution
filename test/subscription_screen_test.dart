@@ -15,6 +15,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/shop/subscription_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 SubscriptionPlan _plan({
@@ -274,5 +275,38 @@ void main() {
     expect(find.text('सबै विषय, एकाइ र अध्याय'), findsWidgets);
     expect(find.text('अहिले सदस्यता लिनुहोस्'), findsOneWidget);
     expect(find.text('तपाईंका निःशुल्क सेवा'), findsOneWidget);
+  });
+
+  testWidgets('rejected request quote-panel spine is clipped to the card',
+      (tester) async {
+    await _pump(tester, _router(() async => _data()));
+    await _settle(tester);
+
+    expect(find.text('Receipt did not match'), findsOneWidget);
+    // The 4px tone spine with rounded outer corners…
+    final spines = find.byWidgetPredicate((w) =>
+        w is Container &&
+        w.constraints?.maxWidth == 4.0 &&
+        w.decoration is BoxDecoration &&
+        (w.decoration as BoxDecoration).borderRadius ==
+            const BorderRadius.only(
+              topLeft: Radius.circular(ExpoRadius.md),
+              bottomLeft: Radius.circular(ExpoRadius.md),
+            ));
+    expect(spines, findsOneWidget);
+    // …must sit under a ClipRRect cut to the card's radius, so the spine's
+    // square inner corners can't poke past the rounded card corners.
+    var clipped = false;
+    spines.evaluate().single.visitAncestorElements((ancestor) {
+      final widget = ancestor.widget;
+      if (widget is ClipRRect &&
+          widget.borderRadius == BorderRadius.circular(ExpoRadius.md)) {
+        clipped = true;
+        return false;
+      }
+      return true;
+    });
+    expect(clipped, isTrue,
+        reason: 'quote-panel spine is not clipped to the card radius');
   });
 }

@@ -827,20 +827,30 @@ ExamCardState resolveExamCardState({
 /// courseIds/subcourseIds when present, always sorted by `order`.
 class ExamSection {
   final String id;
-  final String name;
+  final String nameEn;
+  final String nameNe;
   final String description;
+  final String kind; // 'mcq' | 'theory' | 'mixed'
+  final int colorValue; // ARGB, parsed from the doc's hex color string
   final int order;
   final List<String> courseIds;
   final List<String> subcourseIds;
 
   ExamSection({
     required this.id,
-    required this.name,
+    required this.nameEn,
+    required this.nameNe,
     required this.description,
+    required this.kind,
+    required this.colorValue,
     required this.order,
     required this.courseIds,
     required this.subcourseIds,
   });
+
+  /// Display name in the current app language (React: language === 'ne' ? nameNe : nameEn).
+  String displayName(bool nepali) =>
+      nepali && nameNe.isNotEmpty ? nameNe : nameEn;
 
   factory ExamSection.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
@@ -850,10 +860,22 @@ class ExamSection {
     int ord = 0;
     final raw = fields['order'];
     if (raw is num) ord = raw.toInt();
+    final rawKind = (fields['kind'] ?? 'mcq').toString();
+    final kind =
+        rawKind == 'theory' || rawKind == 'mixed' ? rawKind : 'mcq';
+    int colorValue = 0xFF2563EB;
+    final rawColor = (fields['color'] ?? '').toString();
+    if (RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(rawColor)) {
+      colorValue =
+          int.parse('FF${rawColor.replaceFirst('#', '')}', radix: 16);
+    }
     return ExamSection(
       id: (doc['id'] ?? fields['id'] ?? '').toString(),
-      name: (fields['name'] ?? '').toString(),
+      nameEn: (fields['nameEn'] ?? fields['name'] ?? '').toString(),
+      nameNe: (fields['nameNe'] ?? '').toString(),
       description: (fields['description'] ?? '').toString(),
+      kind: kind,
+      colorValue: colorValue,
       order: ord,
       courseIds: ids(fields['courseIds']),
       subcourseIds: ids(fields['subcourseIds']),
@@ -895,10 +917,19 @@ Future<List<ExamSection>> fetchExamSections({
 /// Exam provinces (chips) — mirrors examHub.fetchProvinces.
 class ExamProvince {
   final String id;
-  final String name;
+  final String nameEn;
+  final String nameNe;
   final int order;
 
-  ExamProvince({required this.id, required this.name, required this.order});
+  ExamProvince(
+      {required this.id,
+      required this.nameEn,
+      required this.nameNe,
+      required this.order});
+
+  /// Display name in the current app language.
+  String displayName(bool nepali) =>
+      nepali && nameNe.isNotEmpty ? nameNe : nameEn;
 
   factory ExamProvince.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
@@ -907,7 +938,8 @@ class ExamProvince {
     if (raw is num) ord = raw.toInt();
     return ExamProvince(
       id: (doc['id'] ?? fields['id'] ?? '').toString(),
-      name: (fields['name'] ?? '').toString(),
+      nameEn: (fields['nameEn'] ?? fields['name'] ?? '').toString(),
+      nameNe: (fields['nameNe'] ?? '').toString(),
       order: ord,
     );
   }
@@ -1052,6 +1084,15 @@ Future<List<ExamRule>> fetchExamRules({
   return const [];
 }
 
+/// Lists every exam attempt of a user across all sets (the whole
+/// `users/{uid}/exam_attempts` subcollection, newest attempt first).
+Future<List<ExamAttempt>> fetchAllExamAttempts(String uid) async {
+  final docs = await ExamRest.listDocs('users/$uid/exam_attempts');
+  final attempts = docs.map(ExamAttempt.fromMap).toList()
+    ..sort((a, b) => b.attemptNumber.compareTo(a.attemptNumber));
+  return attempts;
+}
+
 /// Mirrors fetchAttemptsForSet in services/examHub.ts: list the whole
 /// subcollection (no query — avoids composite-index requirements), filter by
 /// examSetId client-side, sort by attemptNumber like React.
@@ -1064,6 +1105,49 @@ Future<List<ExamAttempt>> fetchAttemptsForSet(
       .toList()
     ..sort((a, b) => a.attemptNumber.compareTo(b.attemptNumber));
   return attempts;
+}
+
+/// A student's written-answer submission (flat `app_exam_answers` collection,
+/// ownership via the `uid` field). Mirrors examHub's ExamAnswer.
+class ExamAnswer {
+  final String id;
+  final String uid;
+  final String examSetId;
+  final String status; // pending | reviewed | ...
+
+  ExamAnswer({
+    required this.id,
+    required this.uid,
+    required this.examSetId,
+    required this.status,
+  });
+
+  factory ExamAnswer.fromMap(Map<String, dynamic> m) {
+    final fields = m['_fields'] as Map<String, dynamic>? ?? m;
+    return ExamAnswer(
+      id: (m['id'] ?? fields['id'] ?? '').toString(),
+      uid: (fields['uid'] ?? '').toString(),
+      examSetId: (fields['examSetId'] ?? '').toString(),
+      status: (fields['status'] ?? 'pending').toString(),
+    );
+  }
+}
+
+/// Mirrors fetchMyExamAnswersBySet (examAnswers.ts): the user's own answer
+/// docs keyed by examSetId, so PDF cards can look up "did I already submit?"
+/// in O(1).
+Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
+  final docs = await ExamRest.runQuery(
+    'app_exam_answers',
+    where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
+    limit: 200,
+  );
+  final bySet = <String, ExamAnswer>{};
+  for (final d in docs) {
+    final a = ExamAnswer.fromMap(d);
+    if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
+  }
+  return bySet;
 }
 
 /// Saves an attempt twice: private doc + public ranking row (best-effort).

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
@@ -12,15 +13,19 @@ import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/preloading.dart';
 
-/// Exam tab — mirrors app/(tabs)/exam.tsx.
+String _npDigits(String s) => s.replaceAllMapped(
+      RegExp(r'[0-9]'),
+      (m) => '०१२३४५६७८९'[int.parse(m[0]!)],
+    );
+
+/// Exam Hub tab — mirrors app/(tabs)/exam.tsx same-to-same.
 ///
-/// Stable "Loksewa Exams Hub" header, province chips, section tabs (amber
-/// active), section description banner, and per-card lifecycle states
-/// (hidden/countdown/ready/rejoin/pending/locked) driven by
-/// [resolveExamCardState]. The rules sheet uses the shared [AppModalShell]
-/// (the app-wide modal rule) and the doc-ID fallback chain from
-/// [fetchExamRules]; confirming Start routes straight to the quiz — the quiz
-/// never renders behind a modal.
+/// Stable gradient header (the shared #2563EB → #1D4ED8 → #0B1F5B diagonal,
+/// 26px bottom radius — the same object as every other header in the app)
+/// holding the title, the province filter row and the section tabs. Only the
+/// card list below scrolls. Card states come from [resolveExamCardState];
+/// provinces select to WHITE, sections select to AMBER — two rows of pills
+/// next to each other never highlight the same way.
 class ExamTab extends StatefulWidget {
   const ExamTab({super.key});
 
@@ -29,28 +34,24 @@ class ExamTab extends StatefulWidget {
 }
 
 class _ExamTabState extends State<ExamTab> {
-  bool _loading = true;
-  String? _error;
-
   List<ExamProvince> _provinces = const [];
   List<ExamSection> _sections = const [];
-  List<ExamSet> _sets = const [];
-  Map<String, List<ExamAttempt>> _attemptsBySet = const {};
-  Set<String> _approvedSetIds = const {};
-  Map<String, String> _pendingBySet = const {}; // examSetId -> purchaseId
-  Map<String, String> _submittedPdfBySet = const {}; // examSetId -> answerId
-
-  String _selectedProvince = 'all';
-  String _activeSection = '';
-  DateTime _now = DateTime.now();
+  String _provinceId = 'all';
+  String? _sectionId;
+  List<_CardEntry> _cards = const [];
+  bool _loading = true;
+  String? _error;
+  bool _purchaseNavigating = false;
   Timer? _ticker;
 
   @override
   void initState() {
     super.initState();
-    _ticker =
-        Timer.periodic(const Duration(seconds: 1), (_) => _tick(DateTime.now()));
     _load();
+    // Re-evaluate hidden -> countdown -> ready without re-fetching.
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -59,10 +60,25 @@ class _ExamTabState extends State<ExamTab> {
     super.dispose();
   }
 
-  void _tick(DateTime now) {
-    if (!mounted) return;
-    // Re-evaluate card states every second (countdown labels stay live).
-    setState(() => _now = now);
+  String? get _subcourseId {
+    final store = ProfileStore.instance;
+    return store.courseInfo?.subcourseId ?? store.profile?.subcourseId;
+  }
+
+  String get _subcourseLabel {
+    final store = ProfileStore.instance;
+    return store.courseInfo?.subcourseName ??
+        store.courseInfo?.courseName ??
+        '';
+  }
+
+  bool _premiumActive(UserProfile? profile) {
+    if (profile == null || !profile.isPremium) return false;
+    final expiry = profile.premiumExpiryDate;
+    if (expiry == null || expiry.isEmpty) return true;
+    final parsed = DateTime.tryParse(expiry);
+    if (parsed == null) return false;
+    return parsed.isAfter(DateTime.now());
   }
 
   Future<void> _load() async {
@@ -71,687 +87,1283 @@ class _ExamTabState extends State<ExamTab> {
       _error = null;
     });
     try {
-      final profile = ProfileStore.instance.profile;
-      final uid = AuthService.currentUser?.uid ?? '';
-      final courseId = profile?.courseId;
-      final subcourseId = profile?.subcourseId;
+      final store = ProfileStore.instance;
+      final uid = AuthService.currentUser?.uid;
+      if (uid != null && uid.isNotEmpty) {
+        await store.load(uid);
+      }
+      final profile = store.profile;
+      final courseId =
+          store.courseInfo?.courseId ?? profile?.courseId;
+      final subcourseId = _subcourseId;
 
       final results = await Future.wait([
         fetchExamProvinces(),
         fetchExamSections(courseId: courseId, subcourseId: subcourseId),
-        fetchExamSets(subcourseId: subcourseId),
-        uid.isEmpty
+        uid == null
             ? Future.value(<ExamAttempt>[])
-            : ExamRest.listDocs('users/$uid/exam_attempts')
-                .then((d) => d.map(ExamAttempt.fromMap).toList()),
-        uid.isEmpty
-            ? Future.value(<String>[])
-            : fetchMyApprovedExamSetIds(uid),
-        uid.isEmpty
+            : fetchAllExamAttempts(uid),
+        uid == null
+            ? Future.value(<String, ExamAnswer>{})
+            : fetchMyExamAnswersBySet(uid),
+        uid == null
             ? Future.value(<ExamPurchaseRecord>[])
             : fetchMyExamPurchases(uid),
-        uid.isEmpty
-            ? Future.value(<Map<String, dynamic>>[])
-            : ExamRest.runQuery(
-                'app_exam_answers',
-                where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
-                limit: 200,
-              ),
       ]);
 
+      final provinces = results[0] as List<ExamProvince>;
       final sections = results[1] as List<ExamSection>;
-      final attempts = results[3] as List<ExamAttempt>;
-      final purchases = results[5] as List<ExamPurchaseRecord>;
-      final answers = results[6] as List<Map<String, dynamic>>;
+      final attempts = results[2] as List<ExamAttempt>;
+      final answers = results[3] as Map<String, ExamAnswer>;
+      final purchases = results[4] as List<ExamPurchaseRecord>;
 
       final attemptsBySet = <String, List<ExamAttempt>>{};
       for (final a in attempts) {
         attemptsBySet.putIfAbsent(a.examSetId, () => []).add(a);
       }
-      final pendingBySet = <String, String>{};
+      final approvedIds = purchases
+          .where((p) => p.status == 'active')
+          .map((p) => p.examSetId)
+          .toSet();
+      final pendingIds = purchases
+          .where((p) => p.status == 'pending')
+          .map((p) => p.examSetId)
+          .toSet();
+      final pendingBySet = <String, ExamPurchaseRecord>{};
       for (final p in purchases) {
-        if (p.status == 'pending') pendingBySet[p.examSetId] = p.id;
+        if (p.status == 'pending') pendingBySet[p.examSetId] = p;
       }
-      final submittedPdfBySet = <String, String>{};
-      for (final d in answers) {
-        final setId = (d['examSetId'] ?? '').toString();
-        final submitted = d['submitted'] == true;
-        if (setId.isNotEmpty && submitted) {
-          submittedPdfBySet[setId] = (d['id'] ?? '').toString();
-        }
+
+      String? sectionId = _sectionId;
+      if (sections.isNotEmpty &&
+          (sectionId == null ||
+              !sections.any((s) => s.id == sectionId))) {
+        sectionId = sections.first.id;
+      }
+
+      final now = DateTime.now();
+      final premium = _premiumActive(profile);
+      List<_CardEntry> cards = const [];
+      if (subcourseId != null &&
+          subcourseId.isNotEmpty &&
+          sectionId != null) {
+        final sets = await fetchExamSets(
+          subcourseId: subcourseId,
+          sectionId: sectionId,
+          provinceId: _provinceId,
+        );
+        cards = sets
+            .map((set) {
+              final attempted =
+                  (attemptsBySet[set.id]?.length ?? 0) > 0;
+              final state = resolveExamCardState(
+                set: set,
+                now: now,
+                hasAttempted: attempted,
+                isPurchased:
+                    premium || approvedIds.contains(set.id),
+                hasPendingPurchase: pendingIds.contains(set.id),
+              );
+              return _CardEntry(
+                set: set,
+                state: state,
+                isPurchased:
+                    premium || approvedIds.contains(set.id),
+                hasAttempted: attempted,
+                answer: set.contentType == 'pdf'
+                    ? answers[set.id]
+                    : null,
+                pendingPurchase: pendingBySet[set.id],
+              );
+            })
+            .where((e) => e.state != ExamCardState.hidden)
+            .toList();
       }
 
       if (!mounted) return;
       setState(() {
-        _provinces = results[0] as List<ExamProvince>;
+        _provinces = provinces;
         _sections = sections;
-        _sets = results[2] as List<ExamSet>;
-        _attemptsBySet = attemptsBySet;
-        _approvedSetIds = (results[4] as List<String>).toSet();
-        _pendingBySet = pendingBySet;
-        _submittedPdfBySet = submittedPdfBySet;
-        if (_activeSection.isEmpty && sections.isNotEmpty) {
-          _activeSection = sections.first.id;
-        }
+        _sectionId = sectionId;
+        _cards = cards;
+        _purchaseNavigating = false;
         _loading = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = AppLanguage.tr(
-            'Could not load exams. Pull to retry.', 'परीक्षा लोड हुन सकेन।');
+            'Could not load exams. Pull to retry.',
+            'परीक्षा लोड हुन सकेन। पुनः प्रयास गर्न तल तान्नुहोस्।');
         _loading = false;
       });
     }
   }
 
-  bool _isPurchased(ExamSet set) {
-    final profile = ProfileStore.instance.profile;
-    if (profile != null && _premiumActive(profile)) return true;
-    return _approvedSetIds.contains(set.id);
-  }
-
-  bool _premiumActive(UserProfile profile) {
-    if (!profile.isPremium) return false;
-    final expiry = profile.premiumExpiryDate;
-    if (expiry == null || expiry.isEmpty) return true;
-    final dt = DateTime.tryParse(expiry);
-    return dt == null || dt.isAfter(DateTime.now());
-  }
-
-  ExamCardState _cardState(ExamSet set) => resolveExamCardState(
-        set: set,
-        now: _now,
-        hasAttempted: (_attemptsBySet[set.id] ?? const []).isNotEmpty,
-        isPurchased: _isPurchased(set),
-        hasPendingPurchase: _pendingBySet.containsKey(set.id),
-      );
-
-  List<ExamSet> get _visibleSets => _sets.where((s) {
-        if (_activeSection.isNotEmpty && s.sectionId != _activeSection) {
-          return false;
-        }
-        if (_selectedProvince != 'all' && s.provinceId != _selectedProvince) {
-          return false;
-        }
-        return _cardState(s) != ExamCardState.hidden;
-      }).toList();
-
-  ExamSection? get _activeSectionObj {
+  ExamSection? get _activeSection {
     for (final s in _sections) {
-      if (s.id == _activeSection) return s;
+      if (s.id == _sectionId) return s;
     }
     return null;
   }
 
-  // ---------- rules sheet ----------
-
-  Future<void> _openRules(ExamSet set, {required bool startMode}) async {
-    final profile = ProfileStore.instance.profile;
-    List<ExamRule> rules;
-    try {
-      rules = await fetchExamRules(
-        courseId: profile?.courseId,
-        subcourseId: profile?.subcourseId,
-        provinceId: set.provinceId,
-        sectionId: set.sectionId,
-      );
-    } catch (_) {
-      rules = const [];
-    }
-    if (!mounted) return;
-    await AppModalShell.show(
+  Future<void> _openRules(ExamSet set, _RulesMode mode) async {
+    final confirmed = await AppModalShell.show<bool>(
       context: context,
-      builder: (dialogContext) => AppModalShell(
-        onClose: () => Navigator.of(dialogContext).pop(),
-        icon: Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            color: const Color(0xFFF59E0B).withValues(alpha: 0.25),
-            borderRadius: BorderRadius.circular(16),
+      builder: (ctx) => _RulesDialogContent(set: set, mode: mode),
+    );
+    if (!mounted) return;
+    if (mode == _RulesMode.start && confirmed == true) {
+      context.push('/exam/${set.id}/quiz');
+    }
+  }
+
+  void _onPrimaryPress(_CardEntry entry) {
+    final set = entry.set;
+    if (entry.state == ExamCardState.locked) {
+      setState(() => _purchaseNavigating = true);
+      context.push('/exam-purchase/${set.id}');
+      return;
+    }
+    if (entry.state == ExamCardState.pending) {
+      final purchase = entry.pendingPurchase;
+      if (purchase != null) {
+        setState(() => _purchaseNavigating = true);
+        context.push('/subscription/exam-purchase/${purchase.id}');
+      } else {
+        setState(() => _purchaseNavigating = false);
+      }
+      return;
+    }
+    if (set.contentType == 'pdf') {
+      final answer = entry.answer;
+      if (answer != null) {
+        context.push('/exam-answer/${answer.id}');
+        return;
+      }
+      final pdfUrl = set.pdfUrl;
+      if (pdfUrl != null && pdfUrl.isNotEmpty) {
+        final nepali = AppLanguage.isNepali;
+        final section = _activeSection;
+        context.push(
+          '/pdf/${set.id}?uri=${Uri.encodeComponent(pdfUrl)}'
+          '&title=${Uri.encodeComponent(set.title)}'
+          '&examSetId=${set.id}'
+          '&allowUpload=${section?.kind == 'theory' ? '1' : '0'}'
+          '&sectionName=${Uri.encodeComponent(section?.displayName(nepali) ?? '')}',
+        );
+      } else {
+        // Paper not uploaded yet.
+      }
+      return;
+    }
+    if (entry.state == ExamCardState.rejoin) {
+      context.push('/exam/${set.id}');
+    } else {
+      _openRules(set, _RulesMode.start);
+    }
+  }
+
+  String _countdownLabel(DateTime? start, DateTime now) {
+    if (start == null) return '--:--';
+    var s = start.difference(now).inSeconds;
+    if (s < 0) s = 0;
+    final m = s ~/ 60;
+    final sec = s % 60;
+    final label =
+        '${m.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}';
+    return AppLanguage.isNepali ? _npDigits(label) : label;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Scaffold(
+      backgroundColor: palette.background,
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              _buildHeader(),
+              Expanded(child: _buildBody()),
+            ],
           ),
-          child: const Icon(Icons.rule_outlined,
-              color: Color(0xFFB45309), size: 28),
+          if (_purchaseNavigating)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black54,
+                child: Center(
+                  child: PreloadingWidget(
+                    tinted: true,
+                    label: AppLanguage.tr('Loading…', 'लोड हुँदै…'),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Stable header — the shared diagonal gradient, 26px bottom radius,
+  /// full-bleed under the status bar. Title row, province chips, section tabs.
+  Widget _buildHeader() {
+    const gradientColors = [
+      Color(0xFF2563EB),
+      Color(0xFF1D4ED8),
+      Color(0xFF0B1F5B),
+    ];
+    final nepali = AppLanguage.isNepali;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1D4ED8),
+          gradient: LinearGradient(
+            colors: gradientColors,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(26),
+            bottomRight: Radius.circular(26),
+          ),
         ),
-        tagLabel: AppLanguage.tr('Exam Rules', 'परीक्षा नियम'),
-        title: Text(
-          set.title,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        child: SafeArea(
+        top: true,
+        bottom: false,
+        child: Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              // Title row.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 32,
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.school,
+                          size: 18, color: Colors.white),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Loksewa Exams Hub',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 19,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Province filter.
+              SizedBox(
+                height: 40,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _provinces.length + 1,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (c, i) {
+                    final id = i == 0 ? 'all' : _provinces[i - 1].id;
+                    final label = i == 0
+                        ? AppLanguage.tr('All Board', 'सबै बोर्ड')
+                        : _provinces[i - 1].displayName(nepali);
+                    return _provinceChip(id, label);
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Section tabs.
+              SizedBox(
+                height: 44,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: _sections.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (c, i) => _sectionTab(_sections[i]),
+                ),
+              ),
+            ],
+          ),
         ),
-        body: rules.isEmpty
-            ? Text(AppLanguage.tr(
-                'No special rules for this exam. Good luck!',
-                'यस परीक्षाका लागि विशेष नियम छैनन्। शुभकामना!'))
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < rules.length; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: 24,
-                            height: 24,
-                            margin: const EdgeInsets.only(right: 10, top: 1),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFF59E0B),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Center(
-                              child: Text('${i + 1}',
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold)),
-                            ),
+      ),
+    ));
+  }
+
+  /// Provinces select to WHITE; sections select to AMBER — each filter level
+  /// gets its own colour so the two pill rows never read as one control.
+  Widget _provinceChip(String id, String label) {
+    final active = id == _provinceId;
+    return GestureDetector(
+      onTap: () {
+        if (_provinceId == id) return;
+        setState(() => _provinceId = id);
+        _load();
+      },
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        decoration: BoxDecoration(
+          color: active
+              ? Colors.white
+              : Colors.white.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(
+            color: active
+                ? Colors.white
+                : Colors.white.withValues(alpha: 0.45),
+            width: 1.5,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (active)
+              const Padding(
+                padding: EdgeInsets.only(right: 5),
+                child: Icon(Icons.check,
+                    size: 14, color: Color(0xFF1D4ED8)),
+              ),
+            Text(
+              label,
+              style: TextStyle(
+                color: active
+                    ? const Color(0xFF1D4ED8)
+                    : Colors.white,
+                fontSize: 13,
+                fontWeight: active ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTab(ExamSection section) {
+    final active = section.id == _sectionId;
+    final nepali = AppLanguage.isNepali;
+    return GestureDetector(
+      onTap: () {
+        if (_sectionId == section.id) return;
+        setState(() => _sectionId = section.id);
+        _load();
+      },
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: active
+              ? const Color(0xFFFBBF24)
+              : Colors.white.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: active
+                ? const Color(0xFFFBBF24)
+                : Colors.white.withValues(alpha: 0.35),
+            width: 1.5,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            section.displayName(nepali),
+            style: TextStyle(
+              color: active
+                  ? const Color(0xFF78350F)
+                  : Colors.white.withValues(alpha: 0.9),
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    final palette = ExpoPalette.of(context);
+    final subcourseId = _subcourseId;
+    if (_loading) {
+      return PreloadingWidget(
+        tinted: false,
+        label: AppLanguage.tr('Loading Exams…', 'परीक्षा लोड हुँदै…'),
+      );
+    }
+    if (_error != null) {
+      return RefreshIndicator(
+        onRefresh: _load,
+        child: ListView(
+          children: [
+            const SizedBox(height: 80),
+            Center(child: Text(_error!)),
+            const SizedBox(height: 12),
+            Center(
+              child: ElevatedButton(
+                onPressed: _load,
+                child: Text(AppLanguage.tr('Retry', 'पुनः प्रयास')),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (subcourseId == null || subcourseId.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.school_outlined,
+                  size: 48, color: palette.textDisabled),
+              const SizedBox(height: 16),
+              Text(
+                AppLanguage.tr('Set up your course first',
+                    'पहिले आफ्नो कोर्स सेट गर्नुहोस्'),
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.bold),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                AppLanguage.tr(
+                    'Exam sets are matched to your enrolled course and subcourse.',
+                    'परीक्षा सेटहरू तपाईंको कोर्स र सबकोर्ससँग मिलाइन्छ।'),
+                textAlign: TextAlign.center,
+                style: TextStyle(color: palette.textSecondary),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => context.push('/course-setup?mode=update'),
+                icon: const Icon(Icons.arrow_forward, size: 16),
+                label: Text(AppLanguage.tr(
+                    'Set up course', 'कोर्स सेट गर्नुहोस्')),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          if (_activeSection != null) _sectionBanner(_activeSection!),
+          if (_activeSection != null) const SizedBox(height: 12),
+          if (_cards.isEmpty)
+            _emptyState(palette)
+          else
+            ..._cards.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ExamCard(
+                    entry: e,
+                    accentColor: Color(
+                        _activeSection?.colorValue ?? 0xFF2563EB),
+                    subcourseLabel: _subcourseLabel,
+                    countdownLabel:
+                        _countdownLabel(e.set.startTime, DateTime.now()),
+                    onRulesPress: () => _openRules(e.set, _RulesMode.info),
+                    onPrimaryPress: () => _onPrimaryPress(e),
+                    onRankingPress: () =>
+                        context.push('/exam/${e.set.id}/ranking'),
+                  ),
+                )),
+        ],
+      ),
+    );
+  }
+
+  /// Section description banner — megaphone + section name + description,
+  /// tinted with the section's own accent colour.
+  Widget _sectionBanner(ExamSection section) {
+    final accent = Color(section.colorValue);
+    final nepali = AppLanguage.isNepali;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: accent.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: accent.withValues(alpha: 0.2),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.campaign, size: 18, color: accent),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  section.displayName(nepali),
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: accent,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (section.description.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              section.description,
+              style: TextStyle(
+                fontSize: 13,
+                height: 19 / 13,
+                color: ExpoPalette.of(context).textSecondary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState(ExpoPalette palette) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.calendar_today_outlined,
+              size: 48, color: palette.textDisabled),
+          const SizedBox(height: 16),
+          Text(
+            AppLanguage.tr('No exams open right now',
+                'अहिले कुनै परीक्षा खुला छैन'),
+            style:
+                const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppLanguage.tr(
+                'Exam cards appear 10 minutes before their start time. Pull down to refresh, or check another board.',
+                'परीक्षा सुरु हुनुभन्दा १० मिनेटअघि कार्डहरू देखिन्छन्। रिफ्रेश गर्न तल तान्नुहोस् वा अर्को बोर्ड हेर्नुहोस्।'),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: palette.textSecondary, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CardEntry {
+  final ExamSet set;
+  final ExamCardState state;
+  final bool isPurchased;
+  final bool hasAttempted;
+  final ExamAnswer? answer;
+  final ExamPurchaseRecord? pendingPurchase;
+
+  const _CardEntry({
+    required this.set,
+    required this.state,
+    required this.isPurchased,
+    required this.hasAttempted,
+    this.answer,
+    this.pendingPurchase,
+  });
+}
+
+enum _RulesMode { info, start }
+
+/// One exam card — mirrors ExamCard.tsx: title row with icon box, meta chips,
+/// difficulty/access tags, then the Rules / Ranking / primary action row.
+class _ExamCard extends StatelessWidget {
+  final _CardEntry entry;
+  final Color accentColor;
+  final String subcourseLabel;
+  final String countdownLabel;
+  final VoidCallback onRulesPress;
+  final VoidCallback onPrimaryPress;
+  final VoidCallback onRankingPress;
+
+  const _ExamCard({
+    required this.entry,
+    required this.accentColor,
+    required this.subcourseLabel,
+    required this.countdownLabel,
+    required this.onRulesPress,
+    required this.onPrimaryPress,
+    required this.onRankingPress,
+  });
+
+  static const _green = Color(0xFF16A34A);
+  static const _amber = Color(0xFFD97706);
+  static const _red = Color(0xFFDC2626);
+
+  Color _difficultyColor(String d) {
+    switch (d) {
+      case 'medium':
+        return _amber;
+      case 'hard':
+        return _red;
+      default:
+        return _green;
+    }
+  }
+
+  String _difficultyLabel(String d) {
+    switch (d) {
+      case 'medium':
+        return AppLanguage.tr('Medium', 'मध्यम');
+      case 'hard':
+        return AppLanguage.tr('Hard', 'गाह्रो');
+      default:
+        return AppLanguage.tr('Easy', 'सजिलो');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    final set = entry.set;
+    final state = entry.state;
+    final isPdf = set.contentType == 'pdf';
+    final isSubmitted = isPdf && entry.answer != null;
+    final answerStatus = entry.answer?.status;
+
+    // ---- primary button ----
+    late final String primaryLabel;
+    late final IconData primaryIcon;
+    late final bool primaryDisabled;
+    if (isSubmitted) {
+      primaryLabel = AppLanguage.tr('View Details', 'विवरण हेर्नुहोस्');
+      primaryIcon = Icons.lock_outline;
+      primaryDisabled = false;
+    } else {
+      switch (state) {
+        case ExamCardState.countdown:
+          primaryLabel = countdownLabel;
+          primaryIcon = Icons.access_time;
+          primaryDisabled = true;
+          break;
+        case ExamCardState.rejoin:
+          primaryLabel = AppLanguage.tr('Re-Join', 'पुनः जोइन');
+          primaryIcon = Icons.refresh;
+          primaryDisabled = false;
+          break;
+        case ExamCardState.pending:
+          primaryLabel = AppLanguage.tr('Pending', 'पेन्डिङ');
+          primaryIcon = Icons.access_time;
+          primaryDisabled = false;
+          break;
+        case ExamCardState.locked:
+          primaryLabel = AppLanguage.tr('To Purchase', 'खरिद गर्नुहोस्');
+          primaryIcon = Icons.lock_outline;
+          primaryDisabled = false;
+          break;
+        case ExamCardState.ready:
+        case ExamCardState.hidden:
+          if (isPdf) {
+            primaryLabel =
+                AppLanguage.tr('View Question', 'प्रश्न हेर्नुहोस्');
+            primaryIcon = Icons.description;
+          } else {
+            primaryLabel = AppLanguage.tr('Start', 'सुरु गर्नुहोस्');
+            primaryIcon = Icons.play_arrow;
+          }
+          primaryDisabled = false;
+          break;
+      }
+    }
+    final Color primaryColor = primaryDisabled
+        ? palette.textDisabled
+        : isSubmitted ||
+                (entry.isPurchased &&
+                    (state == ExamCardState.ready ||
+                        state == ExamCardState.rejoin)) ||
+                (!entry.isPurchased &&
+                    entry.hasAttempted &&
+                    state == ExamCardState.rejoin)
+            ? _green
+            : accentColor;
+
+    final submitted = isSubmitted;
+    return Opacity(
+      opacity: submitted ? 0.72 : 1,
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: palette.surface,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: palette.border, width: 1),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Title row.
+            Row(
+              children: [
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.09),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    isPdf ? Icons.description : Icons.help,
+                    size: 22,
+                    color: accentColor,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        set.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (subcourseLabel.isNotEmpty)
+                        Text(
+                          subcourseLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: palette.textSecondary,
                           ),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(rules[i].title,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w600)),
-                                if (rules[i].description.isNotEmpty)
-                                  Text(rules[i].description,
-                                      style: TextStyle(
-                                          color: Colors.grey.shade600,
-                                          fontSize: 13)),
-                              ],
+                        ),
+                    ],
+                  ),
+                ),
+                if (submitted) _submittedBadge(answerStatus),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Meta chips.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _chip(
+                  icon: Icons.calendar_today_outlined,
+                  label: _startLabel(set.startTime),
+                  color: accentColor,
+                  bg: accentColor.withValues(alpha: 0.07),
+                  borderColor: accentColor.withValues(alpha: 0.2),
+                  palette: palette,
+                ),
+                if (!isPdf) ...[
+                  _chip(
+                    icon: Icons.help_outline,
+                    label: AppLanguage.isNepali
+                        ? _npDigits('${set.totalQuestions} Qs')
+                        : '${set.totalQuestions} Qs',
+                    palette: palette,
+                  ),
+                  _chip(
+                    icon: Icons.access_time_outlined,
+                    label: AppLanguage.isNepali
+                        ? _npDigits('${set.durationMinutes}m')
+                        : '${set.durationMinutes}m',
+                    palette: palette,
+                  ),
+                  _chip(
+                    icon: Icons.emoji_events_outlined,
+                    label: AppLanguage.isNepali
+                        ? 'पास ${_npDigits('${set.passPercent}%')}'
+                        : 'Pass ${set.passPercent}%',
+                    palette: palette,
+                  ),
+                ] else
+                  _chip(
+                    icon: Icons.attach_file_outlined,
+                    label: AppLanguage.tr('PDF paper', 'PDF प्रश्नपत्र'),
+                    palette: palette,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Tags.
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _chip(
+                  icon: Icons.bar_chart_outlined,
+                  label: _difficultyLabel(set.difficulty),
+                  color: _difficultyColor(set.difficulty),
+                  bg: _difficultyColor(set.difficulty)
+                      .withValues(alpha: 0.08),
+                  borderColor: _difficultyColor(set.difficulty)
+                      .withValues(alpha: 0.27),
+                  bold: true,
+                  palette: palette,
+                ),
+                if (set.accessType == 'free')
+                  _chip(
+                    icon: Icons.check_circle,
+                    label: AppLanguage.tr('Free', 'निःशुल्क'),
+                    color: _green,
+                    bg: _green.withValues(alpha: 0.08),
+                    borderColor: _green.withValues(alpha: 0.27),
+                    bold: true,
+                    palette: palette,
+                  )
+                else
+                  _chip(
+                    icon: state == ExamCardState.locked
+                        ? Icons.lock_outline
+                        : state == ExamCardState.pending
+                            ? Icons.access_time
+                            : Icons.check_circle,
+                    label: state == ExamCardState.locked
+                        ? AppLanguage.tr(
+                            'Not Purchased', 'खरिद गरिएको छैन')
+                        : state == ExamCardState.pending
+                            ? AppLanguage.tr('Purchase Pending',
+                                'खरिद पेन्डिङमा')
+                            : AppLanguage.tr(
+                                'Purchased', 'खरिद गरिएको'),
+                    color: state == ExamCardState.locked
+                        ? palette.danger
+                        : state == ExamCardState.pending
+                            ? palette.warning
+                            : _green,
+                    bg: (state == ExamCardState.locked
+                            ? palette.danger
+                            : state == ExamCardState.pending
+                                ? palette.warning
+                                : _green)
+                        .withValues(alpha: 0.08),
+                    borderColor: (state == ExamCardState.locked
+                            ? palette.danger
+                            : state == ExamCardState.pending
+                                ? palette.warning
+                                : _green)
+                        .withValues(alpha: 0.27),
+                    bold: true,
+                    palette: palette,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            // Actions.
+            Row(
+              children: [
+                _secondaryButton(
+                  context,
+                  icon: Icons.info_outline,
+                  label: AppLanguage.tr('Rules', 'नियमहरू'),
+                  onTap: onRulesPress,
+                ),
+                if (state == ExamCardState.rejoin) ...[
+                  const SizedBox(width: 8),
+                  _secondaryButton(
+                    context,
+                    icon: Icons.emoji_events_outlined,
+                    label: AppLanguage.tr('Ranking', 'र्याङ्किङ'),
+                    iconColor: _amber,
+                    onTap: onRankingPress,
+                  ),
+                ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: primaryDisabled ? null : onPrimaryPress,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12, horizontal: 14),
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(primaryIcon,
+                              size: 16, color: Colors.white),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              primaryLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
-                ],
-              ),
-        footer: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFF59E0B),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14)),
-              ),
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-                if (startMode) {
-                  // Rules confirmed — go straight to the quiz (React: the
-                  // quiz never renders behind a modal).
-                  context.push('/exam/${set.id}/quiz');
-                }
-              },
-              child: Text(
-                  startMode
-                      ? AppLanguage.tr('Start Exam', 'परीक्षा सुरु गर्नुहोस्')
-                      : AppLanguage.tr('Got it', 'बुझें'),
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ---------- primary-press routing (mirrors React onPrimaryPress) ----------
-
-  void _onPrimaryPress(ExamSet set) {
-    final state = _cardState(set);
-    switch (state) {
-      case ExamCardState.locked:
-        // Pro set, not purchased -> buy flow.
-        context.push('/exam-purchase/${set.id}');
-        return;
-      case ExamCardState.pending:
-        // Purchase awaiting review -> pending purchase detail.
-        final purchaseId = _pendingBySet[set.id];
-        if (purchaseId != null) {
-          context.push('/subscription/exam-purchase/$purchaseId');
-        }
-        return;
-      case ExamCardState.countdown:
-        return; // disabled button — nothing to do.
-      case ExamCardState.rejoin:
-        context.push('/exam/${set.id}');
-        return;
-      case ExamCardState.ready:
-        break;
-      case ExamCardState.hidden:
-        return;
-    }
-    if (set.contentType == 'pdf') {
-      final answerId = _submittedPdfBySet[set.id];
-      if (answerId != null && answerId.isNotEmpty) {
-        context.push('/exam-answer/$answerId');
-      } else {
-        final uri = set.pdfUrl ?? '';
-        context.push(
-          '/pdf/${Uri.encodeComponent(set.id)}'
-          '?uri=${Uri.encodeComponent(uri)}'
-          '&title=${Uri.encodeComponent(set.title)}',
-        );
-      }
-      return;
-    }
-    // MCQ: rules sheet in start mode; confirming goes straight to the quiz.
-    _openRules(set, startMode: true);
-  }
-
-  String _countdownLabel(ExamSet set) {
-    final start = set.startTime;
-    if (start == null) return '';
-    final diff = start.difference(_now);
-    if (diff.isNegative) return '';
-    final h = diff.inHours;
-    final m = diff.inMinutes % 60;
-    final s = diff.inSeconds % 60;
-    final mm = m.toString().padLeft(2, '0');
-    final ss = s.toString().padLeft(2, '0');
-    return h > 0 ? '$h:$mm:$ss' : '$mm:$ss';
-  }
-
-  String _startLabel(ExamSet set) {
-    final start = set.startTime;
-    if (start == null) return AppLanguage.tr('Always open', 'सधैं खुला');
-    // Kathmandu wall-clock for display.
-    final k = start.toUtc().add(const Duration(hours: 5, minutes: 45));
-    const months = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    final ampm = k.hour >= 12 ? 'PM' : 'AM';
-    var hh = k.hour % 12;
-    if (hh == 0) hh = 12;
-    final min = k.minute.toString().padLeft(2, '0');
-    return '${months[k.month - 1]} ${k.day}, $hh:$min $ampm';
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
-        children: [
-          _header(),
-          Expanded(
-            child: _loading
-                ? const PreloadingWidget(
-                    tinted: false,
-                    label: 'Loading Exams...',
-                  )
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(_error!),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                                onPressed: _load,
-                                child: const Text('Retry')),
-                          ],
-                        ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _load,
-                        child: ListView(
-                          padding: const EdgeInsets.only(bottom: 24),
-                          children: [
-                            _provinceChips(),
-                            _sectionTabs(),
-                            _sectionBanner(),
-                            ..._visibleSets.map(_examCard),
-                            if (_visibleSets.isEmpty)
-                              Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 48),
-                                child: Center(
-                                  child: Text(AppLanguage.tr(
-                                      'No exams here yet.',
-                                      'यहाँ अहिले परीक्षा छैनन्।')),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------- header ----------
-
-  Widget _header() {
-    return Container(
-      width: double.infinity,
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1E3A8A), Color(0xFF3B82F6)],
-        ),
-        borderRadius: BorderRadius.vertical(bottom: Radius.circular(24)),
-      ),
-      padding: EdgeInsets.only(
-        top: MediaQuery.of(context).padding.top + 16,
-        left: 20,
-        right: 20,
-        bottom: 20,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            AppLanguage.tr('Loksewa Exams Hub', 'लोकसेवा परीक्षा केन्द्र'),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            AppLanguage.tr(
-                'Live tests, model sets & answer desk',
-                'लाइभ परीक्षा, मोडल सेट र उत्तर डेस्क'),
-            style: TextStyle(
-                color: Colors.white.withValues(alpha: 0.85), fontSize: 13),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------- province chips ----------
-
-  Widget _provinceChips() {
-    return SizedBox(
-      height: 52,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        children: [
-          _provinceChip('all', AppLanguage.tr('All Board', 'सबै बोर्ड')),
-          for (final p in _provinces) _provinceChip(p.id, p.name),
-        ],
-      ),
-    );
-  }
-
-  Widget _provinceChip(String id, String label) {
-    final active = _selectedProvince == id;
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: ChoiceChip(
-        label: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (active)
-              const Padding(
-                padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.check, size: 16),
-              ),
-            Text(label),
-          ],
-        ),
-        selected: active,
-        onSelected: (_) => setState(() => _selectedProvince = id),
-        selectedColor: Colors.white,
-        backgroundColor: Colors.grey.shade200,
-        labelStyle: TextStyle(
-          color: active ? const Color(0xFF1E3A8A) : Colors.black87,
-          fontWeight: active ? FontWeight.bold : FontWeight.normal,
-        ),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(999),
-          side: BorderSide(
-              color: active ? const Color(0xFF1E3A8A) : Colors.transparent),
-        ),
-      ),
-    );
-  }
-
-  // ---------- section tabs ----------
-
-  Widget _sectionTabs() {
-    if (_sections.isEmpty) return const SizedBox.shrink();
-    return SizedBox(
-      height: 48,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-        children: [
-          for (final s in _sections)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                label: Text(s.name),
-                selected: _activeSection == s.id,
-                onSelected: (_) => setState(() => _activeSection = s.id),
-                selectedColor: const Color(0xFFF59E0B),
-                backgroundColor: Colors.grey.shade200,
-                labelStyle: TextStyle(
-                  color: _activeSection == s.id
-                      ? Colors.white
-                      : Colors.black87,
-                  fontWeight: _activeSection == s.id
-                      ? FontWeight.bold
-                      : FontWeight.normal,
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(999)),
-              ),
+              ],
             ),
-        ],
+            if (state == ExamCardState.countdown) ...[
+              const SizedBox(height: 8),
+              Center(
+                child: Text(
+                  AppLanguage.tr(
+                      'Opens automatically when the timer ends',
+                      'टाइमर सकिएपछि स्वतः खुल्नेछ'),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: palette.textSecondary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _sectionBanner() {
-    final section = _activeSectionObj;
-    if (section == null || section.description.isEmpty) {
-      return const SizedBox.shrink();
+  String _startLabel(DateTime? start) {
+    if (start == null) {
+      return AppLanguage.tr('Open now', 'अहिले खुला छ');
     }
+    final h12 = start.hour % 12 == 0 ? 12 : start.hour % 12;
+    final mm = start.minute.toString().padLeft(2, '0');
+    final ampm = start.hour < 12 ? 'AM' : 'PM';
+    final time = '$h12:$mm $ampm';
+    return AppLanguage.isNepali
+        ? 'सुरु: ${_npDigits(time)}'
+        : 'Start: $time';
+  }
+
+  Widget _submittedBadge(String? status) {
+    final reviewed = status == 'reviewed';
+    final color = reviewed ? _green : _amber;
     return Container(
-      margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-      padding: const EdgeInsets.all(12),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFBEB),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFDE68A)),
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.info_outline,
-              size: 18, color: Color(0xFFB45309)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(section.description,
-                style: const TextStyle(
-                    fontSize: 13, color: Color(0xFF92400E))),
+          Icon(
+            reviewed ? Icons.done_all_outlined : Icons.access_time,
+            size: 12,
+            color: color,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            reviewed
+                ? AppLanguage.tr('Reviewed', 'समीक्षा भयो')
+                : AppLanguage.tr('Pending', 'पेन्डिङ'),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
           ),
         ],
       ),
     );
   }
 
-  // ---------- exam card ----------
-
-  Widget _examCard(ExamSet set) {
-    final state = _cardState(set);
-    final attempts = _attemptsBySet[set.id] ?? const [];
-    final submittedPdf = _submittedPdfBySet[set.id];
-    final isPdf = set.contentType == 'pdf';
-
-    return Card(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(set.title,
-                      style: const TextStyle(
-                          fontSize: 16, fontWeight: FontWeight.bold)),
-                ),
-                if (set.isPro)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text('PRO',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12)),
-                  ),
-              ],
+  Widget _chip({
+    required IconData icon,
+    required String label,
+    required ExpoPalette palette,
+    Color? color,
+    Color? bg,
+    Color? borderColor,
+    bool bold = false,
+  }) {
+    final c = color ?? palette.textSecondary;
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg ?? palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+            color: borderColor ?? palette.border, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: c),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+              color: c,
             ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                if (!isPdf) _metaChip(Icons.help_outline,
-                    '${set.totalQuestions} ${AppLanguage.tr('Qs', 'प्रश्न')}'),
-                _metaChip(Icons.timer_outlined, '${set.durationMinutes} min'),
-                _metaChip(Icons.flag_outlined,
-                    '${AppLanguage.tr('Pass', 'उत्तीर्ण')} ${set.passPercent}%'),
-                _metaChip(
-                    Icons.schedule_outlined, _startLabel(set)),
-                if (attempts.isNotEmpty)
-                  _metaChip(Icons.history,
-                      '${attempts.length} ${AppLanguage.tr('attempts', 'प्रयास')}'),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: _primaryButton(set, state, submittedPdf)),
-                const SizedBox(width: 8),
-                IconButton(
-                  tooltip: AppLanguage.tr('Rules', 'नियम'),
-                  onPressed: () => _openRules(set, startMode: false),
-                  icon: const Icon(Icons.info_outline),
-                ),
-                IconButton(
-                  tooltip: AppLanguage.tr('Ranking', 'र्याङ्किङ'),
-                  onPressed: () =>
-                      context.push('/exam/${set.id}/ranking'),
-                  icon: const Icon(Icons.leaderboard_outlined),
-                ),
-              ],
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _metaChip(IconData icon, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+  Widget _secondaryButton(
+    BuildContext context, {
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    Color? iconColor,
+  }) {
+    final palette = ExpoPalette.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
         decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border, width: 1.5),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: Colors.grey.shade600),
-            const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+            Icon(icon,
+                size: 16,
+                color: iconColor ?? palette.textPrimary),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
+              ),
+            ),
           ],
         ),
-      );
-
-  Widget _primaryButton(
-      ExamSet set, ExamCardState state, String? submittedPdf) {
-    final isPdf = set.contentType == 'pdf';
-    switch (state) {
-      case ExamCardState.countdown:
-        return ElevatedButton.icon(
-          onPressed: null,
-          icon: const Icon(Icons.schedule, size: 18),
-          label: Text(
-              '${AppLanguage.tr('Starts in', 'सुरु हुन')} ${_countdownLabel(set)}'),
-        );
-      case ExamCardState.pending:
-        return OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFB45309),
-            side: const BorderSide(color: Color(0xFFF59E0B)),
-          ),
-          onPressed: () => _onPrimaryPress(set),
-          icon: const Icon(Icons.hourglass_empty, size: 18),
-          label: Text(AppLanguage.tr('Purchase Pending', 'खरिद विचाराधीन')),
-        );
-      case ExamCardState.locked:
-        return ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey.shade700,
-            foregroundColor: Colors.white,
-          ),
-          onPressed: () => _onPrimaryPress(set),
-          icon: const Icon(Icons.lock_outline, size: 18),
-          label: Text(AppLanguage.tr('Unlock PRO', 'प्रो अनलक')),
-        );
-      case ExamCardState.rejoin:
-        return OutlinedButton.icon(
-          onPressed: () => _onPrimaryPress(set),
-          icon: const Icon(Icons.refresh, size: 18),
-          label: Text(isPdf
-              ? AppLanguage.tr('Re-Open', 'पुनः खोल्नुहोस्')
-              : AppLanguage.tr('Re-Join', 'पुनः जोडिनुहोस्')),
-        );
-      case ExamCardState.ready:
-      case ExamCardState.hidden:
-        break;
-    }
-    // ready
-    if (isPdf) {
-      final submitted = submittedPdf != null && submittedPdf.isNotEmpty;
-      return ElevatedButton.icon(
-        style: ElevatedButton.styleFrom(
-          backgroundColor:
-              submitted ? Colors.green : const Color(0xFFF59E0B),
-          foregroundColor: Colors.white,
-        ),
-        onPressed: () => _onPrimaryPress(set),
-        icon: Icon(submitted ? Icons.check_circle_outline : Icons.picture_as_pdf,
-            size: 18),
-        label: Text(submitted
-            ? AppLanguage.tr('Submitted — View', 'बुझाइसकियो — हेर्नुहोस्')
-            : AppLanguage.tr('Open PDF', 'PDF खोल्नुहोस्')),
-      );
-    }
-    return ElevatedButton.icon(
-      style: ElevatedButton.styleFrom(
-        backgroundColor: const Color(0xFFF59E0B),
-        foregroundColor: Colors.white,
       ),
-      onPressed: () => _onPrimaryPress(set),
-      icon: const Icon(Icons.play_arrow, size: 18),
-      label: Text(AppLanguage.tr('Start Exam', 'परीक्षा सुरु गर्नुहोस्')),
+    );
+  }
+}
+
+/// Exam rules popup content — mirrors ExamRulesSheet.tsx: shield icon,
+/// numbered rules with icon boxes, primary 'Start Quiz' / 'OK'. Pops `true`
+/// when the primary action confirms a start, `false`/`null` otherwise.
+class _RulesDialogContent extends StatefulWidget {
+  final ExamSet set;
+  final _RulesMode mode;
+
+  const _RulesDialogContent({required this.set, required this.mode});
+
+  @override
+  State<_RulesDialogContent> createState() => _RulesDialogContentState();
+}
+
+class _RulesDialogContentState extends State<_RulesDialogContent> {
+  List<ExamRule>? _rules;
+
+  @override
+  void initState() {
+    super.initState();
+    fetchExamRules(
+      subcourseId: widget.set.subcourseId,
+      provinceId: widget.set.provinceId,
+      sectionId: widget.set.sectionId,
+    ).then((r) {
+      if (mounted) setState(() => _rules = r);
+    }).catchError((_) {
+      if (mounted) setState(() => _rules = []);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    const accent = Color(0xFF2563EB);
+    final rules = _rules;
+    return AppModalShell(
+      icon: Container(
+        width: 56,
+        height: 56,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: const Icon(Icons.shield_outlined,
+            color: Color(0xFF2563EB), size: 28),
+      ),
+      tagLabel: AppLanguage.tr('Exam Rules', 'परीक्षा नियमहरू'),
+      title: Text(
+        widget.set.title,
+        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+      ),
+      accent: accent,
+      body: rules == null
+          ? const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          : rules.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.description_outlined,
+                          size: 40, color: palette.textDisabled),
+                      const SizedBox(height: 8),
+                      Text(
+                        AppLanguage.tr(
+                            'Rules for this exam have not been published yet.',
+                            'यस परीक्षाका नियमहरू अहिलेसम्म प्रकाशित भएका छैनन्।'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 13,
+                            color: palette.textSecondary),
+                      ),
+                    ],
+                  ),
+                )
+              : Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < rules.length; i++)
+                      Padding(
+                        padding: EdgeInsets.only(
+                            bottom: i == rules.length - 1 ? 0 : 12),
+                        child: Row(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            Container(
+                              width: 38,
+                              height: 38,
+                              decoration: BoxDecoration(
+                                color: accent.withValues(alpha: 0.09),
+                                borderRadius:
+                                    BorderRadius.circular(12),
+                              ),
+                              child: Icon(Icons.shield_outlined,
+                                  size: 18, color: accent),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        constraints:
+                                            const BoxConstraints(
+                                                minWidth: 20),
+                                        height: 20,
+                                        padding:
+                                            const EdgeInsets.symmetric(
+                                                horizontal: 5),
+                                        decoration: BoxDecoration(
+                                          color: accent.withValues(
+                                              alpha: 0.09),
+                                          borderRadius:
+                                              BorderRadius.circular(
+                                                  10),
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            AppLanguage.isNepali
+                                                ? _npDigits('${i + 1}')
+                                                : '${i + 1}',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              fontWeight:
+                                                  FontWeight.bold,
+                                              color: accent,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: Text(
+                                          rules[i].title,
+                                          style: const TextStyle(
+                                            fontWeight:
+                                                FontWeight.bold,
+                                            fontSize: 14,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    rules[i].description,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      height: 19 / 13,
+                                      color: palette.textSecondary,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(AppLanguage.tr('Close', 'बन्द गर्नुहोस्')),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: accent,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: Text(widget.mode == _RulesMode.start
+                  ? AppLanguage.tr('Start Quiz', 'क्विज सुरु गर्नुहोस्')
+                  : AppLanguage.tr('OK', 'ठीक छ')),
+            ),
+          ),
+        ],
+      ),
+      onClose: () {},
     );
   }
 }

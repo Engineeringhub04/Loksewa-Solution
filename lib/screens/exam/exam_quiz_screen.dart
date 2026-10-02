@@ -1,25 +1,28 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../services/profile_service.dart';
+import '../../services/theme_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/report_dialog.dart';
-import '../../widgets/subpage_header.dart';
 
-/// Exam quiz — mirrors app/exam/[setId]/quiz.tsx.
+/// Exam quiz — mirrors app/exam/[setId]/quiz.tsx same-to-same.
 ///
-/// Left question-number rail (always visible), timer pill + Q x/y, report
-/// button per question, tap-selected-option-again = deselect, Previous/Next/
-/// Submit, leave-confirm + submit-confirm via the shared [AppModalShell]
-/// (app-wide modal rule), auto-submit on timeout, and `pushReplacement` to
-/// the summary (the quiz is never reachable via Back).
+/// Gradient header (back with leave-guard, title + subcourse subtitle, theme
+/// toggle), left question-number rail, Q pill + timer pill (red under 30s),
+/// report button, tap-again-to-deselect, Previous/Next/Submit bottom bar,
+/// leave + submit confirms via [AppModalShell], auto-submit on timeout with
+/// `pushReplacement` to the summary.
 class ExamQuizScreen extends StatefulWidget {
   final String setId;
   const ExamQuizScreen({super.key, required this.setId});
@@ -35,11 +38,18 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
 
   int _index = 0;
   List<int> _answers = const []; // -1 = unanswered
-  int _remaining = 0;
+  int? _remaining;
   Timer? _timer;
   DateTime? _startedAt;
   bool _submitted = false;
   bool _submitting = false;
+  bool _canPop = false;
+
+  static const _gradientColors = [
+    Color(0xFF2563EB),
+    Color(0xFF1D4ED8),
+    Color(0xFF0B1F5B),
+  ];
 
   @override
   void initState() {
@@ -60,8 +70,12 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     });
     try {
       final set = await fetchExamSet(widget.setId);
-      if (set == null) throw Exception('Exam set not found');
+      if (set == null || set.questions.isEmpty) {
+        throw Exception('empty');
+      }
       if (!mounted) return;
+      // The timer starts now — the rules were already confirmed on the tab,
+      // so reading them never eats into exam time.
       setState(() {
         _set = set;
         _answers = List<int>.filled(set.questions.length, -1);
@@ -71,32 +85,35 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
       });
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted || _submitted) return;
-        setState(() {
-          _remaining--;
-          if (_remaining <= 0) {
-            _autoSubmit();
-          }
-        });
+        final left = (_remaining ?? 1) - 1;
+        if (left <= 0) {
+          _timer?.cancel();
+          _submit(auto: true);
+          return;
+        }
+        setState(() => _remaining = left);
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = AppLanguage.tr(
-            'Could not load the exam.', 'परीक्षा लोड हुन सकेन।');
+            'Exam not available', 'परीक्षा उपलब्ध छैन');
         _loading = false;
       });
     }
   }
 
   String get _clock {
-    final m = (_remaining ~/ 60).toString().padLeft(2, '0');
-    final s = (_remaining % 60).toString().padLeft(2, '0');
+    final total = _remaining ?? 0;
+    final m = (total ~/ 60).toString().padLeft(2, '0');
+    final s = (total % 60).toString().padLeft(2, '0');
     return '$m:$s';
   }
 
   int get _answeredCount => _answers.where((a) => a >= 0).length;
+  bool get _isLast => _set != null && _index >= _set!.questions.length - 1;
 
-  // ---------- leave / submit confirms (AppModalShell) ----------
+  // ---------- confirms ----------
 
   Future<bool> _confirmLeave() async {
     if (_submitted) return true;
@@ -114,17 +131,17 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           child: const Icon(Icons.exit_to_app,
               color: Color(0xFFB91C1C), size: 28),
         ),
-        tagLabel: AppLanguage.tr('Leave Exam?', 'परीक्षा छोड्ने?'),
+        tagLabel: AppLanguage.tr('Leave the exam?', 'परीक्षा छोड्ने?'),
         title: Text(
-          AppLanguage.tr('Your progress will be lost.',
-              'तपाईंको प्रगति गुम्नेछ।'),
+          AppLanguage.tr('Your attempt will not be saved.',
+              'तपाईंको प्रयास सेभ हुनेछैन।'),
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
         ),
         body: Text(
           AppLanguage.tr(
-              'If you leave now, your answers will not be saved.',
-              'अहिले छोड्नुभयो भने तपाईंका उत्तरहरू सेभ हुनेछैनन्।'),
+              'Your attempt will not be saved and the questions you have answered will be lost.',
+              'तपाईंको प्रयास सेभ हुनेछैन र उत्तर दिएका प्रश्नहरू गुम्नेछन्।'),
           textAlign: TextAlign.center,
         ),
         footer: Row(
@@ -132,7 +149,7 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
             Expanded(
               child: OutlinedButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: Text(AppLanguage.tr('Stay', 'बस्नुहोस्')),
+                child: Text(AppLanguage.tr('Keep going', 'जारी राख्नुहोस्')),
               ),
             ),
             const SizedBox(width: 12),
@@ -168,40 +185,42 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           child: const Icon(Icons.send_outlined,
               color: Color(0xFFB45309), size: 28),
         ),
-        tagLabel: AppLanguage.tr('Submit Exam?', 'परीक्षा बुझाउने?'),
+        tagLabel:
+            AppLanguage.tr('Submit your exam?', 'परीक्षा बुझाउने?'),
         title: Text(
-          AppLanguage.tr('Submit your answers?', 'उत्तरहरू बुझाउने?'),
+          AppLanguage.tr(
+              unanswered > 0
+                  ? '$unanswered question(s) are still unanswered.'
+                  : 'You have answered every question.',
+              unanswered > 0
+                  ? '$unanswered प्रश्नको उत्तर बाँकी छ।'
+                  : 'सबै प्रश्नको उत्तर दिनुभयो।'),
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
         ),
-        body: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              unanswered > 0
-                  ? AppLanguage.tr(
-                      'You have $unanswered unanswered question(s). Unanswered questions carry no penalty.',
-                      '$unanswered प्रश्नको उत्तर दिनुभएको छैन। उत्तर नदिएका प्रश्नमा जरिवाना लाग्दैन।')
-                  : AppLanguage.tr(
-                      'You answered all questions. Ready to submit?',
-                      'सबै प्रश्नको उत्तर दिनुभयो। बुझाउन तयार?'),
-              textAlign: TextAlign.center,
-            ),
-          ],
+        body: Text(
+          unanswered > 0
+              ? AppLanguage.tr(
+                  'Unanswered questions score zero but carry no penalty.',
+                  'उत्तर नदिएका प्रश्नमा शून्य अंक, जरिवाना लाग्दैन।')
+              : AppLanguage.tr(
+                  'Ready to submit?', 'बुझाउन तयार हुनुहुन्छ?'),
+          textAlign: TextAlign.center,
         ),
         footer: Row(
           children: [
             Expanded(
               child: OutlinedButton(
                 onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: Text(AppLanguage.tr('Keep Solving', 'जारी राख्नुहोस्')),
+                child:
+                    Text(AppLanguage.tr('Review first', 'पहिले हेर्नुहोस्')),
               ),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFF59E0B),
+                    backgroundColor: const Color(0xFF16A34A),
                     foregroundColor: Colors.white),
                 onPressed: () => Navigator.of(dialogContext).pop(true),
                 child: Text(AppLanguage.tr('Submit', 'बुझाउनुहोस्')),
@@ -214,29 +233,17 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     if (submit == true) _submit(auto: false);
   }
 
-  Future<void> _autoSubmit() async {
-    if (_submitted) return;
-    showToast(
-        context,
-        AppLanguage.tr('Time is up! Submitting your exam…',
-            'समय सकियो! परीक्षा बुझाइँदैछ…'),
-        ToastVariant.info);
-    await _submit(auto: true);
-  }
-
   Future<void> _submit({required bool auto}) async {
     if (_submitted || _submitting) return;
+    final set = _set;
+    if (set == null) return;
     setState(() => _submitting = true);
-    final set = _set!;
     final timeTaken =
         DateTime.now().difference(_startedAt ?? DateTime.now()).inSeconds;
-    final score = scoreExamAttempt(
-      set.questions,
-      _answers,
-      set.passPercent,
-    );
+    final score = scoreExamAttempt(set.questions, _answers, set.passPercent);
     final user = AuthService.currentUser;
     final profile = ProfileStore.instance.profile;
+    bool saved = true;
     try {
       if (user != null) {
         final attempts = await fetchAttemptsForSet(user.uid, set.id);
@@ -253,19 +260,39 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
         );
       }
     } catch (_) {
-      // Best-effort save; the summary is computed from submitted answers.
+      saved = false;
     }
     if (!mounted) return;
+    if (!saved) {
+      // Like React: a failed save keeps the user on the quiz with an error.
+      setState(() => _submitting = false);
+      showToast(
+        context,
+        AppLanguage.tr('Could not save your attempt. Check your connection.',
+            'तपाईंको प्रयास सेभ हुन सकेन। इन्टरनेट हेर्नुहोस्।'),
+        ToastVariant.error,
+      );
+      return;
+    }
+    if (auto && mounted) {
+      showToast(
+        context,
+        AppLanguage.tr(
+            'Time is up — your exam was submitted automatically.',
+            'समय सकियो — तपाईंको परीक्षा स्वतः बुझाइयो।'),
+        ToastVariant.info,
+      );
+    }
     setState(() {
       _submitted = true;
       _submitting = false;
     });
     _timer?.cancel();
-    // Replace the quiz — Back lands on the exam detail/tab, never the quiz.
-    final answersParam = _answers.map((a) => '$a').join(',');
+    // replace(), not push(): the quiz is never reachable with Back.
     context.pushReplacement(
-      '/exam/${set.id}/summary?answers=${Uri.encodeComponent(answersParam)}'
-      '&timeTaken=$timeTaken${auto ? '&auto=1' : ''}',
+      '/exam/${set.id}/summary'
+      '?answers=${Uri.encodeComponent(jsonEncode(_answers))}'
+      '&timeTaken=$timeTaken',
     );
   }
 
@@ -280,16 +307,14 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     );
   }
 
-  bool _canPop = false;
-
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return PopScope(
       canPop: _canPop,
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         if (_submitted) {
-          // Already submitted — leave freely.
           _canPop = true;
           if (mounted) Navigator.of(context).pop();
           return;
@@ -300,106 +325,201 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
         }
       },
       child: Scaffold(
-        body: Column(
+        backgroundColor: palette.background,
+        body: Stack(
           children: [
-            SubpageHeader(title: AppLanguage.tr('Exam', 'परीक्षा')),
-            Expanded(
-              child: _loading
-                  ? const PreloadingWidget(
-                      tinted: false,
-                      label: 'Loading Exam...',
-                    )
-                  : _error != null
-                      ? Center(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Text(_error!),
-                              const SizedBox(height: 12),
-                              ElevatedButton(
-                                  onPressed: _load,
-                                  child: const Text('Retry')),
-                            ],
-                          ),
+            Column(
+              children: [
+                _buildHeader(palette),
+                Expanded(
+                  child: _loading
+                      ? PreloadingWidget(
+                          tinted: false,
+                          label: AppLanguage.tr(
+                              'Loading Exam…', 'परीक्षा लोड हुँदै…'),
                         )
-                      : _quizBody(),
+                      : _error != null
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(_error!,
+                                        style: const TextStyle(
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold)),
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      AppLanguage.tr(
+                                          'This exam set has no questions yet.',
+                                          'यस परीक्षामा अहिलेसम्म प्रश्न छैन।'),
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          color: palette.textSecondary),
+                                    ),
+                                    const SizedBox(height: 16),
+                                    ElevatedButton(
+                                      onPressed: () =>
+                                          Navigator.of(context).pop(),
+                                      child: Text(AppLanguage.tr(
+                                          'Go back', 'फर्कनुहोस्')),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : _quizBody(palette),
+                ),
+              ],
             ),
+            if (_submitting)
+              Positioned.fill(
+                child: Container(
+                  color: Colors.black54,
+                  child: Center(
+                    child: PreloadingWidget(
+                      tinted: true,
+                      label: AppLanguage.tr('Submitting your answers…',
+                          'उत्तरहरू बुझाइँदै…'),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _quizBody() {
+  /// Gradient header: back (leave-guarded), title + subcourse subtitle,
+  /// theme toggle — mirrors quiz.tsx (24px bottom radius).
+  Widget _buildHeader(ExpoPalette palette) {
+    final courseInfo = ProfileStore.instance.courseInfo;
+    final subLabel = courseInfo?.subcourseName ??
+        courseInfo?.courseName ??
+        '';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1D4ED8),
+          gradient: LinearGradient(
+            colors: _gradientColors,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(24),
+            bottomRight: Radius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () async {
+                    if (await _confirmLeave()) {
+                      _canPop = true;
+                      if (mounted) Navigator.of(context).pop();
+                    }
+                  },
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.arrow_back,
+                        size: 20, color: Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _set?.title ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      if (subLabel.isNotEmpty)
+                        Text(
+                          subLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color:
+                                Colors.white.withValues(alpha: 0.85),
+                            fontSize: 12,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () => ThemeService.toggle(context),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      isDark
+                          ? Icons.light_mode_outlined
+                          : Icons.dark_mode_outlined,
+                      size: 18,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _quizBody(ExpoPalette palette) {
     final set = _set!;
     final q = set.questions[_index];
     final total = set.questions.length;
+    final lowTime = (_remaining ?? 61) <= 30;
+    final timerColor =
+        lowTime ? const Color(0xFFDC2626) : const Color(0xFF16A34A);
     return Column(
       children: [
-        // Timer pill + Q x/y + report — mirrors quiz.tsx header row.
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _remaining < 300
-                      ? const Color(0xFFFEF2F2)
-                      : const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: _remaining < 300
-                        ? const Color(0xFFFECACA)
-                        : const Color(0xFFE2E8F0),
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.timer_outlined,
-                        size: 16,
-                        color: _remaining < 300
-                            ? const Color(0xFFDC2626)
-                            : const Color(0xFF475569)),
-                    const SizedBox(width: 4),
-                    Text(_clock,
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: _remaining < 300
-                                ? const Color(0xFFDC2626)
-                                : const Color(0xFF0F172A))),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              Text('Q ${_index + 1}/$total',
-                  style: const TextStyle(fontWeight: FontWeight.w600)),
-              const Spacer(),
-              IconButton(
-                tooltip: AppLanguage.tr('Report', 'रिपोर्ट'),
-                onPressed: _reportQuestion,
-                icon: const Icon(Icons.flag_outlined, size: 20),
-              ),
-            ],
-          ),
-        ),
         Expanded(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Left question-number rail — always visible (React parity).
+              // Question-number rail (52 wide, surfaceAlt — React parity).
               Container(
-                width: 60,
-                margin: const EdgeInsets.fromLTRB(8, 4, 0, 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
+                width: 52,
+                color: palette.surfaceAlt,
                 child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                      vertical: 8, horizontal: 6),
                   itemCount: total,
                   itemBuilder: (c, i) {
                     final answered = _answers[i] >= 0;
@@ -407,22 +527,24 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                     return GestureDetector(
                       onTap: () => setState(() => _index = i),
                       child: Container(
-                        margin: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        height: 40,
+                        width: 38,
+                        height: 38,
+                        margin: const EdgeInsets.only(bottom: 8),
                         decoration: BoxDecoration(
                           color: current
-                              ? const Color(0xFFF59E0B)
+                              ? palette.primary
                               : answered
-                                  ? const Color(0xFFDCFCE7)
-                                  : Colors.white,
-                          borderRadius: BorderRadius.circular(10),
+                                  ? const Color(0xFF16A34A)
+                                      .withValues(alpha: 0.13)
+                                  : palette.surface,
+                          borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: current
-                                ? const Color(0xFFF59E0B)
+                                ? palette.primary
                                 : answered
-                                    ? const Color(0xFF86EFAC)
-                                    : const Color(0xFFE2E8F0),
+                                    ? const Color(0xFF16A34A)
+                                    : palette.border,
+                            width: 1.5,
                           ),
                         ),
                         child: Center(
@@ -433,8 +555,8 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                                   color: current
                                       ? Colors.white
                                       : answered
-                                          ? const Color(0xFF15803D)
-                                          : const Color(0xFF475569))),
+                                          ? const Color(0xFF16A34A)
+                                          : palette.textSecondary)),
                         ),
                       ),
                     );
@@ -443,114 +565,253 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
               ),
               // Question + options.
               Expanded(
-                child: ListView(
-                  padding: const EdgeInsets.all(12),
+                child: Column(
                   children: [
-                    Text('Q${_index + 1}. ${q.question}',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 12),
-                    ...List.generate(q.options.length, (oi) {
-                      final selected = _answers[_index] == oi;
-                      const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
-                      final letter =
-                          oi < letters.length ? letters[oi] : '${oi + 1}';
-                      return GestureDetector(
-                        onTap: () => setState(() {
-                          // Tap again to deselect (React parity).
-                          _answers[_index] =
-                              _answers[_index] == oi ? -1 : oi;
-                        }),
-                        child: Container(
-                          margin: const EdgeInsets.only(bottom: 8),
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: selected
-                                ? const Color(0xFFFFFBEB)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: selected
-                                  ? const Color(0xFFF59E0B)
-                                  : const Color(0xFFE2E8F0),
-                              width: selected ? 2 : 1,
-                            ),
-                          ),
-                          child: Row(
+                    Expanded(
+                      child: ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          // Q pill + timer pill + report.
+                          Row(
                             children: [
                               Container(
-                                width: 28,
-                                height: 28,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
                                 decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: selected
-                                      ? const Color(0xFFF59E0B)
-                                      : const Color(0xFFF1F5F9),
+                                  color: palette.primary
+                                      .withValues(alpha: 0.09),
+                                  borderRadius:
+                                      BorderRadius.circular(999),
                                 ),
-                                child: Center(
-                                  child: Text(letter,
-                                      style: TextStyle(
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 13,
-                                          color: selected
-                                              ? Colors.white
-                                              : const Color(0xFF475569))),
+                                child: Text(
+                                  'Q ${_index + 1} / $total',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: palette.primary,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(child: Text(q.options[oi])),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: timerColor.withValues(alpha: 0.09),
+                                  borderRadius:
+                                      BorderRadius.circular(999),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.access_time,
+                                        size: 13, color: timerColor),
+                                    const SizedBox(width: 5),
+                                    Text(_clock,
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                            color: timerColor)),
+                                  ],
+                                ),
+                              ),
+                              const Spacer(),
+                              IconButton(
+                                tooltip: AppLanguage.tr(
+                                    'Report', 'रिपोर्ट'),
+                                onPressed: _reportQuestion,
+                                icon: Icon(Icons.flag_outlined,
+                                    size: 20,
+                                    color: palette.textSecondary),
+                              ),
                             ],
                           ),
-                        ),
-                      );
-                    }),
+                          const SizedBox(height: 16),
+                          Text(q.question,
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  height: 26 / 16)),
+                          const SizedBox(height: 16),
+                          ...List.generate(q.options.length, (oi) {
+                            final selected = _answers[_index] == oi;
+                            const letters = [
+                              'A', 'B', 'C', 'D', 'E', 'F'
+                            ];
+                            final letter = oi < letters.length
+                                ? letters[oi]
+                                : '${oi + 1}';
+                            return GestureDetector(
+                              onTap: () => setState(() {
+                                // Tap again to deselect.
+                                _answers[_index] =
+                                    _answers[_index] == oi ? -1 : oi;
+                              }),
+                              child: Container(
+                                margin:
+                                    const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: selected
+                                      ? palette.primary
+                                          .withValues(alpha: 0.07)
+                                      : palette.surface,
+                                  borderRadius:
+                                      BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: selected
+                                        ? palette.primary
+                                        : palette.border,
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Container(
+                                      width: 28,
+                                      height: 28,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: selected
+                                            ? palette.primary
+                                            : Colors.transparent,
+                                        border: Border.all(
+                                          color: selected
+                                              ? palette.primary
+                                              : palette.border,
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: Center(
+                                        child: Text(letter,
+                                            style: TextStyle(
+                                                fontWeight:
+                                                    FontWeight.bold,
+                                                fontSize: 12,
+                                                color: selected
+                                                    ? Colors.white
+                                                    : palette
+                                                        .textSecondary)),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                        child: Text(q.options[oi],
+                                            style: const TextStyle(
+                                                fontSize: 14))),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }),
+                        ],
+                      ),
+                    ),
+                    // Bottom bar.
+                    Container(
+                      padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+                      decoration: BoxDecoration(
+                        color: palette.surface,
+                        border: Border(
+                            top: BorderSide(
+                                color: palette.divider, width: 1)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '$_answeredCount / $total ${AppLanguage.tr('answered', 'उत्तर दिइयो')}',
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: palette.textSecondary),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              if (_index > 0)
+                                GestureDetector(
+                                  onTap: () =>
+                                      setState(() => _index--),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 14),
+                                    decoration: BoxDecoration(
+                                      borderRadius:
+                                          BorderRadius.circular(12),
+                                      border: Border.all(
+                                          color: palette.border,
+                                          width: 1.5),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.chevron_left,
+                                            size: 16,
+                                            color: palette.textPrimary),
+                                        const SizedBox(width: 6),
+                                        Text(
+                                            AppLanguage.tr('Previous',
+                                                'अघिल्लो'),
+                                            style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w600,
+                                                color: palette
+                                                    .textPrimary)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              if (_index > 0) const SizedBox(width: 8),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: _isLast
+                                      ? _confirmSubmit
+                                      : () => setState(() => _index++),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 13),
+                                    decoration: BoxDecoration(
+                                      color: _isLast
+                                          ? const Color(0xFF16A34A)
+                                          : palette.primary,
+                                      borderRadius:
+                                          BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Text(
+                                            _isLast
+                                                ? AppLanguage.tr(
+                                                    'Submit', 'बुझाउनुहोस्')
+                                                : AppLanguage.tr(
+                                                    'Next', 'अर्को'),
+                                            style: const TextStyle(
+                                                color: Colors.white,
+                                                fontSize: 13,
+                                                fontWeight:
+                                                    FontWeight.bold)),
+                                        const SizedBox(width: 6),
+                                        Icon(
+                                            _isLast
+                                                ? Icons.done_all
+                                                : Icons.chevron_right,
+                                            size: 16,
+                                            color: Colors.white),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-              ),
-            ],
-          ),
-        ),
-        // Prev / Next / Submit.
-        Container(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: Colors.grey.shade200)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _index > 0
-                      ? () => setState(() => _index--)
-                      : null,
-                  child: Text(AppLanguage.tr('Previous', 'अघिल्लो')),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _index < _set!.questions.length - 1
-                    ? ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFFF59E0B),
-                            foregroundColor: Colors.white),
-                        onPressed: () => setState(() => _index++),
-                        child: Text(AppLanguage.tr('Next', 'अर्को')),
-                      )
-                    : ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF16A34A),
-                            foregroundColor: Colors.white),
-                        onPressed: _submitting ? null : _confirmSubmit,
-                        child: _submitting
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                    strokeWidth: 2, color: Colors.white),
-                              )
-                            : Text(AppLanguage.tr('Submit', 'बुझाउनुहोस्')),
-                      ),
               ),
             ],
           ),

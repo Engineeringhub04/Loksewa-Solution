@@ -304,8 +304,8 @@ final appRouter = GoRouter(
       builder: (_, s) => ExamReviewScreen(
         setId: s.pathParameters['setId']!,
         answers: _qp(s, 'answers'),
-        attemptLabel: _qp(s, 'label'),
-        attemptDate: _qp(s, 'date'),
+        attemptLabel: _qp(s, 'attemptLabel'),
+        attemptDate: _qp(s, 'attemptDate'),
       ),
     ),
     GoRoute(
@@ -314,7 +314,6 @@ final appRouter = GoRouter(
         setId: s.pathParameters['setId']!,
         answers: _qp(s, 'answers'),
         timeTaken: int.tryParse(_qp(s, 'timeTaken') ?? ''),
-        auto: _qp(s, 'auto') == '1',
       ),
     ),
     GoRoute(

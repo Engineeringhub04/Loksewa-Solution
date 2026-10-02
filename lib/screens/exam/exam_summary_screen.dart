@@ -1,44 +1,110 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/exam_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../tabs_screen.dart';
 
-/// Exam summary — mirrors app/exam/[setId]/summary.tsx.
+/// Result summary shown straight after submitting — mirrors
+/// app/exam/[setId]/summary.tsx same-to-same.
 ///
-/// The score shown is EXACTLY what was submitted: answers arrive via route
-/// params and the breakdown is recomputed from them (never re-read from
-/// Firestore). Verdict bands, 6-stat grid, negative-marking caption, and a
-/// review button that stays visible but locked (with a toast) until the
-/// exam window closes.
+/// Answers arrive via route params (JSON, exactly what was submitted) rather
+/// than a re-read. Review Answers stays locked until the exam's own window
+/// closes so finishing early can't leak answers.
 class ExamSummaryScreen extends StatefulWidget {
   final String setId;
-  final String? answers; // comma-separated, -1 = skipped
+  final String? answers; // JSON array, -1 = skipped
   final int? timeTaken;
-  final bool auto; // submitted automatically on timeout
 
   const ExamSummaryScreen({
     super.key,
     required this.setId,
     this.answers,
     this.timeTaken,
-    this.auto = false,
   });
 
   @override
   State<ExamSummaryScreen> createState() => _ExamSummaryScreenState();
 }
 
+class _Verdict {
+  final Color color;
+  final IconData icon;
+  final String title;
+  final String message;
+  const _Verdict(this.color, this.icon, this.title, this.message);
+}
+
+_Verdict _verdict(int percent, bool passed) {
+  if (percent >= 85) {
+    return _Verdict(
+      const Color(0xFF16A34A),
+      Icons.emoji_events_outlined,
+      AppLanguage.tr('Outstanding!', 'उत्कृष्ट!'),
+      AppLanguage.tr(
+          'This is top-rank territory. Keep this consistency and the real exam will feel routine.',
+          'यो शीर्ष स्थानको क्षेत्र हो। यो निरन्तरता राख्नुहोस्, वास्तविक परीक्षा सजिलो लाग्नेछ।'),
+    );
+  }
+  if (percent >= 60) {
+    return _Verdict(
+      const Color(0xFF2563EB),
+      Icons.military_tech_outlined,
+      AppLanguage.tr('Well done!', 'राम्रो!'),
+      AppLanguage.tr(
+          'A solid, comfortable pass. Tighten the few topics you slipped on and you are in strong shape.',
+          'राम्रोसँग उत्तीर्ण। चुक्नुभएका विषयहरू सुधार्नुहोस्, तपाईं बलियो अवस्थामा हुनुहुन्छ।'),
+    );
+  }
+  if (passed) {
+    return _Verdict(
+      const Color(0xFFD97706),
+      Icons.check_circle_outline,
+      AppLanguage.tr('You passed', 'तपाईं उत्तीर्ण हुनुभयो'),
+      AppLanguage.tr(
+          'You are over the line, but there is real room to grow. Review the explanations and try again.',
+          'तपाईं पास हुनुभयो, तर सुधार्ने ठाउँ धेरै छ। व्याख्या हेर्नुहोस् र पुनः प्रयास गर्नुहोस्।'),
+    );
+  }
+  return _Verdict(
+    const Color(0xFFDC2626),
+    Icons.refresh,
+    AppLanguage.tr('Not this time', 'यसपटक भएन'),
+    AppLanguage.tr(
+        'Every attempt shows you exactly what to study next. Read the explanations and re-attempt — this is how scores climb.',
+        'हरेक प्रयासले के पढ्ने देखाउँछ। व्याख्या पढ्नुहोस् र पुनः प्रयास गर्नुहोस् — यसरी नै स्कोर बढ्छ।'),
+  );
+}
+
 class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   ExamSet? _set;
-  ScoreBreakdown? _score;
-  List<int> _answers = const [];
   bool _loading = true;
   String? _error;
+
+  List<int> _parseAnswers(String? param) {
+    if (param == null || param.isEmpty) return [];
+    try {
+      final parsed = jsonDecode(param);
+      if (parsed is List) {
+        return parsed
+            .map((v) => v is num ? v.toInt() : int.tryParse('$v') ?? -1)
+            .toList();
+      }
+    } catch (_) {}
+    // Fallback for legacy comma-separated params.
+    return param
+        .replaceAll(RegExp(r'[\[\]\s]'), '')
+        .split(',')
+        .where((s) => s.isNotEmpty)
+        .map((s) => int.tryParse(s.trim()) ?? -1)
+        .toList();
+  }
 
   @override
   void initState() {
@@ -47,318 +113,393 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   }
 
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
     try {
       final set = await fetchExamSet(widget.setId);
       if (set == null) throw Exception('Exam set not found');
-      final answers = (widget.answers ?? '')
-          .split(',')
-          .map((s) => int.tryParse(s.trim()) ?? -1)
-          .toList();
-      // Pad/truncate to the question count so the score is exact.
-      final padded = List<int>.filled(set.questions.length, -1);
-      for (var i = 0; i < padded.length && i < answers.length; i++) {
-        padded[i] = answers[i];
-      }
-      final score = scoreExamAttempt(
-        set.questions,
-        padded,
-        set.passPercent,
-      );
       if (!mounted) return;
       setState(() {
         _set = set;
-        _answers = padded;
-        _score = score;
         _loading = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = AppLanguage.tr(
-            'Could not load the summary.', 'नतिजा लोड हुन सकेन।');
+            'Result unavailable', 'नतिजा उपलब्ध छैन');
         _loading = false;
       });
     }
   }
 
-  (String, String) _verdict(ScoreBreakdown s) {
-    if (s.percent >= 85) {
-      return (
-        AppLanguage.tr('Outstanding!', 'उत्कृष्ट!'),
-        AppLanguage.tr('Exceptional performance. Keep it up!',
-            'असाधारण प्रदर्शन। यसरी नै अगाडि बढ्नुहोस्!')
-      );
-    }
-    if (s.percent >= 60) {
-      return (
-        AppLanguage.tr('Well Done!', 'राम्रो!'),
-        AppLanguage.tr('Strong performance. A little polish to go!',
-            'बलियो प्रदर्शन। थोरै मेहनत बाँकी!')
-      );
-    }
-    if (s.passed) {
-      return (
-        AppLanguage.tr('Passed', 'उत्तीर्ण'),
-        AppLanguage.tr('You cleared the pass mark. Keep practising!',
-            'उत्तीर्ण अंक पार गर्नुभयो। अभ्यास जारी राख्नुहोस्!')
-      );
-    }
-    return (
-      AppLanguage.tr('Keep Trying', 'प्रयास जारी राख्नुहोस्'),
-      AppLanguage.tr('Review your answers and try again — you\'ve got this!',
-          'उत्तरहरू समीक्षा गर्नुहोस् र पुनः प्रयास गर्नुहोस्!')
-    );
+  String _hm(DateTime d) {
+    final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final mm = d.minute.toString().padLeft(2, '0');
+    return '$h12:$mm ${d.hour < 12 ? 'AM' : 'PM'}';
   }
 
-  String _timeLabel(int seconds) {
+  String _duration(int seconds) {
     final m = seconds ~/ 60;
     final s = seconds % 60;
-    return '${m}m ${s}s';
+    return m > 0 ? '${m}m ${s}s' : '${s}s';
   }
 
-  void _goReview() {
+  void _openReview() {
     final set = _set!;
-    if (!areResultsUnlocked(set, DateTime.now())) {
-      final unlock = resultsUnlockAt(set, DateTime.now());
-      final k = unlock.toUtc().add(const Duration(hours: 5, minutes: 45));
+    final now = DateTime.now();
+    if (!areResultsUnlocked(set, now)) {
+      final unlock = resultsUnlockAt(set, now);
       showToast(
         context,
         AppLanguage.tr(
-            'Answers unlock after the exam window closes (${k.hour}:${k.minute.toString().padLeft(2, '0')}).',
-            'परीक्षा समय सकिएपछि उत्तरहरू खुल्नेछन्।'),
-        ToastVariant.warning,
+            'Answers unlock at ${_hm(unlock.toUtc().add(const Duration(hours: 5, minutes: 45)))}.',
+            'उत्तरहरू अहिले उपलब्ध छैनन्।'),
+        ToastVariant.info,
       );
       return;
     }
-    final answersParam = _answers.map((a) => '$a').join(',');
     context.push(
-      '/exam/${set.id}/review?answers=${Uri.encodeComponent(answersParam)}',
+      '/exam/${set.id}/review'
+      '?answers=${Uri.encodeComponent(jsonEncode(_parseAnswers(widget.answers)))}',
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    if (_loading) {
+      // No header while loading — header + result arrive together in one step.
+      return Scaffold(
+        backgroundColor: palette.background,
+        body: PreloadingWidget(
+          tinted: false,
+          label: AppLanguage.tr(
+              'Preparing your result…', 'तपाईंको नतिजा तयार हुँदै…'),
+        ),
+      );
+    }
+    if (_error != null || _set == null) {
+      return Scaffold(
+        backgroundColor: palette.background,
+        body: Column(
+          children: [
+            SubpageHeader(title: AppLanguage.tr('Result', 'नतिजा')),
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error ?? ''),
+                    const SizedBox(height: 12),
+                    ElevatedButton(
+                      onPressed: () => context.go('/'),
+                      child: Text(
+                          AppLanguage.tr('Back to Exams', 'परीक्षामा फर्कनुहोस्')),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return Scaffold(
+      backgroundColor: palette.background,
       body: Column(
         children: [
-          const SubpageHeader(title: 'Result'),
-          Expanded(
-            child: _loading
-                ? const PreloadingWidget(
-                    tinted: false,
-                    label: 'Loading Result...',
-                  )
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(_error!),
-                            const SizedBox(height: 12),
-                            ElevatedButton(
-                                onPressed: _load,
-                                child: const Text('Retry')),
-                          ],
-                        ),
-                      )
-                    : _summary(),
-          ),
+          // Back goes to the exam detail screen: the quiz was replaced (not
+          // pushed), so the detail screen is still underneath.
+          SubpageHeader(title: AppLanguage.tr('Your Result', 'तपाईंको नतिजा')),
+          Expanded(child: _body(palette)),
         ],
       ),
     );
   }
 
-  Widget _summary() {
+  Widget _body(ExpoPalette palette) {
     final set = _set!;
-    final s = _score!;
-    final (verdict, message) = _verdict(s);
-    final passColor = s.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
+    final answers = _parseAnswers(widget.answers);
+    final padded = List<int>.filled(set.questions.length, -1);
+    for (var i = 0; i < padded.length && i < answers.length; i++) {
+      padded[i] = answers[i];
+    }
+    final breakdown =
+        scoreExamAttempt(set.questions, padded, set.passPercent);
+    final band = _verdict(breakdown.percent, breakdown.passed);
     final unlocked = areResultsUnlocked(set, DateTime.now());
-    final timeTaken = widget.timeTaken ?? 0;
+    final unlockAt = resultsUnlockAt(set, DateTime.now());
+    final elapsed = widget.timeTaken ?? 0;
+
+    final stats = [
+      _Stat(Icons.check_circle, AppLanguage.tr('Correct', 'सही'),
+          '${breakdown.correct}', const Color(0xFF16A34A)),
+      _Stat(Icons.cancel, AppLanguage.tr('Incorrect', 'गलत'),
+          '${breakdown.incorrect}', const Color(0xFFDC2626)),
+      _Stat(Icons.remove_circle_outline, AppLanguage.tr('Skipped', 'छोडियो'),
+          '${breakdown.skipped}', palette.textSecondary),
+      _Stat(Icons.access_time, AppLanguage.tr('Time taken', 'लागेको समय'),
+          _duration(elapsed), const Color(0xFF2563EB)),
+      _Stat(Icons.trending_down,
+          AppLanguage.tr('Negative marking', 'नकारात्मक अंक'),
+          '-${breakdown.negativeMarks.toStringAsFixed(2)}',
+          const Color(0xFFD97706)),
+      _Stat(Icons.military_tech_outlined,
+          AppLanguage.tr('Pass mark', 'उत्तीर्णांक'),
+          '${set.passPercent}%', const Color(0xFF7C3AED)),
+    ];
 
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       children: [
-        if (widget.auto)
-          Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFEF3C7),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFFDE68A)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.timer_off_outlined,
-                    color: Color(0xFFB45309), size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    AppLanguage.tr(
-                        'Time ran out — your exam was submitted automatically.',
-                        'समय सकियो — तपाईंको परीक्षा स्वतः बुझाइयो।'),
-                    style: const TextStyle(
-                        fontSize: 13, color: Color(0xFF92400E)),
-                  ),
-                ),
-              ],
-            ),
+        // Score card.
+        Container(
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: palette.border, width: 1),
           ),
-        Card(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                Text(set.title,
-                    style: Theme.of(context).textTheme.titleLarge,
-                    textAlign: TextAlign.center),
-                const SizedBox(height: 16),
-                Stack(
+          child: Column(
+            children: [
+              SizedBox(
+                width: 150,
+                height: 150,
+                child: Stack(
                   alignment: Alignment.center,
                   children: [
                     SizedBox(
-                      width: 140,
-                      height: 140,
+                      width: 150,
+                      height: 150,
                       child: CircularProgressIndicator(
-                        value: s.percent / 100,
-                        strokeWidth: 12,
-                        backgroundColor: Colors.grey.shade200,
-                        color: passColor,
+                        value: breakdown.percent / 100,
+                        strokeWidth: 13,
+                        backgroundColor:
+                            band.color.withValues(alpha: 0.15),
+                        valueColor:
+                            AlwaysStoppedAnimation<Color>(band.color),
                       ),
                     ),
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text('${s.percent}%',
-                            style: const TextStyle(
-                                fontSize: 28, fontWeight: FontWeight.bold)),
-                        Text('${s.marks.toStringAsFixed(1)} '
-                            '${AppLanguage.tr('marks', 'अंक')}',
+                        Text('${breakdown.percent}%',
                             style: TextStyle(
-                                fontSize: 12, color: Colors.grey.shade600)),
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                                color: band.color)),
+                        Text(
+                          '${breakdown.marks.toStringAsFixed(2)} / ${set.questions.length}',
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: palette.textSecondary),
+                        ),
                       ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Text(verdict,
-                    style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: passColor)),
-                const SizedBox(height: 4),
-                Text(message,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 13, color: Colors.grey.shade600)),
-              ],
-            ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 6),
+                decoration: BoxDecoration(
+                  color: band.color.withValues(alpha: 0.09),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(band.icon, size: 16, color: band.color),
+                    const SizedBox(width: 6),
+                    Text(
+                      breakdown.passed
+                          ? AppLanguage.tr('PASSED', 'उत्तीर्ण')
+                          : AppLanguage.tr('FAILED', 'अनुत्तीर्ण'),
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          color: band.color),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(band.title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 20, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              Text(band.message,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      fontSize: 14,
+                      height: 21 / 14,
+                      color: palette.textSecondary)),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
-        Card(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
-            child: Column(
+        const SizedBox(height: 16),
+        // Stats grid.
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: stats
+              .map((s) => _statCard(palette, s))
+              .toList(),
+        ),
+        const SizedBox(height: 16),
+        // Lock notice.
+        if (!unlocked)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: palette.warning.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: palette.warning.withValues(alpha: 0.27),
+                  width: 1),
+            ),
+            child: Row(
               children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _stat(AppLanguage.tr('Correct', 'सही'), '${s.correct}',
-                        const Color(0xFF16A34A)),
-                    _stat(AppLanguage.tr('Incorrect', 'गलत'), '${s.incorrect}',
-                        const Color(0xFFDC2626)),
-                    _stat(AppLanguage.tr('Skipped', 'छोडियो'), '${s.skipped}',
-                        Colors.grey),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    _stat(AppLanguage.tr('Time', 'समय'),
-                        _timeLabel(timeTaken), const Color(0xFF0F172A)),
-                    _stat(
-                        AppLanguage.tr('Negative', 'नकारात्मक'),
-                        '-${s.negativeMarks.toStringAsFixed(2)}',
-                        const Color(0xFFB45309)),
-                    _stat(AppLanguage.tr('Pass Mark', 'उत्तीर्णांक'),
-                        '${set.passPercent}%', const Color(0xFF1D4ED8)),
-                  ],
+                Icon(Icons.lock_outline,
+                    size: 18, color: palette.warning),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    AppLanguage.tr(
+                        'Answer review and rankings unlock once the exam window closes at ${_hm(unlockAt.toUtc().add(const Duration(hours: 5, minutes: 45)))}.',
+                        'परीक्षा समय सकिएपछि उत्तर समीक्षा र र्याङ्किङ खुल्नेछ।'),
+                    style: TextStyle(
+                        fontSize: 13, color: palette.textSecondary),
+                  ),
                 ),
               ],
             ),
           ),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text(
-            AppLanguage.tr(
-                'Wrong answers carry −0.25 marks each.',
-                'गलत उत्तरमा −०.२५ अंक कट्छ।'),
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+        if (!unlocked) const SizedBox(height: 16),
+        // Actions.
+        GestureDetector(
+          onTap: _openReview,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            decoration: BoxDecoration(
+              color: unlocked ? palette.primary : palette.textDisabled,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(unlocked ? Icons.visibility_outlined : Icons.lock_outline,
+                    size: 17, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(AppLanguage.tr('Review Answers', 'उत्तर समीक्षा'),
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold)),
+              ],
+            ),
           ),
         ),
-        // Review — visible but locked until the window closes (React parity).
-        OutlinedButton.icon(
-          onPressed: _goReview,
-          icon: Icon(unlocked
-              ? Icons.rate_review_outlined
-              : Icons.lock_outline),
-          label: Text(AppLanguage.tr('Review Answers', 'उत्तर समीक्षा')),
-          style: OutlinedButton.styleFrom(
-            foregroundColor:
-                unlocked ? const Color(0xFF0F172A) : Colors.grey.shade500,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
+        const SizedBox(height: 10),
+        _secondaryAction(
+          palette,
+          icon: Icons.list_outlined,
+          label: AppLanguage.tr(
+              'Exam Details & Attempts', 'परीक्षा विवरण र प्रयासहरू'),
+          onTap: () => context.push('/exam/${set.id}'),
         ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: () => context.push('/exam/${set.id}'),
-          icon: const Icon(Icons.info_outline),
-          label: Text(
-              AppLanguage.tr('Exam Details & Attempts', 'परीक्षा विवरण')),
-          style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14)),
-        ),
-        const SizedBox(height: 8),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFF59E0B),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-          onPressed: () {
-            // Back to the Exam tab (index 1) — React: router.push('/(tabs)/exam').
+        const SizedBox(height: 10),
+        _secondaryAction(
+          palette,
+          icon: Icons.grid_view_outlined,
+          label: AppLanguage.tr(
+              'Practice Other Exams', 'अन्य परीक्षा अभ्यास'),
+          onTap: () {
             TabsScreen.tabIndex.value = 1;
             context.go('/');
           },
-          icon: const Icon(Icons.quiz_outlined),
-          label: Text(
-              AppLanguage.tr('Practice Other Exams', 'अन्य परीक्षा')),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          AppLanguage.tr('Negative marking: 0.25 per wrong answer',
+              'नकारात्मक अंक: गलत उत्तरमा ०.२५'),
+          textAlign: TextAlign.center,
+          style:
+              TextStyle(fontSize: 12, color: palette.textSecondary),
         ),
       ],
     );
   }
 
-  Widget _stat(String label, String value, Color color) => SizedBox(
-        width: 100,
-        child: Column(
+  Widget _statCard(ExpoPalette palette, _Stat s) {
+    // ~3 per row (flexBasis 30%).
+    final width =
+        (MediaQuery.of(context).size.width - 32 - 20) / 3;
+    return Container(
+      width: width,
+      padding:
+          const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: palette.border, width: 1),
+      ),
+      child: Column(
+        children: [
+          Icon(s.icon, size: 18, color: s.color),
+          const SizedBox(height: 3),
+          Text(s.value,
+              style: const TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 3),
+          Text(s.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 11, color: palette.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _secondaryAction(ExpoPalette palette,
+      {required IconData icon,
+      required String label,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border, width: 1.5),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(value,
-                style: TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.bold, color: color)),
-            const SizedBox(height: 4),
+            Icon(icon, size: 17, color: palette.textPrimary),
+            const SizedBox(width: 8),
             Text(label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12)),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary)),
           ],
         ),
-      );
+      ),
+    );
+  }
+}
+
+class _Stat {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+  const _Stat(this.icon, this.label, this.value, this.color);
 }

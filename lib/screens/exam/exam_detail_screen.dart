@@ -1,18 +1,24 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../services/profile_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Exam set detail — mirrors app/exam/[setId]/index.tsx.
+/// Exam set detail — mirrors app/exam/[setId]/index.tsx same-to-same.
 ///
-/// Meta card + Re-Attempt + Your Ranking (lock-gated with a toast until the
-/// exam window closes) + full attempts history — tapping an attempt opens the
-/// review with THAT attempt's answers. An unlock notice shows while locked.
+/// Meta card (title + subcourse + pills), the Your Ranking / Re-Attempt
+/// action row, Attempts History with tone-tinted attempt cards (tapping one
+/// opens the review with THAT attempt's answers), and the warning notice
+/// while the exam window is still closed. Ranking + per-attempt review stay
+/// lock-gated with an info toast.
 class ExamDetailScreen extends StatefulWidget {
   final String setId;
   const ExamDetailScreen({super.key, required this.setId});
@@ -26,7 +32,9 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
   List<ExamAttempt> _attempts = const [];
   bool _loading = true;
   String? _error;
-  bool _unlocked = false;
+
+  static const _pass = Color(0xFF16A34A);
+  static const _fail = Color(0xFFDC2626);
 
   @override
   void initState() {
@@ -51,10 +59,9 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
       setState(() {
         _set = set;
         _attempts = attempts;
-        _unlocked = areResultsUnlocked(set, DateTime.now());
         _loading = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = AppLanguage.tr(
@@ -64,312 +71,409 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
     }
   }
 
-  void _reAttempt() {
-    if (_set?.contentType == 'pdf') {
-      final uri = _set!.pdfUrl ?? '';
-      context.push(
-        '/pdf/${Uri.encodeComponent(_set!.id)}'
-        '?uri=${Uri.encodeComponent(uri)}'
-        '&title=${Uri.encodeComponent(_set!.title)}',
-      );
+  bool get _unlocked =>
+      _set != null && areResultsUnlocked(_set!, DateTime.now());
+
+  String _unlockTime() {
+    final unlock = resultsUnlockAt(_set!, DateTime.now());
+    final k = unlock.toUtc().add(const Duration(hours: 5, minutes: 45));
+    final h12 = k.hour % 12 == 0 ? 12 : k.hour % 12;
+    final mm = k.minute.toString().padLeft(2, '0');
+    final ampm = k.hour < 12 ? 'AM' : 'PM';
+    return '$h12:$mm $ampm';
+  }
+
+  /// Gate shared by ranking + per-attempt review (React: requireUnlocked).
+  void _requireUnlocked(VoidCallback action) {
+    if (_unlocked) {
+      action();
       return;
     }
-    context.push('/exam/${widget.setId}/quiz');
+    showToast(
+      context,
+      AppLanguage.tr(
+          'Unlocks at ${_unlockTime()}.', 'अहिले उपलब्ध छैन।'),
+      ToastVariant.info,
+    );
   }
 
   void _goRanking() {
-    final set = _set!;
-    if (!areResultsUnlocked(set, DateTime.now())) {
-      final unlock = resultsUnlockAt(set, DateTime.now());
-      final k = unlock.toUtc().add(const Duration(hours: 5, minutes: 45));
-      showToast(
-        context,
-        AppLanguage.tr(
-            'Ranking unlocks after the exam window closes (${k.hour}:${k.minute.toString().padLeft(2, '0')}).',
-            'परीक्षा समय सकिएपछि र्याङ्किङ खुल्नेछ।'),
-        ToastVariant.warning,
-      );
-      return;
-    }
-    context.push('/exam/${widget.setId}/ranking');
+    _requireUnlocked(
+        () => context.push('/exam/${widget.setId}/ranking'));
   }
 
   void _reviewAttempt(ExamAttempt attempt) {
-    final set = _set!;
-    if (!areResultsUnlocked(set, DateTime.now())) {
-      showToast(
-        context,
-        AppLanguage.tr(
-            'Answers unlock after the exam window closes.',
-            'परीक्षा समय सकिएपछि उत्तरहरू खुल्नेछन्।'),
-        ToastVariant.warning,
+    _requireUnlocked(() {
+      final date = attempt.createdAt;
+      final dateStr = date == null
+          ? ''
+          : '${date.day}/${date.month}/${date.year} · ${_hm(date)}';
+      context.push(
+        '/exam/${widget.setId}/review'
+        '?answers=${Uri.encodeComponent(jsonEncode(attempt.answers))}'
+        '&attemptLabel=${Uri.encodeComponent('Attempt ${attempt.attemptNumber}')}'
+        '&attemptDate=${Uri.encodeComponent(dateStr)}',
       );
-      return;
-    }
-    final answersParam = attempt.answers.map((a) => '$a').join(',');
-    final date = attempt.createdAt;
-    final dateStr = date == null
-        ? ''
-        : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')}';
-    context.push(
-      '/exam/${set.id}/review'
-      '?answers=${Uri.encodeComponent(answersParam)}'
-      '&label=${Uri.encodeComponent('Attempt ${attempt.attemptNumber}')}'
-      '&date=${Uri.encodeComponent(dateStr)}',
-    );
+    });
+  }
+
+  String _hm(DateTime d) {
+    final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final mm = d.minute.toString().padLeft(2, '0');
+    return '$h12:$mm ${d.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  String _duration(int seconds) {
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return m > 0 ? '${m}m ${s}s' : '${s}s';
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: palette.background,
       body: Column(
         children: [
-          SubpageHeader(title: AppLanguage.tr('Exam Details', 'परीक्षा विवरण')),
+          SubpageHeader(
+              title: AppLanguage.tr('Exam Details', 'परीक्षा विवरण')),
           Expanded(
             child: _loading
-                ? const PreloadingWidget(
+                ? PreloadingWidget(
                     tinted: false,
-                    label: 'Loading Exam...',
+                    label: AppLanguage.tr('Loading Exam Details…',
+                        'परीक्षा विवरण लोड हुँदै…'),
                   )
                 : _error != null
                     ? Center(
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(_error!),
+                            Text(AppLanguage.tr(
+                                'Exam not found', 'परीक्षा भेटिएन')),
                             const SizedBox(height: 12),
                             ElevatedButton(
-                                onPressed: _load,
-                                child: const Text('Retry')),
+                              onPressed: _load,
+                              child: Text(AppLanguage.tr(
+                                  'Retry', 'पुनः प्रयास')),
+                            ),
                           ],
                         ),
                       )
-                    : _body(),
+                    : RefreshIndicator(
+                        onRefresh: _load,
+                        child: _body(palette),
+                      ),
           ),
         ],
       ),
     );
   }
 
-  Widget _body() {
+  Widget _body(ExpoPalette palette) {
     final set = _set!;
-    final best = _attempts.isEmpty
-        ? null
-        : _attempts.reduce((a, b) => a.score >= b.score ? a : b);
+    final courseInfo = ProfileStore.instance.courseInfo;
+    final subLabel = courseInfo?.subcourseName ??
+        courseInfo?.courseName ??
+        '';
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
       children: [
-        Card(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(set.title,
-                          style: Theme.of(context).textTheme.titleLarge),
-                    ),
-                    if (set.isPro)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF59E0B),
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: const Text('PRO',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 12)),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _chip(Icons.help_outline,
-                        '${set.totalQuestions} ${AppLanguage.tr('Questions', 'प्रश्न')}'),
-                    _chip(Icons.timer_outlined,
-                        '${set.durationMinutes} ${AppLanguage.tr('min', 'मिनेट')}'),
-                    _chip(Icons.flag_outlined,
-                        '${AppLanguage.tr('Pass', 'उत्तीर्ण')} ${set.passPercent}%'),
-                    _chip(Icons.speed_outlined, set.difficulty.toUpperCase()),
-                  ],
-                ),
-                if (best != null) ...[
-                  const SizedBox(height: 12),
-                  Text(
-                      '${AppLanguage.tr('Best score', 'उत्कृष्ट स्कोर')}: '
-                      '${best.score}% (${best.correct}/${best.totalQuestions} '
-                      '${AppLanguage.tr('correct', 'सही')})',
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
+        // Exam details card.
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: palette.border, width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(set.title,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              if (subLabel.isNotEmpty)
+                Text(subLabel,
+                    style: TextStyle(
+                        fontSize: 13, color: palette.textSecondary)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _metaPill(palette, Icons.help_outline,
+                      '${set.totalQuestions} ${AppLanguage.tr('Questions', 'प्रश्नहरू')}'),
+                  _metaPill(palette, Icons.access_time_outlined,
+                      '${set.durationMinutes} ${AppLanguage.tr('min', 'मिनेट')}'),
+                  _metaPill(palette, Icons.emoji_events_outlined,
+                      '${AppLanguage.tr('Pass', 'उत्तीर्ण')} ${set.passPercent}%'),
+                  _metaPill(
+                      palette,
+                      Icons.bar_chart_outlined,
+                      set.difficulty.isEmpty
+                          ? ''
+                          : set.difficulty[0].toUpperCase() +
+                              set.difficulty.substring(1)),
                 ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        // Actions row.
+        Row(
+          children: [
+            Expanded(
+              child: _secondaryBtn(
+                palette,
+                icon: _unlocked ? Icons.emoji_events_outlined : Icons.lock_outline,
+                iconColor: const Color(0xFFD97706),
+                label: AppLanguage.tr('Your Ranking', 'तपाईंको र्याङ्किङ'),
+                onTap: _goRanking,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: GestureDetector(
+                onTap: () =>
+                    context.push('/exam/${widget.setId}/quiz'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  decoration: BoxDecoration(
+                    color: palette.primary,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.refresh, size: 16, color: Colors.white),
+                      SizedBox(width: 6),
+                      Text('Re-Attempt',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+        Text(AppLanguage.tr('Attempts History', 'प्रयास इतिहास'),
+            style:
+                const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 12),
+        if (_attempts.isEmpty)
+          _emptyState(palette)
+        else
+          ..._attempts.map((a) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _attemptCard(palette, a),
+              )),
+        if (!_unlocked) ...[
+          const SizedBox(height: 4),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: palette.warning.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                  color: palette.warning.withValues(alpha: 0.27),
+                  width: 1),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lock_outline,
+                    size: 16, color: palette.warning),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    AppLanguage.tr(
+                        'Answer review and rankings unlock once the exam window closes.',
+                        'परीक्षा समय सकिएपछि उत्तर समीक्षा र र्याङ्किङ खुल्नेछ।'),
+                    style: TextStyle(
+                        fontSize: 12, color: palette.textSecondary),
+                  ),
+                ),
               ],
             ),
           ),
-        ),
-        const SizedBox(height: 12),
-        if (!_unlocked) _unlockNotice(),
-        const SizedBox(height: 12),
-        ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFF59E0B),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-          ),
-          onPressed: _reAttempt,
-          icon: const Icon(Icons.play_arrow),
-          label: Text(set.contentType == 'pdf'
-              ? AppLanguage.tr('Open PDF', 'PDF खोल्नुहोस्')
-              : AppLanguage.tr('Re-Attempt', 'पुनः प्रयास')),
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: _goRanking,
-          icon: Icon(_unlocked
-              ? Icons.leaderboard_outlined
-              : Icons.lock_outline),
-          label: Text(AppLanguage.tr('Your Ranking', 'तपाईंको र्याङ्किङ')),
-          style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 14)),
-        ),
-        const SizedBox(height: 20),
-        Text(AppLanguage.tr('Your Attempts', 'तपाईंका प्रयासहरू'),
-            style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        if (_attempts.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Center(
-              child: Text(AppLanguage.tr(
-                  'No attempts yet. Take the exam to see your history here.',
-                  'अहिलेसम्म प्रयास छैन।')),
-            ),
-          )
-        else
-          ..._attempts.map(_attemptRow),
+        ],
       ],
     );
   }
 
-  Widget _unlockNotice() {
-    final set = _set!;
-    final unlock = resultsUnlockAt(set, DateTime.now());
-    final k = unlock.toUtc().add(const Duration(hours: 5, minutes: 45));
+  Widget _metaPill(ExpoPalette palette, IconData icon, String label) {
+    if (label.isEmpty) return const SizedBox.shrink();
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: const Color(0xFFEFF6FF),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFBFDBFE)),
+        color: palette.surfaceAlt,
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.lock_outline,
-              size: 20, color: Color(0xFF1D4ED8)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              AppLanguage.tr(
-                  'Results unlock after the exam window closes (${k.hour}:${k.minute.toString().padLeft(2, '0')}).',
-                  'परीक्षा समय सकिएपछि नतिजा खुल्नेछ।'),
-              style: const TextStyle(
-                  fontSize: 13, color: Color(0xFF1E40AF)),
-            ),
+          Icon(icon, size: 13, color: palette.textSecondary),
+          const SizedBox(width: 5),
+          Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: palette.textSecondary)),
+        ],
+      ),
+    );
+  }
+
+  Widget _secondaryBtn(ExpoPalette palette,
+      {required IconData icon,
+      required Color iconColor,
+      required String label,
+      required VoidCallback onTap}) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 13),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: palette.border, width: 1.5),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: iconColor),
+            const SizedBox(width: 6),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: palette.textPrimary)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState(ExpoPalette palette) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.description_outlined,
+              size: 44, color: palette.textDisabled),
+          const SizedBox(height: 12),
+          Text(AppLanguage.tr('No attempts yet', 'अहिलेसम्म प्रयास छैन'),
+              style:
+                  const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Text(
+            AppLanguage.tr(
+                'Your attempts will appear here with their scores once you finish this exam.',
+                'परीक्षा सकिएपछि तपाईंका प्रयासहरू स्कोरसहित यहाँ देखिनेछन्।'),
+            textAlign: TextAlign.center,
+            style:
+                TextStyle(fontSize: 13, color: palette.textSecondary),
           ),
         ],
       ),
     );
   }
 
-  Widget _attemptRow(ExamAttempt a) {
+  Widget _attemptCard(ExpoPalette palette, ExamAttempt a) {
+    final tone = a.passed ? _pass : _fail;
     final date = a.createdAt;
-    final dateStr = date == null
-        ? ''
-        : '${date.year}-${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} '
-            '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    final passColor =
-        a.passed ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: ListTile(
-        onTap: () => _reviewAttempt(a),
-        leading: Container(
-          width: 44,
-          height: 44,
-          decoration: BoxDecoration(
-            color: passColor.withValues(alpha: 0.12),
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: Text('${a.score}%',
-                style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color: passColor)),
-          ),
+    final dateLabel =
+        date == null ? '' : '${date.day}/${date.month}/${date.year} · ${_hm(date)}';
+    return GestureDetector(
+      onTap: () => _reviewAttempt(a),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: tone.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(20),
+          border:
+              Border.all(color: tone.withValues(alpha: 0.33), width: 1.5),
         ),
-        title: Text(
-            '${AppLanguage.tr('Attempt', 'प्रयास')} ${a.attemptNumber}',
-            style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text(
-            '${a.correct}/${a.totalQuestions} ${AppLanguage.tr('correct', 'सही')}'
-            ' • ${_timeLabel(a.timeTakenSeconds)}'
-            '${dateStr.isNotEmpty ? ' • $dateStr' : ''}'),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Row(
           children: [
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: passColor.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(999),
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(color: tone, shape: BoxShape.circle),
+              child: Center(
+                child: Text('${a.attemptNumber}',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold)),
               ),
-              child: Text(
-                  a.passed
-                      ? AppLanguage.tr('Pass', 'उत्तीर्ण')
-                      : AppLanguage.tr('Fail', 'अनुत्तीर्ण'),
-                  style: TextStyle(
-                      color: passColor,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 12)),
             ),
-            const Icon(Icons.chevron_right),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                      '${AppLanguage.tr('Attempt', 'प्रयास')} ${a.attemptNumber}',
+                      style: const TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 2),
+                  Text(
+                    '$dateLabel${dateLabel.isNotEmpty ? ' · ' : ''}${_duration(a.timeTakenSeconds)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 12, color: palette.textSecondary),
+                  ),
+                  Text(
+                    '${a.correct} ${AppLanguage.tr('correct', 'सही')} · '
+                    '${a.incorrect} ${AppLanguage.tr('wrong', 'गलत')} · '
+                    '${a.skipped} ${AppLanguage.tr('skipped', 'छोडियो')}',
+                    style: TextStyle(
+                        fontSize: 12, color: palette.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('${a.score}%',
+                    style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: tone)),
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: tone,
+                      borderRadius: BorderRadius.circular(999)),
+                  child: Text(
+                      a.passed
+                          ? AppLanguage.tr('PASS', 'उत्तीर्ण')
+                          : AppLanguage.tr('FAIL', 'अनुत्तीर्ण'),
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right,
+                size: 16, color: palette.textSecondary),
           ],
         ),
       ),
     );
   }
-
-  String _timeLabel(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return '${m}m ${s}s';
-  }
-
-  Widget _chip(IconData icon, String label) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: Colors.grey.shade600),
-            const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
-          ],
-        ),
-      );
 }

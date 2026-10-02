@@ -1,22 +1,24 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 
-/// Exam answer review — mirrors app/exam/[setId]/review.tsx.
+/// Review Answers — mirrors app/exam/[setId]/review.tsx same-to-same.
 ///
-/// Answers arrive via route params (from the summary or a specific attempt
-/// on the detail screen), falling back to the user's latest attempt.
-/// Stats header, per-question cards with Correct/Wrong tags, a skipped note
-/// and the explanation. Locked until the exam window closes. The list is a
-/// lazy ListView (React uses FlatList) with no entering animations — cheap
-/// on low-end phones.
+/// Every question with all options colour-coded against the pick: the right
+/// option always green with a "Correct" tag, the wrong pick red with "Wrong",
+/// the explanation underneath. Lazy list, NO entering animations (low-end
+/// perf: the page transition IS the animation). Same unlock gate as summary.
 class ExamReviewScreen extends StatefulWidget {
   final String setId;
-  final String? answers; // comma-separated, -1 = skipped
+  final String? answers; // JSON array, -1 = skipped
   final String? attemptLabel;
   final String? attemptDate;
 
@@ -37,7 +39,27 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
   List<int> _answers = const [];
   bool _loading = true;
   String? _error;
-  String? _lockedMessage;
+
+  static const _correct = Color(0xFF16A34A);
+  static const _wrong = Color(0xFFDC2626);
+
+  List<int> _parseAnswers(String? param) {
+    if (param == null || param.isEmpty) return [];
+    try {
+      final parsed = jsonDecode(param);
+      if (parsed is List) {
+        return parsed
+            .map((v) => v is num ? v.toInt() : int.tryParse('$v') ?? -1)
+            .toList();
+      }
+    } catch (_) {}
+    return param
+        .replaceAll(RegExp(r'[\[\]\s]'), '')
+        .split(',')
+        .where((s) => s.isNotEmpty)
+        .map((s) => int.tryParse(s.trim()) ?? -1)
+        .toList();
+  }
 
   @override
   void initState() {
@@ -49,43 +71,22 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _lockedMessage = null;
     });
     try {
       final set = await fetchExamSet(widget.setId);
       if (set == null) throw Exception('Exam set not found');
-      if (!areResultsUnlocked(set, DateTime.now())) {
-        if (!mounted) return;
-        setState(() {
-          _loading = false;
-          _lockedMessage = AppLanguage.tr(
-              'Answers will be available for review once the exam window closes.',
-              'परीक्षा समय सकिएपछि उत्तर समीक्षा उपलब्ध हुनेछ।');
-        });
-        return;
-      }
-      List<int> answers;
-      if (widget.answers != null && widget.answers!.isNotEmpty) {
-        answers = widget.answers!
-            .split(',')
-            .map((s) => int.tryParse(s.trim()) ?? -1)
-            .toList();
-      } else {
+      List<int> answers = _parseAnswers(widget.answers);
+      if (answers.isEmpty) {
         // Fallback: latest attempt.
         final uid = AuthService.currentUser?.uid ?? '';
         final attempts = uid.isEmpty
             ? <ExamAttempt>[]
             : await fetchAttemptsForSet(uid, widget.setId);
-        if (attempts.isEmpty) {
-          if (!mounted) return;
-          setState(() {
-            _set = set;
-            _loading = false;
-          });
-          return;
+        if (attempts.isNotEmpty) {
+          attempts.sort(
+              (a, b) => b.attemptNumber.compareTo(a.attemptNumber));
+          answers = attempts.first.answers;
         }
-        attempts.sort((a, b) => b.attemptNumber.compareTo(a.attemptNumber));
-        answers = attempts.first.answers;
       }
       final padded = List<int>.filled(set.questions.length, -1);
       for (var i = 0; i < padded.length && i < answers.length; i++) {
@@ -97,11 +98,11 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
         _answers = padded;
         _loading = false;
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _error = AppLanguage.tr(
-            'Could not load the review.', 'समीक्षा लोड हुन सकेन।');
+            'Answers unavailable', 'उत्तरहरू उपलब्ध छैनन्');
         _loading = false;
       });
     }
@@ -109,256 +110,383 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Scaffold(
+      backgroundColor: palette.background,
       body: Column(
         children: [
           SubpageHeader(
               title: AppLanguage.tr('Review Answers', 'उत्तर समीक्षा')),
           Expanded(
             child: _loading
-                ? const PreloadingWidget(
+                ? PreloadingWidget(
                     tinted: false,
-                    label: 'Loading Answers...',
+                    label: AppLanguage.tr(
+                        'Loading Answers…', 'उत्तरहरू लोड हुँदै…'),
                   )
-                : _lockedMessage != null
+                : _error != null
                     ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.lock_outline,
-                                  size: 48, color: Color(0xFF1E3A8A)),
-                              const SizedBox(height: 16),
-                              Text(_lockedMessage!,
-                                  textAlign: TextAlign.center),
-                            ],
-                          ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(_error!),
+                            const SizedBox(height: 12),
+                            ElevatedButton(
+                              onPressed: () => context.pop(),
+                              child: Text(AppLanguage.tr(
+                                  'Go back', 'फर्कनुहोस्')),
+                            ),
+                          ],
                         ),
                       )
-                    : _error != null
-                        ? Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(_error!),
-                                const SizedBox(height: 12),
-                                ElevatedButton(
-                                    onPressed: _load,
-                                    child: const Text('Retry')),
-                              ],
-                            ),
-                          )
+                    : _locked()
+                        ? _lockedBody(palette)
                         : _answers.isEmpty
                             ? Center(
                                 child: Text(AppLanguage.tr(
                                     'No attempt found for this exam.',
                                     'यस परीक्षाको प्रयास भेटिएन।')))
-                            : _reviewList(),
+                            : _list(palette),
           ),
         ],
       ),
     );
   }
 
-  Widget _reviewList() {
-    final set = _set!;
-    final score = scoreExamAttempt(
-      set.questions,
-      _answers,
-      set.passPercent,
+  bool _locked() =>
+      _set != null && !areResultsUnlocked(_set!, DateTime.now());
+
+  Widget _lockedBody(ExpoPalette palette) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: palette.primary.withValues(alpha: 0.1),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.lock_outline,
+                  size: 32, color: palette.primary),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              AppLanguage.tr(
+                  'Answers are locked', 'उत्तरहरू लक छन्'),
+              style: const TextStyle(
+                  fontSize: 17, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              AppLanguage.tr(
+                  'Answer review unlocks after the exam window closes, so nobody gains an advantage by finishing early.',
+                  'परीक्षा समय सकिएपछि उत्तर समीक्षा खुल्नेछ।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontSize: 13, color: palette.textSecondary),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton(
+              onPressed: () => context.pop(),
+              child:
+                  Text(AppLanguage.tr('Go back', 'फर्कनुहोस्')),
+            ),
+          ],
+        ),
+      ),
     );
+  }
+
+  Widget _list(ExpoPalette palette) {
+    final set = _set!;
+    final breakdown =
+        scoreExamAttempt(set.questions, _answers, set.passPercent);
     return ListView.builder(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
+      // Keep the first paint light.
       itemCount: set.questions.length + 1,
       itemBuilder: (c, i) {
-        if (i == 0) return _statsHeader(set, score);
-        return _questionCard(set.questions[i - 1], _answers[i - 1], i);
+        if (i == 0) return _listHeader(palette, set, breakdown);
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _questionCard(
+              palette, set.questions[i - 1], _answers[i - 1], i),
+        );
       },
     );
   }
 
-  Widget _statsHeader(ExamSet set, ScoreBreakdown s) {
-    final label = widget.attemptLabel;
-    final date = widget.attemptDate;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (label != null && label.isNotEmpty) ...[
-              Text(label,
+  Widget _listHeader(
+      ExpoPalette palette, ExamSet set, ScoreBreakdown b) {
+    final stats = [
+      _MiniStat(AppLanguage.tr('Total', 'जम्मा'), '${set.questions.length}',
+          palette.textPrimary),
+      _MiniStat(AppLanguage.tr('Correct', 'सही'), '${b.correct}', _correct),
+      _MiniStat(AppLanguage.tr('Incorrect', 'गलत'), '${b.incorrect}', _wrong),
+      _MiniStat(AppLanguage.tr('Skipped', 'छोडियो'), '${b.skipped}',
+          palette.textSecondary),
+      _MiniStat(AppLanguage.tr('Score', 'स्कोर'), '${b.percent}%',
+          palette.primary),
+    ];
+    final sub = [
+      if (widget.attemptLabel != null &&
+          widget.attemptLabel!.isNotEmpty)
+        widget.attemptLabel!,
+      if (widget.attemptDate != null && widget.attemptDate!.isNotEmpty)
+        widget.attemptDate!,
+    ].join(' · ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: palette.surface,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: palette.border, width: 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(set.title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.bold)),
-              if (date != null && date.isNotEmpty)
-                Text(date,
+                      fontSize: 16, fontWeight: FontWeight.bold)),
+              if (sub.isNotEmpty)
+                Text(sub,
                     style: TextStyle(
-                        fontSize: 12, color: Colors.grey.shade600)),
-              const SizedBox(height: 8),
+                        fontSize: 12, color: palette.textSecondary)),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 14,
+                runSpacing: 10,
+                children: stats
+                    .map((s) => Container(
+                          constraints:
+                              const BoxConstraints(minWidth: 54),
+                          child: Column(
+                            children: [
+                              Text(s.value,
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                      color: s.color)),
+                              const SizedBox(height: 2),
+                              Text(s.label,
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      color: palette.textSecondary)),
+                            ],
+                          ),
+                        ))
+                    .toList(),
+              ),
             ],
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _stat(AppLanguage.tr('Total', 'जम्मा'),
-                    '${set.questions.length}', const Color(0xFF0F172A)),
-                _stat(AppLanguage.tr('Correct', 'सही'), '${s.correct}',
-                    const Color(0xFF16A34A)),
-                _stat(AppLanguage.tr('Incorrect', 'गलत'), '${s.incorrect}',
-                    const Color(0xFFDC2626)),
-                _stat(AppLanguage.tr('Skipped', 'छोडियो'), '${s.skipped}',
-                    Colors.grey),
-                _stat(AppLanguage.tr('Score', 'स्कोर'), '${s.percent}%',
-                    const Color(0xFF1D4ED8)),
-              ],
-            ),
-          ],
+          ),
         ),
-      ),
+        const SizedBox(height: 16),
+        Text(
+          AppLanguage.tr(
+              'Question Answer Details', 'प्रश्न उत्तर विवरण'),
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 12),
+      ],
     );
   }
 
-  Widget _stat(String label, String value, Color color) => Column(
-        children: [
-          Text(value,
-              style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.bold, color: color)),
-          const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 11)),
-        ],
-      );
-
-  Widget _questionCard(ExamQuestion q, int chosen, int number) {
+  Widget _questionCard(
+      ExpoPalette palette, ExamQuestion q, int chosen, int number) {
     final skipped = chosen < 0;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  margin: const EdgeInsets.only(right: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Center(
-                    child: Text('$number',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13)),
-                  ),
-                ),
-                Expanded(
-                  child: Text(q.question,
-                      style: const TextStyle(fontWeight: FontWeight.w600)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            if (skipped)
+    final gotItRight = chosen == q.correctIndex;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6),
+                width: 24,
+                height: 24,
                 decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
+                  color: palette.primary.withValues(alpha: 0.09),
+                  shape: BoxShape.circle,
                 ),
-                child: Text(
-                  AppLanguage.tr('Skipped — no answer given.',
-                      'छोडियो — उत्तर दिइएन।'),
-                  style: TextStyle(
-                      fontSize: 12, color: Colors.grey.shade600),
+                child: Center(
+                  child: Text('$number',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: palette.primary)),
                 ),
               ),
-            ...List.generate(q.options.length, (oi) {
-              final isChosen = oi == chosen;
-              final isCorrect = oi == q.correctIndex;
-              Color? bg;
-              Color border = Colors.grey.shade300;
-              if (isCorrect) {
-                bg = Colors.green.shade50;
-                border = Colors.green;
-              } else if (isChosen) {
-                bg = Colors.red.shade50;
-                border = Colors.red;
-              }
-              return Container(
-                margin: const EdgeInsets.only(bottom: 4),
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: bg,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: border),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(q.options[oi])),
-                    if (isCorrect)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                            AppLanguage.tr('Correct', 'सही'),
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold)),
-                      )
-                    else if (isChosen)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(AppLanguage.tr('Wrong', 'गलत'),
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold)),
-                      ),
-                  ],
-                ),
-              );
-            }),
-            if (q.explanation.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFFBEB),
-                  borderRadius: BorderRadius.circular(8),
-                  border:
-                      Border.all(color: const Color(0xFFFDE68A)),
-                ),
-                child: Text(
-                  '${AppLanguage.tr('Explanation', 'व्याख्या')}: ${q.explanation}',
-                  style: const TextStyle(
-                      fontSize: 13, color: Color(0xFF92400E)),
-                ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(q.question,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        height: 22 / 14)),
+              ),
+              Icon(
+                skipped
+                    ? Icons.remove_circle_outline
+                    : gotItRight
+                        ? Icons.check_circle
+                        : Icons.cancel,
+                size: 20,
+                color: skipped
+                    ? palette.textSecondary
+                    : gotItRight
+                        ? _correct
+                        : _wrong,
               ),
             ],
-          ],
-        ),
+          ),
+          const SizedBox(height: 10),
+          ...List.generate(q.options.length, (oi) {
+            final isCorrectOption = oi == q.correctIndex;
+            final isUserPick = oi == chosen;
+            // The right option is always highlighted green, even when the
+            // user skipped — that is the point of a review.
+            final Color? tone =
+                isCorrectOption ? _correct : isUserPick ? _wrong : null;
+            return Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: tone != null
+                    ? tone.withValues(alpha: 0.07)
+                    : palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                    color: tone ?? palette.border, width: 1.5),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: tone ?? Colors.transparent,
+                      border: Border.all(
+                          color: tone ?? palette.border, width: 1.5),
+                    ),
+                    child: Center(
+                      child: Text(String.fromCharCode(65 + oi),
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: tone != null
+                                  ? Colors.white
+                                  : palette.textSecondary)),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                      child: Text(q.options[oi],
+                          style: const TextStyle(fontSize: 13))),
+                  if (isCorrectOption)
+                    _tag(AppLanguage.tr('Correct', 'सही'), _correct),
+                  if (isUserPick && !isCorrectOption)
+                    _tag(AppLanguage.tr('Wrong', 'गलत'), _wrong),
+                ],
+              ),
+            );
+          }),
+          if (skipped)
+            Container(
+              margin: const EdgeInsets.only(top: 2, bottom: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.info_outline,
+                      size: 14, color: palette.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    AppLanguage.tr('You skipped this question',
+                        'तपाईंले यो प्रश्न छोड्नुभयो'),
+                    style: TextStyle(
+                        fontSize: 12, color: palette.textSecondary),
+                  ),
+                ],
+              ),
+            ),
+          if (q.explanation.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(11),
+              decoration: BoxDecoration(
+                color: palette.info.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.lightbulb_outline,
+                          size: 15, color: palette.info),
+                      const SizedBox(width: 6),
+                      Text(
+                        AppLanguage.tr('Explanation', 'व्याख्या'),
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: palette.info),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(q.explanation,
+                      style: TextStyle(
+                          fontSize: 13,
+                          height: 20 / 13,
+                          color: palette.textSecondary)),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
+
+  Widget _tag(String label, Color color) {
+    return Container(
+      margin: const EdgeInsets.only(left: 8),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+          color: color, borderRadius: BorderRadius.circular(999)),
+      child: Text(label,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold)),
+    );
+  }
+}
+
+class _MiniStat {
+  final String label;
+  final String value;
+  final Color color;
+  const _MiniStat(this.label, this.value, this.color);
 }

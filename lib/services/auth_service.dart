@@ -131,48 +131,14 @@ class AuthService {
     await PrefsService.setString(PrefsService.sessionKey, json.encode(_session!.toJson()));
   }
 
-  /// Restore session from storage. Returns the user or null.
-  ///
-  /// A failed token refresh no longer wipes the session: only a truly-dead
-  /// session (HTTP 400, e.g. invalid_grant) is discarded. Transient server
-  /// errors and network failures keep the existing session — the API layer
-  /// retries the refresh via [getValidIdToken] on its next call.
-  static Future<AppUser?> restoreSession() async {
-    final raw = await PrefsService.getString(PrefsService.sessionKey);
-    if (raw == null) return null;
-    try {
-      _session = _Session.fromJson(json.decode(raw) as Map<String, dynamic>);
-      if (_session!.isExpired) {
-        try {
-          await _refreshToken();
-        } on AuthError catch (e) {
-          if (e.code == 'auth/session-expired') {
-            await PrefsService.remove(PrefsService.sessionKey);
-            _session = null;
-            return null;
-          }
-          // 'auth/session-transient' (or any other AuthError): keep the
-          // existing session and return the user below.
-        } catch (_) {
-          // Network/transport failure: keep the existing session too.
-        }
-      }
-      return _session!.user;
-    } catch (_) {
-      await PrefsService.remove(PrefsService.sessionKey);
-      _session = null;
-      return null;
-    }
-  }
-
   /// Reads the saved session from disk WITHOUT any network refresh and
-  /// installs it in memory. Used by the splash when the full
-  /// [restoreSession] times out: a saved session means the user was logged
-  /// in, even if the token refresh was slower than the splash deadline.
+  /// installs it in memory. Used by the splash on cold start: a saved
+  /// session means the user was logged in. This NEVER wipes — a link tap
+  /// or any other cold start can therefore never log the user out.
   /// Installing it in memory matters — [getValidIdToken] then retries the
   /// refresh itself on its next call instead of sending API requests with an
-  /// empty token. Never wipes anything; returns null when nothing was saved
-  /// or the saved blob is corrupt.
+  /// empty token. Returns null when nothing was saved or the saved blob is
+  /// corrupt (without deleting anything).
   static Future<AppUser?> peekSavedSession() async {
     try {
       final raw = await PrefsService.getString(PrefsService.sessionKey);

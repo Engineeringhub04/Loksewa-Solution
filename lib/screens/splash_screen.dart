@@ -41,21 +41,18 @@ class _SplashScreenState extends State<SplashScreen> {
     if (splashHasRouted) return;
     final startedAt = DateTime.now();
 
-    // restoreSession is deadline-bounded, but a TIMEOUT is not a logout: it
-    // just means the token refresh was slower than the splash deadline
-    // (slow mobile network). Only a definitive null (no saved session /
-    // truly-dead refresh token) means "not logged in". On timeout, fall back
-    // to the on-disk session without a network refresh: if one was saved,
-    // the user was logged in — route home and let the API layer retry the
-    // refresh via getValidIdToken on its next call.
-    AppUser? user;
-    try {
-      user = await AuthService.restoreSession().timeout(_callTimeout);
-    } on TimeoutException {
-      user = await AuthService.peekSavedSession().catchError((_) => null);
-    }
+    // The splash NEVER wipes the session. A saved session on disk means the
+    // user is logged in — route accordingly and let the API layer refresh
+    // the token lazily via getValidIdToken. A link tap (or any cold start)
+    // can therefore never log the user out: the worst case is a failed
+    // refresh surfacing as an API error later, never a silent logout.
+    final user = await AuthService.peekSavedSession();
 
-    // One account = one device, asked FIRST — before anything is warmed.
+    // One account = one device — NON-DESTRUCTIVE. If another device claimed
+    // the account, park the notice and send this device to the login screen
+    // WITHOUT wiping the saved session: logging in again re-claims the
+    // device and heals the mismatch (e.g. a claim that failed to write
+    // after a reinstall). The account is never destroyed here.
     var evicted = false;
     if (user != null) {
       final session = await _withTimeout(
@@ -66,7 +63,6 @@ class _SplashScreenState extends State<SplashScreen> {
         evicted = true;
         splashHasRouted = true;
         await DeviceSession.markEvictionNotice(session.deviceName);
-        await AuthService.logout().catchError((_) {});
       }
     }
 

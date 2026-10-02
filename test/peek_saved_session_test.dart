@@ -6,10 +6,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 
-/// peekSavedSession: the splash's timeout fallback. A timed-out
-/// restoreSession is NOT a logout — the token refresh was just slower than
-/// the splash deadline. The splash falls back to this disk read (no network):
-/// a saved session means the user was logged in.
+/// peekSavedSession: the splash's cold-start session read. A saved session on
+/// disk means the user is logged in — this read NEVER wipes, so a link tap
+/// (or any cold start) can never log the user out. No network is touched;
+/// the token refresh happens lazily via getValidIdToken.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues({});
@@ -48,5 +48,23 @@ void main() {
   test('returns null on a corrupt blob and never throws', () async {
     await PrefsService.setString(PrefsService.sessionKey, 'not-json{{{');
     expect(await AuthService.peekSavedSession(), isNull);
+  });
+
+  test('never deletes the saved blob — not even when it is corrupt', () async {
+    // Regression: the splash must never wipe the session. A corrupt blob
+    // returns null but stays on disk for inspection/repair.
+    await PrefsService.setString(PrefsService.sessionKey, 'not-json{{{');
+    await AuthService.peekSavedSession();
+    expect(await PrefsService.getString(PrefsService.sessionKey),
+        'not-json{{{');
+  });
+
+  test('never deletes the saved blob for an expired session', () async {
+    await PrefsService.setString(
+        PrefsService.sessionKey, json.encode(sessionJson(expired: true)));
+    final before =
+        await PrefsService.getString(PrefsService.sessionKey);
+    await AuthService.peekSavedSession();
+    expect(await PrefsService.getString(PrefsService.sessionKey), before);
   });
 }

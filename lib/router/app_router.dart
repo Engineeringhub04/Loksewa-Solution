@@ -114,6 +114,13 @@ String? _qp(GoRouterState s, String key) => s.uri.queryParameters[key];
 /// Full route table — mirrors the Expo app/ directory 1:1.
 final appRouter = GoRouter(
   initialLocation: '/splash',
+  // App Links (https://www.kbr.com.np) carry no in-app routing: the shared
+  // link just opens the app. Android hands the tapped link to the engine as
+  // the platform's initial route, and go_router would otherwise boot
+  // straight to '/' (or '/signup'), bypassing the splash — no session
+  // check, no user loaded. Forcing the initial location keeps EVERY cold
+  // start (link or manual) on the splash's normal session check.
+  overridePlatformDefaultLocation: true,
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
     GoRoute(path: '/', builder: (_, __) => const TabsScreen()),

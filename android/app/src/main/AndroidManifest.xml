@@ -23,17 +23,19 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <!-- App Links: https://kbr.com.np and https://www.kbr.com.np open
-                 the installed app (verified via .well-known/assetlinks.json);
-                 when the app is not installed the link falls through to the
-                 download page. The canonical share URL itself is read from
-                 Firestore (app_applink_details/main) so it can change without
-                 an app update. -->
+                 the installed app (verified via .well-known/assetlinks.json).
+                 No path restriction: the bare domain must open the app too.
+                 The link carries no in-app routing — tapping it just opens /
+                 resumes the app. When the app is not installed the URL opens
+                 in the browser on the website's home page. The canonical share
+                 URL itself is read from Firestore (app_applink_details/main)
+                 so it can change without an app update. -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="https" android:host="kbr.com.np" android:pathPattern="/.*"/>
-                <data android:scheme="https" android:host="www.kbr.com.np" android:pathPattern="/.*"/>
+                <data android:scheme="https" android:host="kbr.com.np"/>
+                <data android:scheme="https" android:host="www.kbr.com.np"/>
             </intent-filter>
         </activity>
         <meta-data

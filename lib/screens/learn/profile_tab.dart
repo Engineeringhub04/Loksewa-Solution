@@ -182,10 +182,12 @@ class _ProfileTabState extends State<ProfileTab> {
   void _goToEdit() => context.push('/edit-profile');
 
   /// One-time migration (2026-10-02, remove in a later update): the share link
-  /// moved from https://www.kbr.com.np/downloadapp to
-  /// https://www.kbr.com.np/signup. If the seeded `app_applink_details/main`
-  /// document still carries the old link, an admin opening the profile flips
-  /// it — no console work needed. Admin-only write per firebase.rules.
+  /// One-time admin migration: the shared App Link is now the plain domain
+  /// https://www.kbr.com.np (tapping it just opens / resumes the app — no
+  /// in-app routing). If the seeded `app_applink_details/main` document
+  /// still carries an old link (/downloadapp or /signup), an admin opening
+  /// the profile flips it — no console work needed. Admin-only write per
+  /// firebase.rules.
   Future<void> _migrateAppLinkDoc() async {
     try {
       final profile = ProfileStore.instance.profile;
@@ -193,12 +195,12 @@ class _ProfileTabState extends State<ProfileTab> {
       final doc =
           await FirestoreRest.getDocument('app_applink_details/main');
       final link = (doc?['link'] as String?)?.trim() ?? '';
-      if (link != 'https://www.kbr.com.np/downloadapp') return;
+      if (link == 'https://www.kbr.com.np') return;
       final idToken = await AuthService.getValidIdToken();
       await FirestoreRest.setDocument(
         'app_applink_details/main',
         {
-          'link': 'https://www.kbr.com.np/signup',
+          'link': 'https://www.kbr.com.np',
           'updatedDate': DateTime.now().toUtc(),
         },
         idToken: idToken,

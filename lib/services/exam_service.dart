@@ -796,6 +796,10 @@ DateTime resultsUnlockAt(ExamSet set, DateTime now) {
 /// the visible countdown state (React: examHub.CARD_REVEAL_LEAD_MS).
 const cardRevealLead = Duration(minutes: 10);
 
+/// Province id meaning "every province" — mirrors examHub.ALL_PROVINCES.
+/// When selected, [fetchExamSets] skips the province filter entirely.
+const allProvinces = 'all';
+
 /// Exam-card lifecycle state — mirrors examHub.resolveExamCardState.
 enum ExamCardState { hidden, countdown, ready, rejoin, pending, locked }
 
@@ -968,6 +972,26 @@ String normalizeExamSectionId(String raw) {
 /// dual query (subcourseIds array-contains + legacy subcourseId ==), merged by
 /// id, published-only, in-memory section/province narrowing, sorted by
 /// startTime desc (nulls last).
+/// Visibility predicate for an exam set — mirrors the in-memory filters in
+/// examHub.fetchExamSets: published-only, section narrowing, and province
+/// narrowing that is SKIPPED when [allProvinces] is selected ("All Board"
+/// shows every province's sets).
+bool examSetVisible(ExamSet s, {String? sectionId, String? provinceId}) {
+  if (!s.isPublished) return false;
+  if (sectionId != null &&
+      sectionId.isNotEmpty &&
+      s.sectionId != sectionId) {
+    return false;
+  }
+  if (provinceId != null &&
+      provinceId.isNotEmpty &&
+      provinceId != allProvinces &&
+      s.provinceId != provinceId) {
+    return false;
+  }
+  return true;
+}
+
 Future<List<ExamSet>> fetchExamSets({
   String? subcourseId,
   String? sectionId,
@@ -997,20 +1021,11 @@ Future<List<ExamSet>> fetchExamSets({
       merged[(d['id'] ?? '').toString()] = d;
     }
   }
-  final sets = merged.values.map(ExamSet.fromMap).where((s) {
-    if (!s.isPublished) return false;
-    if (sectionId != null &&
-        sectionId.isNotEmpty &&
-        s.sectionId != sectionId) {
-      return false;
-    }
-    if (provinceId != null &&
-        provinceId.isNotEmpty &&
-        s.provinceId != provinceId) {
-      return false;
-    }
-    return true;
-  }).toList()
+  final sets = merged.values
+      .map(ExamSet.fromMap)
+      .where((s) => examSetVisible(s,
+          sectionId: sectionId, provinceId: provinceId))
+      .toList()
     ..sort((a, b) {
       // startTime desc, nulls last (React order).
       if (a.startTime == null && b.startTime == null) return 0;

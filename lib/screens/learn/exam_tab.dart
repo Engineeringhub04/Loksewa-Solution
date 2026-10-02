@@ -36,7 +36,7 @@ class ExamTab extends StatefulWidget {
 class _ExamTabState extends State<ExamTab> {
   List<ExamProvince> _provinces = const [];
   List<ExamSection> _sections = const [];
-  String _provinceId = 'all';
+  String _provinceId = allProvinces;
   String? _sectionId;
   List<_CardEntry> _cards = const [];
   bool _loading = true;
@@ -383,7 +383,7 @@ class _ExamTabState extends State<ExamTab> {
                   itemCount: _provinces.length + 1,
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (c, i) {
-                    final id = i == 0 ? 'all' : _provinces[i - 1].id;
+                    final id = i == 0 ? allProvinces : _provinces[i - 1].id;
                     final label = i == 0
                         ? AppLanguage.tr('All Board', 'सबै बोर्ड')
                         : _provinces[i - 1].displayName(nepali);

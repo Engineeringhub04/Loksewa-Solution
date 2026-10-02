@@ -162,6 +162,55 @@ void main() {
     });
   });
 
+  group('examSetVisible', () {
+    ExamSet set({bool published = true}) => _set(
+          startTime: null,
+          isPublished: published,
+        );
+
+    test('allProvinces skips the province filter (All Board shows everything)',
+        () {
+      final s = set();
+      // The fixture's provinceId is 'all' by default; give it a real one.
+      final withProvince = ExamSet(
+        id: s.id,
+        courseId: s.courseId,
+        subcourseId: s.subcourseId,
+        courseIds: s.courseIds,
+        subcourseIds: s.subcourseIds,
+        provinceId: 'koshi',
+        sectionId: s.sectionId,
+        isPublished: s.isPublished,
+        title: s.title,
+        price: s.price,
+        currency: s.currency,
+        startTime: s.startTime,
+        totalQuestions: s.totalQuestions,
+        durationMinutes: s.durationMinutes,
+        passPercent: s.passPercent,
+        accessType: s.accessType,
+        difficulty: s.difficulty,
+        contentType: s.contentType,
+        pdfUrl: s.pdfUrl,
+        questions: s.questions,
+      );
+      expect(
+          examSetVisible(withProvince, provinceId: allProvinces), isTrue);
+      expect(examSetVisible(withProvince, provinceId: 'koshi'), isTrue);
+      expect(examSetVisible(withProvince, provinceId: 'madhesh'), isFalse);
+    });
+
+    test('unpublished sets are never visible', () {
+      expect(examSetVisible(set(published: false)), isFalse);
+    });
+
+    test('section narrowing still applies', () {
+      final s = set();
+      expect(examSetVisible(s, sectionId: 'mcq-tests'), isTrue);
+      expect(examSetVisible(s, sectionId: 'theory-desk'), isFalse);
+    });
+  });
+
   group('ExamSet.fromMap', () {
     test('normalises legacy section aliases on read', () {
       final set = ExamSet.fromMap({

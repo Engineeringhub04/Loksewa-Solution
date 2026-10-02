@@ -589,14 +589,24 @@ class ExamSet {
     required this.questions,
   });
 
-  factory ExamSet.fromMap(Map<String, dynamic> m) => ExamSet(
+  factory ExamSet.fromMap(Map<String, dynamic> m) {
+    // Legacy alias normalisation on read (React: examHub):
+    // old 'mcq'/'theory' ids map to the current section ids.
+    final rawSection = _str(m['sectionId']);
+    final rawSubIds = _strList(m['subcourseIds']);
+    final rawCourseIds = _strList(m['courseIds']);
+    return ExamSet(
         id: _str(m['id']),
         courseId: _str(m['courseId']),
         subcourseId: _str(m['subcourseId']),
-        courseIds: _strList(m['courseIds']),
-        subcourseIds: _strList(m['subcourseIds']),
+        courseIds:
+            rawCourseIds.isNotEmpty ? rawCourseIds : [_str(m['courseId'])]
+              ..removeWhere((e) => e.isEmpty),
+        subcourseIds:
+            rawSubIds.isNotEmpty ? rawSubIds : [_str(m['subcourseId'])]
+              ..removeWhere((e) => e.isEmpty),
         provinceId: _str(m['provinceId']),
-        sectionId: _str(m['sectionId']),
+        sectionId: normalizeExamSectionId(rawSection),
         isPublished: _bool(m['isPublished'], true),
         title: _str(m['title']),
         price: _dbl(m['price']),
@@ -614,6 +624,7 @@ class ExamSet {
                 (q) => ExamQuestion.fromMap((q as Map).cast<String, dynamic>()))
             .toList(),
       );
+  }
 
   bool get isPro => accessType == 'pro';
 }
@@ -771,10 +782,211 @@ ScoreBreakdown scoreExamAttempt(
 }
 
 /// Review/ranking unlock once the exam window has closed (start + duration).
-bool areResultsUnlocked(ExamSet set, DateTime now) {
-  if (set.startTime == null) return true;
-  final unlockAt = set.startTime!.add(Duration(minutes: set.durationMinutes));
-  return !now.isBefore(unlockAt);
+bool areResultsUnlocked(ExamSet set, DateTime now) =>
+    !now.isBefore(resultsUnlockAt(set, now));
+
+/// The instant results unlock: start + duration. Sets with no scheduled start
+/// are always unlocked. (React: examHub.resultsUnlockAt.)
+DateTime resultsUnlockAt(ExamSet set, DateTime now) {
+  if (set.startTime == null) return now;
+  return set.startTime!.add(Duration(minutes: set.durationMinutes));
+}
+
+/// Lead-in before a scheduled exam start at which a hidden card switches to
+/// the visible countdown state (React: examHub.CARD_REVEAL_LEAD_MS).
+const cardRevealLead = Duration(minutes: 10);
+
+/// Exam-card lifecycle state — mirrors examHub.resolveExamCardState.
+enum ExamCardState { hidden, countdown, ready, rejoin, pending, locked }
+
+/// Resolves the lifecycle state of an exam card (React: resolveExamCardState):
+/// - pro && pending purchase && !purchased  -> pending
+/// - pro && !purchased                      -> locked
+/// - no startTime                           -> always open
+/// - now < start - 10min                    -> hidden
+/// - now < start                            -> countdown
+/// - attempted                              -> rejoin else ready
+ExamCardState resolveExamCardState({
+  required ExamSet set,
+  required DateTime now,
+  required bool hasAttempted,
+  required bool isPurchased,
+  required bool hasPendingPurchase,
+}) {
+  if (set.isPro && !isPurchased) {
+    return hasPendingPurchase ? ExamCardState.pending : ExamCardState.locked;
+  }
+  final start = set.startTime;
+  if (start == null) return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
+  if (now.isBefore(start.subtract(cardRevealLead))) return ExamCardState.hidden;
+  if (now.isBefore(start)) return ExamCardState.countdown;
+  return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
+}
+
+/// Exam sections (tabs) — mirrors examHub.fetchExamSections: filters by
+/// courseIds/subcourseIds when present, always sorted by `order`.
+class ExamSection {
+  final String id;
+  final String name;
+  final String description;
+  final int order;
+  final List<String> courseIds;
+  final List<String> subcourseIds;
+
+  ExamSection({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.order,
+    required this.courseIds,
+    required this.subcourseIds,
+  });
+
+  factory ExamSection.fromMap(Map<String, dynamic> doc) {
+    final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
+    List<String> ids(dynamic v) => v is List
+        ? v.map((e) => e.toString()).toList()
+        : <String>[];
+    int ord = 0;
+    final raw = fields['order'];
+    if (raw is num) ord = raw.toInt();
+    return ExamSection(
+      id: (doc['id'] ?? fields['id'] ?? '').toString(),
+      name: (fields['name'] ?? '').toString(),
+      description: (fields['description'] ?? '').toString(),
+      order: ord,
+      courseIds: ids(fields['courseIds']),
+      subcourseIds: ids(fields['subcourseIds']),
+    );
+  }
+
+  /// Matches React: doc applies when its scope list contains our id, or when
+  /// it carries no scope list at all.
+  bool inScope({String? courseId, String? subcourseId}) {
+    if (courseId != null &&
+        courseId.isNotEmpty &&
+        courseIds.isNotEmpty &&
+        !courseIds.contains(courseId)) {
+      return false;
+    }
+    if (subcourseId != null &&
+        subcourseId.isNotEmpty &&
+        subcourseIds.isNotEmpty &&
+        !subcourseIds.contains(subcourseId)) {
+      return false;
+    }
+    return true;
+  }
+}
+
+Future<List<ExamSection>> fetchExamSections({
+  String? courseId,
+  String? subcourseId,
+}) async {
+  final docs = await ExamRest.listDocs('app_exam_sections');
+  final sections = docs
+      .map(ExamSection.fromMap)
+      .where((s) => s.inScope(courseId: courseId, subcourseId: subcourseId))
+      .toList()
+    ..sort((a, b) => a.order.compareTo(b.order));
+  return sections;
+}
+
+/// Exam provinces (chips) — mirrors examHub.fetchProvinces.
+class ExamProvince {
+  final String id;
+  final String name;
+  final int order;
+
+  ExamProvince({required this.id, required this.name, required this.order});
+
+  factory ExamProvince.fromMap(Map<String, dynamic> doc) {
+    final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
+    int ord = 0;
+    final raw = fields['order'];
+    if (raw is num) ord = raw.toInt();
+    return ExamProvince(
+      id: (doc['id'] ?? fields['id'] ?? '').toString(),
+      name: (fields['name'] ?? '').toString(),
+      order: ord,
+    );
+  }
+}
+
+Future<List<ExamProvince>> fetchExamProvinces() async {
+  final docs = await ExamRest.listDocs('app_exam_provinces');
+  final provinces = docs.map(ExamProvince.fromMap).toList()
+    ..sort((a, b) => a.order.compareTo(b.order));
+  return provinces;
+}
+
+/// Normalises legacy section/province aliases on read (React: examHub).
+String normalizeExamSectionId(String raw) {
+  switch (raw) {
+    case 'mcq':
+      return 'mcq-tests';
+    case 'theory':
+      return 'theory-desk';
+    default:
+      return raw;
+  }
+}
+
+/// Fetches exam sets for a subcourse — mirrors examHub.fetchExamSets:
+/// dual query (subcourseIds array-contains + legacy subcourseId ==), merged by
+/// id, published-only, in-memory section/province narrowing, sorted by
+/// startTime desc (nulls last).
+Future<List<ExamSet>> fetchExamSets({
+  String? subcourseId,
+  String? sectionId,
+  String? provinceId,
+}) async {
+  final merged = <String, Map<String, dynamic>>{};
+  if (subcourseId != null && subcourseId.isNotEmpty) {
+    final byList = await ExamRest.runQuery(
+      'app_exam_sets',
+      where: ExamRest.fieldFilter('subcourseIds', 'ARRAY_CONTAINS', subcourseId),
+      limit: 500,
+    );
+    for (final d in byList) {
+      merged[(d['id'] ?? '').toString()] = d;
+    }
+    final byLegacy = await ExamRest.runQuery(
+      'app_exam_sets',
+      where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
+      limit: 500,
+    );
+    for (final d in byLegacy) {
+      merged[(d['id'] ?? '').toString()] = d;
+    }
+  } else {
+    final all = await ExamRest.listDocs('app_exam_sets');
+    for (final d in all) {
+      merged[(d['id'] ?? '').toString()] = d;
+    }
+  }
+  final sets = merged.values.map(ExamSet.fromMap).where((s) {
+    if (!s.isPublished) return false;
+    if (sectionId != null &&
+        sectionId.isNotEmpty &&
+        s.sectionId != sectionId) {
+      return false;
+    }
+    if (provinceId != null &&
+        provinceId.isNotEmpty &&
+        s.provinceId != provinceId) {
+      return false;
+    }
+    return true;
+  }).toList()
+    ..sort((a, b) {
+      // startTime desc, nulls last (React order).
+      if (a.startTime == null && b.startTime == null) return 0;
+      if (a.startTime == null) return 1;
+      if (b.startTime == null) return -1;
+      return b.startTime!.compareTo(a.startTime!);
+    });
+  return sets;
 }
 
 Future<ExamSet?> fetchExamSet(String setId) async {
@@ -782,16 +994,62 @@ Future<ExamSet?> fetchExamSet(String setId) async {
   return doc == null ? null : ExamSet.fromMap(doc);
 }
 
+/// Builds the doc-id fallback chain for exam rules
+/// (React: examHub.fetchExamRules).
+List<String> examRuleCandidateIds({
+  String? subcourseId,
+  String? provinceId,
+  String? sectionId,
+}) {
+  final candidates = <String>[];
+  if (subcourseId != null &&
+      subcourseId.isNotEmpty &&
+      provinceId != null &&
+      provinceId.isNotEmpty &&
+      sectionId != null &&
+      sectionId.isNotEmpty) {
+    candidates.add('${subcourseId}__${provinceId}__${sectionId}');
+  }
+  if (subcourseId != null &&
+      subcourseId.isNotEmpty &&
+      sectionId != null &&
+      sectionId.isNotEmpty) {
+    candidates.add('${subcourseId}__${sectionId}');
+  }
+  if (sectionId != null && sectionId.isNotEmpty) {
+    candidates.add('default__${sectionId}');
+  }
+  candidates.add('default');
+  return candidates;
+}
+
+/// Loads exam rules via the doc-ID fallback chain — mirrors
+/// examHub.fetchExamRules. First existing candidate wins.
 Future<List<ExamRule>> fetchExamRules({
   String? courseId,
   String? subcourseId,
+  String? provinceId,
+  String? sectionId,
 }) async {
-  final docs = await ExamRest.listDocs('app_exam_rules');
-  return docs.map(ExamRule.fromMap).where((r) {
-    // Rules docs may scope by course; no scope fields => applies to all.
-    final m = docs.isEmpty ? null : null;
-    return m == null;
-  }).toList();
+  for (final id in examRuleCandidateIds(
+    subcourseId: subcourseId,
+    provinceId: provinceId,
+    sectionId: sectionId,
+  )) {
+    final doc = await ExamRest.getDoc('app_exam_rules/$id');
+    if (doc != null) {
+      final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
+      final raw = fields['rules'];
+      if (raw is List) {
+        return raw
+            .whereType<Map<String, dynamic>>()
+            .map(ExamRule.fromMap)
+            .toList();
+      }
+      return [ExamRule.fromMap(doc)];
+    }
+  }
+  return const [];
 }
 
 /// Mirrors fetchAttemptsForSet in services/examHub.ts: list the whole

@@ -47,6 +47,11 @@ class _ProfileTabState extends State<ProfileTab> {
   final _scrollOffset = ValueNotifier<double>(0);
   String? _uid;
 
+  /// True while the share link is being generated (Share App tapped, share
+  /// sheet not open yet) — the profile page shows a preloading overlay so
+  /// the user feels the link is being generated.
+  bool _sharing = false;
+
   /// Guards the one-shot canonical-stats refresh per account+subcourse (see
   /// [_onStoreChanged]): the refresh ends in [ProfileStore.setScore], which
   /// notifies this same listener — without the key the refresh would loop.
@@ -239,17 +244,23 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   Future<void> _shareApp() async {
-    // The share URL comes from Firestore (app_applink_details/main) so the
-    // link can change without an app update; falls back to the download page
-    // until the document is seeded. Brand stays English; the tagline is the
-    // app's config literal.
-    await AppLinkService.ensureLoaded();
-    final message =
-        'Loksewa Solution — Prepare Smarter, Score Higher\n\n${AppLinkService.shareLink}';
+    if (_sharing) return;
+    // Preloading overlay on the profile page while the link generates —
+    // the user feels the link is being prepared until the share sheet opens.
+    setState(() => _sharing = true);
     try {
+      // The share URL comes from Firestore (app_applink_details/main) so the
+      // link can change without an app update; falls back to the download page
+      // until the document is seeded. Brand stays English; the tagline is the
+      // app's config literal.
+      await AppLinkService.ensureLoaded();
+      final message =
+          'Loksewa Solution — Prepare Smarter, Score Higher\n\n${AppLinkService.shareLink}';
       await Share.share(message, subject: 'Loksewa Solution');
     } catch (_) {
       // User dismissed the share sheet — nothing to report.
+    } finally {
+      if (mounted) setState(() => _sharing = false);
     }
   }
 
@@ -637,6 +648,22 @@ class _ProfileTabState extends State<ProfileTab> {
                           ThemeService.toggle(context),
                     ),
                   ),
+                  // Share-link preloading overlay: visible from the Share App
+                  // tap until the share sheet opens, so the user feels the
+                  // link is being generated.
+                  if (_sharing)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black54,
+                        child: Center(
+                          child: PreloadingWidget(
+                            tinted: true,
+                            label: AppLanguage.tr(
+                                'Generating link…', 'लिङ्क बनाउँदै…'),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               );
             },

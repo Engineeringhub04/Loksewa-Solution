@@ -1,14 +1,25 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/exam_service.dart';
-import '../../widgets/subpage_header.dart';
+
+import '../../services/app_language.dart';
+import '../../services/auth_service.dart';
+import '../../services/exam_service.dart';
+import '../../services/profile_service.dart';
+import '../../widgets/app_modal_shell.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/report_dialog.dart';
+import '../../widgets/subpage_header.dart';
 
 /// Exam quiz — mirrors app/exam/[setId]/quiz.tsx.
-/// Full-screen timed MCQ: option select, next/previous, question palette,
-/// countdown, submit → score → save attempt → summary.
+///
+/// Left question-number rail (always visible), timer pill + Q x/y, report
+/// button per question, tap-selected-option-again = deselect, Previous/Next/
+/// Submit, leave-confirm + submit-confirm via the shared [AppModalShell]
+/// (app-wide modal rule), auto-submit on timeout, and `pushReplacement` to
+/// the summary (the quiz is never reachable via Back).
 class ExamQuizScreen extends StatefulWidget {
   final String setId;
   const ExamQuizScreen({super.key, required this.setId});
@@ -19,18 +30,16 @@ class ExamQuizScreen extends StatefulWidget {
 
 class _ExamQuizScreenState extends State<ExamQuizScreen> {
   ExamSet? _set;
-  UserProfile? _profile;
   bool _loading = true;
   String? _error;
-  bool _locked = false;
 
-  List<int?> _answers = [];
   int _index = 0;
+  List<int> _answers = const []; // -1 = unanswered
   int _remaining = 0;
   Timer? _timer;
   DateTime? _startedAt;
+  bool _submitted = false;
   bool _submitting = false;
-  bool _showPalette = false;
 
   @override
   void initState() {
@@ -52,307 +61,501 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     try {
       final set = await fetchExamSet(widget.setId);
       if (set == null) throw Exception('Exam set not found');
-      final uid = AuthService.currentUser?.uid ?? '';
-      final profile = uid.isEmpty ? null : await fetchUserProfile(uid);
       if (!mounted) return;
-      final locked = set.isPro && !(profile?.isPro ?? false);
       setState(() {
         _set = set;
-        _profile = profile;
-        _locked = locked;
+        _answers = List<int>.filled(set.questions.length, -1);
+        _remaining = set.durationMinutes * 60;
+        _startedAt = DateTime.now();
         _loading = false;
-        if (!locked) {
-          _answers = List<int?>.filled(set.questions.length, null);
-          _remaining = set.durationMinutes * 60;
-          _startedAt = DateTime.now();
-          _timer = Timer.periodic(const Duration(seconds: 1), (t) {
-            if (!mounted) return;
-            if (_remaining <= 1) {
-              t.cancel();
-              _autoSubmit();
-            } else {
-              setState(() => _remaining -= 1);
-            }
-          });
-        }
+      });
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || _submitted) return;
+        setState(() {
+          _remaining--;
+          if (_remaining <= 0) {
+            _autoSubmit();
+          }
+        });
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not load the exam.';
+        _error = AppLanguage.tr(
+            'Could not load the exam.', 'परीक्षा लोड हुन सकेन।');
         _loading = false;
       });
     }
   }
 
-  void _select(int optionIndex) {
-    if (_submitting) return;
-    setState(() => _answers[_index] = optionIndex);
+  String get _clock {
+    final m = (_remaining ~/ 60).toString().padLeft(2, '0');
+    final s = (_remaining % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
-  void _goTo(int i) {
-    if (i < 0 || i >= _set!.questions.length) return;
-    setState(() {
-      _index = i;
-      _showPalette = false;
-    });
+  int get _answeredCount => _answers.where((a) => a >= 0).length;
+
+  // ---------- leave / submit confirms (AppModalShell) ----------
+
+  Future<bool> _confirmLeave() async {
+    if (_submitted) return true;
+    final leave = await AppModalShell.show<bool>(
+      context: context,
+      builder: (dialogContext) => AppModalShell(
+        onClose: () => Navigator.of(dialogContext).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: const Color(0xFFEF4444).withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.exit_to_app,
+              color: Color(0xFFB91C1C), size: 28),
+        ),
+        tagLabel: AppLanguage.tr('Leave Exam?', 'परीक्षा छोड्ने?'),
+        title: Text(
+          AppLanguage.tr('Your progress will be lost.',
+              'तपाईंको प्रगति गुम्नेछ।'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+        ),
+        body: Text(
+          AppLanguage.tr(
+              'If you leave now, your answers will not be saved.',
+              'अहिले छोड्नुभयो भने तपाईंका उत्तरहरू सेभ हुनेछैनन्।'),
+          textAlign: TextAlign.center,
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppLanguage.tr('Stay', 'बस्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFEF4444),
+                    foregroundColor: Colors.white),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppLanguage.tr('Leave', 'छोड्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    return leave == true;
   }
 
   Future<void> _confirmSubmit() async {
-    final unanswered = _answers.where((a) => a == null).length;
-    final ok = await showDialog<bool>(
+    final unanswered = _answers.length - _answeredCount;
+    final submit = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Submit Test?'),
-        content: Text(unanswered > 0
-            ? 'You have $unanswered unanswered question(s). Submit anyway?'
-            : 'Are you sure you want to submit?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
-          ElevatedButton(
-              onPressed: () => Navigator.pop(c, true), child: const Text('Submit')),
-        ],
+      builder: (dialogContext) => AppModalShell(
+        onClose: () => Navigator.of(dialogContext).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF59E0B).withValues(alpha: 0.25),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.send_outlined,
+              color: Color(0xFFB45309), size: 28),
+        ),
+        tagLabel: AppLanguage.tr('Submit Exam?', 'परीक्षा बुझाउने?'),
+        title: Text(
+          AppLanguage.tr('Submit your answers?', 'उत्तरहरू बुझाउने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+        ),
+        body: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              unanswered > 0
+                  ? AppLanguage.tr(
+                      'You have $unanswered unanswered question(s). Unanswered questions carry no penalty.',
+                      '$unanswered प्रश्नको उत्तर दिनुभएको छैन। उत्तर नदिएका प्रश्नमा जरिवाना लाग्दैन।')
+                  : AppLanguage.tr(
+                      'You answered all questions. Ready to submit?',
+                      'सबै प्रश्नको उत्तर दिनुभयो। बुझाउन तयार?'),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(AppLanguage.tr('Keep Solving', 'जारी राख्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFF59E0B),
+                    foregroundColor: Colors.white),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: Text(AppLanguage.tr('Submit', 'बुझाउनुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
-    if (ok == true) _submit();
+    if (submit == true) _submit(auto: false);
   }
 
-  void _autoSubmit() {
-    if (_submitting) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Time is up — submitting automatically.')),
-    );
-    _submit();
+  Future<void> _autoSubmit() async {
+    if (_submitted) return;
+    showToast(
+        context,
+        AppLanguage.tr('Time is up! Submitting your exam…',
+            'समय सकियो! परीक्षा बुझाइँदैछ…'),
+        ToastVariant.info);
+    await _submit(auto: true);
   }
 
-  Future<void> _submit() async {
-    if (_submitting || _set == null) return;
+  Future<void> _submit({required bool auto}) async {
+    if (_submitted || _submitting) return;
     setState(() => _submitting = true);
-    _timer?.cancel();
+    final set = _set!;
+    final timeTaken =
+        DateTime.now().difference(_startedAt ?? DateTime.now()).inSeconds;
+    final score = scoreExamAttempt(
+      set.questions,
+      _answers,
+      set.passPercent,
+    );
+    final user = AuthService.currentUser;
+    final profile = ProfileStore.instance.profile;
     try {
-      final set = _set!;
-      final score = scoreExamAttempt(set.questions, _answers, set.passPercent);
-      final uid = AuthService.currentUser!.uid;
-      final prev = await fetchAttemptsForSet(uid, set.id);
-      final timeTaken = DateTime.now().difference(_startedAt ?? DateTime.now()).inSeconds;
-      await saveExamAttempt(
-        uid: uid,
-        set: set,
-        score: score,
-        answers: _answers.map((a) => a ?? -1).toList(),
-        attemptNumber: prev.length + 1,
-        timeTakenSeconds: timeTaken,
-        name: _profile?.name ??
-            AuthService.currentUser?.displayName ??
-            'Anonymous',
-        photoURL: _profile?.photoURL ?? AuthService.currentUser?.photoURL,
-        isPro: _profile?.isPro ?? false,
-      );
-      if (!mounted) return;
-      context.go('/exam/${set.id}/summary');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to submit. Try again.')),
-      );
+      if (user != null) {
+        final attempts = await fetchAttemptsForSet(user.uid, set.id);
+        await saveExamAttempt(
+          uid: user.uid,
+          set: set,
+          score: score,
+          answers: List<int>.from(_answers),
+          attemptNumber: attempts.length + 1,
+          timeTakenSeconds: timeTaken,
+          name: profile?.name ?? user.displayName ?? 'Student',
+          photoURL: profile?.photoURL,
+          isPro: profile?.isPremium ?? false,
+        );
+      }
+    } catch (_) {
+      // Best-effort save; the summary is computed from submitted answers.
     }
+    if (!mounted) return;
+    setState(() {
+      _submitted = true;
+      _submitting = false;
+    });
+    _timer?.cancel();
+    // Replace the quiz — Back lands on the exam detail/tab, never the quiz.
+    final answersParam = _answers.map((a) => '$a').join(',');
+    context.pushReplacement(
+      '/exam/${set.id}/summary?answers=${Uri.encodeComponent(answersParam)}'
+      '&timeTaken=$timeTaken${auto ? '&auto=1' : ''}',
+    );
   }
 
-  String _clock() {
-    final m = _remaining ~/ 60;
-    final s = _remaining % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+  void _reportQuestion() {
+    final q = _set!.questions[_index];
+    ReportDialog.show(
+      context: context,
+      question: q.question,
+      options: q.options,
+      questionId: '${widget.setId}#$_index',
+      mode: 'exam',
+    );
   }
+
+  bool _canPop = false;
 
   @override
   Widget build(BuildContext context) {
-    return WillPopScope(
-      onWillPop: () async {
-        if (_submitting || _loading) return false;
-        final ok = await showDialog<bool>(
-          context: context,
-          builder: (c) => AlertDialog(
-            title: const Text('Leave Test?'),
-            content: const Text('Your progress will be lost.'),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(c, false),
-                  child: const Text('Stay')),
-              TextButton(
-                  onPressed: () => Navigator.pop(c, true),
-                  child: const Text('Leave')),
-            ],
-          ),
-        );
-        return ok == true;
+    return PopScope(
+      canPop: _canPop,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (_submitted) {
+          // Already submitted — leave freely.
+          _canPop = true;
+          if (mounted) Navigator.of(context).pop();
+          return;
+        }
+        if (await _confirmLeave()) {
+          _canPop = true;
+          if (mounted) Navigator.of(context).pop();
+        }
       },
       child: Scaffold(
         body: Column(
           children: [
-            SubpageHeader(title: _set?.title ?? 'Test', actions: [
-            if (_set != null && !_locked)
-              Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: Center(
-                  child: Chip(
-                    avatar: const Icon(Icons.timer, size: 16),
-                    label: Text(_clock(),
-                        style: const TextStyle(fontWeight: FontWeight.bold)),
-                  ),
-                ),
-              ),
-            if (_set != null && !_locked)
-              IconButton(
-                icon: const Icon(Icons.grid_view),
-                onPressed: () =>
-                    setState(() => _showPalette = !_showPalette),
-              ),
-          ]),
+            SubpageHeader(title: AppLanguage.tr('Exam', 'परीक्षा')),
             Expanded(
               child: _loading
-            ? const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Questions...',
-            )
-            : _error != null
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(_error!),
-                        const SizedBox(height: 12),
-                        ElevatedButton(
-                            onPressed: _load, child: const Text('Retry')),
-                      ],
-                    ),
-                  )
-                : _locked
-                    ? const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Text(
-                            'This is a premium test. Upgrade to Premium to unlock it.',
-                            textAlign: TextAlign.center,
+                  ? const PreloadingWidget(
+                      tinted: false,
+                      label: 'Loading Exam...',
+                    )
+                  : _error != null
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(_error!),
+                              const SizedBox(height: 12),
+                              ElevatedButton(
+                                  onPressed: _load,
+                                  child: const Text('Retry')),
+                            ],
                           ),
-                        ),
-                      )
-                    : _showPalette
-                        ? _palette()
-                        : _questionView(),
+                        )
+                      : _quizBody(),
             ),
           ],
         ),
-        bottomNavigationBar:
-            (_set != null && !_locked && !_loading && _error == null)
-                ? _navBar()
-                : null,
       ),
     );
   }
 
-  Widget _questionView() {
+  Widget _quizBody() {
     final set = _set!;
     final q = set.questions[_index];
-    final selected = _answers[_index];
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    final total = set.questions.length;
+    return Column(
       children: [
-        LinearProgressIndicator(value: (_index + 1) / set.questions.length),
-        const SizedBox(height: 12),
-        Text('Q ${_index + 1}/${set.questions.length}',
-            style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Text(q.question, style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 16),
-        ...List.generate(q.options.length, (i) {
-          final isSel = selected == i;
-          return Card(
-            color: isSel ? Colors.blue.shade50 : null,
-            child: ListTile(
-              leading: CircleAvatar(
-                backgroundColor: isSel ? Colors.blue : Colors.grey.shade200,
-                foregroundColor: isSel ? Colors.white : Colors.black87,
-                child: Text(String.fromCharCode(65 + i)),
+        // Timer pill + Q x/y + report — mirrors quiz.tsx header row.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _remaining < 300
+                      ? const Color(0xFFFEF2F2)
+                      : const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(
+                    color: _remaining < 300
+                        ? const Color(0xFFFECACA)
+                        : const Color(0xFFE2E8F0),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.timer_outlined,
+                        size: 16,
+                        color: _remaining < 300
+                            ? const Color(0xFFDC2626)
+                            : const Color(0xFF475569)),
+                    const SizedBox(width: 4),
+                    Text(_clock,
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: _remaining < 300
+                                ? const Color(0xFFDC2626)
+                                : const Color(0xFF0F172A))),
+                  ],
+                ),
               ),
-              title: Text(q.options[i]),
-              onTap: () => _select(i),
-            ),
-          );
-        }),
-      ],
-    );
-  }
-
-  Widget _palette() {
-    final set = _set!;
-    return GridView.builder(
-      padding: const EdgeInsets.all(16),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 5,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-      ),
-      itemCount: set.questions.length,
-      itemBuilder: (c, i) {
-        final answered = _answers[i] != null;
-        return InkWell(
-          onTap: () => _goTo(i),
-          child: Container(
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: _index == i
-                  ? Colors.blue
-                  : answered
-                      ? Colors.green.shade100
-                      : Colors.grey.shade200,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text('${i + 1}',
-                style: TextStyle(
-                    color: _index == i ? Colors.white : Colors.black87,
-                    fontWeight: FontWeight.bold)),
+              const Spacer(),
+              Text('Q ${_index + 1}/$total',
+                  style: const TextStyle(fontWeight: FontWeight.w600)),
+              const Spacer(),
+              IconButton(
+                tooltip: AppLanguage.tr('Report', 'रिपोर्ट'),
+                onPressed: _reportQuestion,
+                icon: const Icon(Icons.flag_outlined, size: 20),
+              ),
+            ],
           ),
-        );
-      },
-    );
-  }
-
-  Widget _navBar() {
-    final set = _set!;
-    final isLast = _index == set.questions.length - 1;
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _index > 0 && !_submitting ? () => _goTo(_index - 1) : null,
-                child: const Text('Previous'),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: isLast
-                  ? ElevatedButton(
-                      onPressed: _submitting ? null : _confirmSubmit,
-                      child: _submitting
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Text('Submit'),
-                    )
-                  : ElevatedButton(
-                      onPressed: () => _goTo(_index + 1),
-                      child: const Text('Next'),
-                    ),
-            ),
-          ],
         ),
-      ),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Left question-number rail — always visible (React parity).
+              Container(
+                width: 60,
+                margin: const EdgeInsets.fromLTRB(8, 4, 0, 8),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: total,
+                  itemBuilder: (c, i) {
+                    final answered = _answers[i] >= 0;
+                    final current = i == _index;
+                    return GestureDetector(
+                      onTap: () => setState(() => _index = i),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: current
+                              ? const Color(0xFFF59E0B)
+                              : answered
+                                  ? const Color(0xFFDCFCE7)
+                                  : Colors.white,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: current
+                                ? const Color(0xFFF59E0B)
+                                : answered
+                                    ? const Color(0xFF86EFAC)
+                                    : const Color(0xFFE2E8F0),
+                          ),
+                        ),
+                        child: Center(
+                          child: Text('${i + 1}',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 13,
+                                  color: current
+                                      ? Colors.white
+                                      : answered
+                                          ? const Color(0xFF15803D)
+                                          : const Color(0xFF475569))),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              // Question + options.
+              Expanded(
+                child: ListView(
+                  padding: const EdgeInsets.all(12),
+                  children: [
+                    Text('Q${_index + 1}. ${q.question}',
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 12),
+                    ...List.generate(q.options.length, (oi) {
+                      final selected = _answers[_index] == oi;
+                      const letters = ['A', 'B', 'C', 'D', 'E', 'F'];
+                      final letter =
+                          oi < letters.length ? letters[oi] : '${oi + 1}';
+                      return GestureDetector(
+                        onTap: () => setState(() {
+                          // Tap again to deselect (React parity).
+                          _answers[_index] =
+                              _answers[_index] == oi ? -1 : oi;
+                        }),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? const Color(0xFFFFFBEB)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: selected
+                                  ? const Color(0xFFF59E0B)
+                                  : const Color(0xFFE2E8F0),
+                              width: selected ? 2 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: selected
+                                      ? const Color(0xFFF59E0B)
+                                      : const Color(0xFFF1F5F9),
+                                ),
+                                child: Center(
+                                  child: Text(letter,
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 13,
+                                          color: selected
+                                              ? Colors.white
+                                              : const Color(0xFF475569))),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(child: Text(q.options[oi])),
+                            ],
+                          ),
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        // Prev / Next / Submit.
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border(top: BorderSide(color: Colors.grey.shade200)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _index > 0
+                      ? () => setState(() => _index--)
+                      : null,
+                  child: Text(AppLanguage.tr('Previous', 'अघिल्लो')),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _index < _set!.questions.length - 1
+                    ? ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF59E0B),
+                            foregroundColor: Colors.white),
+                        onPressed: () => setState(() => _index++),
+                        child: Text(AppLanguage.tr('Next', 'अर्को')),
+                      )
+                    : ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF16A34A),
+                            foregroundColor: Colors.white),
+                        onPressed: _submitting ? null : _confirmSubmit,
+                        child: _submitting
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : Text(AppLanguage.tr('Submit', 'बुझाउनुहोस्')),
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

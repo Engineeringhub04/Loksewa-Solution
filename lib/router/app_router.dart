@@ -301,11 +301,21 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/exam/:setId/review',
-      builder: (_, s) => ExamReviewScreen(setId: s.pathParameters['setId']!),
+      builder: (_, s) => ExamReviewScreen(
+        setId: s.pathParameters['setId']!,
+        answers: _qp(s, 'answers'),
+        attemptLabel: _qp(s, 'label'),
+        attemptDate: _qp(s, 'date'),
+      ),
     ),
     GoRoute(
       path: '/exam/:setId/summary',
-      builder: (_, s) => ExamSummaryScreen(setId: s.pathParameters['setId']!),
+      builder: (_, s) => ExamSummaryScreen(
+        setId: s.pathParameters['setId']!,
+        answers: _qp(s, 'answers'),
+        timeTaken: int.tryParse(_qp(s, 'timeTaken') ?? ''),
+        auto: _qp(s, 'auto') == '1',
+      ),
     ),
     GoRoute(
       path: '/mock-test/:id/instructions',

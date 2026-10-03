@@ -1,47 +1,69 @@
+// Discussion create / edit screen (/discussion/create, ?editId=).
+// Mirrors app/discussion/create.tsx:
+// - new post vs edit mode (prefill + updateDiscussion)
+// - admin-only: title field (required for NEW posts), image/link URL tools
+// - category dropdown for everyone
+// - canSubmit: body non-empty; admin new posts also need a title
+// - discard-confirm on back with unsaved content
+// - offline: warning banner + submit disabled (no offline queue for posts)
+// - success: new → back to feed (feed refreshes); edit → replace with detail
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/preloading.dart';
 
-/// Create / edit discussion — mirrors app/discussion/create.tsx.
-///
-/// Category dropdown (tips/resources/general/question), body (required),
-/// title/imageUrl/linkUrl shown for admins only. Edit mode (editId) loads the
-/// existing post. Back with unsaved changes asks for confirmation.
+import '../../services/app_language.dart';
+import '../../services/auth_service.dart';
+import '../../services/discussion_service.dart';
+import '../../services/profile_service.dart';
+import '../../widgets/app_modal_shell.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
+import '../learn/discussion_tab.dart';
+
 class DiscussionCreateScreen extends StatefulWidget {
   final String? editId;
+
   const DiscussionCreateScreen({super.key, this.editId});
 
   @override
-  State<DiscussionCreateScreen> createState() => _DiscussionCreateScreenState();
+  State<DiscussionCreateScreen> createState() =>
+      _DiscussionCreateScreenState();
 }
 
 class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
-  bool get _editing => widget.editId != null;
-
-  bool _loading = true;
-  bool _saving = false;
-  bool _isAdmin = false;
-
-  String _category = 'general';
   final _titleCtrl = TextEditingController();
   final _bodyCtrl = TextEditingController();
   final _imageCtrl = TextEditingController();
   final _linkCtrl = TextEditingController();
 
-  String _origCategory = 'general';
-  String _origTitle = '';
-  String _origBody = '';
-  String _origImage = '';
-  String _origLink = '';
+  DiscussionCategory? _category;
+  bool _posting = false;
+  bool _loadingPost = false;
+  bool _offline = false;
+
+  bool get _isEdit => widget.editId != null;
+  bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
+
+  bool get _canSubmit => canSubmitDiscussionPost(
+        body: _bodyCtrl.text,
+        isAdmin: _isAdmin,
+        title: _titleCtrl.text,
+        editId: widget.editId,
+      );
+
+  bool get _hasUnsaved => hasUnsavedDiscussionContent(
+        title: _titleCtrl.text,
+        body: _bodyCtrl.text,
+        imageUrl: _imageCtrl.text,
+        linkUrl: _linkCtrl.text,
+      );
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _checkOnline();
+    if (_isEdit) _loadPost();
     for (final c in [_titleCtrl, _bodyCtrl, _imageCtrl, _linkCtrl]) {
       c.addListener(() => setState(() {}));
     }
@@ -56,237 +78,437 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
     super.dispose();
   }
 
-  bool get _dirty =>
-      _category != _origCategory ||
-      _titleCtrl.text != _origTitle ||
-      _bodyCtrl.text != _origBody ||
-      _imageCtrl.text != _origImage ||
-      _linkCtrl.text != _origLink;
-
-  Future<void> _init() async {
-    final uid = AuthService.currentUser?.uid;
-    if (uid == null) {
-      setState(() => _loading = false);
-      return;
-    }
+  Future<void> _checkOnline() async {
     try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      final me =
-          await FirestoreRest.getDocument('users/$uid', idToken: idToken);
-      _isAdmin = (me?['role'] ?? '').toString() == 'admin';
-      if (_editing) {
-        final post = await FirestoreRest.getDocument(
-            'discussions/${widget.editId}',
-            idToken: idToken);
-        if (post != null) {
-          _category = _origCategory =
-              (post['category'] ?? 'general').toString();
-          _titleCtrl.text = _origTitle =
-              (post['title'] ?? '').toString();
-          _bodyCtrl.text = _origBody = (post['body'] ?? '').toString();
-          _imageCtrl.text = _origImage =
-              (post['imageUrl'] ?? '').toString();
-          _linkCtrl.text = _origLink =
-              (post['linkUrl'] ?? '').toString();
-        }
-      }
+      final results = await Connectivity().checkConnectivity();
+      if (!mounted) return;
+      setState(
+          () => _offline = results.every((r) => r == ConnectivityResult.none));
     } catch (_) {}
-    setState(() => _loading = false);
   }
 
-  Future<bool> _confirmDiscard() async {
-    if (!_dirty) return true;
-    final res = await showDialog<bool>(
+  Future<void> _loadPost() async {
+    setState(() => _loadingPost = true);
+    try {
+      final post =
+          await DiscussionService.fetchDiscussion(widget.editId!);
+      if (!mounted) return;
+      if (post == null) {
+        showToast(
+            context,
+            AppLanguage.tr('This post has been deleted',
+                'यो पोस्ट मेटाइएको छ'),
+            ToastVariant.error);
+        context.pop();
+        return;
+      }
+      setState(() {
+        _titleCtrl.text = post.title;
+        _bodyCtrl.text = post.body;
+        _category = discussionCategoryFromValue(post.category);
+        _imageCtrl.text = post.imageUrl ?? '';
+        _linkCtrl.text = post.linkUrl ?? '';
+        _loadingPost = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loadingPost = false);
+      showToast(
+          context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
+      context.pop();
+    }
+  }
+
+  Future<void> _handleBack() async {
+    if (!_hasUnsaved) {
+      context.pop();
+      return;
+    }
+    final discard = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Discard post?'),
-        content: const Text('Your unsaved changes will be lost.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Keep editing')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Discard')),
-        ],
-      ),
+      builder: (pageContext) => _DiscardBody(),
     );
-    return res == true;
+    if (discard == true && mounted) context.pop();
   }
 
   Future<void> _submit() async {
-    final body = _bodyCtrl.text.trim();
-    if (body.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please write something first.')),
-      );
+    if (_posting || !_canSubmit || _offline) return;
+    final uid = AuthService.currentUser?.uid ?? '';
+    if (uid.isEmpty) {
+      context.pop();
       return;
     }
-    final user = AuthService.currentUser;
-    if (user == null) return;
-    setState(() => _saving = true);
+    final profile = ProfileStore.instance.profile;
+    final authorName = (profile?.name ?? '').trim().isEmpty
+        ? 'Anonymous'
+        : profile!.name.trim();
+    final courseInfo = ProfileStore.instance.courseInfo;
+
+    setState(() => _posting = true);
     try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      final me =
-          await FirestoreRest.getDocument('users/${user.uid}', idToken: idToken);
-      final first = (me?['firstName'] ?? '').toString();
-      final last = (me?['lastName'] ?? '').toString();
-      final name = '$first $last'.trim();
-      final data = {
-        'title': _isAdmin ? _titleCtrl.text.trim() : '',
-        'body': body,
-        'category': _category,
-        'imageUrl': _isAdmin ? _imageCtrl.text.trim() : '',
-        'linkUrl': _isAdmin ? _linkCtrl.text.trim() : '',
-      };
-      if (_editing) {
-        await FirestoreRest.setDocument(
-          'discussions/${widget.editId}',
-          {...data, 'editedAt': FirestoreRest.serverTimestamp()},
-          idToken: idToken,
-          merge: true,
+      final categoryValue =
+          _category == null ? '' : discussionCategoryValue(_category!);
+      if (_isEdit) {
+        await DiscussionService.updateDiscussion(
+          widget.editId!,
+          title: _isAdmin ? _titleCtrl.text.trim() : null,
+          body: _bodyCtrl.text.trim(),
+          category: categoryValue,
+          imageUrl: _isAdmin && _imageCtrl.text.trim().isNotEmpty
+              ? _imageCtrl.text.trim()
+              : null,
+          linkUrl: _isAdmin && _linkCtrl.text.trim().isNotEmpty
+              ? _linkCtrl.text.trim()
+              : null,
         );
+        if (!mounted) return;
+        context.pushReplacement('/discussion/${widget.editId}');
       } else {
-        final id =
-            '${DateTime.now().millisecondsSinceEpoch}${user.uid.hashCode.abs() % 1000}';
-        await FirestoreRest.setDocument(
-          'discussions/$id',
-          {
-            ...data,
-            'authorId': user.uid,
-            'authorName': name.isNotEmpty ? name : 'Anonymous',
-            'authorPhoto': (me?['photoURL'] ?? '').toString(),
-            'isAdmin': _isAdmin,
-            'likeCount': 0,
-            'commentCount': 0,
-            'createdAt': FirestoreRest.serverTimestamp(),
-            'editedAt': null,
-          },
-          idToken: idToken,
+        await DiscussionService.createDiscussion(
+          title: _isAdmin ? _titleCtrl.text.trim() : '',
+          body: _bodyCtrl.text.trim(),
+          category: categoryValue,
+          authorName: authorName,
+          authorPhoto: profile?.photoURL,
+          authorId: uid,
+          courseId: courseInfo?.courseId,
+          subcourseId: courseInfo?.subcourseId,
+          courseName: courseInfo?.courseName,
+          subcourseName: courseInfo?.subcourseName,
+          imageUrl: _isAdmin && _imageCtrl.text.trim().isNotEmpty
+              ? _imageCtrl.text.trim()
+              : null,
+          linkUrl: _isAdmin && _linkCtrl.text.trim().isNotEmpty
+              ? _linkCtrl.text.trim()
+              : null,
+          isAdmin: _isAdmin,
         );
+        if (!mounted) return;
+        DiscussionTab.requestRefresh();
+        context.pop();
       }
-      if (mounted) context.pop();
-    } catch (e) {
-      setState(() => _saving = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to post: $e')));
-      }
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+          context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
+    } finally {
+      if (mounted) setState(() => _posting = false);
     }
   }
 
-  static const _categories = ['tips', 'resources', 'general', 'question'];
-
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) async {
-        if (didPop) return;
-        if (await _confirmDiscard() && context.mounted) context.pop();
-      },
-      child: Scaffold(
-        body: Column(
+    return Scaffold(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Column(
           children: [
-            SubpageHeader(title: _editing ? 'Edit discussion' : 'New discussion', actions: [
-            TextButton(
-              onPressed: (_dirty && !_saving && !_loading) ? _submit : null,
-              child: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('Post',
-                      style: TextStyle(color: Colors.white)),
+            SubpageHeader(
+              title: _isEdit
+                  ? AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्')
+                  : AppLanguage.tr('Create Post', 'पोस्ट बनाउनुहोस्'),
+              showBack: true,
+              onBackPress: _handleBack,
             ),
-          ]),
             Expanded(
-              child: _loading
-            ? const PreloadingWidget(
-              tinted: false,
-              label: 'Loading...',
-            )
-            : ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  DropdownButtonFormField<String>(
-                    value: _category,
-                    decoration: const InputDecoration(
-                      labelText: 'Category',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final c in _categories)
-                        DropdownMenuItem(value: c, child: Text(c)),
-                    ],
-                    onChanged: (v) =>
-                        setState(() => _category = v ?? 'general'),
-                  ),
-                  if (_isAdmin) ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _titleCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Title (admin)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _imageCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Image URL (admin, optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.url,
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _linkCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Link URL (admin, optional)',
-                        border: OutlineInputBorder(),
-                      ),
-                      keyboardType: TextInputType.url,
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: _bodyCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'Share tips, ask a question…',
-                      border: OutlineInputBorder(),
-                    ),
-                    minLines: 6,
-                    maxLines: 12,
-                  ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    height: 48,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.navy,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed:
-                          (_dirty && !_saving) ? _submit : null,
-                      child: _saving
-                          ? const SizedBox(
-                              width: 22,
-                              height: 22,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white))
-                          : Text(_editing ? 'Save changes' : 'Post'),
-                    ),
-                  ),
-                ],
-              ),
+              child: _loadingPost
+                  ? Center(child: PreloadingWidget(label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...')))
+                  : _buildForm(),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildForm() {
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+      children: [
+        if (_offline)
+          Container(
+            margin: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              AppLanguage.tr(
+                  'You\'re offline. Connect to the internet to post.',
+                  'तपाईं अफलाइन हुनुहुन्छ। पोस्ट गर्न इन्टरनेटमा जडान गर्नुहोस्।'),
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFFB45309),
+                  decoration: TextDecoration.none),
+            ),
+          ),
+        if (_isAdmin) ...[
+          _Label(
+              '${AppLanguage.tr('Title', 'शीर्षक')} (${AppLanguage.tr('optional', 'ऐच्छिक')})'),
+          _TextInput(
+            controller: _titleCtrl,
+            hint: AppLanguage.tr(
+                'Give your discussion a title…', 'छलफललाई शीर्षक दिनुहोस्…'),
+          ),
+          const SizedBox(height: 14),
+        ],
+        _Label(AppLanguage.tr('Category', 'श्रेणी')),
+        _CategoryDropdown(
+          value: _category,
+          onChanged: (c) => setState(() => _category = c),
+        ),
+        const SizedBox(height: 14),
+        if (_isAdmin) ...[
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF1F5F9),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLanguage.tr('Admin post tools', 'एडमिन पोस्ट उपकरण'),
+                  style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF0F172A),
+                      decoration: TextDecoration.none),
+                ),
+                const SizedBox(height: 10),
+                _Label(
+                    '${AppLanguage.tr('Image URL', 'इमेज URL')} (${AppLanguage.tr('optional', 'ऐच्छिक')})'),
+                _TextInput(
+                  controller: _imageCtrl,
+                  hint: 'https://…',
+                  url: true,
+                ),
+                const SizedBox(height: 10),
+                _Label(
+                    '${AppLanguage.tr('Link URL', 'लिंक URL')} (${AppLanguage.tr('optional', 'ऐच्छिक')})'),
+                _TextInput(
+                  controller: _linkCtrl,
+                  hint: 'https://…',
+                  url: true,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        _Label(AppLanguage.tr(
+            'What\'s on your mind?', 'तपाईंको मनमा के छ?')),
+        _TextInput(
+          controller: _bodyCtrl,
+          hint: AppLanguage.tr('Write your discussion...',
+              'आफ्नो छलफल लेख्नुहोस्...'),
+          multiline: true,
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          height: 48,
+          child: ElevatedButton(
+            onPressed:
+                (_canSubmit && !_offline && !_posting) ? _submit : null,
+            style: ElevatedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+            child: _posting
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: Colors.white),
+                  )
+                : Text(
+                    _isEdit
+                        ? AppLanguage.tr('Save', 'सेभ गर्नुहोस्')
+                        : AppLanguage.tr('Post', 'पोस्ट गर्नुहोस्'),
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        decoration: TextDecoration.none),
+                  ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _Label extends StatelessWidget {
+  final String text;
+  const _Label(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        text,
+        style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF475569),
+            decoration: TextDecoration.none),
+      ),
+    );
+  }
+}
+
+class _TextInput extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final bool multiline;
+  final bool url;
+
+  const _TextInput({
+    required this.controller,
+    required this.hint,
+    this.multiline = false,
+    this.url = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      minLines: multiline ? 6 : 1,
+      maxLines: multiline ? 10 : 1,
+      keyboardType: url ? TextInputType.url : null,
+      autocorrect: !url,
+      decoration: InputDecoration(
+        hintText: hint,
+        hintStyle: const TextStyle(
+            color: Color(0xFF94A3B8),
+            decoration: TextDecoration.none),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+              color: Theme.of(context).colorScheme.primary),
+        ),
+      ),
+      style: const TextStyle(
+          fontSize: 14, decoration: TextDecoration.none),
+    );
+  }
+}
+
+class _CategoryDropdown extends StatelessWidget {
+  final DiscussionCategory? value;
+  final ValueChanged<DiscussionCategory?> onChanged;
+
+  const _CategoryDropdown({required this.value, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final lang = AppLanguage.current.value;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<DiscussionCategory?>(
+          value: value,
+          isExpanded: true,
+          hint: Text(
+            AppLanguage.tr('Select a category…', 'श्रेणी छान्नुहोस्…'),
+            style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF94A3B8),
+                decoration: TextDecoration.none),
+          ),
+          items: DiscussionCategory.values
+              .map((c) => DropdownMenuItem<DiscussionCategory?>(
+                    value: c,
+                    child: Text(
+                      discussionCategoryLabel(c, lang),
+                      style: const TextStyle(
+                          fontSize: 14,
+                          decoration: TextDecoration.none),
+                    ),
+                  ))
+              .toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+}
+
+/// Discard-confirm body for unsaved form content.
+class _DiscardBody extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          AppLanguage.tr('Discard this post?', 'यो पोस्ट हटाउने हो?'),
+          style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+              decoration: TextDecoration.none),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          AppLanguage.tr(
+              'You have unsaved content. Are you sure you want to discard it?',
+              'तपाईंसँग सेव नगरिएको सामग्री छ। तपाई पक्का हटाउन चाहनुहुन्छ?'),
+          style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF475569),
+              decoration: TextDecoration.none),
+        ),
+        const SizedBox(height: 16),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                    style:
+                        const TextStyle(decoration: TextDecoration.none)),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFDC2626),
+                    foregroundColor: Colors.white),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(AppLanguage.tr('Discard', 'मेट्नुहोस्'),
+                    style:
+                        const TextStyle(decoration: TextDecoration.none)),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }

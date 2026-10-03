@@ -51,7 +51,7 @@ void main() {
 
       expect(find.text('Loksewa Solution'), findsOneWidget);
       expect(find.text('Prepare Smarter, Score Higher'), findsOneWidget);
-      expect(find.text('Version 1.0.47'), findsOneWidget);
+      expect(find.text('Version 1.0.48'), findsOneWidget);
       expect(find.byType(StatusPill), findsOneWidget);
       expect(find.byType(Image), findsWidgets);
     });
@@ -134,7 +134,7 @@ void main() {
 
       expect(find.text('एप जानकारी'), findsOneWidget);
       expect(find.text('राम्रो तयारी, उच्च अंक'), findsOneWidget);
-      expect(find.text('संस्करण १.०.४७'), findsOneWidget);
+      expect(find.text('संस्करण १.०.४८'), findsOneWidget);
       expect(find.text('बारेमा'), findsOneWidget);
       expect(find.text('तपाईंले पाउने कुरा'), findsOneWidget);
       expect(find.text('सम्पर्क'), findsOneWidget);

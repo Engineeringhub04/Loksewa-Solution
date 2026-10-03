@@ -1,403 +1,429 @@
+// Discussion feed tab (bottom-nav "Discussion").
+// Mirrors app/(tabs)/discussion.tsx:
+// - latest 30 posts, orderBy createdAt desc, one-shot get (no listeners)
+// - like state preloaded per post (60s-cached reaction reads)
+// - client-side search across title/body/category/author/course/subcourse
+// - pull-to-refresh + refetch on tab refocus
+// - signed-out users browse only (no FAB, like taps → sign-in prompt)
+// - guidelines auto-popup on first visit per app start
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
-import '../../widgets/preloading.dart';
-import '../../widgets/trash_icon.dart';
 
-/// Discussion tab — mirrors app/(tabs)/discussion.tsx.
-/// Gradient header + search, post list with like/report/delete, FAB.
+import '../../services/app_language.dart';
+import '../../services/auth_service.dart';
+import '../../services/discussion_service.dart';
+import '../../services/profile_service.dart';
+import '../../widgets/discussion/discussion_signin_prompt.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/discussion/discussion_action_menu.dart';
+import '../../widgets/discussion/discussion_confirm_dialog.dart';
+import '../../widgets/discussion/discussion_guidelines_dialog.dart';
+import '../../widgets/discussion/discussion_post_card.dart';
+import '../../widgets/discussion/discussion_report_dialog.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
+import '../tabs_screen.dart';
+
 class DiscussionTab extends StatefulWidget {
   const DiscussionTab({super.key});
+
+  /// Increment to force the feed to reload (e.g. after posting).
+  static final ValueNotifier<int> refreshSignal = ValueNotifier<int>(0);
+
+  static void requestRefresh() => refreshSignal.value++;
 
   @override
   State<DiscussionTab> createState() => _DiscussionTabState();
 }
 
 class _DiscussionTabState extends State<DiscussionTab> {
-  late Future<List<Map<String, dynamic>>> _future;
+  static bool _guidelinesShownThisStart = false;
+
+  List<DiscussionPost> _posts = [];
+  final Map<String, bool> _liked = {};
+  bool _loading = true;
+  Object? _error;
+  bool _offline = false;
   String _query = '';
-  final Set<String> _likedIds = {};
+  bool _wasActive = false;
+
+  bool get _signedIn => AuthService.currentUser != null;
+  bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
+
+  List<DiscussionPost> get _visible =>
+      filterDiscussions(_posts, _query);
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    TabsScreen.tabIndex.addListener(_onTabIndexChanged);
+    DiscussionTab.refreshSignal.addListener(_onRefreshSignal);
+    _load();
   }
 
-  Future<List<Map<String, dynamic>>> _load() async {
-    final token = await AuthService.getValidIdToken();
-    final docs = await FirestoreRest.listDocuments('discussions',
-        idToken: token, pageSize: 50);
-    docs.removeWhere((d) => d['isDeleted'] == true);
-    docs.sort(
-        (a, b) => _num(b['createdAt']).compareTo(_num(a['createdAt'])));
-    return docs;
+  @override
+  void dispose() {
+    TabsScreen.tabIndex.removeListener(_onTabIndexChanged);
+    DiscussionTab.refreshSignal.removeListener(_onRefreshSignal);
+    super.dispose();
   }
 
-  static double _num(dynamic v) =>
-      v is num ? v.toDouble() : double.tryParse('$v') ?? 0;
-
-  List<Map<String, dynamic>> _filtered(List<Map<String, dynamic>> docs) {
-    if (_query.trim().isEmpty) return docs;
-    final q = _query.toLowerCase();
-    return docs.where((d) {
-      final t = ((d['title'] as String?) ?? '').toLowerCase();
-      final b = ((d['body'] as String?) ?? '').toLowerCase();
-      return t.contains(q) || b.contains(q);
-    }).toList();
+  void _onRefreshSignal() {
+    if (mounted) _load(silent: true);
   }
 
-  Future<void> _toggleLike(Map<String, dynamic> post) async {
-    final id = post['id'] as String;
-    final uid = AuthService.currentUser?.uid;
-    if (uid == null) return;
-    final liked = _likedIds.contains(id);
-    setState(() {
-      if (liked) {
-        _likedIds.remove(id);
-      } else {
-        _likedIds.add(id);
-      }
-    });
+  void _onTabIndexChanged() {
+    final active = TabsScreen.tabIndex.value == 2;
+    if (active && !_wasActive && mounted) {
+      // Focus refresh — feed only (detail screens never auto-refetch).
+      _load(silent: true);
+    }
+    _wasActive = active;
+  }
+
+  Future<bool> _isOnline() async {
     try {
-      final token = await AuthService.getValidIdToken();
-      final likes =
-          List<String>.from((post['likes'] as List?)?.cast<String>() ?? []);
-      if (liked) {
-        likes.remove(uid);
-      } else if (!likes.contains(uid)) {
-        likes.add(uid);
-      }
-      await FirestoreRest.setDocument('discussions/$id', {'likes': likes},
-          idToken: token, merge: true);
-      post['likes'] = likes;
+      final results = await Connectivity().checkConnectivity();
+      return results.any((r) => r != ConnectivityResult.none);
     } catch (_) {
+      return true;
+    }
+  }
+
+  Future<void> _load({bool silent = false}) async {
+    if (!mounted) return;
+    if (!silent) {
       setState(() {
-        if (liked) {
-          _likedIds.add(id);
-        } else {
-          _likedIds.remove(id);
-        }
+        _loading = true;
+        _error = null;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to update like.')));
-      }
     }
-  }
-
-  Future<void> _deletePost(Map<String, dynamic> post) async {
-    final id = post['id'] as String;
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete post?'),
-        content: const Text('This cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete',
-                  style: TextStyle(color: Colors.red))),
-        ],
-      ),
-    );
-    if (confirm != true) return;
     try {
-      final token = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument('discussions/$id', idToken: token);
-      if (mounted) setState(() => _future = _load());
-    } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Failed to delete post.')));
+      if (!await _isOnline()) {
+        throw const _OfflineException();
       }
+      final posts = await DiscussionService.fetchDiscussions(max: 30);
+      final likes = <String, bool>{};
+      if (_signedIn && posts.isNotEmpty) {
+        final results = await Future.wait(
+            posts.map((p) => DiscussionService.isDiscussionLiked(p.id)));
+        for (var i = 0; i < posts.length; i++) {
+          likes[posts[i].id] = results[i];
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _posts = posts;
+        _liked
+          ..clear()
+          ..addAll(likes);
+        _error = null;
+        _offline = false;
+        _loading = false;
+      });
+      _maybeShowGuidelines();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+        _offline = e is _OfflineException;
+        _loading = false;
+      });
     }
   }
 
-  void _showGuidelines() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Discussion Guidelines'),
-        content: const Text(
-          '• Be respectful to fellow learners.\n'
-          '• Ask study-related questions.\n'
-          '• No spam or advertisements.\n'
-          '• Do not share personal contact details.\n'
-          '• Report inappropriate content.',
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Got it')),
-        ],
-      ),
-    );
+  Future<void> _maybeShowGuidelines() async {
+    if (_guidelinesShownThisStart || !mounted) return;
+    _guidelinesShownThisStart = true;
+    try {
+      final g = await DiscussionService.fetchDiscussionGuidelines();
+      if (!mounted) return;
+      final seeded = await DiscussionGuidelinesDialog.show(
+        context: context,
+        guidelines: g,
+        showSeedButton: g.fromDefaults && _isAdmin,
+        onSeed: () async {
+          await DiscussionService.seedDiscussionGuidelines();
+        },
+      );
+      if (seeded && mounted) {
+        showToast(
+            context,
+            AppLanguage.tr(
+                'Guidelines saved', 'नियमहरू सुरक्षित गरियो'),
+            ToastVariant.success);
+      }
+    } catch (_) {
+      // Guidelines are advisory — never block the feed.
+    }
   }
 
-  String _timeAgo(dynamic v) {
-    final ms = _num(v).toInt();
-    if (ms <= 0) return '';
-    final diff = DateTime.now().difference(
-        DateTime.fromMillisecondsSinceEpoch(ms));
-    if (diff.inMinutes < 1) return 'Just now';
-    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
-    if (diff.inHours < 24) return '${diff.inHours}h ago';
-    return '${diff.inDays}d ago';
+  void _promptSignIn() {
+    DiscussionSignInPrompt.show(context);
+  }
+
+  Future<void> _onToggleLike(DiscussionPost post, bool liked) async {
+    if (!_signedIn) {
+      _promptSignIn();
+      throw const AuthRequiredException();
+    }
+    try {
+      await DiscussionService.toggleLikeDiscussion(post.id, liked);
+      _liked[post.id] = liked;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  void _onMenu(DiscussionPost post, Offset anchor) {
+    final uid = AuthService.currentUser?.uid;
+    final canModerate =
+        _isAdmin || (uid != null && uid.isNotEmpty && uid == post.authorId);
+    final items = <DiscussionMenuItem>[
+      if (canModerate)
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्'),
+          onSelect: () =>
+              context.push('/discussion/create?editId=${post.id}'),
+        ),
+      if (canModerate)
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Delete', 'मेट्नुहोस्'),
+          danger: true,
+          onSelect: () => _confirmDelete(post),
+        ),
+      if (!canModerate)
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Report post', 'पोस्ट रिपोर्ट गर्नुहोस्'),
+          onSelect: () => DiscussionReportDialog.show(
+            context: context,
+            targetType: 'post',
+            targetId: post.id,
+            targetTitle: post.title,
+          ).then((ok) {
+            if (ok == true && mounted) {
+              showToast(
+                  context,
+                  AppLanguage.tr(
+                      'Post reported', 'पोस्ट रिपोर्ट गरियो'),
+                  ToastVariant.success);
+            }
+          }),
+        ),
+    ];
+    if (items.isEmpty) return;
+    DiscussionActionMenu.show(
+        context: context, anchorTopRight: anchor, items: items);
+  }
+
+  Future<void> _confirmDelete(DiscussionPost post) async {
+    final ok = await confirmDiscussionDelete(
+      context: context,
+      title: AppLanguage.tr('Delete this post?', 'यो पोस्ट मेट्ने हो?'),
+      message: AppLanguage.tr('This action cannot be undone.',
+          'यो काम फर्काउन मिल्दैन।'),
+      onConfirm: () => DiscussionService.deleteDiscussion(post.id),
+    );
+    if (ok) _load(silent: true);
   }
 
   @override
   Widget build(BuildContext context) {
-    final uid = AuthService.currentUser?.uid;
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          SliverAppBar(
-            expandedHeight: 170,
-            pinned: true,
-            flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [AppColors.navy, AppColors.deepNavy],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  // 26px bottom curve, like React's tab headers.
-                  borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(26),
-                    bottomRight: Radius.circular(26),
-                  ),
-                ),
-                child: SafeArea(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      children: [
-                        Row(
-                          children: [
-                            const Expanded(
-                              child: Column(
-                                crossAxisAlignment:
-                                    CrossAxisAlignment.start,
-                                children: [
-                                  Text('Discussion',
-                                      style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 24,
-                                          fontWeight: FontWeight.bold)),
-                                  Text(
-                                      'Ask questions, share knowledge',
-                                      style: TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 13)),
-                                ],
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.info_outline,
-                                  color: Colors.white),
-                              onPressed: _showGuidelines,
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          decoration: InputDecoration(
-                            hintText: 'Search discussions...',
-                            prefixIcon: const Icon(Icons.search),
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12),
-                              borderSide: BorderSide.none,
-                            ),
-                            contentPadding: EdgeInsets.zero,
-                          ),
-                          onChanged: (v) => setState(() => _query = v),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Column(
+          children: [
+            SubpageHeader(
+              title: AppLanguage.tr('Discussion', 'छलफल'),
+              showBack: false,
             ),
-          ),
-          SliverToBoxAdapter(
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: PreloadingWidget(
-                      tinted: false,
-                      label: 'Loading Discussions...',
-                    ),
-                  );
-                }
-                if (snap.hasError) {
-                  return Padding(
-                    padding: const EdgeInsets.all(32),
-                    child: Column(
-                      children: [
-                        const Text('Failed to load discussions.'),
-                        const SizedBox(height: 8),
-                        ElevatedButton(
-                          onPressed: () =>
-                              setState(() => _future = _load()),
-                          child: const Text('Retry'),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                final posts = _filtered(snap.data ?? []);
-                if (posts.isEmpty) {
-                  return const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(
-                        child: Text('No discussions yet. Be the first!',
-                            style: TextStyle(color: Colors.grey))),
-                  );
-                }
-                return Column(
-                  children: posts.map((p) => _postCard(p, uid)).toList(),
-                );
-              },
+            _SearchBar(
+              onChanged: (v) => setState(() => _query = v),
             ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 80)),
-        ],
+            Expanded(child: _buildBody()),
+          ],
+        ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: AppColors.navy,
-        onPressed: () => context.push('/discussion/create'),
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+      floatingActionButton: _signedIn
+          ? FloatingActionButton(
+              onPressed: () => context.push('/discussion/create'),
+              tooltip: AppLanguage.tr('New discussion', 'नयाँ छलफल'),
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 
-  Widget _postCard(Map<String, dynamic> p, String? uid) {
-    final id = p['id'] as String;
-    final title = (p['title'] as String?) ?? '';
-    final body = (p['body'] as String?) ?? '';
-    final author = (p['authorName'] as String?) ?? 'Anonymous';
-    final likes = ((p['likes'] as List?)?.length ?? 0) +
-        (_likedIds.contains(id) ? 1 : 0);
-    final comments = (p['commentCount'] as num?)?.toInt() ?? 0;
-    final isMine = uid != null && p['authorId'] == uid;
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: InkWell(
-        onTap: () => context.push('/discussion/$id'),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  CircleAvatar(
-                    backgroundColor: AppColors.navy,
-                    radius: 18,
-                    child: Text(
-                        author.isNotEmpty ? author[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 14)),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(author,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold, fontSize: 13)),
-                        Text(_timeAgo(p['createdAt']),
-                            style: const TextStyle(
-                                color: Colors.grey, fontSize: 11)),
-                      ],
-                    ),
-                  ),
-                  if (isMine)
-                    IconButton(
-                      icon: const TrashIcon(size: 20, color: Colors.red),
-                      onPressed: () => _deletePost(p),
-                    )
-                  else
-                    IconButton(
-                      icon: const Icon(Icons.flag_outlined,
-                          size: 20, color: Colors.grey),
-                      onPressed: () => ScaffoldMessenger.of(context)
-                          .showSnackBar(const SnackBar(
-                              content:
-                                  Text('Thanks — our team will review this post.'))),
-                    ),
-                ],
-              ),
-              if (title.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(title,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.bold, fontSize: 15)),
-              ],
-              if (body.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(body,
-                    maxLines: 4,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 14)),
-              ],
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  InkWell(
-                    onTap: () => _toggleLike(p),
-                    borderRadius: BorderRadius.circular(20),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      child: Row(
-                        children: [
-                          Icon(
-                            _likedIds.contains(id)
-                                ? Icons.thumb_up
-                                : Icons.thumb_up_outlined,
-                            size: 18,
-                            color: _likedIds.contains(id)
-                                ? AppColors.navy
-                                : Colors.grey,
-                          ),
-                          const SizedBox(width: 4),
-                          Text('$likes',
-                              style: const TextStyle(fontSize: 13)),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Row(
-                    children: [
-                      const Icon(Icons.comment_outlined,
-                          size: 18, color: Colors.grey),
-                      const SizedBox(width: 4),
-                      Text('$comments',
-                          style: const TextStyle(fontSize: 13)),
-                    ],
-                  ),
-                ],
-              ),
-            ],
+  Widget _buildBody() {
+    if (_loading) {
+      return Center(child: PreloadingWidget(label: AppLanguage.tr('Loading discussions...', 'छलफलहरू लोड हुँदैछन्...')));
+    }
+    if (_error != null) {
+      return _ErrorState(
+        offline: _offline,
+        onRetry: () => _load(),
+      );
+    }
+    final posts = _visible;
+    if (posts.isEmpty) {
+      return _EmptyState(
+        searching: _query.trim().isNotEmpty,
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () => _load(silent: true),
+      child: ListView.builder(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 88),
+        itemCount: posts.length,
+        itemBuilder: (context, i) {
+          final post = posts[i];
+          return SyllabusEntrance(
+            delayMs: (i * 40).clamp(0, 400),
+            child: DiscussionPostCard(
+              post: post,
+              liked: _liked[post.id] ?? false,
+              onToggleLike: (liked) => _onToggleLike(post, liked),
+              onTap: () => context.push('/discussion/${post.id}'),
+              onMenu: (anchor) => _onMenu(post, anchor),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _OfflineException implements Exception {
+  const _OfflineException();
+}
+
+class _SearchBar extends StatelessWidget {
+  final ValueChanged<String> onChanged;
+
+  const _SearchBar({required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: TextField(
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          hintText: AppLanguage.tr(
+              'Search discussions...', 'छलफल खोज्नुहोस्...'),
+          hintStyle: const TextStyle(
+              color: Color(0xFF94A3B8),
+              decoration: TextDecoration.none),
+          prefixIcon: const Icon(Icons.search,
+              size: 20, color: Color(0xFF94A3B8)),
+          filled: true,
+          fillColor: Colors.white,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
           ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          ),
+        ),
+        style: const TextStyle(
+            fontSize: 14, decoration: TextDecoration.none),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final bool offline;
+  final VoidCallback onRetry;
+
+  const _ErrorState({required this.offline, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              offline ? Icons.wifi_off_outlined : Icons.error_outline,
+              size: 44,
+              color: const Color(0xFF94A3B8),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              offline
+                  ? AppLanguage.tr('You are offline',
+                      'तपाईं अफलाइन हुनुहुन्छ')
+                  : AppLanguage.tr('Could not load discussions',
+                      'छलफलहरू लोड हुन सकेन'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              AppLanguage.tr('Check your connection and try again.',
+                  'आफ्नो जडान जाँचेर पुन: प्रयास गर्नुहोस्।'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: Color(0xFF64748B),
+                  decoration: TextDecoration.none),
+            ),
+            const SizedBox(height: 14),
+            ElevatedButton(
+              onPressed: onRetry,
+              child: Text(AppLanguage.tr('Retry', 'पुन: प्रयास'),
+                  style: const TextStyle(decoration: TextDecoration.none)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final bool searching;
+
+  const _EmptyState({required this.searching});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.forum_outlined,
+                size: 44, color: Color(0xFF94A3B8)),
+            const SizedBox(height: 12),
+            Text(
+              searching
+                  ? AppLanguage.tr('No discussions match your search.',
+                      'तपाईंको खोजसँग मिल्ने छलफल छैन।')
+                  : AppLanguage.tr('No discussions yet. Be the first to post!',
+                      'अहिलेसम्म कुनै छलफल छैन। पहिलो पोस्ट गर्ने बन्नुहोस्!'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none),
+            ),
+
+          ],
         ),
       ),
     );

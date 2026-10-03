@@ -1,651 +1,1087 @@
+// Discussion detail screen (/discussion/:id).
+// Mirrors app/discussion/[id].tsx:
+// - header card: title, admin accent, meta (author/course/date), image with
+//   global viewer, tappable body links, heart like + live comment count +
+//   share + overflow menu
+// - comments ascending, like states per comment, replies lazy + expandable
+// - bottom composer (signed-in only); offline comments silently queued
+// - NO comment editing anywhere; editedAt is written but never displayed
+// - commentCount shown = live comments length (not the doc counter)
+import 'dart:async';
+
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
-import '../../widgets/image_viewer.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/preloading.dart';
+import 'package:share_plus/share_plus.dart';
 
-/// Discussion detail — mirrors app/discussion/[id].tsx.
-///
-/// Post card (author, category, title, body, image, link, like, delete for
-/// author/admin, report), comments with expandable replies, reply composers,
-/// and a comment composer. Likes use the deterministic per-user reaction
-/// documents (`discussions/{id}/reactions/{uid}`) with a read-then-write
-/// likeCount, mirroring discussions.ts.
+import '../../services/app_language.dart';
+import '../../services/auth_service.dart';
+import '../../services/discussion_service.dart';
+import '../../services/profile_service.dart';
+import '../../widgets/app_toast.dart';
+import '../../widgets/discussion/discussion_action_menu.dart';
+import '../../widgets/discussion/discussion_avatar.dart';
+import '../../widgets/discussion/discussion_comment_card.dart';
+import '../../widgets/discussion/discussion_confirm_dialog.dart';
+import '../../widgets/discussion/discussion_heart_like.dart';
+import '../../widgets/discussion/discussion_link_text.dart';
+import '../../widgets/discussion/discussion_report_dialog.dart';
+import '../../widgets/discussion/discussion_signin_prompt.dart';
+import '../../widgets/image_viewer.dart';
+import '../../widgets/preloading.dart';
+import '../../widgets/subpage_header.dart';
+
 class DiscussionDetailScreen extends StatefulWidget {
   final String id;
+
   const DiscussionDetailScreen({super.key, required this.id});
 
   @override
   State<DiscussionDetailScreen> createState() => _DiscussionDetailScreenState();
 }
 
+class _PendingItem {
+  final String body;
+  final String? replyToId;
+  final String? replyToName;
+  final DateTime queuedAt;
+
+  _PendingItem(
+      {required this.body,
+      this.replyToId,
+      this.replyToName,
+      DateTime? queuedAt})
+      : queuedAt = queuedAt ?? DateTime.now();
+}
+
 class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
-  late Future<_DiscussionData> _future;
-  final _commentCtrl = TextEditingController();
-  final Map<String, TextEditingController> _replyCtrls = {};
+  DiscussionPost? _post;
+  List<DiscussionComment> _comments = [];
+  bool _loading = true;
+  Object? _error;
+
+  bool _postLiked = false;
+  final Map<String, bool> _commentLiked = {};
+  final Map<String, bool> _replyLiked = {};
+
+  final Map<String, List<DiscussionReply>> _replies = {};
+  final Set<String> _repliesLoading = {};
   final Set<String> _expanded = {};
-  bool _posting = false;
+
+  final List<_PendingItem> _pending = [];
+  StreamSubscription<List<ConnectivityResult>>? _connSub;
+
+  final TextEditingController _composer = TextEditingController();
+  final FocusNode _composerFocus = FocusNode();
+  final Map<String, TextEditingController> _replyControllers = {};
+  final Set<String> _replySending = {};
+  bool _sending = false;
+
+  bool get _signedIn => AuthService.currentUser != null;
+  bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
+  String get _uid => AuthService.currentUser?.uid ?? '';
+
+  int get _liveCommentCount => _comments.length + _pending.length;
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _load();
+    _connSub =
+        Connectivity().onConnectivityChanged.listen((results) {
+      if (results.any((r) => r != ConnectivityResult.none) &&
+          _pending.isNotEmpty) {
+        _flushPending();
+      }
+    });
   }
 
   @override
   void dispose() {
-    _commentCtrl.dispose();
-    for (final c in _replyCtrls.values) {
+    _connSub?.cancel();
+    _composer.dispose();
+    _composerFocus.dispose();
+    for (final c in _replyControllers.values) {
       c.dispose();
     }
     super.dispose();
   }
 
-  String _genId() =>
-      '${DateTime.now().millisecondsSinceEpoch}${(AuthService.currentUser?.uid ?? 'x').hashCode.abs() % 1000}';
+  Future<bool> _isOnline() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      return true;
+    }
+  }
 
-  Future<_DiscussionData> _load() async {
-    final uid = AuthService.currentUser?.uid;
-    final idToken = await AuthService.getValidIdToken() ?? '';
-    final post = await FirestoreRest.getDocument('discussions/${widget.id}',
-        idToken: idToken);
-    if (post == null) throw Exception('Discussion not found.');
-
-    final comments = await FirestoreRest.listDocuments(
-        'discussions/${widget.id}/comments',
-        idToken: idToken,
-        pageSize: 100);
-    comments.sort((a, b) {
-      final ca = a['createdAt'];
-      final cb = b['createdAt'];
-      final ta = ca is DateTime ? ca.millisecondsSinceEpoch : 0;
-      final tb = cb is DateTime ? cb.millisecondsSinceEpoch : 0;
-      return ta.compareTo(tb);
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
     });
-
-    bool liked = false;
-    bool isAdmin = false;
-    if (uid != null) {
-      final reaction = await FirestoreRest.getDocument(
-          'discussions/${widget.id}/reactions/$uid',
-          idToken: idToken);
-      liked = reaction != null;
-      final me = await FirestoreRest.getDocument('users/$uid',
-          idToken: idToken);
-      isAdmin = (me?['role'] ?? '').toString() == 'admin';
+    try {
+      final post = await DiscussionService.fetchDiscussion(widget.id);
+      if (post == null) throw const _NotFoundException();
+      final comments =
+          await DiscussionService.fetchComments(widget.id);
+      var postLiked = false;
+      final commentLiked = <String, bool>{};
+      if (_signedIn) {
+        postLiked = await DiscussionService.isDiscussionLiked(widget.id);
+        final results = await Future.wait(comments.map(
+            (c) => DiscussionService.isCommentLiked(widget.id, c.id)));
+        for (var i = 0; i < comments.length; i++) {
+          commentLiked[comments[i].id] = results[i];
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _post = post;
+        _comments = comments;
+        _postLiked = postLiked;
+        _commentLiked
+          ..clear()
+          ..addAll(commentLiked);
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e;
+        _loading = false;
+      });
     }
-    return _DiscussionData(
-        post: post, comments: comments, liked: liked, isAdmin: isAdmin);
   }
 
-  void _reload() => setState(() => _future = _load());
-
-  Future<void> _toggleLike(_DiscussionData d) async {
-    final uid = AuthService.currentUser?.uid;
-    if (uid == null) return;
-    final idToken = await AuthService.getValidIdToken() ?? '';
-    final path = 'discussions/${widget.id}';
+  Future<void> _refreshComments() async {
     try {
-      if (d.liked) {
-        await FirestoreRest.deleteDocument('$path/reactions/$uid',
-            idToken: idToken);
-        final count = ((d.post['likeCount'] ?? 0) as int) - 1;
-        await FirestoreRest.setDocument(path, {'likeCount': count < 0 ? 0 : count},
-            idToken: idToken, merge: true);
+      final comments =
+          await DiscussionService.fetchComments(widget.id);
+      if (!mounted) return;
+      setState(() => _comments = comments);
+    } catch (_) {
+      // Keep the visible list on transient failures.
+    }
+  }
+
+  // ---------- Likes ----------
+
+  void _requireSignIn() {
+    DiscussionSignInPrompt.show(context);
+    throw const AuthRequiredException();
+  }
+
+  Future<void> _togglePostLike(bool liked) async {
+    if (!_signedIn) _requireSignIn();
+    try {
+      await DiscussionService.toggleLikeDiscussion(widget.id, liked);
+      _postLiked = liked;
+    } catch (_) {
+      rethrow;
+    }
+  }
+
+  Future<void> _toggleCommentLike(
+      DiscussionComment c, bool liked, String? replyId) async {
+    if (!_signedIn) _requireSignIn();
+    try {
+      await DiscussionService.toggleCommentLike(
+          widget.id, c.id, liked, replyId);
+      if (replyId == null) {
+        _commentLiked[c.id] = liked;
       } else {
-        await FirestoreRest.setDocument('$path/reactions/$uid',
-            {'liked': true, 'createdAt': FirestoreRest.serverTimestamp()},
-            idToken: idToken);
-        final count = ((d.post['likeCount'] ?? 0) as int) + 1;
-        await FirestoreRest.setDocument(path, {'likeCount': count},
-            idToken: idToken, merge: true);
+        _replyLiked['${c.id}__$replyId'] = liked;
       }
-      _reload();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Like failed: $e')));
-      }
+    } catch (_) {
+      rethrow;
     }
   }
 
-  Future<void> _postComment() async {
-    final body = _commentCtrl.text.trim();
-    if (body.isEmpty) return;
-    final user = AuthService.currentUser;
-    if (user == null) return;
-    setState(() => _posting = true);
+  // ---------- Replies ----------
+
+  Future<void> _toggleReplies(DiscussionComment c) async {
+    if (_expanded.contains(c.id)) {
+      setState(() => _expanded.remove(c.id));
+      return;
+    }
+    setState(() {
+      _expanded.add(c.id);
+      _repliesLoading.add(c.id);
+    });
     try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      final me = await FirestoreRest.getDocument('users/${user.uid}',
-          idToken: idToken);
-      await FirestoreRest.setDocument(
-        'discussions/${widget.id}/comments/${_genId()}',
-        {
-          'body': body,
-          'authorId': user.uid,
-          'authorName': _displayName(me, user),
-          'authorPhoto': (me?['photoURL'] ?? '').toString(),
-          'likeCount': 0,
-          'createdAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: idToken,
+      final replies =
+          await DiscussionService.fetchReplies(widget.id, c.id);
+      final liked = <String, bool>{};
+      if (_signedIn && replies.isNotEmpty) {
+        final results = await Future.wait(replies.map((r) =>
+            DiscussionService.isCommentLiked(widget.id, c.id, r.id)));
+        for (var i = 0; i < replies.length; i++) {
+          liked['${c.id}__${replies[i].id}'] = results[i];
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _replies[c.id] = replies;
+        _replyLiked.addAll(liked);
+        _repliesLoading.remove(c.id);
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _expanded.remove(c.id);
+        _repliesLoading.remove(c.id);
+      });
+      showToast(
+          context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
+    }
+  }
+
+  // ---------- Composer ----------
+
+  void _startReply(DiscussionComment c) {
+    if (!_signedIn) {
+      DiscussionSignInPrompt.show(context);
+      return;
+    }
+    if (!_expanded.contains(c.id)) {
+      _toggleReplies(c);
+    }
+  }
+
+  String _authorName() {
+    final profile = ProfileStore.instance.profile;
+    final name = (profile?.name ?? '').trim();
+    return name.isEmpty ? 'Anonymous' : name;
+  }
+
+  /// Bottom composer: top-level comments only (Expo parity).
+  Future<void> _submit() async {
+    final text = _composer.text.trim();
+    if (text.isEmpty || _sending) return;
+    if (!_signedIn) {
+      DiscussionSignInPrompt.show(context);
+      return;
+    }
+    final profile = ProfileStore.instance.profile;
+
+    if (!await _isOnline()) {
+      // Silently queued — flushed when connectivity returns.
+      setState(() {
+        _pending.add(_PendingItem(body: text));
+        _composer.clear();
+      });
+      return;
+    }
+
+    setState(() => _sending = true);
+    try {
+      await DiscussionService.addComment(
+        widget.id,
+        body: text,
+        authorName: _authorName(),
+        authorPhoto: profile?.photoURL,
+        authorId: _uid,
       );
-      _commentCtrl.clear();
-      _reload();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to post: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _posting = false);
+      await _refreshComments();
+      if (!mounted) return;
+      setState(() {
+        _composer.clear();
+        _sending = false;
+      });
+      showToast(
+          context,
+          AppLanguage.tr('Comment posted', 'कमेन्ट पोस्ट भयो'),
+          ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _sending = false);
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
     }
   }
 
-  Future<void> _postReply(String commentKey) async {
-    final ctrl = _replyCtrls[commentKey];
-    final body = ctrl?.text.trim() ?? '';
-    if (body.isEmpty) return;
-    final user = AuthService.currentUser;
-    if (user == null) return;
+  /// Inline per-thread reply composer (Expo parity).
+  Future<void> _submitReply(DiscussionComment c) async {
+    final controller = _replyControllers[c.id];
+    final text = controller?.text.trim() ?? '';
+    if (text.isEmpty || _replySending.contains(c.id)) return;
+    if (!_signedIn) {
+      DiscussionSignInPrompt.show(context);
+      return;
+    }
+    final profile = ProfileStore.instance.profile;
+
+    if (!await _isOnline()) {
+      setState(() {
+        _pending.add(_PendingItem(
+            body: text, replyToId: c.id, replyToName: c.authorName));
+        controller?.clear();
+      });
+      return;
+    }
+
+    setState(() => _replySending.add(c.id));
     try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      final me = await FirestoreRest.getDocument('users/${user.uid}',
-          idToken: idToken);
-      await FirestoreRest.setDocument(
-        'discussions/${widget.id}/comments/$commentKey/replies/${_genId()}',
-        {
-          'body': body,
-          'parentCommentId': commentKey,
-          'authorId': user.uid,
-          'authorName': _displayName(me, user),
-          'authorPhoto': (me?['photoURL'] ?? '').toString(),
-          'likeCount': 0,
-          'createdAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: idToken,
+      await DiscussionService.addReply(
+        widget.id,
+        c.id,
+        body: text,
+        authorName: _authorName(),
+        authorPhoto: profile?.photoURL,
+        authorId: _uid,
       );
-      ctrl?.clear();
-      _reload();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to reply: $e')));
-      }
+      await _toggleRepliesRefresh(c);
+      if (!mounted) return;
+      setState(() {
+        controller?.clear();
+        _replySending.remove(c.id);
+      });
+      showToast(
+          context,
+          AppLanguage.tr('Reply posted', 'रिप्लाइ पोस्ट भयो'),
+          ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _replySending.remove(c.id));
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
     }
   }
 
-  String _displayName(Map<String, dynamic>? me, dynamic user) {
-    final first = (me?['firstName'] ?? '').toString();
-    final last = (me?['lastName'] ?? '').toString();
-    final full = '$first $last'.trim();
-    if (full.isNotEmpty) return full;
+  Future<void> _toggleRepliesRefresh(DiscussionComment c) async {
     try {
-      final dn = (user.displayName ?? '').toString();
-      if (dn.isNotEmpty) return dn;
+      final replies =
+          await DiscussionService.fetchReplies(widget.id, c.id);
+      if (!mounted) return;
+      setState(() => _replies[c.id] = replies);
     } catch (_) {}
-    return 'Anonymous';
   }
 
-  Future<void> _deletePost(_DiscussionData d) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Delete discussion?'),
-        content: const Text('This cannot be undone.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Delete')),
-        ],
-      ),
-    );
-    if (ok != true) return;
-    try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      await FirestoreRest.deleteDocument('discussions/${widget.id}',
-          idToken: idToken);
-      if (mounted) context.pop();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+  Future<void> _flushPending() async {
+    if (_pending.isEmpty || _sending) return;
+    final profile = ProfileStore.instance.profile;
+    final authorName = (profile?.name ?? '').trim().isEmpty
+        ? 'Anonymous'
+        : profile!.name.trim();
+    final items = List<_PendingItem>.from(_pending);
+    for (final item in items) {
+      try {
+        if (item.replyToId != null) {
+          await DiscussionService.addReply(
+            widget.id,
+            item.replyToId!,
+            body: item.body,
+            authorName: authorName,
+            authorPhoto: profile?.photoURL,
+            authorId: _uid,
+          );
+        } else {
+          await DiscussionService.addComment(
+            widget.id,
+            body: item.body,
+            authorName: authorName,
+            authorPhoto: profile?.photoURL,
+            authorId: _uid,
+          );
+        }
+        _pending.remove(item);
+      } catch (_) {
+        break; // stop on first failure; retry on next trigger
       }
     }
+    if (!mounted) return;
+    setState(() {});
+    await _refreshComments();
   }
 
-  Future<void> _report(String targetType, String targetId,
-      Map<String, dynamic> ctx) async {
-    final reasonCtrl = TextEditingController();
-    final reason = await showDialog<String>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Report'),
-        content: TextField(
-          controller: reasonCtrl,
-          decoration: const InputDecoration(
-              hintText: 'Reason for reporting…', border: OutlineInputBorder()),
-          maxLines: 3,
+  // ---------- Menus ----------
+
+  bool _canModerate(String? authorId) =>
+      _isAdmin || (_uid.isNotEmpty && _uid == authorId);
+
+  void _postMenu(Offset anchor) {
+    final post = _post;
+    if (post == null) return;
+    final items = <DiscussionMenuItem>[
+      if (_canModerate(post.authorId))
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्'),
+          onSelect: () => context
+              .push('/discussion/create?editId=${post.id}')
+              .then((_) => _load()),
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, reasonCtrl.text.trim()),
-              child: const Text('Submit')),
-        ],
-      ),
-    );
-    if (reason == null || reason.isEmpty) return;
-    try {
-      final idToken = await AuthService.getValidIdToken() ?? '';
-      await FirestoreRest.setDocument(
-        'app_report_history/${_genId()}',
-        {
-          'source': 'discussion',
-          'targetType': targetType,
-          'targetId': targetId,
-          'targetTitle': (ctx['title'] ?? '').toString(),
-          'targetPreview': (ctx['body'] ?? '').toString(),
-          'targetAuthorName': (ctx['authorName'] ?? '').toString(),
-          'reason': reason,
-          'reporterUid': AuthService.currentUser?.uid ?? '',
-          'createdAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: idToken,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Report submitted. Thank you.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Report failed: $e')));
-      }
-    }
+      if (_canModerate(post.authorId))
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Delete', 'मेट्नुहोस्'),
+          danger: true,
+          onSelect: () async {
+            final ok = await confirmDiscussionDelete(
+              context: context,
+              title: AppLanguage.tr(
+                  'Delete this post?', 'यो पोस्ट मेट्ने हो?'),
+              message: AppLanguage.tr('This action cannot be undone.',
+                  'यो काम फर्काउन मिल्दैन।'),
+              onConfirm: () =>
+                  DiscussionService.deleteDiscussion(post.id),
+            );
+            if (ok && mounted) context.pop();
+          },
+        ),
+      if (!_canModerate(post.authorId))
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Report post', 'पोस्ट रिपोर्ट गर्नुहोस्'),
+          onSelect: () => DiscussionReportDialog.show(
+            context: context,
+            targetType: 'post',
+            targetId: post.id,
+            targetTitle: post.title,
+          ).then((ok) {
+            if (ok == true && mounted) {
+              showToast(
+                  context,
+                  AppLanguage.tr(
+                      'Post reported', 'पोस्ट रिपोर्ट गरियो'),
+                  ToastVariant.success);
+            }
+          }),
+        ),
+    ];
+    if (items.isEmpty) return;
+    DiscussionActionMenu.show(
+        context: context, anchorTopRight: anchor, items: items);
   }
+
+  void _commentMenu(DiscussionComment c, String? replyId, Offset anchor) {
+    final items = <DiscussionMenuItem>[
+      if (_canModerate(c.authorId))
+        DiscussionMenuItem(
+          label: AppLanguage.tr('Delete', 'मेट्नुहोस्'),
+          danger: true,
+          onSelect: () async {
+            final ok = await confirmDiscussionDelete(
+              context: context,
+              title: replyId == null
+                  ? AppLanguage.tr(
+                      'Delete this comment?', 'यो कमेन्ट मेट्ने हो?')
+                  : AppLanguage.tr(
+                      'Delete this reply?', 'यो रिप्लाइ मेट्ने हो?'),
+              message: AppLanguage.tr('This action cannot be undone.',
+                  'यो काम फर्काउन मिल्दैन।'),
+              onConfirm: () => replyId == null
+                  ? DiscussionService.deleteComment(widget.id, c.id)
+                  : DiscussionService.deleteReply(
+                      widget.id, c.id, replyId),
+            );
+            if (ok) {
+              if (replyId == null) {
+                await _refreshComments();
+              } else {
+                await _toggleRepliesRefresh(c);
+              }
+            }
+          },
+        ),
+      if (!_canModerate(c.authorId))
+        DiscussionMenuItem(
+          label:
+              AppLanguage.tr('Report comment', 'कमेन्ट रिपोर्ट गर्नुहोस्'),
+          onSelect: () => DiscussionReportDialog.show(
+            context: context,
+            // Reply reports reuse the comment path/type (Expo parity).
+            targetType: 'comment',
+            targetId: replyId ?? c.id,
+            targetTitle: c.body.length > 60
+                ? '${c.body.substring(0, 60)}…'
+                : c.body,
+          ).then((ok) {
+            if (ok == true && mounted) {
+              showToast(
+                  context,
+                  AppLanguage.tr(
+                      'Post reported', 'पोस्ट रिपोर्ट गरियो'),
+                  ToastVariant.success);
+            }
+          }),
+        ),
+    ];
+    if (items.isEmpty) return;
+    DiscussionActionMenu.show(
+        context: context, anchorTopRight: anchor, items: items);
+  }
+
+  void _share() {
+    final post = _post;
+    if (post == null) return;
+    Share.share(
+      '${post.title}\nhttps://www.kbr.com.np/discussion/${post.id}',
+      subject: 'Loksewa Solution',
+    );
+  }
+
+  // ---------- Build ----------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      backgroundColor: const Color(0xFFF8FAFC),
+      body: SafeArea(
+        child: Column(
+          children: [
+            SubpageHeader(
+              title: AppLanguage.tr('Discussion', 'छलफल'),
+              showBack: true,
+            ),
+            Expanded(child: _buildBody()),
+            if (_signedIn && _post != null) _buildComposer(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_loading) {
+      return Center(child: PreloadingWidget(label: AppLanguage.tr('Loading comments...', 'कमेन्टहरू लोड हुँदैछन्...')));
+    }
+    if (_error != null || _post == null) {
+      final notFound = _error is _NotFoundException;
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.forum_outlined,
+                  size: 44, color: Color(0xFF94A3B8)),
+              const SizedBox(height: 12),
+              Text(
+                notFound
+                    ? AppLanguage.tr('This post has been deleted',
+                        'यो पोस्ट मेटाइएको छ')
+                    : AppLanguage.tr(
+                        'Something went wrong', 'केही समस्या भयो'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    decoration: TextDecoration.none),
+              ),
+              const SizedBox(height: 14),
+              ElevatedButton(
+                onPressed: _load,
+                child: Text(AppLanguage.tr('Retry', 'पुन: प्रयास'),
+                    style:
+                        const TextStyle(decoration: TextDecoration.none)),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: () async {
+        await _load();
+        await _flushPending();
+      },
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
         children: [
-          const SubpageHeader(title: 'Discussion'),
-          Expanded(
-            child: FutureBuilder<_DiscussionData>(
-        future: _future,
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const PreloadingWidget(
-              tinted: false,
-              label: 'Loading Discussion...',
-            );
-          }
-          if (snap.hasError) {
-            return Center(
+          _buildHeaderCard(),
+          const SizedBox(height: 16),
+          _buildCommentsHeader(),
+          const SizedBox(height: 8),
+          ..._pending.map(_buildPendingCard),
+          ..._comments.map(_buildCommentThread),
+          if (_comments.isEmpty && _pending.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Center(
+                child: Text(
+                  AppLanguage.tr('No comments yet.',
+                      'अहिलेसम्म कुनै कमेन्ट छैन।'),
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 13,
+                      color: Color(0xFF64748B),
+                      decoration: TextDecoration.none),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHeaderCard() {
+    final post = _post!;
+    final primary = Theme.of(context).colorScheme.primary;
+    const grey = Color(0xFF64748B);
+    final courseLabel = [
+      if ((post.courseName ?? '').isNotEmpty) post.courseName!,
+      if ((post.subcourseName ?? '').isNotEmpty) post.subcourseName!,
+    ].join(' • ');
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (post.isAdmin)
+              Container(
+                width: 4,
+                decoration: BoxDecoration(
+                  color: primary,
+                  borderRadius: const BorderRadius.horizontal(
+                      left: Radius.circular(16)),
+                ),
+              ),
+            Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(14),
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Failed to load discussion:\n${snap.error}',
-                        textAlign: TextAlign.center),
+                    Row(
+                      children: [
+                        DiscussionAvatar(
+                            photoUrl: post.authorPhoto,
+                            name: post.authorName,
+                            radius: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                post.authorName,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: post.isAdmin
+                                      ? primary
+                                      : const Color(0xFF0F172A),
+                                  decoration: TextDecoration.none,
+                                ),
+                              ),
+                              Text(
+                                formatDiscussionDetailDateTime(
+                                    post.createdAt),
+                                style: const TextStyle(
+                                    fontSize: 11,
+                                    color: grey,
+                                    decoration: TextDecoration.none),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (courseLabel.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        courseLabel,
+                        style: const TextStyle(
+                            fontSize: 11,
+                            color: grey,
+                            decoration: TextDecoration.none),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    Text(
+                      post.title,
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                        color: post.isAdmin
+                            ? primary
+                            : const Color(0xFF0F172A),
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                    if (post.body.trim().isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      DiscussionLinkText(
+                        text: post.body,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          height: 1.5,
+                          color: Color(0xFF334155),
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                    if ((post.imageUrl ?? '').trim().isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      GestureDetector(
+                        onTap: () => showImageViewer(
+                            context, NetworkImage(post.imageUrl!.trim())),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Image.network(
+                            post.imageUrl!.trim(),
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => const SizedBox(),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 12),
-                    ElevatedButton(
-                        onPressed: _reload,
-                        child: const Text('Retry')),
+                    Row(
+                      children: [
+                        DiscussionHeartLike(
+                          initialLiked: _postLiked,
+                          likeCount: post.likeCount,
+                          onToggle: _togglePostLike,
+                        ),
+                        const SizedBox(width: 16),
+                        const Icon(Icons.chat_bubble_outline,
+                            size: 18, color: grey),
+                        const SizedBox(width: 4),
+                        Text(
+                          '$_liveCommentCount',
+                          style: const TextStyle(
+                              fontSize: 13,
+                              color: grey,
+                              decoration: TextDecoration.none),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.share_outlined,
+                              size: 20, color: grey),
+                          tooltip: AppLanguage.tr('Share', 'सेयर'),
+                          onPressed: _share,
+                        ),
+                        Builder(
+                          builder: (menuCtx) => IconButton(
+                            icon: const Icon(Icons.more_vert,
+                                size: 20, color: grey),
+                            onPressed: () {
+                              final box = menuCtx.findRenderObject()
+                                  as RenderBox;
+                              final pos = box.localToGlobal(
+                                  Offset(box.size.width, box.size.height));
+                              _postMenu(pos);
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-            );
-          }
-          final d = snap.data!;
-          final post = d.post;
-          final uid = AuthService.currentUser?.uid;
-          final canDelete = d.isAdmin ||
-              ((post['authorId'] ?? '').toString() == (uid ?? ''));
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-          return Column(
-            children: [
-              Expanded(
-                child: RefreshIndicator(
-                  onRefresh: () async => _reload(),
-                  child: ListView(
-                    padding: const EdgeInsets.all(12),
-                    children: [
-                      _postCard(d, canDelete),
-                      const SizedBox(height: 12),
-                      Text('Comments (${d.comments.length})',
-                          style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.navy)),
-                      const SizedBox(height: 8),
-                      for (final c in d.comments)
-                        _commentCard(c, d.isAdmin, uid),
-                    ],
+  Widget _buildCommentsHeader() {
+    return Text(
+      '${AppLanguage.tr('Comments', 'कमेन्टहरू')} ($_liveCommentCount)',
+      style: const TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF0F172A),
+          decoration: TextDecoration.none),
+    );
+  }
+
+  Widget _buildPendingCard(_PendingItem item) {
+    return Opacity(
+      opacity: 0.6,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  item.replyToId != null
+                      ? '${AppLanguage.tr('Reply to', 'लाई जवाफ')} ${item.replyToName ?? ''}'
+                      : AppLanguage.tr('Comment', 'कमेन्ट'),
+                  style: const TextStyle(
+                      fontSize: 11,
+                      color: Color(0xFF64748B),
+                      decoration: TextDecoration.none),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    AppLanguage.tr('Queued', 'पर्खाइमा'),
+                    style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFB45309),
+                        decoration: TextDecoration.none),
                   ),
                 ),
-              ),
-              _composer(),
-            ],
-          );
-        },
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              item.body,
+              style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF334155),
+                  decoration: TextDecoration.none),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildCommentThread(DiscussionComment c) {
+    final expanded = _expanded.contains(c.id);
+    final replies = _replies[c.id] ?? const <DiscussionReply>[];
+    final loading = _repliesLoading.contains(c.id);
+    final primary = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          DiscussionCommentCard(
+            comment: c,
+            isReply: false,
+            liked: _commentLiked[c.id] ?? false,
+            onToggleLike: (liked) => _toggleCommentLike(c, liked, null),
+            onMenu: (anchor) => _commentMenu(c, null, anchor),
+          ),
+          // Replies toggle + Reply button (rendered by the screen, Expo parity).
+          Padding(
+            padding: const EdgeInsets.only(left: 40, top: 4),
+            child: Row(
+              children: [
+                GestureDetector(
+                  onTap: () => _toggleReplies(c),
+                  child: Text(
+                    expanded
+                        ? AppLanguage.tr(
+                            'Hide replies', 'रिप्लाइ लुकाउनुहोस्')
+                        : AppLanguage.tr(
+                            'View replies', 'रिप्लाइ हेर्नुहोस्'),
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: primary,
+                        decoration: TextDecoration.none),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                GestureDetector(
+                  onTap: () => _startReply(c),
+                  child: Text(
+                    AppLanguage.tr('Reply', 'रिप्लाइ'),
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: primary,
+                        decoration: TextDecoration.none),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (expanded)
+            Container(
+              margin: const EdgeInsets.only(left: 24, top: 8),
+              padding: const EdgeInsets.only(left: 10),
+              decoration: const BoxDecoration(
+                border: Border(
+                    left: BorderSide(
+                        color: Color(0xFFE2E8F0), width: 2)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (loading)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2),
+                      ),
+                    ),
+                  for (final r in replies)
+                    DiscussionCommentCard(
+                      comment: r,
+                      isReply: true,
+                      liked:
+                          _replyLiked['${c.id}__${r.id}'] ?? false,
+                      onToggleLike: (liked) =>
+                          _toggleCommentLike(c, liked, r.id),
+                      onMenu: (anchor) =>
+                          _commentMenu(c, r.id, anchor),
+                    ),
+                  if (_signedIn) _buildInlineReplyComposer(c),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInlineReplyComposer(DiscussionComment c) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final controller = _replyControllers.putIfAbsent(
+        c.id, () => TextEditingController());
+    final sending = _replySending.contains(c.id);
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: controller,
+              minLines: 1,
+              maxLines: 3,
+              textInputAction: TextInputAction.send,
+              onSubmitted: (_) => _submitReply(c),
+              decoration: InputDecoration(
+                hintText: AppLanguage.tr(
+                    'Write a reply...', 'रिप्लाइ लेख्नुहोस्...'),
+                hintStyle: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFF94A3B8),
+                    decoration: TextDecoration.none),
+                filled: true,
+                fillColor: const Color(0xFFF1F5F9),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 8),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  borderSide: BorderSide.none,
+                ),
+              ),
+              style: const TextStyle(
+                  fontSize: 13, decoration: TextDecoration.none),
+            ),
+          ),
+          const SizedBox(width: 6),
+          GestureDetector(
+            onTap: sending ? null : () => _submitReply(c),
+            child: Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: primary.withValues(alpha: sending ? 0.45 : 1.0),
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: sending
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.send,
+                        size: 15, color: Colors.white),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _postCard(_DiscussionData d, bool canDelete) {
-    final post = d.post;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _avatar((post['authorPhoto'] ?? '').toString(),
-                    (post['authorName'] ?? 'A').toString()),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                                (post['authorName'] ?? 'Anonymous')
-                                    .toString(),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold)),
-                          ),
-                          if (post['isAdmin'] == true) ...[
-                            const SizedBox(width: 6),
-                            const Icon(Icons.verified,
-                                size: 16, color: AppColors.accent),
-                          ],
-                        ],
-                      ),
-                      if ((post['category'] ?? '').toString().isNotEmpty)
-                        Text((post['category'] ?? '').toString(),
-                            style: const TextStyle(
-                                color: Colors.grey, fontSize: 12)),
-                    ],
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (v) {
-                    if (v == 'delete') _deletePost(d);
-                    if (v == 'report') {
-                      _report('post', widget.id, post);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    if (canDelete)
-                      const PopupMenuItem(
-                          value: 'delete', child: Text('Delete')),
-                    const PopupMenuItem(
-                        value: 'report', child: Text('Report')),
-                  ],
-                ),
-              ],
-            ),
-            if ((post['title'] ?? '').toString().isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text((post['title'] ?? '').toString(),
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.bold)),
-            ],
-            const SizedBox(height: 8),
-            Text((post['body'] ?? '').toString(),
-                style: const TextStyle(height: 1.5)),
-            if ((post['imageUrl'] ?? '').toString().isNotEmpty) ...[
-              const SizedBox(height: 10),
-              GestureDetector(
-                onTap: () => showImageViewer(context,
-                    NetworkImage((post['imageUrl'] ?? '').toString())),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(8),
-                  child: Image.network(
-                      (post['imageUrl'] ?? '').toString(),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          const SizedBox.shrink()),
-                ),
-              ),
-            ],
-            if ((post['linkUrl'] ?? '').toString().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SelectableText((post['linkUrl'] ?? '').toString(),
-                  style: const TextStyle(
-                      color: AppColors.accent,
-                      decoration: TextDecoration.underline)),
-            ],
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                TextButton.icon(
-                  onPressed: () => _toggleLike(d),
-                  icon: Icon(
-                      d.liked ? Icons.favorite : Icons.favorite_border,
-                      color: d.liked ? Colors.red : null),
-                  label: Text('${(post['likeCount'] ?? 0)}'),
-                ),
-                const Spacer(),
-                if ((post['courseName'] ?? '').toString().isNotEmpty)
-                  Text((post['courseName'] ?? '').toString(),
-                      style:
-                          const TextStyle(color: Colors.grey, fontSize: 12)),
-              ],
-            ),
-          ],
-        ),
+  Widget _buildComposer() {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
       ),
-    );
-  }
-
-  Widget _commentCard(
-      Map<String, dynamic> c, bool isAdmin, String? uid) {
-    final commentKey = _commentKeyOf(c);
-    final expanded = _expanded.contains(commentKey);
-    final canDelete =
-        isAdmin || ((c['authorId'] ?? '').toString() == (uid ?? ''));
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                _avatar((c['authorPhoto'] ?? '').toString(),
-                    (c['authorName'] ?? 'A').toString()),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text((c['authorName'] ?? 'Anonymous').toString(),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.bold)),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (v) async {
-                    if (v == 'delete') {
-                      final ok = await showDialog<bool>(
-                        context: context,
-                        builder: (x) => AlertDialog(
-                          title: const Text('Delete comment?'),
-                          actions: [
-                            TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(x, false),
-                                child: const Text('Cancel')),
-                            TextButton(
-                                onPressed: () =>
-                                    Navigator.pop(x, true),
-                                child: const Text('Delete')),
-                          ],
-                        ),
-                      );
-                      if (ok == true) {
-                        try {
-                          final idToken =
-                              await AuthService.getValidIdToken() ??
-                                  '';
-                          await FirestoreRest.deleteDocument(
-                              'discussions/${widget.id}/comments/$commentKey',
-                              idToken: idToken);
-                          _reload();
-                        } catch (e) {
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                    content:
-                                        Text('Delete failed: $e')));
-                          }
-                        }
-                      }
-                    }
-                    if (v == 'report') {
-                      _report('comment', commentKey, c);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    if (canDelete)
-                      const PopupMenuItem(
-                          value: 'delete', child: Text('Delete')),
-                    const PopupMenuItem(
-                        value: 'report', child: Text('Report')),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text((c['body'] ?? '').toString()),
-            const SizedBox(height: 6),
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  if (expanded) {
-                    _expanded.remove(commentKey);
-                  } else {
-                    _expanded.add(commentKey);
-                  }
-                });
-              },
-              child: Text(expanded ? 'Hide replies' : 'Replies'),
-            ),
-            if (expanded)
-              _RepliesView(
-                discussionId: widget.id,
-                commentKey: commentKey,
-                isAdmin: isAdmin,
-                uid: uid,
-                onReport: (id, ctx) => _report('comment', id, ctx),
-                onChanged: _reload,
-              ),
-            if (expanded)
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _replyCtrls.putIfAbsent(
-                          commentKey, () => TextEditingController()),
-                      decoration: const InputDecoration(
-                        hintText: 'Write a reply…',
-                        isDense: true,
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.send,
-                        color: AppColors.navy),
-                    onPressed: () => _postReply(commentKey),
-                  ),
-                ],
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  String _commentKeyOf(Map<String, dynamic> c) {
-    // Prefer a real document id when the list API provides one; otherwise
-    // fall back to a content-derived key (replies then can't load — the REST
-    // list API does not return doc ids).
-    for (final k in ['docId', 'id']) {
-      final v = (c[k] ?? '').toString();
-      if (v.isNotEmpty) return v;
-    }
-    final created = c['createdAt'];
-    final ms = created is DateTime ? created.millisecondsSinceEpoch : 0;
-    return "local:${c['authorId']}:$ms:${(c['body'] ?? '').toString().hashCode}";
-  }
-
-  Widget _avatar(String photo, String name) {
-    if (photo.isNotEmpty) {
-      return CircleAvatar(backgroundImage: NetworkImage(photo));
-    }
-    return CircleAvatar(
-      backgroundColor: AppColors.navy.withValues(alpha: 0.1),
-      child: Text(name.isNotEmpty ? name[0].toUpperCase() : 'A',
-          style: const TextStyle(color: AppColors.navy)),
-    );
-  }
-
-  Widget _composer() {
-    return SafeArea(
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 8,
-                offset: const Offset(0, -2)),
-          ],
-        ),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      child: SafeArea(
+        top: false,
         child: Row(
           children: [
             Expanded(
               child: TextField(
-                controller: _commentCtrl,
-                decoration: const InputDecoration(
-                  hintText: 'Write a comment…',
-                  border: OutlineInputBorder(),
-                  isDense: true,
-                ),
+                controller: _composer,
+                focusNode: _composerFocus,
                 minLines: 1,
                 maxLines: 4,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  hintText: AppLanguage.tr(
+                      'Write a comment...', 'कमेन्ट लेख्नुहोस्...'),
+                  hintStyle: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      decoration: TextDecoration.none),
+                  filled: true,
+                  fillColor: const Color(0xFFF1F5F9),
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(20),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                style: const TextStyle(
+                    fontSize: 14, decoration: TextDecoration.none),
               ),
             ),
             const SizedBox(width: 8),
-            _posting
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : IconButton(
-                    icon: const Icon(Icons.send,
-                        color: AppColors.navy),
-                    onPressed: _postComment,
-                  ),
+            GestureDetector(
+              onTap: _submit,
+              child: Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: primary,
+                  shape: BoxShape.circle,
+                ),
+                child: Center(
+                  child: _sending
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Icon(Icons.send,
+                          size: 18, color: Colors.white),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -653,111 +1089,6 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   }
 }
 
-class _DiscussionData {
-  final Map<String, dynamic> post;
-  final List<Map<String, dynamic>> comments;
-  final bool liked;
-  final bool isAdmin;
-  _DiscussionData(
-      {required this.post,
-      required this.comments,
-      required this.liked,
-      required this.isAdmin});
-}
-
-/// Replies under one comment, loaded lazily when expanded.
-class _RepliesView extends StatefulWidget {
-  final String discussionId;
-  final String commentKey;
-  final bool isAdmin;
-  final String? uid;
-  final void Function(String id, Map<String, dynamic> ctx) onReport;
-  final VoidCallback onChanged;
-  const _RepliesView(
-      {required this.discussionId,
-      required this.commentKey,
-      required this.isAdmin,
-      required this.uid,
-      required this.onReport,
-      required this.onChanged});
-
-  @override
-  State<_RepliesView> createState() => _RepliesViewState();
-}
-
-class _RepliesViewState extends State<_RepliesView> {
-  late Future<List<Map<String, dynamic>>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = _load();
-  }
-
-  Future<List<Map<String, dynamic>>> _load() async {
-    // Content-derived keys (prefixed "local:") are not real document ids, so
-    // skip the fetch instead of hitting a bogus path.
-    if (widget.commentKey.startsWith('local:')) return [];
-    final idToken = await AuthService.getValidIdToken() ?? '';
-    try {
-      final rows = await FirestoreRest.listDocuments(
-          'discussions/${widget.discussionId}/comments/${widget.commentKey}/replies',
-          idToken: idToken,
-          pageSize: 100);
-      rows.sort((a, b) {
-        final ca = a['createdAt'];
-        final cb = b['createdAt'];
-        final ta = ca is DateTime ? ca.millisecondsSinceEpoch : 0;
-        final tb = cb is DateTime ? cb.millisecondsSinceEpoch : 0;
-        return ta.compareTo(tb);
-      });
-      return rows;
-    } catch (_) {
-      return [];
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _future,
-      builder: (context, snap) {
-        if (snap.connectionState == ConnectionState.waiting) {
-          return const Padding(
-            padding: EdgeInsets.all(8),
-            child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2)),
-          );
-        }
-        final replies = snap.data ?? [];
-        if (replies.isEmpty) return const SizedBox.shrink();
-        return Column(
-          children: [
-            for (final r in replies)
-              Container(
-                margin: const EdgeInsets.only(left: 16, bottom: 6),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text((r['authorName'] ?? 'Anonymous').toString(),
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 12)),
-                    const SizedBox(height: 4),
-                    Text((r['body'] ?? '').toString()),
-                  ],
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
+class _NotFoundException implements Exception {
+  const _NotFoundException();
 }

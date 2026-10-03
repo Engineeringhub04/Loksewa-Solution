@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -287,10 +288,18 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         );
         _doneId = id;
         // Admin Discord alert — best-effort, never blocks.
+        // React parity (upload.tsx): course/subcourse come from the USER's
+        // profile courseInfo, not the exam set — theory sets carry no
+        // courseName, which is why Discord showed "-".
+        final courseInfo = await fetchUserCourseInfo(uid);
         unawaited(notifyExamAnswerSubmitted(
           studentName: _nameCtrl.text.trim(),
-          courseName: (_examSet?['courseName'] ?? '').toString(),
-          subcourseName: (_examSet?['subcourseName'] ?? '').toString(),
+          courseName:
+              (courseInfo?.courseName ?? _examSet?['courseName'] ?? '')
+                  .toString(),
+          subcourseName:
+              (courseInfo?.subcourseName ?? _examSet?['subcourseName'] ?? '')
+                  .toString(),
           examSetTitle: (_examSet?['title'] ?? '').toString(),
           message: _msgCtrl.text.trim(),
           pdfUrl: _previewUrl ?? '',

@@ -9,7 +9,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/report_dialog.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Subject read mode — faithful port of app/subjects/read.tsx.
@@ -274,7 +274,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
       padding: EdgeInsets.fromLTRB(16, 16, 16, bottomInset + 48),
       children: [
         // Section header: Important Questions + expand/collapse all.
-        StaggerEntrance(
+        SyllabusEntrance(
           delayMs: 0,
           child: Container(
             padding: const EdgeInsets.all(12),
@@ -374,7 +374,7 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
         ..._questions.asMap().entries.map((entry) {
           final index = entry.key;
           final q = entry.value;
-          return StaggerEntrance(
+          return SyllabusEntrance(
             key: ValueKey('read_card_${q.id}'),
             delayMs: (index < 8 ? index : 8) * 60,
             child: Padding(

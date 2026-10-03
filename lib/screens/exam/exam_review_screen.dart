@@ -9,6 +9,7 @@ import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Review Answers — mirrors app/exam/[setId]/review.tsx same-to-same.
 ///
@@ -224,13 +225,15 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
       ExpoPalette palette, ExamSet set, ScoreBreakdown b) {
     final stats = [
       _MiniStat(AppLanguage.tr('Total', 'जम्मा'), '${set.questions.length}',
-          palette.textPrimary),
-      _MiniStat(AppLanguage.tr('Correct', 'सही'), '${b.correct}', _correct),
-      _MiniStat(AppLanguage.tr('Incorrect', 'गलत'), '${b.incorrect}', _wrong),
+          palette.textPrimary, Icons.layers_outlined),
+      _MiniStat(AppLanguage.tr('Correct', 'सही'), '${b.correct}', _correct,
+          Icons.check_circle_outline),
+      _MiniStat(AppLanguage.tr('Incorrect', 'गलत'), '${b.incorrect}',
+          _wrong, Icons.cancel_outlined),
       _MiniStat(AppLanguage.tr('Skipped', 'छोडियो'), '${b.skipped}',
-          palette.textSecondary),
+          palette.textSecondary, Icons.remove_circle_outline),
       _MiniStat(AppLanguage.tr('Score', 'स्कोर'), '${b.percent}%',
-          palette.primary),
+          palette.primary, Icons.emoji_events_outlined),
     ];
     final sub = [
       if (widget.attemptLabel != null &&
@@ -243,48 +246,105 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: palette.surface,
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: palette.border, width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: palette.primary.withValues(alpha: 0.08),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
+          clipBehavior: Clip.antiAlias,
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(set.title,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
-              if (sub.isNotEmpty)
-                Text(sub,
-                    style: TextStyle(
-                        fontSize: 12, color: palette.textSecondary)),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 14,
-                runSpacing: 10,
-                children: stats
-                    .map((s) => Container(
-                          constraints:
-                              const BoxConstraints(minWidth: 54),
-                          child: Column(
-                            children: [
-                              Text(s.value,
-                                  style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      color: s.color)),
-                              const SizedBox(height: 2),
-                              Text(s.label,
-                                  style: TextStyle(
-                                      fontSize: 11,
-                                      color: palette.textSecondary)),
-                            ],
+              // Gradient hero band: title + score ring.
+              Container(
+                padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      palette.primary,
+                      palette.primary.withValues(alpha: 0.75),
+                    ],
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(set.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                          if (sub.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(sub,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: Colors.white
+                                        .withValues(alpha: 0.85))),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    // Score ring.
+                    SizedBox(
+                      width: 64,
+                      height: 64,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          SizedBox(
+                            width: 64,
+                            height: 64,
+                            child: CircularProgressIndicator(
+                              value: b.percent / 100,
+                              strokeWidth: 7,
+                              backgroundColor:
+                                  Colors.white.withValues(alpha: 0.25),
+                              valueColor:
+                                  const AlwaysStoppedAnimation<Color>(
+                                      Colors.white),
+                            ),
                           ),
-                        ))
-                    .toList(),
+                          Text('${b.percent}%',
+                              style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // Stat tiles.
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+                child: Row(
+                  children: [
+                    for (var i = 0; i < stats.length; i++) ...[
+                      Expanded(child: _premiumStatTile(palette, stats[i])),
+                      if (i < stats.length - 1)
+                        const SizedBox(width: 8),
+                    ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -298,6 +358,36 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
         ),
         const SizedBox(height: 12),
       ],
+    );
+  }
+
+  Widget _premiumStatTile(ExpoPalette palette, _MiniStat s) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      decoration: BoxDecoration(
+        color: s.color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+            color: s.color.withValues(alpha: 0.18), width: 1),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(s.icon, size: 17, color: s.color),
+          const SizedBox(height: 5),
+          Text(s.value,
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  color: s.color)),
+          const SizedBox(height: 2),
+          Text(s.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                  fontSize: 10, color: palette.textSecondary)),
+        ],
+      ),
     );
   }
 
@@ -364,7 +454,10 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
             // user skipped — that is the point of a review.
             final Color? tone =
                 isCorrectOption ? _correct : isUserPick ? _wrong : null;
-            return Container(
+            // Point 11: the shared syllabus/profile entrance on options.
+            return SyllabusEntrance(
+              delayMs: (oi.clamp(0, 8)) * 60,
+              child: Container(
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(11),
               decoration: BoxDecoration(
@@ -405,6 +498,7 @@ class _ExamReviewScreenState extends State<ExamReviewScreen> {
                   if (isUserPick && !isCorrectOption)
                     _tag(AppLanguage.tr('Wrong', 'गलत'), _wrong),
                 ],
+              ),
               ),
             );
           }),
@@ -488,5 +582,6 @@ class _MiniStat {
   final String label;
   final String value;
   final Color color;
-  const _MiniStat(this.label, this.value, this.color);
+  final IconData icon;
+  const _MiniStat(this.label, this.value, this.color, this.icon);
 }

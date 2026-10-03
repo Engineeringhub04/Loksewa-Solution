@@ -89,15 +89,38 @@ void main() {
     });
 
     test('started set without attempt is ready', () {
-      expect(state(_set(startTime: now.subtract(const Duration(minutes: 5)))),
+      // 5 min ago with a 0-min duration => live window already over.
+      expect(
+          state(_set(
+              startTime: now.subtract(const Duration(minutes: 5)),
+              durationMinutes: 0)),
           ExamCardState.ready);
     });
 
     test('started set with attempt is rejoin', () {
       expect(
-          state(_set(startTime: now.subtract(const Duration(minutes: 5))),
+          state(
+              _set(
+                  startTime: now.subtract(const Duration(minutes: 5)),
+                  durationMinutes: 0),
               hasAttempted: true),
           ExamCardState.rejoin);
+    });
+
+    test('set inside its live window is live', () {
+      expect(state(_set(startTime: now.subtract(const Duration(minutes: 5)))),
+          ExamCardState.live);
+    });
+
+    test('live window ends at startTime + durationMinutes', () {
+      final set = _set(startTime: now.subtract(const Duration(minutes: 61)));
+      expect(state(set), ExamCardState.ready);
+      expect(liveWindowEnd(set),
+          now.subtract(const Duration(minutes: 1)));
+    });
+
+    test('null startTime has no live window', () {
+      expect(liveWindowEnd(_set(startTime: null)), isNull);
     });
   });
 

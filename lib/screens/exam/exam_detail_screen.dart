@@ -237,8 +237,8 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: GestureDetector(
-                onTap: () =>
-                    context.push('/exam/${widget.setId}/quiz'),
+                onTap: () => context.push(
+                    '/exam/${widget.setId}/quiz?title=${Uri.encodeComponent(set.title)}'),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   decoration: BoxDecoration(

@@ -15,6 +15,7 @@ import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/report_dialog.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Exam quiz — mirrors app/exam/[setId]/quiz.tsx same-to-same.
 ///
@@ -25,7 +26,12 @@ import '../../widgets/report_dialog.dart';
 /// `pushReplacement` to the summary.
 class ExamQuizScreen extends StatefulWidget {
   final String setId;
-  const ExamQuizScreen({super.key, required this.setId});
+
+  /// Title passed from the launching card so the header shows it instantly
+  /// during preloading (no empty-title flash).
+  final String? initialTitle;
+
+  const ExamQuizScreen({super.key, required this.setId, this.initialTitle});
 
   @override
   State<ExamQuizScreen> createState() => _ExamQuizScreenState();
@@ -45,6 +51,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
   bool _submitting = false;
   bool _canPop = false;
 
+  /// Header height minus the overlap, so the question rail slides *under*
+  /// the header's rounded bottom edge instead of peeking beside it.
+  final _headerKey = GlobalKey();
+  double _headerReserve = 0;
+
   static const _gradientColors = [
     Color(0xFF2563EB),
     Color(0xFF1D4ED8),
@@ -55,6 +66,20 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
   void initState() {
     super.initState();
     _load();
+    WidgetsBinding.instance
+        .addPostFrameCallback((_) => _syncHeaderReserve());
+  }
+
+  /// Measures the header so the body can tuck 24px under its rounded
+  /// bottom edge (point 8). Only setStates when the height actually moved.
+  void _syncHeaderReserve() {
+    final box =
+        _headerKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || !mounted) return;
+    final reserve = (box.size.height - 24).clamp(0.0, 10000.0);
+    if ((reserve - _headerReserve).abs() > 0.5) {
+      setState(() => _headerReserve = reserve);
+    }
   }
 
   @override
@@ -83,8 +108,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
         _startedAt = DateTime.now();
         _loading = false;
       });
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _syncHeaderReserve());
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (!mounted || _submitted) return;
+        _syncHeaderReserve();
         final left = (_remaining ?? 1) - 1;
         if (left <= 0) {
           _timer?.cancel();
@@ -136,13 +164,22 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           AppLanguage.tr('Your attempt will not be saved.',
               'तपाईंको प्रयास सेभ हुनेछैन।'),
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+          ),
         ),
         body: Text(
           AppLanguage.tr(
               'Your attempt will not be saved and the questions you have answered will be lost.',
               'तपाईंको प्रयास सेभ हुनेछैन र उत्तर दिएका प्रश्नहरू गुम्नेछन्।'),
           textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+          ),
         ),
         footer: Row(
           children: [
@@ -196,7 +233,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                   ? '$unanswered प्रश्नको उत्तर बाँकी छ।'
                   : 'सबै प्रश्नको उत्तर दिनुभयो।'),
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+          ),
         ),
         body: Text(
           unanswered > 0
@@ -206,6 +247,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
               : AppLanguage.tr(
                   'Ready to submit?', 'बुझाउन तयार हुनुहुन्छ?'),
           textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+          ),
         ),
         footer: Row(
           children: [
@@ -289,10 +335,22 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     });
     _timer?.cancel();
     // replace(), not push(): the quiz is never reachable with Back.
+    // Point 9: the score is computed here inside the submitting overlay, so
+    // the summary renders instantly with no middle "Preparing" loading.
     context.pushReplacement(
       '/exam/${set.id}/summary'
       '?answers=${Uri.encodeComponent(jsonEncode(_answers))}'
-      '&timeTaken=$timeTaken',
+      '&timeTaken=$timeTaken'
+      '&title=${Uri.encodeComponent(set.title)}'
+      '&percent=${score.percent}'
+      '&marks=${score.marks}'
+      '&correct=${score.correct}'
+      '&wrong=${score.incorrect}'
+      '&skipped=${score.skipped}'
+      '&negative=${score.negativeMarks}'
+      '&passed=${score.passed ? '1' : '0'}'
+      '&passMark=${set.passPercent}'
+      '&total=${set.questions.length}',
     );
   }
 
@@ -330,7 +388,10 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           children: [
             Column(
               children: [
-                _buildHeader(palette),
+                // Reserve the header's height minus 24px: the body tucks
+                // under the header's rounded bottom edge, which is painted
+                // on top and hides the rail's sharp top corners.
+                SizedBox(height: _headerReserve),
                 Expanded(
                   child: _loading
                       ? PreloadingWidget(
@@ -372,6 +433,16 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                           : _quizBody(palette),
                 ),
               ],
+            ),
+            // Header painted last = on top, covering the rail's top edge.
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: KeyedSubtree(
+                key: _headerKey,
+                child: _buildHeader(palette),
+              ),
             ),
             if (_submitting)
               Positioned.fill(
@@ -451,7 +522,7 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        _set?.title ?? '',
+                        _set?.title ?? widget.initialTitle ?? '',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
@@ -518,8 +589,8 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                 width: 52,
                 color: palette.surfaceAlt,
                 child: ListView.builder(
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 8, horizontal: 6),
+                  // +24 top: the first 24px tuck under the header.
+                  padding: const EdgeInsets.fromLTRB(6, 32, 6, 8),
                   itemCount: total,
                   itemBuilder: (c, i) {
                     final answered = _answers[i] >= 0;
@@ -568,8 +639,9 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                 child: Column(
                   children: [
                     Expanded(
+                      // +24 top: the first 24px tuck under the header.
                       child: ListView(
-                        padding: const EdgeInsets.all(16),
+                        padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
                         children: [
                           // Q pill + timer pill + report.
                           Row(
@@ -641,7 +713,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                             final letter = oi < letters.length
                                 ? letters[oi]
                                 : '${oi + 1}';
-                            return GestureDetector(
+                            // Point 11: the shared syllabus/profile entrance
+                            // (380ms easeOut, 24px rise) on every option.
+                            return SyllabusEntrance(
+                              delayMs: (oi.clamp(0, 8)) * 60,
+                              child: GestureDetector(
                               onTap: () => setState(() {
                                 // Tap again to deselect.
                                 _answers[_index] =
@@ -702,6 +778,7 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                                   ],
                                 ),
                               ),
+                            ),
                             );
                           }),
                         ],

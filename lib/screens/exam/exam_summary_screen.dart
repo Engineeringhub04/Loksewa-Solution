@@ -22,11 +22,47 @@ class ExamSummaryScreen extends StatefulWidget {
   final String? answers; // JSON array, -1 = skipped
   final int? timeTaken;
 
+  /// Pre-computed result (passed from the quiz's submitting overlay so the
+  /// summary renders instantly with no middle "Preparing" loading — point 9).
+  /// When present the set is still fetched in the background for review
+  /// navigation and unlock checks.
+  final String? instantTitle;
+  final int? instantPercent;
+  final double? instantMarks;
+  final int? instantCorrect;
+  final int? instantIncorrect;
+  final int? instantSkipped;
+  final double? instantNegativeMarks;
+  final bool? instantPassed;
+  final int? instantPassMark;
+  final int? instantTotalQuestions;
+
+  bool get hasInstant =>
+      instantPercent != null &&
+      instantMarks != null &&
+      instantCorrect != null &&
+      instantIncorrect != null &&
+      instantSkipped != null &&
+      instantNegativeMarks != null &&
+      instantPassed != null &&
+      instantPassMark != null &&
+      instantTotalQuestions != null;
+
   const ExamSummaryScreen({
     super.key,
     required this.setId,
     this.answers,
     this.timeTaken,
+    this.instantTitle,
+    this.instantPercent,
+    this.instantMarks,
+    this.instantCorrect,
+    this.instantIncorrect,
+    this.instantSkipped,
+    this.instantNegativeMarks,
+    this.instantPassed,
+    this.instantPassMark,
+    this.instantTotalQuestions,
   });
 
   @override
@@ -109,7 +145,26 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    if (widget.hasInstant) {
+      // Point 9: result already computed in the quiz's submitting overlay —
+      // render instantly, no middle "Preparing" loading. The set still loads
+      // in the background for review navigation + unlock checks.
+      _loading = false;
+      _loadSetBackground();
+    } else {
+      _load();
+    }
+  }
+
+  /// Background set fetch for the instant path (review + unlock only).
+  Future<void> _loadSetBackground() async {
+    try {
+      final set = await fetchExamSet(widget.setId);
+      if (!mounted) return;
+      setState(() => _set = set);
+    } catch (_) {
+      // Instant result already shows; review just stays gated.
+    }
   }
 
   Future<void> _load() async {
@@ -148,7 +203,16 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   }
 
   void _openReview() {
-    final set = _set!;
+    final set = _set;
+    if (set == null) {
+      // Background fetch still in flight — ask for a beat.
+      showToast(
+        context,
+        AppLanguage.tr('Loading…', 'लोड हुँदै…'),
+        ToastVariant.info,
+      );
+      return;
+    }
     final now = DateTime.now();
     if (!areResultsUnlocked(set, now)) {
       final unlock = resultsUnlockAt(set, now);
@@ -181,7 +245,7 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
         ),
       );
     }
-    if (_error != null || _set == null) {
+    if (_error != null || (_set == null && !widget.hasInstant)) {
       return Scaffold(
         backgroundColor: palette.background,
         body: Column(
@@ -221,17 +285,39 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
   }
 
   Widget _body(ExpoPalette palette) {
-    final set = _set!;
+    final set = _set;
     final answers = _parseAnswers(widget.answers);
-    final padded = List<int>.filled(set.questions.length, -1);
-    for (var i = 0; i < padded.length && i < answers.length; i++) {
-      padded[i] = answers[i];
+    // Instant path (point 9): breakdown already computed by the quiz.
+    final ScoreBreakdown breakdown;
+    final int totalQuestions;
+    final int passPercent;
+    if (set != null) {
+      final padded = List<int>.filled(set.questions.length, -1);
+      for (var i = 0; i < padded.length && i < answers.length; i++) {
+        padded[i] = answers[i];
+      }
+      breakdown =
+          scoreExamAttempt(set.questions, padded, set.passPercent);
+      totalQuestions = set.questions.length;
+      passPercent = set.passPercent;
+    } else {
+      breakdown = ScoreBreakdown(
+        correct: widget.instantCorrect!,
+        incorrect: widget.instantIncorrect!,
+        skipped: widget.instantSkipped!,
+        marks: widget.instantMarks!,
+        percent: widget.instantPercent!,
+        negativeMarks: widget.instantNegativeMarks!,
+        passed: widget.instantPassed!,
+      );
+      totalQuestions = widget.instantTotalQuestions!;
+      passPercent = widget.instantPassMark!;
     }
-    final breakdown =
-        scoreExamAttempt(set.questions, padded, set.passPercent);
     final band = _verdict(breakdown.percent, breakdown.passed);
-    final unlocked = areResultsUnlocked(set, DateTime.now());
-    final unlockAt = resultsUnlockAt(set, DateTime.now());
+    // Before the background set fetch lands, review stays gated.
+    final unlocked = set != null && areResultsUnlocked(set, DateTime.now());
+    final unlockAt =
+        set != null ? resultsUnlockAt(set, DateTime.now()) : DateTime.now();
     final elapsed = widget.timeTaken ?? 0;
 
     final stats = [
@@ -249,7 +335,7 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
           const Color(0xFFD97706)),
       _Stat(Icons.military_tech_outlined,
           AppLanguage.tr('Pass mark', 'उत्तीर्णांक'),
-          '${set.passPercent}%', const Color(0xFF7C3AED)),
+          '$passPercent%', const Color(0xFF7C3AED)),
     ];
 
     return ListView(
@@ -292,7 +378,7 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
                                 fontWeight: FontWeight.bold,
                                 color: band.color)),
                         Text(
-                          '${breakdown.marks.toStringAsFixed(2)} / ${set.questions.length}',
+                          '${breakdown.marks.toStringAsFixed(2)} / $totalQuestions',
                           style: TextStyle(
                               fontSize: 12,
                               color: palette.textSecondary),
@@ -411,7 +497,7 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
           icon: Icons.list_outlined,
           label: AppLanguage.tr(
               'Exam Details & Attempts', 'परीक्षा विवरण र प्रयासहरू'),
-          onTap: () => context.push('/exam/${set.id}'),
+          onTap: () => context.push('/exam/${widget.setId}'),
         ),
         const SizedBox(height: 10),
         _secondaryAction(

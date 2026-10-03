@@ -43,14 +43,22 @@ class _ExamTabState extends State<ExamTab> {
   String? _error;
   bool _purchaseNavigating = false;
   Timer? _ticker;
+  bool _shellLoaded = false;
+  final Map<String, _SectionCache> _sectionCache = {};
+
+  String get _cacheKey => '${_sectionId ?? ''}|$_provinceId';
 
   @override
   void initState() {
     super.initState();
     _load();
-    // Re-evaluate hidden -> countdown -> ready without re-fetching.
+    // Re-resolve hidden -> countdown -> live -> ended every second from the
+    // cache, without re-fetching.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      final cache = _sectionCache[_cacheKey];
+      if (cache == null) return;
+      setState(() => _cards = _resolveCards(cache, DateTime.now()));
     });
   }
 
@@ -81,7 +89,100 @@ class _ExamTabState extends State<ExamTab> {
     return parsed.isAfter(DateTime.now());
   }
 
+  /// Full refresh — app start and pull-to-refresh only.
   Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      await _loadShell();
+      await _loadSection(forceRefresh: true);
+      if (!mounted) return;
+      setState(() => _loading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = AppLanguage.tr(
+            'Could not load exams. Pull to retry.',
+            'परीक्षा लोड हुन सकेन। पुनः प्रयास गर्न तल तान्नुहोस्।');
+        _loading = false;
+      });
+    }
+  }
+
+  /// Provinces + sections + profile — section/province independent.
+  Future<void> _loadShell() async {
+    final store = ProfileStore.instance;
+    final uid = AuthService.currentUser?.uid;
+    if (uid != null && uid.isNotEmpty) {
+      await store.load(uid);
+    }
+    final profile = store.profile;
+    final courseId = store.courseInfo?.courseId ?? profile?.courseId;
+    final subcourseId = _subcourseId;
+
+    final results = await Future.wait([
+      fetchExamProvinces(),
+      fetchExamSections(courseId: courseId, subcourseId: subcourseId),
+    ]);
+    final provinces = results[0] as List<ExamProvince>;
+    final sections = results[1] as List<ExamSection>;
+
+    String? sectionId = _sectionId;
+    if (sections.isNotEmpty &&
+        (sectionId == null || !sections.any((s) => s.id == sectionId))) {
+      sectionId = sections.first.id;
+    }
+    if (!mounted) return;
+    setState(() {
+      _provinces = provinces;
+      _sections = sections;
+      _sectionId = sectionId;
+    });
+    _shellLoaded = true;
+  }
+
+  List<_CardEntry> _resolveCards(_SectionCache cache, DateTime now) {
+    return cache.sets.map((set) {
+      final attempted = (cache.attemptsBySet[set.id]?.length ?? 0) > 0;
+      final state = resolveExamCardState(
+        set: set,
+        now: now,
+        hasAttempted: attempted,
+        isPurchased:
+            cache.premium || cache.approvedIds.contains(set.id),
+        hasPendingPurchase: cache.pendingIds.contains(set.id),
+      );
+      return _CardEntry(
+        set: set,
+        state: state,
+        isPurchased:
+            cache.premium || cache.approvedIds.contains(set.id),
+        hasAttempted: attempted,
+        answer:
+            set.contentType == 'pdf' ? cache.answers[set.id] : null,
+        pendingPurchase: cache.pendingBySet[set.id],
+      );
+    }).where((e) => e.state != ExamCardState.hidden).toList();
+  }
+
+  /// Section data — cached per (sectionId, provinceId). A cached section
+  /// shows instantly with no spinner; only pull-to-refresh / app start
+  /// forces a network refresh.
+  Future<void> _loadSection({bool forceRefresh = false}) async {
+    final key = _cacheKey;
+    final cached = _sectionCache[key];
+    if (!forceRefresh && cached != null) {
+      if (!mounted) return;
+      setState(() {
+        _cards = _resolveCards(cached, DateTime.now());
+        _purchaseNavigating = false;
+        _loading = false;
+        _error = null;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
@@ -89,17 +190,11 @@ class _ExamTabState extends State<ExamTab> {
     try {
       final store = ProfileStore.instance;
       final uid = AuthService.currentUser?.uid;
-      if (uid != null && uid.isNotEmpty) {
-        await store.load(uid);
-      }
       final profile = store.profile;
-      final courseId =
-          store.courseInfo?.courseId ?? profile?.courseId;
       final subcourseId = _subcourseId;
+      final sectionId = _sectionId;
 
       final results = await Future.wait([
-        fetchExamProvinces(),
-        fetchExamSections(courseId: courseId, subcourseId: subcourseId),
         uid == null
             ? Future.value(<ExamAttempt>[])
             : fetchAllExamAttempts(uid),
@@ -110,12 +205,9 @@ class _ExamTabState extends State<ExamTab> {
             ? Future.value(<ExamPurchaseRecord>[])
             : fetchMyExamPurchases(uid),
       ]);
-
-      final provinces = results[0] as List<ExamProvince>;
-      final sections = results[1] as List<ExamSection>;
-      final attempts = results[2] as List<ExamAttempt>;
-      final answers = results[3] as Map<String, ExamAnswer>;
-      final purchases = results[4] as List<ExamPurchaseRecord>;
+      final attempts = results[0] as List<ExamAttempt>;
+      final answers = results[1] as Map<String, ExamAnswer>;
+      final purchases = results[2] as List<ExamPurchaseRecord>;
 
       final attemptsBySet = <String, List<ExamAttempt>>{};
       for (final a in attempts) {
@@ -134,63 +226,36 @@ class _ExamTabState extends State<ExamTab> {
         if (p.status == 'pending') pendingBySet[p.examSetId] = p;
       }
 
-      String? sectionId = _sectionId;
-      if (sections.isNotEmpty &&
-          (sectionId == null ||
-              !sections.any((s) => s.id == sectionId))) {
-        sectionId = sections.first.id;
-      }
-
-      final now = DateTime.now();
-      final premium = _premiumActive(profile);
-      List<_CardEntry> cards = const [];
+      List<ExamSet> sets = const [];
       if (subcourseId != null &&
           subcourseId.isNotEmpty &&
           sectionId != null) {
-        final sets = await fetchExamSets(
+        sets = await fetchExamSets(
           subcourseId: subcourseId,
           sectionId: sectionId,
           provinceId: _provinceId,
         );
-        cards = sets
-            .map((set) {
-              final attempted =
-                  (attemptsBySet[set.id]?.length ?? 0) > 0;
-              final state = resolveExamCardState(
-                set: set,
-                now: now,
-                hasAttempted: attempted,
-                isPurchased:
-                    premium || approvedIds.contains(set.id),
-                hasPendingPurchase: pendingIds.contains(set.id),
-              );
-              return _CardEntry(
-                set: set,
-                state: state,
-                isPurchased:
-                    premium || approvedIds.contains(set.id),
-                hasAttempted: attempted,
-                answer: set.contentType == 'pdf'
-                    ? answers[set.id]
-                    : null,
-                pendingPurchase: pendingBySet[set.id],
-              );
-            })
-            .where((e) => e.state != ExamCardState.hidden)
-            .toList();
       }
-
-      if (!mounted) return;
+      final cache = _SectionCache(
+        sets: sets,
+        attemptsBySet: attemptsBySet,
+        approvedIds: approvedIds,
+        pendingIds: pendingIds,
+        answers: answers,
+        pendingBySet: pendingBySet,
+        premium: _premiumActive(profile),
+      );
+      _sectionCache[key] = cache;
+      // The user may have switched section/province mid-fetch — only apply
+      // if this result still belongs to the visible tab.
+      if (!mounted || _cacheKey != key) return;
       setState(() {
-        _provinces = provinces;
-        _sections = sections;
-        _sectionId = sectionId;
-        _cards = cards;
+        _cards = _resolveCards(cache, DateTime.now());
         _purchaseNavigating = false;
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || _cacheKey != key) return;
       setState(() {
         _error = AppLanguage.tr(
             'Could not load exams. Pull to retry.',
@@ -214,7 +279,8 @@ class _ExamTabState extends State<ExamTab> {
     );
     if (!mounted) return;
     if (mode == _RulesMode.start && confirmed == true) {
-      context.push('/exam/${set.id}/quiz');
+      context.push(
+          '/exam/${set.id}/quiz?title=${Uri.encodeComponent(set.title)}');
     }
   }
 
@@ -418,7 +484,7 @@ class _ExamTabState extends State<ExamTab> {
       onTap: () {
         if (_provinceId == id) return;
         setState(() => _provinceId = id);
-        _load();
+        _loadSection();
       },
       child: Container(
         padding:
@@ -467,7 +533,7 @@ class _ExamTabState extends State<ExamTab> {
       onTap: () {
         if (_sectionId == section.id) return;
         setState(() => _sectionId = section.id);
-        _load();
+        _loadSection();
       },
       child: Container(
         padding:
@@ -694,6 +760,29 @@ class _CardEntry {
 
 enum _RulesMode { info, start }
 
+/// Cached per (sectionId, provinceId): the raw sets plus everything needed to
+/// resolve card states. Card STATES are re-resolved with a fresh `now` on
+/// every tick (countdown -> live -> ended transitions) without re-fetching.
+class _SectionCache {
+  final List<ExamSet> sets;
+  final Map<String, List<ExamAttempt>> attemptsBySet;
+  final Set<String> approvedIds;
+  final Set<String> pendingIds;
+  final Map<String, ExamAnswer> answers;
+  final Map<String, ExamPurchaseRecord> pendingBySet;
+  final bool premium;
+
+  const _SectionCache({
+    required this.sets,
+    required this.attemptsBySet,
+    required this.approvedIds,
+    required this.pendingIds,
+    required this.answers,
+    required this.pendingBySet,
+    required this.premium,
+  });
+}
+
 /// One exam card — mirrors ExamCard.tsx: title row with icon box, meta chips,
 /// difficulty/access tags, then the Rules / Ranking / primary action row.
 class _ExamCard extends StatelessWidget {
@@ -770,6 +859,22 @@ class _ExamCard extends StatelessWidget {
           primaryIcon = Icons.refresh;
           primaryDisabled = false;
           break;
+        case ExamCardState.live:
+          // Live window: same action as ready/rejoin — the red blinking
+          // timer lives in its own chip above.
+          if (entry.hasAttempted) {
+            primaryLabel = AppLanguage.tr('Re-Join', 'पुनः जोइन');
+            primaryIcon = Icons.refresh;
+          } else if (isPdf) {
+            primaryLabel =
+                AppLanguage.tr('View Question', 'प्रश्न हेर्नुहोस्');
+            primaryIcon = Icons.description;
+          } else {
+            primaryLabel = AppLanguage.tr('Start', 'सुरु गर्नुहोस्');
+            primaryIcon = Icons.play_arrow;
+          }
+          primaryDisabled = false;
+          break;
         case ExamCardState.pending:
           primaryLabel = AppLanguage.tr('Pending', 'पेन्डिङ');
           primaryIcon = Icons.access_time;
@@ -799,18 +904,24 @@ class _ExamCard extends StatelessWidget {
         : isSubmitted ||
                 (entry.isPurchased &&
                     (state == ExamCardState.ready ||
-                        state == ExamCardState.rejoin)) ||
+                        state == ExamCardState.rejoin ||
+                        state == ExamCardState.live)) ||
                 (!entry.isPurchased &&
                     entry.hasAttempted &&
-                    state == ExamCardState.rejoin)
+                    (state == ExamCardState.rejoin ||
+                        state == ExamCardState.live))
             ? _green
             : accentColor;
 
     final submitted = isSubmitted;
+    final now = DateTime.now();
+    final windowEnd = liveWindowEnd(set);
+    final windowOver =
+        windowEnd != null && !now.isBefore(windowEnd);
     return Opacity(
       opacity: submitted ? 0.72 : 1,
       child: Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: palette.surface,
           borderRadius: BorderRadius.circular(20),
@@ -823,29 +934,29 @@ class _ExamCard extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 42,
+                  height: 42,
                   decoration: BoxDecoration(
                     color: accentColor.withValues(alpha: 0.09),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     isPdf ? Icons.description : Icons.help,
-                    size: 22,
+                    size: 20,
                     color: accentColor,
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         set.title,
-                        maxLines: 2,
+                        maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -855,7 +966,7 @@ class _ExamCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 13,
+                            fontSize: 12.5,
                             color: palette.textSecondary,
                           ),
                         ),
@@ -865,20 +976,23 @@ class _ExamCard extends StatelessWidget {
                 if (submitted) _submittedBadge(answerStatus),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             // Meta chips.
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                _chip(
-                  icon: Icons.calendar_today_outlined,
-                  label: _startLabel(set.startTime),
-                  color: accentColor,
-                  bg: accentColor.withValues(alpha: 0.07),
-                  borderColor: accentColor.withValues(alpha: 0.2),
-                  palette: palette,
-                ),
+                if (state == ExamCardState.live && windowEnd != null)
+                  _LiveChip(end: windowEnd)
+                else if (!windowOver)
+                  _chip(
+                    icon: Icons.calendar_today_outlined,
+                    label: _startLabel(set.startTime),
+                    color: accentColor,
+                    bg: accentColor.withValues(alpha: 0.07),
+                    borderColor: accentColor.withValues(alpha: 0.2),
+                    palette: palette,
+                  ),
                 if (!isPdf) ...[
                   _chip(
                     icon: Icons.help_outline,
@@ -973,7 +1087,32 @@ class _ExamCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
+            // Published date — shown once the live window has ended,
+            // just above the Rules / Ranking / primary action row.
+            if (windowOver && set.startTime != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Row(
+                  children: [
+                    Icon(Icons.calendar_month_outlined,
+                        size: 14, color: palette.textSecondary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '${AppLanguage.tr('Published', 'प्रकाशित')}: ${_fullDateTime(set.startTime!)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: palette.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             // Actions.
             Row(
               children: [
@@ -1061,6 +1200,19 @@ class _ExamCard extends StatelessWidget {
     return AppLanguage.isNepali
         ? 'सुरु: ${_npDigits(time)}'
         : 'Start: $time';
+  }
+
+  /// Full date-time for the post-live "Published: 2026-01-01 7:05 PM" line.
+  String _fullDateTime(DateTime d) {
+    final date =
+        '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    final h12 = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    final mm = d.minute.toString().padLeft(2, '0');
+    final ampm = d.hour < 12 ? 'AM' : 'PM';
+    final time = AppLanguage.isNepali
+        ? _npDigits('$h12:$mm $ampm')
+        : '$h12:$mm $ampm';
+    return '$date $time';
   }
 
   Widget _submittedBadge(String? status) {
@@ -1173,6 +1325,94 @@ class _ExamCard extends StatelessWidget {
   }
 }
 
+/// Live chip — red pulsing dot + "LIVE" + remaining window time, blinking
+/// red while the exam is inside its live window.
+class _LiveChip extends StatefulWidget {
+  final DateTime end;
+
+  const _LiveChip({required this.end});
+
+  @override
+  State<_LiveChip> createState() => _LiveChipState();
+}
+
+class _LiveChipState extends State<_LiveChip> {
+  Timer? _blink;
+  bool _on = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _blink = Timer.periodic(const Duration(milliseconds: 650), (_) {
+      if (mounted) setState(() => _on = !_on);
+    });
+  }
+
+  @override
+  void dispose() {
+    _blink?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final left = widget.end.difference(DateTime.now());
+    final total = left.inSeconds.clamp(0, 1 << 30);
+    final h = total ~/ 3600;
+    final m = (total % 3600) ~/ 60;
+    final s = total % 60;
+    final clock = h > 0
+        ? '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
+        : '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+    const red = Color(0xFFDC2626);
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 300),
+      opacity: _on ? 1.0 : 0.35,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: red.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: red.withValues(alpha: 0.4), width: 1.5),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: const BoxDecoration(
+                color: red,
+                shape: BoxShape.circle,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              AppLanguage.tr('LIVE', 'लाइभ'),
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: red,
+                letterSpacing: 0.5,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              AppLanguage.isNepali ? _npDigits(clock) : clock,
+              style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                color: red,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Exam rules popup content — mirrors ExamRulesSheet.tsx: shield icon,
 /// numbered rules with icon boxes, primary 'Start Quiz' / 'OK'. Pops `true`
 /// when the primary action confirms a start, `false`/`null` otherwise.
@@ -1188,6 +1428,7 @@ class _RulesDialogContent extends StatefulWidget {
 
 class _RulesDialogContentState extends State<_RulesDialogContent> {
   List<ExamRule>? _rules;
+  final _scrollController = ScrollController();
 
   @override
   void initState() {
@@ -1204,11 +1445,24 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
   }
 
   @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     const accent = Color(0xFF2563EB);
     final rules = _rules;
     return AppModalShell(
+      // React AppDialog parity: maxWidth 340, content capped at 80% of the
+      // screen with internal scroll + auto-creep for long rule lists.
+      maxWidth: 340,
+      contentMaxHeight: MediaQuery.of(context).size.height * 0.8,
+      scrollHint: true,
+      scrollController: _scrollController,
+      autoScroll: true,
       icon: Container(
         width: 56,
         height: 56,

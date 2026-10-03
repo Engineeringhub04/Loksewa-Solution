@@ -10,6 +10,12 @@ import 'package:flutter/material.dart';
 /// Use this on the Help, App Info, and Subscription pages. Do NOT replace
 /// the shared `StaggerEntrance` (stagger_entrance.dart) elsewhere — its
 /// easeOutBack spring is the approved motion for the other pages that use it.
+///
+/// OVERRIDDEN 2026-10-03 by explicit user request (12-point exam round): the
+/// user wants this exact motion on exam quiz/review options, subject
+/// chapters, subject units, and practice-mode options. subject_chapters,
+/// subject_units (local _StaggeredReveal deleted), subject_read now use this;
+/// practice _OptionStagger retuned to 380ms/24px/60ms to match.
 class SyllabusEntrance extends StatefulWidget {
   final int delayMs;
   final Widget child;

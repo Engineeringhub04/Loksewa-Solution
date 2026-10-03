@@ -1185,15 +1185,18 @@ class _OptionStagger extends StatefulWidget {
 
 class _OptionStaggerState extends State<_OptionStagger>
     with SingleTickerProviderStateMixin {
+  // Point 11: the shared syllabus/profile entrance motion — 380ms easeOut,
+  // 24px rise, no spring (same as SyllabusEntrance).
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 280),
+    duration: const Duration(milliseconds: 380),
   );
 
   @override
   void initState() {
     super.initState();
-    Future.delayed(Duration(milliseconds: widget.index * 70), () {
+    Future.delayed(Duration(milliseconds: (widget.index.clamp(0, 8)) * 60),
+        () {
       if (mounted) _controller.forward();
     });
   }
@@ -1213,7 +1216,7 @@ class _OptionStaggerState extends State<_OptionStagger>
         return Opacity(
           opacity: t,
           child: Transform.translate(
-            offset: Offset(0, 12 * (1 - t)),
+            offset: Offset(0, 24 * (1 - t)),
             child: child,
           ),
         );

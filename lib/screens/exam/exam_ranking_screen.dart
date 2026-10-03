@@ -336,7 +336,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
                         fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 10),
-                  if (_rows.isEmpty)
+                  if (_rows.length <= 3)
                     _emptyRow()
                   else
                     ..._rows
@@ -563,7 +563,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
             overflow: TextOverflow.ellipsis,
             textAlign: centered ? TextAlign.center : TextAlign.start,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.bold,
               color: filled ? _text : _textDim,
             ),

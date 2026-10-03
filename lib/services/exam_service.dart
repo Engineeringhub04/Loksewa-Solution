@@ -801,14 +801,24 @@ const cardRevealLead = Duration(minutes: 10);
 const allProvinces = 'all';
 
 /// Exam-card lifecycle state — mirrors examHub.resolveExamCardState.
-enum ExamCardState { hidden, countdown, ready, rejoin, pending, locked }
+enum ExamCardState { hidden, countdown, live, ready, rejoin, pending, locked }
 
-/// Resolves the lifecycle state of an exam card (React: resolveExamCardState):
+/// End of the live window for a set: startTime + durationMinutes.
+/// During [start, liveWindowEnd) the card shows the red blinking live timer.
+DateTime? liveWindowEnd(ExamSet set) {
+  final start = set.startTime;
+  if (start == null) return null;
+  return start.add(Duration(minutes: set.durationMinutes));
+}
+
+/// Resolves the lifecycle state of an exam card (React: resolveExamCardState
+/// + the live-window extension):
 /// - pro && pending purchase && !purchased  -> pending
 /// - pro && !purchased                      -> locked
 /// - no startTime                           -> always open
 /// - now < start - 10min                    -> hidden
 /// - now < start                            -> countdown
+/// - now < start + duration                 -> live (red blinking timer)
 /// - attempted                              -> rejoin else ready
 ExamCardState resolveExamCardState({
   required ExamSet set,
@@ -824,6 +834,8 @@ ExamCardState resolveExamCardState({
   if (start == null) return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
   if (now.isBefore(start.subtract(cardRevealLead))) return ExamCardState.hidden;
   if (now.isBefore(start)) return ExamCardState.countdown;
+  final end = liveWindowEnd(set);
+  if (end != null && now.isBefore(end)) return ExamCardState.live;
   return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
 }
 

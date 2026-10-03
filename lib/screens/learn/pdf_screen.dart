@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
@@ -33,6 +34,12 @@ class PdfScreen extends StatefulWidget {
   final String? uri;
   final String? title;
 
+  /// Present when this paper is a Theory Desk set — enables the
+  /// "Upload your Answer" footer (React: allowUpload === '1' && examSetId).
+  final String? examSetId;
+  final bool allowUpload;
+  final String? sectionName;
+
   /// Test seam: overrides the network download (production uses http).
   final Future<Uint8List> Function(String url)? downloadBytes;
 
@@ -41,6 +48,9 @@ class PdfScreen extends StatefulWidget {
     required this.id,
     this.uri,
     this.title,
+    this.examSetId,
+    this.allowUpload = false,
+    this.sectionName,
     this.downloadBytes,
   });
 
@@ -67,6 +77,21 @@ class _PdfScreenState extends State<PdfScreen>
   String get _resolvedTitle {
     final t = (widget.title ?? '').trim();
     return t.isNotEmpty ? t : 'Question Paper';
+  }
+
+  bool get _showUploadFooter =>
+      widget.allowUpload &&
+      (widget.examSetId ?? '').isNotEmpty &&
+      !_fullscreen;
+
+  void _openUpload() {
+    final examSetId = widget.examSetId!;
+    context.push(
+      '/exam-answer/upload'
+      '?examSetId=${Uri.encodeComponent(examSetId)}'
+      '&examSetTitle=${Uri.encodeComponent(_resolvedTitle)}'
+      '&sectionName=${Uri.encodeComponent(widget.sectionName ?? '')}',
+    );
   }
 
   String get _uri => (widget.uri ?? '').trim();
@@ -379,10 +404,11 @@ class _PdfScreenState extends State<PdfScreen>
                     ),
                   ),
                   // Floating page counter — bottom centre (real page numbers
-                  // now, driven by the native renderer).
+                  // now, driven by the native renderer). Lifted when the
+                  // upload footer is showing (React parity).
                   if (_totalPages > 0 && !_loading && _error == null)
                     Positioned(
-                      bottom: 24,
+                      bottom: _showUploadFooter ? 84 : 24,
                       left: 0,
                       right: 0,
                       child: Center(
@@ -412,6 +438,47 @@ class _PdfScreenState extends State<PdfScreen>
                 ],
               ),
             ),
+            // "Upload your Answer" footer — Theory Desk sets only
+            // (React: app/pdf/[id].tsx showUploadFooter).
+            if (_showUploadFooter)
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(
+                    top: BorderSide(
+                        color: Colors.grey.withValues(alpha: 0.3)),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 12,
+                      offset: const Offset(0, -4),
+                    ),
+                  ],
+                ),
+                padding: EdgeInsets.fromLTRB(
+                    16, 12, 16, MediaQuery.of(context).padding.bottom + 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _openUpload,
+                    icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                    label: const Text(
+                      'Upload your Answer',
+                      style: TextStyle(
+                          fontSize: 15, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ],
         ),
       ),

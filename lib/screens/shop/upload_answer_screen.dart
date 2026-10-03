@@ -1,19 +1,22 @@
 // Upload / edit an answer sheet.
 // Mirrors app/exam-answer/upload.tsx: full-name field, message field, a PDF
-// attachment (<= 8MB), a guard against duplicate submissions per examSetId,
-// a success screen that routes to the details, and an edit mode
+// attachment (<= 8MB) picked from the device and uploaded to Cloudinary the
+// moment it's picked (raw/upload, exam-answers folder) so the preview below
+// renders the real HTTPS URL — a guard against duplicate submissions per
+// examSetId, a success screen that routes to the details, and an edit mode
 // (?editId=<id>) that updates only pdfUrl + message.
-// NOTE (Flutter): the Expo app uploads the PDF to Cloudinary and stores the
-// URL. This build has no file-picker/upload plugin wired, so the PDF is
-// supplied as a URL field; the Firestore write below is the same shape the
-// Expo app produces after its upload step.
+import 'dart:typed_data';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:pdfx/pdfx.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -28,7 +31,6 @@ class UploadAnswerScreen extends StatefulWidget {
 class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   final _nameCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
-  final _pdfCtrl = TextEditingController();
   bool _loading = true;
   bool _submitting = false;
   String? _editId;
@@ -36,6 +38,23 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   Map<String, dynamic>? _examSet;
   bool _done = false;
   String? _doneId;
+
+  // Answer PDF — picked from the device, uploaded to Cloudinary the moment
+  // it's picked (React parity), preview renders the picked bytes directly.
+  String? _pickedName;
+  int? _pickedSize;
+  Uint8List? _pickedBytes;
+  bool _picking = false;
+  double _uploadProgress = 0;
+  String? _previewUrl;
+  PdfControllerPinch? _previewController;
+
+  static const _maxPdfBytes = 8 * 1024 * 1024;
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 
   @override
   void initState() {
@@ -47,8 +66,78 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   void dispose() {
     _nameCtrl.dispose();
     _msgCtrl.dispose();
-    _pdfCtrl.dispose();
+    _previewController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickFile() async {
+    if (_picking || _submitting) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true,
+    );
+    final file = result?.files.firstOrNull;
+    if (file == null) return; // user cancelled
+    final bytes = file.bytes;
+    if (bytes == null) {
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Could not read that file.', 'त्यो फाइल पढ्न सकिएन।'),
+          ToastVariant.error);
+      return;
+    }
+    if (bytes.length > _maxPdfBytes) {
+      showToast(
+          context,
+          AppLanguage.tr(
+              'That PDF is larger than 8 MB. Please choose a smaller file.',
+              'त्यो PDF 8 MB भन्दा ठूलो छ। सानो फाइल छान्नुहोस्।'),
+          ToastVariant.error);
+      return;
+    }
+    _previewController?.dispose();
+    _previewController = null;
+    setState(() {
+      _pickedName = file.name;
+      _pickedSize = bytes.length;
+      _pickedBytes = bytes;
+      _picking = true;
+      _uploadProgress = 0;
+      _previewUrl = null;
+    });
+    try {
+      // Uploaded the moment it's picked (not deferred to Submit) so the
+      // preview below renders a real HTTPS URL — same as React.
+      final url = await CloudinaryUploader.uploadAnswerPdf(
+        bytes,
+        file.name,
+        onProgress: (f) {
+          if (mounted) setState(() => _uploadProgress = f);
+        },
+      );
+      if (!mounted) return;
+      setState(() {
+        _previewUrl = url;
+        _previewController =
+            PdfControllerPinch(document: PdfDocument.openData(bytes));
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _pickedName = null;
+        _pickedSize = null;
+        _pickedBytes = null;
+      });
+      showToast(
+          context,
+          AppLanguage.tr('Could not upload the PDF. Please try again.',
+              'PDF अपलोड हुन सकेन। कृपया पुनः प्रयास गर्नुहोस्।'),
+          ToastVariant.error);
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
   }
 
   Future<void> _init() async {
@@ -64,7 +153,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             'app_exam_answers/$_editId',
             idToken: token);
         _msgCtrl.text = a?['message']?.toString() ?? '';
-        _pdfCtrl.text = a?['pdfUrl']?.toString() ?? '';
+        _previewUrl = a?['pdfUrl']?.toString();
         _nameCtrl.text = a?['studentName']?.toString() ?? _nameCtrl.text;
       } else if (_examSetId != null && _examSetId!.isNotEmpty) {
         final results = await Future.wait([
@@ -106,12 +195,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           ToastVariant.error);
       return;
     }
-    if (_pdfCtrl.text.trim().isEmpty) {
+    if (_previewUrl == null || _previewUrl!.isEmpty) {
       showToast(
           context,
-          AppLanguage.tr(
-              'Please paste your answer-sheet PDF URL (max 8MB).',
-              'कृपया आफ्नो उत्तरपत्रको PDF URL टाँस्नुहोस् (अधिकतम 8MB)।'),
+          AppLanguage.tr('Please choose your answer-sheet PDF first.',
+              'कृपया पहिले आफ्नो उत्तरपत्रको PDF छान्नुहोस्।'),
           ToastVariant.error);
       return;
     }
@@ -121,12 +209,12 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
       final user = AuthService.currentUser;
       final uid = user?.uid ?? '';
       if (_editId != null && _editId!.isNotEmpty) {
-        // Edit mode: update pdfUrl + message only.
+        // Edit mode: update pdfUrl + message only (React: updateMyExamAnswer).
         await FirestoreRest.setDocument(
           'app_exam_answers/$_editId',
           {
             'studentName': _nameCtrl.text.trim(),
-            'pdfUrl': _pdfCtrl.text.trim(),
+            'pdfUrl': _previewUrl,
             'message': _msgCtrl.text.trim(),
             'updatedAt': DateTime.now().toIso8601String(),
           },
@@ -155,11 +243,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             'examSetTitle': _examSet?['title'],
             'sectionName': _examSet?['sectionName'],
             'message': _msgCtrl.text.trim(),
-            'pdfUrl': _pdfCtrl.text.trim(),
+            'pdfUrl': _previewUrl,
             'checkedPdfUrl': '',
             'status': 'pending',
             'score': 0,
-            'fullMarks': _examSet?['fullMarks'] ?? 0,
+            'fullMarks': 100,
             'passed': false,
             'reviewNote': '',
             'createdAt': DateTime.now().toIso8601String(),
@@ -376,18 +464,121 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                 icon: Icons.person_outline),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _pdfCtrl,
-            keyboardType: TextInputType.url,
-            decoration: _fieldDecoration(
-                pal,
-                AppLanguage.tr(
-                    'Answer-sheet PDF URL *', 'उत्तरपत्रको PDF URL *'),
-                helper: AppLanguage.tr(
-                    'Max 8MB. In the full app this uploads your PDF directly; here paste the file link.',
-                    'अधिकतम 8MB। पूर्ण एपमा यसले तपाईंको PDF सिधै अपलोड गर्छ; यहाँ फाइल लिङ्क टाँस्नुहोस्।'),
-                icon: Icons.picture_as_pdf_outlined),
+          Text(
+            AppLanguage.tr('Answer PDF *', 'उत्तर PDF *'),
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: pal.textPrimary),
           ),
+          const SizedBox(height: 8),
+          GestureDetector(
+            onTap: _picking || _submitting ? null : _pickFile,
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              decoration: BoxDecoration(
+                color: pal.surfaceAlt,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: pal.border, width: 0.75),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (_picking)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  else
+                    Icon(Icons.attach_file_outlined,
+                        size: 18, color: pal.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    _picking
+                        ? AppLanguage.tr('Uploading…', 'अपलोड हुँदै…')
+                        : _pickedName != null
+                            ? AppLanguage.tr(
+                                'Change file', 'फाइल परिवर्तन गर्नुहोस्')
+                            : AppLanguage.tr(
+                                'Choose PDF', 'PDF छान्नुहोस्'),
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: pal.primary),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_pickedName != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: pal.surfaceAlt,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.description_outlined,
+                      size: 16, color: pal.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _pickedName!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 13, color: pal.textPrimary),
+                    ),
+                  ),
+                  if (_pickedSize != null)
+                    Text(
+                      _formatBytes(_pickedSize!),
+                      style: TextStyle(
+                          fontSize: 11, color: pal.textSecondary),
+                    ),
+                ],
+              ),
+            ),
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                AppLanguage.tr(
+                    'PDF only, up to 8 MB.', 'PDF मात्र, अधिकतम 8 MB।'),
+                style:
+                    TextStyle(fontSize: 11, color: pal.textSecondary),
+              ),
+            ),
+          if (_picking) ...[
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: _uploadProgress,
+                minHeight: 6,
+                backgroundColor: pal.surfaceAlt,
+                valueColor:
+                    AlwaysStoppedAnimation<Color>(pal.primary),
+              ),
+            ),
+          ],
+          if (_previewController != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              height: 300,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: pal.border, width: 0.75),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: PdfViewPinch(
+                controller: _previewController!,
+              ),
+            ),
+          ],
           const SizedBox(height: 12),
           TextField(
             controller: _msgCtrl,

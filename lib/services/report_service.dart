@@ -5,6 +5,7 @@ import 'dart:math';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
@@ -93,6 +94,50 @@ class CloudinaryUploader {
 
     final streamed = await request.send().timeout(
           const Duration(seconds: 60),
+          onTimeout: () => throw TimeoutException('CLOUDINARY_TIMEOUT'),
+        );
+    final res = await http.Response.fromStream(streamed);
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('CLOUDINARY_UPLOAD_FAILED_${res.statusCode}');
+    }
+    Map<String, dynamic> data;
+    try {
+      data = jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      throw Exception('CLOUDINARY_BAD_RESPONSE');
+    }
+    final url = data['secure_url'] as String?;
+    if (url == null || url.isEmpty) {
+      throw Exception(data['error']?['message'] ?? 'CLOUDINARY_BAD_RESPONSE');
+    }
+    onProgress?.call(1);
+    return url;
+  }
+
+  /// Answer-sheet PDF upload — mirrors `uploadPdfToCloudinary` in
+  /// `src/core/media/cloudinary.ts`: the `raw/upload` endpoint, same
+  /// unsigned preset, `exam-answers` folder.
+  static Future<String> uploadAnswerPdf(
+    Uint8List bytes,
+    String filename, {
+    void Function(double fraction)? onProgress,
+  }) async {
+    final uri =
+        Uri.parse('https://api.cloudinary.com/v1_1/$_cloudName/raw/upload');
+    final total = bytes.length;
+    final request = http.MultipartRequest('POST', uri)
+      ..fields['upload_preset'] = _uploadPreset
+      ..fields['folder'] = 'exam-answers'
+      ..files.add(http.MultipartFile(
+        'file',
+        _countedStream(bytes, (sent) => onProgress?.call(sent / total)),
+        total,
+        filename: filename,
+        contentType: http_parser.MediaType('application', 'pdf'),
+      ));
+
+    final streamed = await request.send().timeout(
+          const Duration(seconds: 120),
           onTimeout: () => throw TimeoutException('CLOUDINARY_TIMEOUT'),
         );
     final res = await http.Response.fromStream(streamed);

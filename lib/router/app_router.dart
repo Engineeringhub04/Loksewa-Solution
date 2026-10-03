@@ -283,6 +283,9 @@ final appRouter = GoRouter(
         id: s.pathParameters['id']!,
         uri: _qp(s, 'uri'),
         title: _qp(s, 'title'),
+        examSetId: _qp(s, 'examSetId'),
+        allowUpload: _qp(s, 'allowUpload') == '1',
+        sectionName: _qp(s, 'sectionName'),
       ),
     ),
 
@@ -293,7 +296,10 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/exam/:setId/quiz',
-      builder: (_, s) => ExamQuizScreen(setId: s.pathParameters['setId']!),
+      builder: (_, s) => ExamQuizScreen(
+        setId: s.pathParameters['setId']!,
+        initialTitle: _qp(s, 'title'),
+      ),
     ),
     GoRoute(
       path: '/exam/:setId/ranking',
@@ -314,6 +320,18 @@ final appRouter = GoRouter(
         setId: s.pathParameters['setId']!,
         answers: _qp(s, 'answers'),
         timeTaken: int.tryParse(_qp(s, 'timeTaken') ?? ''),
+        instantTitle: _qp(s, 'title'),
+        instantPercent: int.tryParse(_qp(s, 'percent') ?? ''),
+        instantMarks: double.tryParse(_qp(s, 'marks') ?? ''),
+        instantCorrect: int.tryParse(_qp(s, 'correct') ?? ''),
+        instantIncorrect: int.tryParse(_qp(s, 'wrong') ?? ''),
+        instantSkipped: int.tryParse(_qp(s, 'skipped') ?? ''),
+        instantNegativeMarks: double.tryParse(_qp(s, 'negative') ?? ''),
+        instantPassed: _qp(s, 'passed') == null
+            ? null
+            : _qp(s, 'passed') == '1',
+        instantPassMark: int.tryParse(_qp(s, 'passMark') ?? ''),
+        instantTotalQuestions: int.tryParse(_qp(s, 'total') ?? ''),
       ),
     ),
     GoRoute(

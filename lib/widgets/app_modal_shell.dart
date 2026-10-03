@@ -7,6 +7,7 @@
 //
 // NOTE: every Text this shell renders carries an explicit
 // `decoration: TextDecoration.none` as a defensive guard.
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -65,6 +66,12 @@ class AppModalShell extends StatelessWidget {
   /// [scrollHint] is true this drives the bottom-reached detection.
   final ScrollController? scrollController;
 
+  /// React AppDialog `autoScroll` parity for long content (e.g. exam
+  /// rules): the capped region slowly ping-pongs through its content.
+  /// Requires [contentMaxHeight] + [scrollController]; implies the hinted
+  /// scroll treatment.
+  final bool autoScroll;
+
   const AppModalShell({
     super.key,
     required this.icon,
@@ -82,6 +89,7 @@ class AppModalShell extends StatelessWidget {
     this.contentMaxHeight,
     this.scrollHint = false,
     this.scrollController,
+    this.autoScroll = false,
   });
 
   /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
@@ -167,11 +175,12 @@ class AppModalShell extends StatelessWidget {
     );
     final Widget contentWidget;
     if (contentMaxHeight != null &&
-        scrollHint &&
+        (scrollHint || autoScroll) &&
         scrollController != null) {
       contentWidget = _HintedScroll(
         maxHeight: contentMaxHeight!,
         controller: scrollController!,
+        autoScroll: autoScroll,
         child: content,
       );
     } else if (contentMaxHeight != null) {
@@ -346,7 +355,14 @@ class _HintedScroll extends StatefulWidget {
     required this.maxHeight,
     required this.controller,
     required this.child,
+    this.autoScroll = false,
   });
+
+  /// React AppDialog `autoScroll` parity: after a 1.2s delay the content
+  /// creeps 1px every 30ms, ping-ponging top<->bottom with a 1.1s hold at
+  /// each end so long rule lists read themselves out. Any finger pauses it;
+  /// it resumes 3s after the finger lifts.
+  final bool autoScroll;
 
   @override
   State<_HintedScroll> createState() => _HintedScrollState();
@@ -356,17 +372,88 @@ class _HintedScrollState extends State<_HintedScroll> {
   static const _orange = Color(0xFFDE6E00);
   bool _atBottom = false;
 
+  // --- auto-creep refs (ticks every 30ms; never setState) ---
+  Timer? _startTimer;
+  Timer? _creepTimer;
+  Timer? _resumeTimer;
+  double _offset = 0;
+  int _direction = 1; // +1 down, -1 up
+  int _holdTicks = 0;
+  bool _autoRunning = false;
+
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onScroll());
+    if (widget.autoScroll) {
+      _startTimer = Timer(const Duration(milliseconds: 1200), () {
+        if (mounted) _startCreep();
+      });
+    }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_onScroll);
+    _startTimer?.cancel();
+    _creepTimer?.cancel();
+    _resumeTimer?.cancel();
     super.dispose();
+  }
+
+  void _startCreep() {
+    _creepTimer?.cancel();
+    _autoRunning = true;
+    _creepTimer =
+        Timer.periodic(const Duration(milliseconds: 30), (_) => _tick());
+  }
+
+  void _stopCreep() {
+    _autoRunning = false;
+    _creepTimer?.cancel();
+    _creepTimer = null;
+  }
+
+  void _tick() {
+    final c = widget.controller;
+    if (!c.hasClients || !mounted) return;
+    final pos = c.position;
+    final max = pos.maxScrollExtent;
+    if (max <= 0) return; // Content fits: nothing to creep through.
+    if (_holdTicks > 0) {
+      _holdTicks--;
+      return;
+    }
+    final next = _offset + 1.0 * _direction;
+    if (next >= max) {
+      _offset = max;
+      _direction = -1;
+      _holdTicks = (1100 / 30).round();
+    } else if (next <= 0) {
+      _offset = 0;
+      _direction = 1;
+      _holdTicks = (1100 / 30).round();
+    } else {
+      _offset = next;
+    }
+    c.jumpTo(_offset);
+  }
+
+  /// Any finger on the list stops the creep immediately…
+  void _pauseAuto() {
+    if (!widget.autoScroll || !_autoRunning) return;
+    _resumeTimer?.cancel();
+    _stopCreep();
+  }
+
+  /// …and it picks up again 3s after that finger lifts.
+  void _scheduleResume() {
+    if (!widget.autoScroll) return;
+    _resumeTimer?.cancel();
+    _resumeTimer = Timer(const Duration(milliseconds: 3000), () {
+      if (mounted) _startCreep();
+    });
   }
 
   void _onScroll() {
@@ -383,9 +470,21 @@ class _HintedScrollState extends State<_HintedScroll> {
       constraints: BoxConstraints(maxHeight: widget.maxHeight),
       child: Stack(
         children: [
-          SingleChildScrollView(
-            controller: widget.controller,
-            child: widget.child,
+          NotificationListener<ScrollNotification>(
+            onNotification: (n) {
+              // A real finger drag pauses the creep; programmatic jumpTo
+              // (the creep itself) carries no dragDetails.
+              if (n is ScrollStartNotification && n.dragDetails != null) {
+                _pauseAuto();
+              } else if (n is ScrollEndNotification) {
+                _scheduleResume();
+              }
+              return false;
+            },
+            child: SingleChildScrollView(
+              controller: widget.controller,
+              child: widget.child,
+            ),
           ),
           // Bottom fade — the classic "content continues" cue.
           Positioned(

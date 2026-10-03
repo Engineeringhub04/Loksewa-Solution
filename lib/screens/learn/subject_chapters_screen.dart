@@ -7,7 +7,7 @@ import '../../services/exam_service.dart';
 import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
-import '../../widgets/stagger_entrance.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Subject chapters — exact port of app/subjects/chapters/[subjectId].tsx.
 /// Summary gradient card + progress ring + chapter cards with P/R/T tags;
@@ -267,7 +267,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                                 ),
                               ),
                             ),
-                            StaggerEntrance(
+                            SyllabusEntrance(
                               delayMs: 0,
                               child: ChapterSummaryCard(
                                 subjectId: widget.subjectId,
@@ -289,7 +289,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                               )
                             else
                               ...d.chapters.asMap().entries.map((e) =>
-                                  StaggerEntrance(
+                                  SyllabusEntrance(
                                     delayMs:
                                         (e.key > 8 ? 8 : e.key) * 60,
                                     child: _chapterCard(

@@ -92,6 +92,7 @@ class _ReportDialogBody extends StatefulWidget {
 class _ReportDialogBodyState extends State<_ReportDialogBody> {
   String? _issue;
   final _detailsController = TextEditingController();
+  bool _sending = false;
 
   /// Drives the shell's scroll-hint (bottom fade + bouncing chevron) —
   /// the shell hides the hint once this reports scrolled-to-bottom.
@@ -171,6 +172,7 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
   }
 
   Future<void> _submit() async {
+    if (_sending) return;
     if (_issue == null) {
       showToast(widget.rootContext,
           'Please select an issue type.', ToastVariant.warning);
@@ -178,19 +180,25 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
     }
     final details = _detailsController.text.trim();
     final issue = _issue!;
-    // Fade-out first, then send. Capture everything needed before the pop.
-    Navigator.of(context).pop();
+    final description = _buildDescription(details);
+    // Loading on the Submit button; the popup stays until the send
+    // finishes — then it dismisses with a toast (standing popup-action
+    // pattern). A failed send keeps the dialog open with an error toast.
+    setState(() => _sending = true);
     try {
       await ReportService.submitProblemReport(
         category: 'question-report / $issue',
-        description: _buildDescription(details),
+        description: description,
       );
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      showToast(widget.rootContext,
+          'Report sent. Thank you for helping us improve.', ToastVariant.success);
     } catch (_) {
-      // Never throw to the UI.
-      if (widget.rootContext.mounted) {
-        showToast(widget.rootContext,
-            'Could not send the report. Please try again.', ToastVariant.error);
-      }
+      if (!mounted) return;
+      setState(() => _sending = false);
+      showToast(widget.rootContext,
+          'Could not send the report. Please try again.', ToastVariant.error);
     }
   }
 
@@ -440,7 +448,7 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
               borderRadius: BorderRadius.circular(22),
               child: InkWell(
                 borderRadius: BorderRadius.circular(22),
-                onTap: _submit,
+                onTap: _sending ? null : _submit,
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   decoration: BoxDecoration(
@@ -462,15 +470,27 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
                       ),
                     ],
                   ),
-                  child: const Text(
-                    'Submit',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                        decoration: TextDecoration.none),
-                  ),
+                  child: _sending
+                      ? const Center(
+                          child: SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2.5,
+                              valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white),
+                            ),
+                          ),
+                        )
+                      : const Text(
+                          'Submit',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                              decoration: TextDecoration.none),
+                        ),
                 ),
               ),
             ),

@@ -9,6 +9,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Subject units — exact port of app/subjects/units/[subjectId].tsx.
 /// Units are grouped into selectable tracks ("All" + one chip per unit, with a
@@ -353,9 +354,10 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                                         children: _selectedTrackChapters(d)
                                             .asMap()
                                             .entries
-                                            .map((e) => _StaggeredReveal(
-                                                  index: e.key,
-                                                  animationKey: _selectedTrack,
+                                            .map((e) => SyllabusEntrance(
+                                                  delayMs:
+                                                      (e.key.clamp(0, 8)) *
+                                                          60,
                                                   child: _chapterCard(
                                                       context, e.value, d),
                                                 ))
@@ -752,9 +754,8 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
     final children = <Widget>[];
     final units = d.tracks.where((t) => !t.direct).toList();
     for (var i = 0; i < units.length; i++) {
-      children.add(_StaggeredReveal(
-        index: i,
-        animationKey: 'all-${d.tracks.length}',
+      children.add(SyllabusEntrance(
+        delayMs: (i.clamp(0, 8)) * 60,
         child: _unitCard(context, units[i], d),
       ));
     }
@@ -936,9 +937,9 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                             .map((e) => Padding(
                                   padding:
                                       const EdgeInsets.only(bottom: 9),
-                                  child: _StaggeredReveal(
-                                    index: e.key,
-                                    animationKey: '${t.id}-$isExpanded',
+                                  child: SyllabusEntrance(
+                                    delayMs:
+                                        (e.key.clamp(0, 8)) * 60,
                                     child:
                                         _chapterCard(context, e.value, d),
                                   ),
@@ -1272,66 +1273,6 @@ class _ChipsHeaderDelegate extends SliverPersistentHeaderDelegate {
 
   @override
   bool shouldRebuild(covariant _ChipsHeaderDelegate oldDelegate) => true;
-}
-
-// ---------------------------------------------------------------------------
-// Staggered reveal (opacity + translateY 12->0, 260/300ms, delay index*55)
-// ---------------------------------------------------------------------------
-class _StaggeredReveal extends StatefulWidget {
-  final int index;
-  final String animationKey;
-  final Widget child;
-  const _StaggeredReveal(
-      {required this.index, required this.animationKey, required this.child});
-
-  @override
-  State<_StaggeredReveal> createState() => _StaggeredRevealState();
-}
-
-class _StaggeredRevealState extends State<_StaggeredReveal>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
-
-  @override
-  void initState() {
-    super.initState();
-    _run();
-  }
-
-  @override
-  void didUpdateWidget(covariant _StaggeredReveal oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.animationKey != widget.animationKey) {
-      _c.reset();
-      _run();
-    }
-  }
-
-  void _run() {
-    Future.delayed(Duration(milliseconds: widget.index * 55), () {
-      if (mounted) _c.forward();
-    });
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: CurvedAnimation(parent: _c, curve: Curves.easeOutCubic),
-      child: SlideTransition(
-        position: Tween<Offset>(
-                begin: const Offset(0, 0.06), end: Offset.zero)
-            .animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic)),
-        child: widget.child,
-      ),
-    );
-  }
 }
 
 // ---------------------------------------------------------------------------

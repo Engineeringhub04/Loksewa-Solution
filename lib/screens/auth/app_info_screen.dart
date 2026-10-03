@@ -22,7 +22,7 @@ class AppInfoScreen extends StatefulWidget {
   const AppInfoScreen({super.key});
 
   /// Displayed app version. BUMP WITH EVERY RELEASE — see ~/AGENTS.md.
-  static const _appVersion = '1.0.56';
+  static const _appVersion = '1.0.57';
 
   /// Public read of the app version for other screens
   /// (e.g. the account-deletion-request Discord embed).

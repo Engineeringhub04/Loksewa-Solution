@@ -41,6 +41,15 @@ class DiscussionTab extends StatefulWidget {
 
   static void requestRefresh() => refreshSignal.value++;
 
+  /// Optimistically insert a just-created post at the top of the feed
+  /// (instant show — the background refresh replaces it with server data).
+  static final ValueNotifier<DiscussionPost?> _optimisticPost =
+      ValueNotifier<DiscussionPost?>(null);
+
+  static void insertOptimistic(DiscussionPost post) {
+    _optimisticPost.value = post;
+  }
+
   @override
   State<DiscussionTab> createState() => _DiscussionTabState();
 }
@@ -66,6 +75,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
     super.initState();
     TabsScreen.tabIndex.addListener(_onTabIndexChanged);
     DiscussionTab.refreshSignal.addListener(_onRefreshSignal);
+    DiscussionTab._optimisticPost.addListener(_onOptimisticPost);
     _load();
     // Edge case: the app booted straight onto the Discussion tab (deep link
     // / restored state) — no tab-change event will fire, so check once.
@@ -81,8 +91,22 @@ class _DiscussionTabState extends State<DiscussionTab> {
   void dispose() {
     TabsScreen.tabIndex.removeListener(_onTabIndexChanged);
     DiscussionTab.refreshSignal.removeListener(_onRefreshSignal);
+    DiscussionTab._optimisticPost.removeListener(_onOptimisticPost);
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  void _onOptimisticPost() {
+    final post = DiscussionTab._optimisticPost.value;
+    if (post == null || !mounted) return;
+    // Clear so it doesn't re-insert on rebuilds.
+    DiscussionTab._optimisticPost.value = null;
+    setState(() {
+      // Avoid duplicates if the background refresh already fetched it.
+      _posts.removeWhere((p) => p.id == post.id);
+      _posts.insert(0, post);
+      _sortPosts();
+    });
   }
 
   void _onRefreshSignal() {

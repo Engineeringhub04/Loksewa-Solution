@@ -196,6 +196,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      // Clear replies cache — fresh data on page refresh.
+      _replies.clear();
+      _repliesLoading.clear();
+      _openReplyId = null;
     });
     try {
       final post = await DiscussionService.fetchDiscussion(widget.id);
@@ -303,23 +307,31 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   }
 
   /// "View replies" — toggles the single open thread.
+  /// Replies are cached: preloading + fetch happen ONLY the first time.
+  /// Hide → View again shows cached data instantly (no preloading).
+  /// Page refresh clears the cache for fresh data.
   void _toggleReplyThread(DiscussionComment c) {
     if (_openReplyId == c.id) {
       setState(() => _openReplyId = null);
       return;
     }
     setState(() => _openReplyId = c.id);
-    _loadReplies(c);
+    // Only fetch if not already cached.
+    if (!_replies.containsKey(c.id)) {
+      _loadReplies(c);
+    }
   }
 
-  /// "Reply" — always opens the thread and (re)loads it.
+  /// "Reply" — always opens the thread; fetches only if not cached.
   void _startReply(DiscussionComment c) {
     if (!_signedIn) {
       DiscussionSignInPrompt.show(context);
       return;
     }
     setState(() => _openReplyId = c.id);
-    _loadReplies(c);
+    if (!_replies.containsKey(c.id)) {
+      _loadReplies(c);
+    }
   }
 
   String _authorName() {

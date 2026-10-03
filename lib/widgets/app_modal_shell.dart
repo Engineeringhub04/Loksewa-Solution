@@ -216,7 +216,17 @@ class AppModalShell extends StatelessWidget {
           borderRadius: BorderRadius.circular(borderRadius),
           child: Container(
             color: Colors.white,
-            child: Column(
+            // The card is ALWAYS white (never follows theme) — so the
+            // default text color is fixed dark. Explicit styles (red
+            // Delete, colored action buttons) override this; only
+            // theme-following text is affected. This fixes white-on-white
+            // text in dark mode app-wide.
+            child: DefaultTextStyle(
+              style: const TextStyle(
+                color: Color(0xFF0F172A),
+                decoration: TextDecoration.none,
+              ),
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -335,6 +345,7 @@ class AppModalShell extends StatelessWidget {
                 content,
               ],
             ),
+          ),
           ),
         ),
       ),

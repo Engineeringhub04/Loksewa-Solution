@@ -194,7 +194,7 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
         if (!mounted) return;
         context.pushReplacement('/discussion/${widget.editId}');
       } else {
-        await DiscussionService.createDiscussion(
+        final postId = await DiscussionService.createDiscussion(
           title: _isAdmin ? _titleCtrl.text.trim() : '',
           body: _bodyCtrl.text.trim(),
           category: categoryValue,
@@ -214,6 +214,29 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
           isAdmin: _isAdmin,
         );
         if (!mounted) return;
+        // Instant show: insert optimistically at the top of the feed
+        // (background refresh replaces with server data).
+        DiscussionTab.insertOptimistic(DiscussionPost(
+          id: postId,
+          title: _isAdmin ? _titleCtrl.text.trim() : '',
+          body: _bodyCtrl.text.trim(),
+          category: categoryValue,
+          authorName: authorName,
+          authorPhoto: profile?.photoURL,
+          authorId: uid,
+          courseId: courseInfo?.courseId,
+          subcourseId: courseInfo?.subcourseId,
+          courseName: courseInfo?.courseName,
+          subcourseName: courseInfo?.subcourseName,
+          imageUrl: _isAdmin && _imageCtrl.text.trim().isNotEmpty
+              ? _imageCtrl.text.trim()
+              : null,
+          linkUrl: _isAdmin && _linkCtrl.text.trim().isNotEmpty
+              ? _linkCtrl.text.trim()
+              : null,
+          isAdmin: _isAdmin,
+          createdAt: DateTime.now(),
+        ));
         DiscussionTab.requestRefresh();
         context.pop();
       }

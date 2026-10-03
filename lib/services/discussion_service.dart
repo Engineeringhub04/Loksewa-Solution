@@ -95,6 +95,30 @@ class DiscussionPost {
 
   static DateTime? _dt(Object? v) => v is DateTime ? v : null;
 
+  /// Display-only copy with an overridden field (e.g. live comment count
+  /// on the detail header — the stored counter is not the source of truth).
+  DiscussionPost copyWith({int? commentCount}) => DiscussionPost(
+        id: id,
+        title: title,
+        body: body,
+        category: category,
+        authorName: authorName,
+        authorPhoto: authorPhoto,
+        authorId: authorId,
+        courseId: courseId,
+        subcourseId: subcourseId,
+        courseName: courseName,
+        subcourseName: subcourseName,
+        imageUrl: imageUrl,
+        linkUrl: linkUrl,
+        isAdmin: isAdmin,
+        isSeed: isSeed,
+        likeCount: likeCount,
+        commentCount: commentCount ?? this.commentCount,
+        createdAt: createdAt,
+        editedAt: editedAt,
+      );
+
   factory DiscussionPost.fromMap(Map<String, dynamic> m) => DiscussionPost(
         id: '${m['id'] ?? ''}',
         title: _str(m['title']),

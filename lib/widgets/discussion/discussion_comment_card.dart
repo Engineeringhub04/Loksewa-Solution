@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import '../../services/discussion_service.dart';
 import 'discussion_avatar.dart';
 import 'discussion_heart_like.dart';
+import 'discussion_link_text.dart';
 import 'discussion_pressed.dart';
 
 class DiscussionCommentCard extends StatelessWidget {
@@ -111,8 +112,9 @@ class DiscussionCommentCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          Text(
-            comment.body,
+          DiscussionLinkText(
+            text: comment.body,
+            confirmBeforeOpen: true,
             style: const TextStyle(
               fontSize: 13,
               height: 1.5,
@@ -127,7 +129,7 @@ class DiscussionCommentCard extends StatelessWidget {
                 initialLiked: liked,
                 likeCount: comment.likeCount,
                 onToggle: onToggleLike,
-                heartSize: 16,
+                heartSize: 17,
                 compact: true,
                 popScale: 1.24,
                 popUpMs: 110,

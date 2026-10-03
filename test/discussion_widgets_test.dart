@@ -270,7 +270,10 @@ void main() {
       ));
       await tester.pump();
 
-      expect(find.text('Great explanation, thanks!'), findsOneWidget);
+      expect(
+          find.textContaining('Great explanation, thanks!',
+              findRichText: true),
+          findsOneWidget);
       expect(find.text('Sita'), findsOneWidget);
       // Reply indentation: 40px left padding + 2px connector line.
       expect(

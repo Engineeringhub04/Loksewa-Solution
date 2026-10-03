@@ -1,18 +1,28 @@
 // Discussion detail screen (/discussion/:id).
-// Mirrors app/discussion/[id].tsx:
-// - header card: title, admin accent, meta (author/course/date), image with
-//   global viewer, tappable body links, heart like + live comment count +
-//   share + overflow menu
-// - comments ascending, like states per comment, replies lazy + expandable
-// - bottom composer (signed-in only); offline comments silently queued
-// - NO comment editing anywhere; editedAt is written but never displayed
-// - commentCount shown = live comments length (not the doc counter)
+//
+// BEHAVIOR mirrors app/discussion/[id].tsx exactly:
+// - post + comments one-shot fetch (orderBy createdAt asc), NO listeners
+// - header = shared DiscussionPostCard (full date-time, live comment count,
+//   no-op onTap); image → global viewer
+// - comments ascending; per-comment/reply like states (60s cache)
+// - lazy replies, ONE open thread at a time; inline reply composer
+// - bottom composer (signed-in only), send spinner, disabled when empty
+// - pull-to-refresh (post + comments); offline queue with "Queued" chip +
+//   auto-flush on reconnect
+// - menus: post → edit/delete (owner/admin) else report; comment/reply →
+//   delete (owner/admin) else report (reply reports use type 'comment')
+// - NO comment editing; editedAt never displayed
+// - deleted post → "This post has been deleted" state
+//
+// DESIGN is premium-modern (unique to Flutter): gradient band behind the
+// floating post card, floating comment cards with soft shadows, staggered
+// entrances, gradient reply rail, focus-elevating composer, 0.92 send
+// micro-interaction. All animations finite.
 import 'dart:async';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
@@ -20,16 +30,16 @@ import '../../services/discussion_service.dart';
 import '../../services/profile_service.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/discussion/discussion_action_menu.dart';
-import '../../widgets/discussion/discussion_avatar.dart';
 import '../../widgets/discussion/discussion_comment_card.dart';
 import '../../widgets/discussion/discussion_confirm_dialog.dart';
 import '../../widgets/discussion/discussion_heart_like.dart';
-import '../../widgets/discussion/discussion_link_text.dart';
+import '../../widgets/discussion/discussion_post_card.dart';
 import '../../widgets/discussion/discussion_report_dialog.dart';
 import '../../widgets/discussion/discussion_signin_prompt.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 class DiscussionDetailScreen extends StatefulWidget {
   final String id;
@@ -55,6 +65,11 @@ class _PendingItem {
 }
 
 class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
+  static const _bg = Color(0xFFF5F6FA);
+  static const _navy = Color(0xFF0F172A);
+  static const _grey = Color(0xFF64748B);
+  static const _border = Color(0xFFE2E8F0);
+
   DiscussionPost? _post;
   List<DiscussionComment> _comments = [];
   bool _loading = true;
@@ -66,13 +81,14 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
 
   final Map<String, List<DiscussionReply>> _replies = {};
   final Set<String> _repliesLoading = {};
-  final Set<String> _expanded = {};
+  String? _openReplyId;
 
   final List<_PendingItem> _pending = [];
   StreamSubscription<List<ConnectivityResult>>? _connSub;
 
   final TextEditingController _composer = TextEditingController();
   final FocusNode _composerFocus = FocusNode();
+  bool _composerFocused = false;
   final Map<String, TextEditingController> _replyControllers = {};
   final Set<String> _replySending = {};
   bool _sending = false;
@@ -86,9 +102,14 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _composerFocus.addListener(() {
+      if (mounted) setState(() => _composerFocused = _composerFocus.hasFocus);
+    });
+    _composer.addListener(() {
+      if (mounted) setState(() {});
+    });
     _load();
-    _connSub =
-        Connectivity().onConnectivityChanged.listen((results) {
+    _connSub = Connectivity().onConnectivityChanged.listen((results) {
       if (results.any((r) => r != ConnectivityResult.none) &&
           _pending.isNotEmpty) {
         _flushPending();
@@ -125,8 +146,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     try {
       final post = await DiscussionService.fetchDiscussion(widget.id);
       if (post == null) throw const _NotFoundException();
-      final comments =
-          await DiscussionService.fetchComments(widget.id);
+      final comments = await DiscussionService.fetchComments(widget.id);
       var postLiked = false;
       final commentLiked = <String, bool>{};
       if (_signedIn) {
@@ -158,8 +178,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
 
   Future<void> _refreshComments() async {
     try {
-      final comments =
-          await DiscussionService.fetchComments(widget.id);
+      final comments = await DiscussionService.fetchComments(widget.id);
       if (!mounted) return;
       setState(() => _comments = comments);
     } catch (_) {
@@ -188,8 +207,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       DiscussionComment c, bool liked, String? replyId) async {
     if (!_signedIn) _requireSignIn();
     try {
-      await DiscussionService.toggleCommentLike(
-          widget.id, c.id, liked, replyId);
+      await DiscussionService.toggleCommentLike(widget.id, c.id, liked, replyId);
       if (replyId == null) {
         _commentLiked[c.id] = liked;
       } else {
@@ -200,24 +218,16 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     }
   }
 
-  // ---------- Replies ----------
+  // ---------- Replies (lazy, one open thread at a time) ----------
 
-  Future<void> _toggleReplies(DiscussionComment c) async {
-    if (_expanded.contains(c.id)) {
-      setState(() => _expanded.remove(c.id));
-      return;
-    }
-    setState(() {
-      _expanded.add(c.id);
-      _repliesLoading.add(c.id);
-    });
+  Future<void> _loadReplies(DiscussionComment c) async {
+    setState(() => _repliesLoading.add(c.id));
     try {
-      final replies =
-          await DiscussionService.fetchReplies(widget.id, c.id);
+      final replies = await DiscussionService.fetchReplies(widget.id, c.id);
       final liked = <String, bool>{};
       if (_signedIn && replies.isNotEmpty) {
-        final results = await Future.wait(replies.map((r) =>
-            DiscussionService.isCommentLiked(widget.id, c.id, r.id)));
+        final results = await Future.wait(replies.map(
+            (r) => DiscussionService.isCommentLiked(widget.id, c.id, r.id)));
         for (var i = 0; i < replies.length; i++) {
           liked['${c.id}__${replies[i].id}'] = results[i];
         }
@@ -230,10 +240,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _expanded.remove(c.id);
-        _repliesLoading.remove(c.id);
-      });
+      setState(() => _repliesLoading.remove(c.id));
       showToast(
           context,
           AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
@@ -241,16 +248,24 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     }
   }
 
-  // ---------- Composer ----------
+  /// "View replies" — toggles the single open thread.
+  void _toggleReplyThread(DiscussionComment c) {
+    if (_openReplyId == c.id) {
+      setState(() => _openReplyId = null);
+      return;
+    }
+    setState(() => _openReplyId = c.id);
+    _loadReplies(c);
+  }
 
+  /// "Reply" — always opens the thread and (re)loads it.
   void _startReply(DiscussionComment c) {
     if (!_signedIn) {
       DiscussionSignInPrompt.show(context);
       return;
     }
-    if (!_expanded.contains(c.id)) {
-      _toggleReplies(c);
-    }
+    setState(() => _openReplyId = c.id);
+    _loadReplies(c);
   }
 
   String _authorName() {
@@ -259,7 +274,19 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     return name.isEmpty ? 'Anonymous' : name;
   }
 
-  /// Bottom composer: top-level comments only (Expo parity).
+  /// Comment/reply author photo with the signed-in fallback (Expo parity):
+  /// stored photo ?? (own item ? profile photo ?? auth photo : null).
+  String? _authorPhotoOf(DiscussionComment c) {
+    if ((c.authorPhoto ?? '').isNotEmpty) return c.authorPhoto;
+    if (_uid.isNotEmpty && c.authorId == _uid) {
+      return ProfileStore.instance.profile?.photoURL ??
+          AuthService.currentUser?.photoURL;
+    }
+    return null;
+  }
+
+  // ---------- Composers ----------
+
   Future<void> _submit() async {
     final text = _composer.text.trim();
     if (text.isEmpty || _sending) return;
@@ -270,7 +297,6 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     final profile = ProfileStore.instance.profile;
 
     if (!await _isOnline()) {
-      // Silently queued — flushed when connectivity returns.
       setState(() {
         _pending.add(_PendingItem(body: text));
         _composer.clear();
@@ -302,13 +328,11 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       setState(() => _sending = false);
       showToast(
           context,
-          AppLanguage.tr(
-              'Something went wrong', 'केही समस्या भयो'),
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
           ToastVariant.error);
     }
   }
 
-  /// Inline per-thread reply composer (Expo parity).
   Future<void> _submitReply(DiscussionComment c) async {
     final controller = _replyControllers[c.id];
     final text = controller?.text.trim() ?? '';
@@ -338,9 +362,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
         authorPhoto: profile?.photoURL,
         authorId: _uid,
       );
-      await _toggleRepliesRefresh(c);
+      final replies = await DiscussionService.fetchReplies(widget.id, c.id);
       if (!mounted) return;
       setState(() {
+        _replies[c.id] = replies;
         controller?.clear();
         _replySending.remove(c.id);
       });
@@ -353,19 +378,9 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       setState(() => _replySending.remove(c.id));
       showToast(
           context,
-          AppLanguage.tr(
-              'Something went wrong', 'केही समस्या भयो'),
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
           ToastVariant.error);
     }
-  }
-
-  Future<void> _toggleRepliesRefresh(DiscussionComment c) async {
-    try {
-      final replies =
-          await DiscussionService.fetchReplies(widget.id, c.id);
-      if (!mounted) return;
-      setState(() => _replies[c.id] = replies);
-    } catch (_) {}
   }
 
   Future<void> _flushPending() async {
@@ -417,9 +432,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       if (_canModerate(post.authorId))
         DiscussionMenuItem(
           label: AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्'),
-          onSelect: () => context
-              .push('/discussion/create?editId=${post.id}')
-              .then((_) => _load()),
+          onSelect: () =>
+              context.push('/discussion/create?editId=${post.id}').then((_) {
+            if (mounted) _load();
+          }),
         ),
       if (_canModerate(post.authorId))
         DiscussionMenuItem(
@@ -428,12 +444,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           onSelect: () async {
             final ok = await confirmDiscussionDelete(
               context: context,
-              title: AppLanguage.tr(
-                  'Delete this post?', 'यो पोस्ट मेट्ने हो?'),
+              title: AppLanguage.tr('Delete this post?', 'यो पोस्ट मेट्ने हो?'),
               message: AppLanguage.tr('This action cannot be undone.',
                   'यो काम फर्काउन मिल्दैन।'),
-              onConfirm: () =>
-                  DiscussionService.deleteDiscussion(post.id),
+              onConfirm: () => DiscussionService.deleteDiscussion(post.id),
             );
             if (ok && mounted) context.pop();
           },
@@ -450,8 +464,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
             if (ok == true && mounted) {
               showToast(
                   context,
-                  AppLanguage.tr(
-                      'Post reported', 'पोस्ट रिपोर्ट गरियो'),
+                  AppLanguage.tr('Post reported', 'पोस्ट रिपोर्ट गरियो'),
                   ToastVariant.success);
             }
           }),
@@ -480,22 +493,22 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                   'यो काम फर्काउन मिल्दैन।'),
               onConfirm: () => replyId == null
                   ? DiscussionService.deleteComment(widget.id, c.id)
-                  : DiscussionService.deleteReply(
-                      widget.id, c.id, replyId),
+                  : DiscussionService.deleteReply(widget.id, c.id, replyId),
             );
-            if (ok) {
+            if (ok && mounted) {
               if (replyId == null) {
                 await _refreshComments();
               } else {
-                await _toggleRepliesRefresh(c);
+                final replies =
+                    await DiscussionService.fetchReplies(widget.id, c.id);
+                if (mounted) setState(() => _replies[c.id] = replies);
               }
             }
           },
         ),
       if (!_canModerate(c.authorId))
         DiscussionMenuItem(
-          label:
-              AppLanguage.tr('Report comment', 'कमेन्ट रिपोर्ट गर्नुहोस्'),
+          label: AppLanguage.tr('Report comment', 'कमेन्ट रिपोर्ट गर्नुहोस्'),
           onSelect: () => DiscussionReportDialog.show(
             context: context,
             // Reply reports reuse the comment path/type (Expo parity).
@@ -508,8 +521,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
             if (ok == true && mounted) {
               showToast(
                   context,
-                  AppLanguage.tr(
-                      'Post reported', 'पोस्ट रिपोर्ट गरियो'),
+                  AppLanguage.tr('Post reported', 'पोस्ट रिपोर्ट गरियो'),
                   ToastVariant.success);
             }
           }),
@@ -520,39 +532,31 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
         context: context, anchorTopRight: anchor, items: items);
   }
 
-  void _share() {
-    final post = _post;
-    if (post == null) return;
-    Share.share(
-      '${post.title}\nhttps://www.kbr.com.np/discussion/${post.id}',
-      subject: 'Loksewa Solution',
-    );
-  }
-
   // ---------- Build ----------
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: Column(
-          children: [
-            SubpageHeader(
-              title: AppLanguage.tr('Discussion', 'छलफल'),
-              showBack: true,
-            ),
-            Expanded(child: _buildBody()),
-            if (_signedIn && _post != null) _buildComposer(),
-          ],
-        ),
+      backgroundColor: _bg,
+      body: Column(
+        children: [
+          SubpageHeader(
+            title: AppLanguage.tr('Comments', 'कमेन्टहरू'),
+            showBack: true,
+          ),
+          Expanded(child: _buildBody()),
+          if (_signedIn && _post != null && _error == null) _buildComposer(),
+        ],
       ),
     );
   }
 
   Widget _buildBody() {
     if (_loading) {
-      return Center(child: PreloadingWidget(label: AppLanguage.tr('Loading comments...', 'कमेन्टहरू लोड हुँदैछन्...')));
+      return Center(
+          child: PreloadingWidget(
+              label: AppLanguage.tr(
+                  'Loading comments...', 'कमेन्टहरू लोड हुँदैछन्...')));
     }
     if (_error != null || _post == null) {
       final notFound = _error is _NotFoundException;
@@ -562,9 +566,26 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.forum_outlined,
-                  size: 44, color: Color(0xFF94A3B8)),
-              const SizedBox(height: 12),
+              Container(
+                width: 76,
+                height: 76,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: _border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _navy.withValues(alpha: 0.06),
+                      blurRadius: 16,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: const Icon(Icons.forum_outlined,
+                    size: 34, color: Color(0xFF94A3B8)),
+              ),
+              const SizedBox(height: 16),
               Text(
                 notFound
                     ? AppLanguage.tr('This post has been deleted',
@@ -573,13 +594,18 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                         'Something went wrong', 'केही समस्या भयो'),
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: _navy,
                     decoration: TextDecoration.none),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: _load,
+                style: ElevatedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
                 child: Text(AppLanguage.tr('Retry', 'पुन: प्रयास'),
                     style:
                         const TextStyle(decoration: TextDecoration.none)),
@@ -595,359 +621,32 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
         await _flushPending();
       },
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+        padding: const EdgeInsets.only(bottom: 28),
         children: [
-          _buildHeaderCard(),
-          const SizedBox(height: 16),
-          _buildCommentsHeader(),
-          const SizedBox(height: 8),
+          _buildPostHeader(),
+          _buildCommentsHeading(),
           ..._pending.map(_buildPendingCard),
-          ..._comments.map(_buildCommentThread),
+          ..._comments.asMap().entries.map(
+              (e) => _buildThread(e.value, e.key)),
           if (_comments.isEmpty && _pending.isEmpty)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Text(
-                  AppLanguage.tr('No comments yet.',
-                      'अहिलेसम्म कुनै कमेन्ट छैन।'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 13,
-                      color: Color(0xFF64748B),
-                      decoration: TextDecoration.none),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildHeaderCard() {
-    final post = _post!;
-    final primary = Theme.of(context).colorScheme.primary;
-    const grey = Color(0xFF64748B);
-    final courseLabel = [
-      if ((post.courseName ?? '').isNotEmpty) post.courseName!,
-      if ((post.subcourseName ?? '').isNotEmpty) post.subcourseName!,
-    ].join(' • ');
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (post.isAdmin)
-              Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: primary,
-                  borderRadius: const BorderRadius.horizontal(
-                      left: Radius.circular(16)),
-                ),
-              ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        DiscussionAvatar(
-                            photoUrl: post.authorPhoto,
-                            name: post.authorName,
-                            radius: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                post.authorName,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: post.isAdmin
-                                      ? primary
-                                      : const Color(0xFF0F172A),
-                                  decoration: TextDecoration.none,
-                                ),
-                              ),
-                              Text(
-                                formatDiscussionDetailDateTime(
-                                    post.createdAt),
-                                style: const TextStyle(
-                                    fontSize: 11,
-                                    color: grey,
-                                    decoration: TextDecoration.none),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (courseLabel.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        courseLabel,
-                        style: const TextStyle(
-                            fontSize: 11,
-                            color: grey,
-                            decoration: TextDecoration.none),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    Text(
-                      post.title,
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: post.isAdmin
-                            ? primary
-                            : const Color(0xFF0F172A),
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                    if (post.body.trim().isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      DiscussionLinkText(
-                        text: post.body,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          height: 1.5,
-                          color: Color(0xFF334155),
-                          decoration: TextDecoration.none,
-                        ),
-                      ),
-                    ],
-                    if ((post.imageUrl ?? '').trim().isNotEmpty) ...[
-                      const SizedBox(height: 10),
-                      GestureDetector(
-                        onTap: () => showImageViewer(
-                            context, NetworkImage(post.imageUrl!.trim())),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(10),
-                          child: Image.network(
-                            post.imageUrl!.trim(),
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const SizedBox(),
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        DiscussionHeartLike(
-                          initialLiked: _postLiked,
-                          likeCount: post.likeCount,
-                          onToggle: _togglePostLike,
-                        ),
-                        const SizedBox(width: 16),
-                        const Icon(Icons.chat_bubble_outline,
-                            size: 18, color: grey),
-                        const SizedBox(width: 4),
-                        Text(
-                          '$_liveCommentCount',
-                          style: const TextStyle(
-                              fontSize: 13,
-                              color: grey,
-                              decoration: TextDecoration.none),
-                        ),
-                        const Spacer(),
-                        IconButton(
-                          icon: const Icon(Icons.share_outlined,
-                              size: 20, color: grey),
-                          tooltip: AppLanguage.tr('Share', 'सेयर'),
-                          onPressed: _share,
-                        ),
-                        Builder(
-                          builder: (menuCtx) => IconButton(
-                            icon: const Icon(Icons.more_vert,
-                                size: 20, color: grey),
-                            onPressed: () {
-                              final box = menuCtx.findRenderObject()
-                                  as RenderBox;
-                              final pos = box.localToGlobal(
-                                  Offset(box.size.width, box.size.height));
-                              _postMenu(pos);
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCommentsHeader() {
-    return Text(
-      '${AppLanguage.tr('Comments', 'कमेन्टहरू')} ($_liveCommentCount)',
-      style: const TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF0F172A),
-          decoration: TextDecoration.none),
-    );
-  }
-
-  Widget _buildPendingCard(_PendingItem item) {
-    return Opacity(
-      opacity: 0.6,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text(
-                  item.replyToId != null
-                      ? '${AppLanguage.tr('Reply to', 'लाई जवाफ')} ${item.replyToName ?? ''}'
-                      : AppLanguage.tr('Comment', 'कमेन्ट'),
-                  style: const TextStyle(
-                      fontSize: 11,
-                      color: Color(0xFF64748B),
-                      decoration: TextDecoration.none),
-                ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFEF3C7),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    AppLanguage.tr('Queued', 'पर्खाइमा'),
-                    style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFB45309),
-                        decoration: TextDecoration.none),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              item.body,
-              style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF334155),
-                  decoration: TextDecoration.none),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCommentThread(DiscussionComment c) {
-    final expanded = _expanded.contains(c.id);
-    final replies = _replies[c.id] ?? const <DiscussionReply>[];
-    final loading = _repliesLoading.contains(c.id);
-    final primary = Theme.of(context).colorScheme.primary;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          DiscussionCommentCard(
-            comment: c,
-            isReply: false,
-            liked: _commentLiked[c.id] ?? false,
-            onToggleLike: (liked) => _toggleCommentLike(c, liked, null),
-            onMenu: (anchor) => _commentMenu(c, null, anchor),
-          ),
-          // Replies toggle + Reply button (rendered by the screen, Expo parity).
-          Padding(
-            padding: const EdgeInsets.only(left: 40, top: 4),
-            child: Row(
-              children: [
-                GestureDetector(
-                  onTap: () => _toggleReplies(c),
-                  child: Text(
-                    expanded
-                        ? AppLanguage.tr(
-                            'Hide replies', 'रिप्लाइ लुकाउनुहोस्')
-                        : AppLanguage.tr(
-                            'View replies', 'रिप्लाइ हेर्नुहोस्'),
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: primary,
-                        decoration: TextDecoration.none),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                GestureDetector(
-                  onTap: () => _startReply(c),
-                  child: Text(
-                    AppLanguage.tr('Reply', 'रिप्लाइ'),
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: primary,
-                        decoration: TextDecoration.none),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (expanded)
-            Container(
-              margin: const EdgeInsets.only(left: 24, top: 8),
-              padding: const EdgeInsets.only(left: 10),
-              decoration: const BoxDecoration(
-                border: Border(
-                    left: BorderSide(
-                        color: Color(0xFFE2E8F0), width: 2)),
-              ),
+              padding: const EdgeInsets.symmetric(vertical: 48),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (loading)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8),
-                      child: SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2),
-                      ),
-                    ),
-                  for (final r in replies)
-                    DiscussionCommentCard(
-                      comment: r,
-                      isReply: true,
-                      liked:
-                          _replyLiked['${c.id}__${r.id}'] ?? false,
-                      onToggleLike: (liked) =>
-                          _toggleCommentLike(c, liked, r.id),
-                      onMenu: (anchor) =>
-                          _commentMenu(c, r.id, anchor),
-                    ),
-                  if (_signedIn) _buildInlineReplyComposer(c),
+                  Icon(Icons.chat_bubble_outline,
+                      size: 40,
+                      color: _grey.withValues(alpha: 0.5)),
+                  const SizedBox(height: 12),
+                  Text(
+                    AppLanguage.tr(
+                        'No comments yet.', 'अहिलेसम्म कुनै कमेन्ट छैन।'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 14,
+                        color: _grey,
+                        decoration: TextDecoration.none),
+                  ),
                 ],
               ),
             ),
@@ -956,13 +655,324 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     );
   }
 
+  /// Gradient band with the shared post card floating over it.
+  Widget _buildPostHeader() {
+    final post = _post!;
+    final imageUrl = (post.imageUrl ?? '').trim();
+    return Stack(
+      children: [
+        Container(
+          height: 132,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Color(0xFF2563EB),
+                Color(0xFF1D4ED8),
+                Color(0xFF0B1F5B),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.only(
+              bottomLeft: Radius.circular(28),
+              bottomRight: Radius.circular(28),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 72, left: 16, right: 16),
+          child: DiscussionPostCard(
+            post: post.copyWith(commentCount: _liveCommentCount),
+            liked: _postLiked,
+            onToggleLike: _togglePostLike,
+            onTap: () {}, // no-op on detail (Expo parity)
+            onMenu: _postMenu,
+            timestampOverride:
+                formatDiscussionDetailDateTime(post.createdAt),
+            onImageTap: imageUrl.isNotEmpty
+                ? () => showImageViewer(context, NetworkImage(imageUrl))
+                : null,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCommentsHeading() {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 22, 16, 12),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 20,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [primary, primary.withValues(alpha: 0.4)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            AppLanguage.tr('Comments', 'कमेन्टहरू'),
+            style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: _navy,
+                decoration: TextDecoration.none),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: primary.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              '$_liveCommentCount',
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: primary,
+                  decoration: TextDecoration.none),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPendingCard(_PendingItem item) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Opacity(
+        opacity: 0.75,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: const Color(0xFFB45309).withValues(alpha: 0.3)),
+            boxShadow: [
+              BoxShadow(
+                color: _navy.withValues(alpha: 0.05),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    item.replyToId != null
+                        ? '${AppLanguage.tr('Reply to', 'लाई जवाफ')} ${item.replyToName ?? ''}'
+                        : AppLanguage.tr('Comment', 'कमेन्ट'),
+                    style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: _grey,
+                        decoration: TextDecoration.none),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      AppLanguage.tr('Queued', 'पर्खाइमा'),
+                      style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFFB45309),
+                          decoration: TextDecoration.none),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                item.body,
+                style: const TextStyle(
+                    fontSize: 13,
+                    color: Color(0xFF334155),
+                    decoration: TextDecoration.none),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// One comment thread: floating card + View replies/Reply buttons +
+  /// gradient-railed replies + inline composer. Staggered entrance.
+  Widget _buildThread(DiscussionComment c, int index) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final open = _openReplyId == c.id;
+    final replies = _replies[c.id] ?? const <DiscussionReply>[];
+    final loadingReplies = _repliesLoading.contains(c.id);
+    return SyllabusEntrance(
+      key: ValueKey('thread_${c.id}'),
+      delayMs: (index * 60).clamp(0, 480),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: _border.withValues(alpha: 0.7)),
+            boxShadow: [
+              BoxShadow(
+                color: _navy.withValues(alpha: 0.06),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DiscussionCommentCard(
+                comment: DiscussionComment(
+                  id: c.id,
+                  body: c.body,
+                  authorName: c.authorName,
+                  authorPhoto: _authorPhotoOf(c),
+                  authorId: c.authorId,
+                  likeCount: c.likeCount,
+                  createdAt: c.createdAt,
+                  editedAt: c.editedAt,
+                ),
+                isReply: false,
+                liked: _commentLiked[c.id] ?? false,
+                onToggleLike: (liked) =>
+                    _toggleCommentLike(c, liked, null),
+                onMenu: (anchor) => _commentMenu(c, null, anchor),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(left: 46, top: 10),
+                child: Row(
+                  children: [
+                    _TextButton(
+                      label: open
+                          ? AppLanguage.tr(
+                              'Hide replies', 'रिप्लाइ लुकाउनुहोस्')
+                          : AppLanguage.tr(
+                              'View replies', 'रिप्लाइ हेर्नुहोस्'),
+                      active: open,
+                      onTap: () => _toggleReplyThread(c),
+                    ),
+                    const SizedBox(width: 8),
+                    _TextButton(
+                      label: AppLanguage.tr('Reply', 'रिप्लाइ'),
+                      onTap: () => _startReply(c),
+                    ),
+                  ],
+                ),
+              ),
+              if (open) ...[
+                const SizedBox(height: 10),
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Refined gradient rail.
+                      Container(
+                        width: 3,
+                        margin:
+                            const EdgeInsets.only(left: 21, right: 12),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              primary.withValues(alpha: 0.55),
+                              primary.withValues(alpha: 0.08),
+                            ],
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                          ),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.stretch,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (loadingReplies)
+                              const Padding(
+                                padding:
+                                    EdgeInsets.symmetric(vertical: 10),
+                                child: SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2),
+                                ),
+                              ),
+                            for (final r in replies)
+                              Padding(
+                                padding:
+                                    const EdgeInsets.only(bottom: 8),
+                                child: DiscussionCommentCard(
+                                  comment: DiscussionComment(
+                                    id: r.id,
+                                    body: r.body,
+                                    authorName: r.authorName,
+                                    authorPhoto: _authorPhotoOf(r),
+                                    authorId: r.authorId,
+                                    likeCount: r.likeCount,
+                                    createdAt: r.createdAt,
+                                    editedAt: r.editedAt,
+                                  ),
+                                  isReply: false,
+                                  liked:
+                                      _replyLiked['${c.id}__${r.id}'] ??
+                                          false,
+                                  onToggleLike: (liked) =>
+                                      _toggleCommentLike(
+                                          c, liked, r.id),
+                                  onMenu: (anchor) =>
+                                      _commentMenu(c, r.id, anchor),
+                                ),
+                              ),
+                            if (_signedIn)
+                              _buildInlineReplyComposer(c),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInlineReplyComposer(DiscussionComment c) {
     final primary = Theme.of(context).colorScheme.primary;
-    final controller = _replyControllers.putIfAbsent(
-        c.id, () => TextEditingController());
+    final controller =
+        _replyControllers.putIfAbsent(c.id, () => TextEditingController());
     final sending = _replySending.contains(c.id);
     return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 4),
+      padding: const EdgeInsets.only(top: 4),
       child: Row(
         children: [
           Expanded(
@@ -982,9 +992,9 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 filled: true,
                 fillColor: const Color(0xFFF1F5F9),
                 contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 8),
+                    horizontal: 12, vertical: 9),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(14),
                   borderSide: BorderSide.none,
                 ),
               ),
@@ -992,97 +1002,201 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                   fontSize: 13, decoration: TextDecoration.none),
             ),
           ),
-          const SizedBox(width: 6),
-          GestureDetector(
-            onTap: sending ? null : () => _submitReply(c),
-            child: Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: primary.withValues(alpha: sending ? 0.45 : 1.0),
-                shape: BoxShape.circle,
-              ),
-              child: Center(
-                child: sending
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.send,
-                        size: 15, color: Colors.white),
-              ),
-            ),
+          const SizedBox(width: 8),
+          _SendButton(
+            size: 40,
+            radius: 13,
+            loading: sending,
+            onTap: () => _submitReply(c),
           ),
         ],
       ),
     );
   }
 
+  /// Bottom composer — focus elevation + 0.92 send micro-interaction.
   Widget _buildComposer() {
     final primary = Theme.of(context).colorScheme.primary;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+        border: const Border(top: BorderSide(color: _border)),
+        boxShadow: _composerFocused
+            ? [
+                BoxShadow(
+                  color: primary.withValues(alpha: 0.12),
+                  blurRadius: 24,
+                  offset: const Offset(0, -8),
+                ),
+              ]
+            : null,
       ),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       child: SafeArea(
         top: false,
-        child: Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _composer,
-                focusNode: _composerFocus,
-                minLines: 1,
-                maxLines: 4,
-                textInputAction: TextInputAction.send,
-                onSubmitted: (_) => _submit(),
-                decoration: InputDecoration(
-                  hintText: AppLanguage.tr(
-                      'Write a comment...', 'कमेन्ट लेख्नुहोस्...'),
-                  hintStyle: const TextStyle(
-                      color: Color(0xFF94A3B8),
-                      decoration: TextDecoration.none),
-                  filled: true,
-                  fillColor: const Color(0xFFF1F5F9),
-                  contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  border: OutlineInputBorder(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  decoration: BoxDecoration(
+                    color: _composerFocused
+                        ? Colors.white
+                        : const Color(0xFFF1F5F9),
                     borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none,
+                    border: Border.all(
+                      color: _composerFocused ? primary : Colors.transparent,
+                      width: 1.5,
+                    ),
+                    boxShadow: _composerFocused
+                        ? [
+                            BoxShadow(
+                              color:
+                                  primary.withValues(alpha: 0.12),
+                              blurRadius: 12,
+                              offset: const Offset(0, 4),
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: TextField(
+                    controller: _composer,
+                    focusNode: _composerFocus,
+                    minLines: 1,
+                    maxLines: 4,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _submit(),
+                    decoration: InputDecoration(
+                      hintText: AppLanguage.tr(
+                          'Write a comment...', 'कमेन्ट लेख्नुहोस्...'),
+                      hintStyle: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          decoration: TextDecoration.none),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 11),
+                    ),
+                    style: const TextStyle(
+                        fontSize: 14,
+                        decoration: TextDecoration.none),
                   ),
                 ),
-                style: const TextStyle(
-                    fontSize: 14, decoration: TextDecoration.none),
               ),
-            ),
-            const SizedBox(width: 8),
-            GestureDetector(
-              onTap: _submit,
-              child: Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: primary,
-                  shape: BoxShape.circle,
-                ),
-                child: Center(
-                  child: _sending
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Icon(Icons.send,
-                          size: 18, color: Colors.white),
-                ),
+              const SizedBox(width: 8),
+              _SendButton(
+                size: 46,
+                radius: 15,
+                loading: _sending,
+                disabled:
+                    _sending || _composer.text.trim().isEmpty,
+                onTap: _submit,
               ),
-            ),
-          ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Primary text button (View replies / Reply) — pill highlight when active.
+class _TextButton extends StatelessWidget {
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _TextButton(
+      {required this.label, this.active = false, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color:
+              active ? primary.withValues(alpha: 0.1) : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: primary,
+              decoration: TextDecoration.none),
+        ),
+      ),
+    );
+  }
+}
+
+/// Send button with a finite 0.92 press micro-interaction + loading state.
+class _SendButton extends StatefulWidget {
+  final double size;
+  final double radius;
+  final bool loading;
+  final bool disabled;
+  final VoidCallback onTap;
+
+  const _SendButton({
+    required this.size,
+    required this.radius,
+    required this.onTap,
+    this.loading = false,
+    this.disabled = false,
+  });
+
+  @override
+  State<_SendButton> createState() => _SendButtonState();
+}
+
+class _SendButtonState extends State<_SendButton> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final dimmed = widget.disabled || widget.loading;
+    return GestureDetector(
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: dimmed ? null : widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.92 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        child: Container(
+          width: widget.size,
+          height: widget.size,
+          decoration: BoxDecoration(
+            color: primary.withValues(alpha: dimmed ? 0.45 : 1.0),
+            borderRadius: BorderRadius.circular(widget.radius),
+            boxShadow: dimmed
+                ? null
+                : [
+                    BoxShadow(
+                      color: primary.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+          ),
+          alignment: Alignment.center,
+          child: widget.loading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.send_rounded,
+                  size: 19, color: Colors.white),
         ),
       ),
     );

@@ -33,6 +33,9 @@ class DiscussionPostCard extends StatelessWidget {
   final ValueChanged<Offset> onMenu;
   final VoidCallback? onImageTap;
 
+  /// Detail header override: full date+time instead of the feed's date-only.
+  final String? timestampOverride;
+
   const DiscussionPostCard({
     super.key,
     required this.post,
@@ -41,6 +44,7 @@ class DiscussionPostCard extends StatelessWidget {
     required this.onTap,
     required this.onMenu,
     this.onImageTap,
+    this.timestampOverride,
   });
 
   static const _border = Color(0xFFE2E8F0);
@@ -171,7 +175,8 @@ class DiscussionPostCard extends StatelessWidget {
                       Row(
                         children: [
                           Text(
-                            formatDiscussionFeedDate(post.createdAt),
+                            timestampOverride ??
+                                formatDiscussionFeedDate(post.createdAt),
                             style: const TextStyle(
                               fontSize: 12,
                               color: _grey,

@@ -763,8 +763,8 @@ class _ProfileTabState extends State<ProfileTab> {
               label: 'Answer Review',
               subtitle: AppLanguage.tr('Review submitted exam answers',
                   'पेस गरिएका परीक्षा उत्तरहरू समीक्षा गर्नुहोस्'),
-              trailingText: 'Exams > Theory Desk',
-              onPress: () => TabsScreen.tabIndex.value = 1,
+              trailingText: AppLanguage.tr('Admin', 'प्रशासक'),
+              onPress: () => context.push('/admin/answers-review'),
             ),
             ProfileMenuRow(
               icon: const Icon(Icons.diamond_outlined),

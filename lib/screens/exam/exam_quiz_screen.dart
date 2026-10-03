@@ -8,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../services/firestore_rest.dart';
 import '../../services/profile_service.dart';
 import '../../services/theme_service.dart';
 import '../../theme/app_theme.dart';
@@ -365,6 +366,68 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     );
   }
 
+  /// Premium question card — the bookmark + report icons live on the card
+  /// itself (top-right), next to the "Question" label.
+  Widget _questionCard(ExpoPalette palette, ExamQuestion q) {
+    final uid = AuthService.currentUser?.uid ?? '';
+    final profile = ProfileStore.instance.profile;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: palette.border, width: 0.75),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(
+                AppLanguage.tr('Question', 'प्रश्न'),
+                style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.6,
+                    color: palette.textSecondary),
+              ),
+              const Spacer(),
+              _QuizBookmarkButton(
+                key: ValueKey('qbm_$_index'),
+                uid: uid,
+                setId: widget.setId,
+                index: _index,
+                question: q,
+                examTitle: _set?.title ?? '',
+                subcourseId: _set?.subcourseId ?? '',
+                isPro: profile?.isPremium == true,
+              ),
+              IconButton(
+                tooltip: AppLanguage.tr('Report', 'रिपोर्ट'),
+                onPressed: _reportQuestion,
+                icon: Icon(Icons.flag_outlined,
+                    size: 20, color: palette.textSecondary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(q.question,
+              style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  height: 26 / 16)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
@@ -640,10 +703,14 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                   children: [
                     Expanded(
                       // +24 top: the first 24px tuck under the header.
+                      // ValueKey(_index): every question change rebuilds the
+                      // subtree fresh so the option entrance animation replays
+                      // on ALL questions, not just the first.
                       child: ListView(
+                        key: ValueKey('q$_index'),
                         padding: const EdgeInsets.fromLTRB(16, 40, 16, 16),
                         children: [
-                          // Q pill + timer pill + report.
+                          // Q pill + timer pill.
                           Row(
                             children: [
                               Container(
@@ -688,22 +755,11 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
                                 ),
                               ),
                               const Spacer(),
-                              IconButton(
-                                tooltip: AppLanguage.tr(
-                                    'Report', 'रिपोर्ट'),
-                                onPressed: _reportQuestion,
-                                icon: Icon(Icons.flag_outlined,
-                                    size: 20,
-                                    color: palette.textSecondary),
-                              ),
                             ],
                           ),
                           const SizedBox(height: 16),
-                          Text(q.question,
-                              style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w600,
-                                  height: 26 / 16)),
+                          // Question card — bookmark + report live on it.
+                          _questionCard(palette, q),
                           const SizedBox(height: 16),
                           ...List.generate(q.options.length, (oi) {
                             final selected = _answers[_index] == oi;
@@ -894,6 +950,216 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Bookmark toggle for one exam-quiz question. Same storage scheme as the
+/// practice bookmark button (`exam__<ref>` docs under users/{uid}/bookmarks,
+/// context "exam", kind "question") so the Bookmarks screen renders them with
+/// no changes. Same free-tier cap: 15 per sub-course.
+class _QuizBookmarkButton extends StatefulWidget {
+  final String uid;
+  final String setId;
+  final int index;
+  final ExamQuestion question;
+  final String examTitle;
+  final String subcourseId;
+  final bool isPro;
+
+  const _QuizBookmarkButton({
+    super.key,
+    required this.uid,
+    required this.setId,
+    required this.index,
+    required this.question,
+    required this.examTitle,
+    required this.subcourseId,
+    required this.isPro,
+  });
+
+  @override
+  State<_QuizBookmarkButton> createState() => _QuizBookmarkButtonState();
+}
+
+class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
+  static const _freeLimit = 15;
+  bool _saved = false;
+  bool _busy = false;
+  Timer? _saveTimer;
+  int _opId = 0;
+
+  String get _refId => '${widget.setId}#${widget.index}';
+
+  String get _docId {
+    var ref = _refId
+        .replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-')
+        .replaceAll(RegExp(r'^-+|-+$'), '');
+    if (ref.length > 90) ref = ref.substring(0, 90);
+    if (ref.isEmpty) ref = 'item';
+    return 'exam__$ref';
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+  }
+
+  Future<void> _refresh() async {
+    if (widget.uid.isEmpty) return;
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final doc = await FirestoreRest.getDocument(
+        'users/${widget.uid}/bookmarks/$_docId',
+        idToken: idToken,
+      );
+      if (mounted) setState(() => _saved = doc != null);
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _saveTimer?.cancel();
+    super.dispose();
+  }
+
+  void _onTap() {
+    if (_busy || widget.uid.isEmpty) return;
+    if (_saved) {
+      _remove();
+      return;
+    }
+    setState(() => _busy = true);
+    _saveTimer?.cancel();
+    final op = ++_opId;
+    unawaited(_saveInBackground(op));
+    _saveTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _saved = true;
+      });
+      showToast(context,
+          AppLanguage.tr('Saved to bookmarks.', 'बुकमार्कमा बचत भयो।'),
+          ToastVariant.success);
+    });
+  }
+
+  Future<void> _saveInBackground(int op) async {
+    final path = 'users/${widget.uid}/bookmarks/$_docId';
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      final rows = await FirestoreRest.listDocuments(
+        'users/${widget.uid}/bookmarks',
+        idToken: idToken,
+      );
+      final scoped = widget.subcourseId.isEmpty
+          ? rows.length
+          : rows
+              .where((r) =>
+                  (r['subcourseId'] ?? '') == widget.subcourseId)
+              .length;
+      if (scoped >= _freeLimit && !widget.isPro) {
+        if (op != _opId || !mounted) return;
+        _saveTimer?.cancel();
+        setState(() => _busy = false);
+        showToast(
+            context,
+            AppLanguage.tr('Bookmark limit reached for this sub-course',
+                'यस उप-पाठ्यक्रमका लागि बुकमार्क सीमा पुग्यो'),
+            ToastVariant.warning);
+        return;
+      }
+      final q = widget.question;
+      await FirestoreRest.setDocument(
+        path,
+        {
+          'context': 'exam',
+          'kind': 'question',
+          'refId': _refId,
+          'title': q.question,
+          'preview': q.explanation,
+          'sourceLabel': widget.examTitle,
+          'subcourseId': widget.subcourseId,
+          'payload': {
+            'question': q.question,
+            'options': q.options,
+            'answerIndex': q.correctIndex,
+            'explanation': q.explanation,
+            'meta': widget.examTitle.isNotEmpty
+                ? [
+                    {'label': 'Exam', 'value': widget.examTitle}
+                  ]
+                : null,
+          },
+          'createdAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: idToken,
+      );
+    } catch (_) {
+      if (op != _opId || !mounted) return;
+      _saveTimer?.cancel();
+      setState(() {
+        _busy = false;
+        _saved = false;
+      });
+      showToast(
+          context,
+          AppLanguage.tr('Could not update the bookmark. Please try again.',
+              'बुकमार्क अद्यावधिक हुन सकेन। कृपया पुनः प्रयास गर्नुहोस्।'),
+          ToastVariant.error);
+    }
+  }
+
+  Future<void> _remove() async {
+    _opId++;
+    _saveTimer?.cancel();
+    setState(() => _busy = true);
+    try {
+      final idToken = await AuthService.getValidIdToken();
+      await FirestoreRest.deleteDocument(
+          'users/${widget.uid}/bookmarks/$_docId',
+          idToken: idToken);
+      if (!mounted) return;
+      setState(() {
+        _saved = false;
+        _busy = false;
+      });
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Removed from bookmarks.', 'बुकमार्कबाट हटाइयो।'),
+          ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      showToast(
+          context,
+          AppLanguage.tr('Could not update the bookmark. Please try again.',
+              'बुकमार्क अद्यावधिक हुन सकेन। कृपया पुनः प्रयास गर्नुहोस्।'),
+          ToastVariant.error);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return IconButton(
+      tooltip: AppLanguage.tr('Bookmark', 'बुकमार्क'),
+      onPressed: _onTap,
+      icon: _busy
+          ? SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: palette.textSecondary),
+            )
+          : Icon(
+              _saved ? Icons.bookmark : Icons.bookmark_outline,
+              size: 20,
+              color: _saved ? palette.primary : palette.textSecondary,
+            ),
     );
   }
 }

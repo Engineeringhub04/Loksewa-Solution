@@ -103,6 +103,7 @@ import '../screens/admin/admin_exam_purchases_screen.dart';
 import '../screens/admin/admin_exam_purchase_detail_screen.dart';
 import '../screens/admin/admin_content_purchase_detail_screen.dart';
 import '../screens/admin/admin_exam_answer_screen.dart';
+import '../screens/admin/admin_answers_review_screen.dart';
 import '../screens/admin/admin_purchase_details_screen.dart';
 import '../screens/admin/admin_report_history_screen.dart';
 import '../screens/admin/admin_report_detail_screen.dart';
@@ -519,6 +520,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/admin/exam-answer/:id',
       builder: (_, s) => AdminExamAnswerScreen(id: s.pathParameters['id']!),
+    ),
+    GoRoute(
+      path: '/admin/answers-review',
+      builder: (_, __) => const AdminAnswersReviewScreen(),
     ),
     GoRoute(
         path: '/admin/purchase-details',

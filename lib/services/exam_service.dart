@@ -1111,6 +1111,64 @@ Future<List<ExamRule>> fetchExamRules({
   return const [];
 }
 
+/// In-memory session cache for exam rules. Rules practically never change
+/// for a live set, so one fetch per (subcourse, province, section) per app
+/// session is enough — every later Rules popup opens instantly with ZERO
+/// Firestore reads. Pull-to-refresh / app start clears it (fresh fetch).
+final Map<String, List<ExamRule>> _examRulesCache = {};
+
+String _examRulesCacheKey({
+  String? subcourseId,
+  String? provinceId,
+  String? sectionId,
+}) =>
+    '${subcourseId ?? ''}|${provinceId ?? ''}|${sectionId ?? ''}';
+
+/// Cached variant of [fetchExamRules]: cache hit returns instantly with no
+/// reads; miss fetches once and populates the cache.
+Future<List<ExamRule>> fetchExamRulesCached({
+  String? courseId,
+  String? subcourseId,
+  String? provinceId,
+  String? sectionId,
+}) async {
+  final key = _examRulesCacheKey(
+    subcourseId: subcourseId,
+    provinceId: provinceId,
+    sectionId: sectionId,
+  );
+  final hit = _examRulesCache[key];
+  if (hit != null) return hit;
+  final rules = await fetchExamRules(
+    courseId: courseId,
+    subcourseId: subcourseId,
+    provinceId: provinceId,
+    sectionId: sectionId,
+  );
+  _examRulesCache[key] = rules;
+  return rules;
+}
+
+/// Fire-and-forget warm-up: call when a section's sets load so the first
+/// Rules popup opens instantly with no spinner and no extra reads.
+void prefetchExamRules({
+  String? courseId,
+  String? subcourseId,
+  String? provinceId,
+  String? sectionId,
+}) {
+  fetchExamRulesCached(
+    courseId: courseId,
+    subcourseId: subcourseId,
+    provinceId: provinceId,
+    sectionId: sectionId,
+  ).catchError((_) => const <ExamRule>[]);
+}
+
+/// Drops the rules session cache — full refresh (pull-to-refresh, app
+/// start) re-fetches fresh rules on next open.
+void clearExamRulesCache() => _examRulesCache.clear();
+
 /// Lists every exam attempt of a user across all sets (the whole
 /// `users/{uid}/exam_attempts` subcollection, newest attempt first).
 Future<List<ExamAttempt>> fetchAllExamAttempts(String uid) async {
@@ -1141,12 +1199,28 @@ class ExamAnswer {
   final String uid;
   final String examSetId;
   final String status; // pending | reviewed | ...
+  final String studentName;
+  final String profileName;
+  final String email;
+  final String examSetTitle;
+  final String sectionName;
+  final String message;
+  final String pdfUrl;
+  final String createdAt; // ISO string
 
   ExamAnswer({
     required this.id,
     required this.uid,
     required this.examSetId,
     required this.status,
+    this.studentName = '',
+    this.profileName = '',
+    this.email = '',
+    this.examSetTitle = '',
+    this.sectionName = '',
+    this.message = '',
+    this.pdfUrl = '',
+    this.createdAt = '',
   });
 
   factory ExamAnswer.fromMap(Map<String, dynamic> m) {
@@ -1156,8 +1230,20 @@ class ExamAnswer {
       uid: (fields['uid'] ?? '').toString(),
       examSetId: (fields['examSetId'] ?? '').toString(),
       status: (fields['status'] ?? 'pending').toString(),
+      studentName: (fields['studentName'] ?? '').toString(),
+      profileName: (fields['profileName'] ?? '').toString(),
+      email: (fields['email'] ?? '').toString(),
+      examSetTitle: (fields['examSetTitle'] ?? '').toString(),
+      sectionName: (fields['sectionName'] ?? '').toString(),
+      message: (fields['message'] ?? '').toString(),
+      pdfUrl: (fields['pdfUrl'] ?? '').toString(),
+      createdAt: (fields['createdAt'] ?? '').toString(),
     );
   }
+
+  /// Milliseconds since epoch for [createdAt], 0 when unparseable.
+  int get createdAtMillis =>
+      DateTime.tryParse(createdAt)?.millisecondsSinceEpoch ?? 0;
 }
 
 /// Mirrors fetchMyExamAnswersBySet (examAnswers.ts): the user's own answer
@@ -1175,6 +1261,62 @@ Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
     if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
   }
   return bySet;
+}
+
+/// Mirrors fetchAllExamAnswers (examAnswers.ts) — ADMIN ONLY: every theory
+/// answer submission, newest first. Powers the Answers Review desk.
+Future<List<ExamAnswer>> fetchAllExamAnswers() async {
+  final docs = await ExamRest.runQuery('app_exam_answers', limit: 500);
+  final answers = docs.map(ExamAnswer.fromMap).toList()
+    ..sort((a, b) => b.createdAtMillis.compareTo(a.createdAtMillis));
+  return answers;
+}
+
+const _examAnswerWebhookUrl = 'https://script.google.com/macros/s/AKfycbzBvEYD5q7hbqApGLrdeKlNoJmlyNdbs4VgA7vTaqY4lrCySIaX39xXXMM-UnrCxJeo/exec';
+
+/// Notifies the admin (via Discord) whenever a student submits a theory
+/// answer — mirrors examAnswerNotify.ts: POSTs to the small Apps Script web
+/// app (deployed from script.google.com, "Anyone" access) which relays a
+/// Discord embed. The Apps Script URL is public by design and holds no
+/// secret — it only relays a fixed shape onward to Discord.
+///
+/// Fire-and-forget: a failed notification must never block or fail the
+/// actual submission — callers swallow errors.
+Future<void> notifyExamAnswerSubmitted({
+  required String studentName,
+  required String courseName,
+  required String subcourseName,
+  required String examSetTitle,
+  required String message,
+  required String pdfUrl,
+}) async {
+  // Public relay URL (same value as EXPO_PUBLIC_EXAM_ANSWER_WEBHOOK_URL in
+  // the Expo app) — injected at push time from the Expo .env, never a
+  // secret: the Apps Script only relays a fixed shape onward to Discord.
+  const appsScriptUrl = _examAnswerWebhookUrl;
+  if (appsScriptUrl.isEmpty || appsScriptUrl.contains('REPLACE_WITH')) return;
+  try {
+    final res = await http
+        .post(
+          Uri.parse(appsScriptUrl),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'type': 'exam_answer_submitted',
+            'studentName': studentName,
+            'courseName': courseName,
+            'subcourseName': subcourseName,
+            'examSetTitle': examSetTitle,
+            'message': message,
+            'pdfUrl': pdfUrl,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw StateError('notify failed: ${res.statusCode}');
+    }
+  } catch (_) {
+    // Best-effort only.
+  }
 }
 
 /// Saves an attempt twice: private doc + public ranking row (best-effort).

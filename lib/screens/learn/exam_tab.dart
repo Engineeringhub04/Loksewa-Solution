@@ -12,6 +12,7 @@ import '../../services/profile_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 String _npDigits(String s) => s.replaceAllMapped(
       RegExp(r'[0-9]'),
@@ -91,6 +92,8 @@ class _ExamTabState extends State<ExamTab> {
 
   /// Full refresh — app start and pull-to-refresh only.
   Future<void> _load() async {
+    // Fresh rules on full refresh — the session cache is rebuilt below.
+    clearExamRulesCache();
     setState(() {
       _loading = true;
       _error = null;
@@ -246,6 +249,21 @@ class _ExamTabState extends State<ExamTab> {
         premium: _premiumActive(profile),
       );
       _sectionCache[key] = cache;
+      // Warm the rules session-cache for the visible sets' province combos
+      // (capped): the first Rules popup then opens instantly, zero reads.
+      final provincesToWarm = <String>{};
+      for (final s in sets) {
+        if (provincesToWarm.length >= 3) break;
+        final p = s.provinceId;
+        if (p.isNotEmpty) provincesToWarm.add(p);
+      }
+      for (final p in provincesToWarm) {
+        prefetchExamRules(
+          subcourseId: subcourseId,
+          provinceId: p,
+          sectionId: sectionId,
+        );
+      }
       // The user may have switched section/province mid-fetch — only apply
       // if this result still belongs to the visible tab.
       if (!mounted || _cacheKey != key) return;
@@ -640,8 +658,14 @@ class _ExamTabState extends State<ExamTab> {
           if (_cards.isEmpty)
             _emptyState(palette)
           else
-            ..._cards.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+            // Staggered syllabus entrance on the model cards.
+            ..._cards.asMap().entries.map((me) {
+              final i = me.key;
+              final e = me.value;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: SyllabusEntrance(
+                  delayMs: (i.clamp(0, 8)) * 60,
                   child: _ExamCard(
                     entry: e,
                     accentColor: Color(
@@ -654,7 +678,9 @@ class _ExamTabState extends State<ExamTab> {
                     onRankingPress: () =>
                         context.push('/exam/${e.set.id}/ranking'),
                   ),
-                )),
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -1433,7 +1459,10 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
   @override
   void initState() {
     super.initState();
-    fetchExamRules(
+    // Session-cached: first open per (subcourse, province, section) fetches
+    // (1-4 reads), every later open returns instantly with zero reads.
+    // _loadSection also prefetches, so this is usually a cache hit.
+    fetchExamRulesCached(
       subcourseId: widget.set.subcourseId,
       provinceId: widget.set.provinceId,
       sectionId: widget.set.sectionId,
@@ -1456,13 +1485,19 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
     const accent = Color(0xFF2563EB);
     final rules = _rules;
     return AppModalShell(
-      // React AppDialog parity: maxWidth 340, content capped at 80% of the
-      // screen with internal scroll + auto-creep for long rule lists.
+      // Daily-limit-sized card (maxWidth 340): compact 60% height cap with
+      // internal scroll + auto-creep for long rule lists. Full blue
+      // gradient header — accentMid/accentLight/tagColor must be blue too,
+      // they default to logo orange.
       maxWidth: 340,
-      contentMaxHeight: MediaQuery.of(context).size.height * 0.8,
+      contentMaxHeight: MediaQuery.of(context).size.height * 0.6,
       scrollHint: true,
       scrollController: _scrollController,
       autoScroll: true,
+      accent: accent,
+      accentMid: const Color(0xFF60A5FA),
+      accentLight: const Color(0xFFBFDBFE),
+      tagColor: accent,
       icon: Container(
         width: 56,
         height: 56,
@@ -1478,7 +1513,6 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
         widget.set.title,
         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
       ),
-      accent: accent,
       body: rules == null
           ? const Padding(
               padding: EdgeInsets.all(32),
@@ -1572,6 +1606,8 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                             fontWeight:
                                                 FontWeight.bold,
                                             fontSize: 14,
+                                            // Explicit ink color: never dim.
+                                            color: Color(0xFF0F172A),
                                           ),
                                         ),
                                       ),
@@ -1580,10 +1616,11 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                   const SizedBox(height: 2),
                                   Text(
                                     rules[i].description,
-                                    style: TextStyle(
+                                    style: const TextStyle(
                                       fontSize: 13,
                                       height: 19 / 13,
-                                      color: palette.textSecondary,
+                                      // Slate-600: readable, never washed.
+                                      color: Color(0xFF475569),
                                     ),
                                   ),
                                 ],
@@ -1608,8 +1645,14 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: accent,
                 foregroundColor: Colors.white,
+                disabledBackgroundColor: accent.withValues(alpha: 0.4),
+                disabledForegroundColor: Colors.white,
               ),
-              onPressed: () => Navigator.of(context).pop(true),
+              // Gated: not clickable until the rules have actually loaded
+              // and shown — no starting blind while the spinner runs.
+              onPressed: rules == null
+                  ? null
+                  : () => Navigator.of(context).pop(true),
               child: Text(widget.mode == _RulesMode.start
                   ? AppLanguage.tr('Start Quiz', 'क्विज सुरु गर्नुहोस्')
                   : AppLanguage.tr('OK', 'ठीक छ')),

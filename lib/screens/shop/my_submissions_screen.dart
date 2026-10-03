@@ -76,6 +76,36 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
     return 0;
   }
 
+  Color _toneOf(Map<String, dynamic> a, ExpoPalette pal) {
+    final reviewed = a['status']?.toString() == 'reviewed';
+    if (!reviewed) return pal.warning;
+    return a['passed'] == true ? pal.success : pal.danger;
+  }
+
+  static const _devDigits = '०१२३४५६७८९';
+  String _dev(String s) => s.replaceAllMapped(
+      RegExp(r'[0-9]'), (m) => _devDigits[int.parse(m.group(0)!)]);
+
+  static const _monthsEn = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ];
+  static const _monthsNe = [
+    'जनवरी', 'फेब्रुअरी', 'मार्च', 'अप्रिल', 'मे', 'जुन',
+    'जुलाई', 'अगस्ट', 'सेप्टेम्बर', 'अक्टोबर', 'नोभेम्बर', 'डिसेम्बर'
+  ];
+
+  /// Timeline date chip label, e.g. "3 Oct 2026" / "३ अक्टोबर २०२६".
+  String _dateLabel(dynamic raw) {
+    final ms = _millis(raw);
+    if (ms == 0) return '';
+    final d = DateTime.fromMillisecondsSinceEpoch(ms);
+    if (AppLanguage.isNepali) {
+      return _dev('${d.day} ${_monthsNe[d.month - 1]} ${d.year}');
+    }
+    return '${d.day} ${_monthsEn[d.month - 1]} ${d.year}';
+  }
+
   String _docId(Map<String, dynamic> d) => d['id']?.toString() ?? '';
 
   String _timeAgo(dynamic raw) {
@@ -125,18 +155,29 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
                             children: [
                               SyllabusEntrance(
                                   delayMs: 0, child: _hero(pal)),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
+                              // Timeline: vertical rail with a status-toned
+                              // dot per submission, date chip above each card.
                               for (var i = 0; i < _items.length; i++) ...[
-                                if (i > 0) const SizedBox(height: 10),
+                                if (i > 0) const SizedBox(height: 14),
                                 SyllabusEntrance(
                                   delayMs: (i.clamp(0, 8) + 1) * 60,
-                                  child: _SubmissionCard(
-                                    key: ValueKey(_docId(_items[i])),
-                                    answer: _items[i],
-                                    pal: pal,
-                                    timeAgo: _timeAgo(_items[i]['createdAt']),
-                                    onTap: () => context.push(
-                                        '/exam-answer/${_docId(_items[i])}'),
+                                  child: _TimelineItem(
+                                    isFirst: i == 0,
+                                    isLast: i == _items.length - 1,
+                                    tone: _toneOf(_items[i], pal),
+                                    dateLabel:
+                                        _dateLabel(_items[i]['createdAt']),
+                                    child: _SubmissionCard(
+                                      key: ValueKey(
+                                          _docId(_items[i])),
+                                      answer: _items[i],
+                                      pal: pal,
+                                      timeAgo:
+                                          _timeAgo(_items[i]['createdAt']),
+                                      onTap: () => context.push(
+                                          '/exam-answer/${_docId(_items[i])}'),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -360,6 +401,110 @@ class _StatTile extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// One timeline row: vertical rail (status-toned dot + connectors) with a
+/// date chip and the submission card to its right.
+class _TimelineItem extends StatelessWidget {
+  final bool isFirst;
+  final bool isLast;
+  final Color tone;
+  final String dateLabel;
+  final Widget child;
+
+  const _TimelineItem({
+    required this.isFirst,
+    required this.isLast,
+    required this.tone,
+    required this.dateLabel,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final lineColor = pal.border;
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Rail.
+          SizedBox(
+            width: 24,
+            child: Column(
+              children: [
+                Container(
+                  width: 2,
+                  height: 22,
+                  color: isFirst ? Colors.transparent : lineColor,
+                ),
+                Container(
+                  width: 15,
+                  height: 15,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: tone,
+                    border: Border.all(
+                        color: pal.background, width: 3),
+                    boxShadow: [
+                      BoxShadow(
+                        color: tone.withValues(alpha: 0.45),
+                        blurRadius: 7,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    color:
+                        isLast ? Colors.transparent : lineColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Date chip + card.
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (dateLabel.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(
+                        left: 2, bottom: 6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: tone.withValues(alpha: 0.10),
+                        borderRadius:
+                            BorderRadius.circular(999),
+                        border: Border.all(
+                            color:
+                                tone.withValues(alpha: 0.22),
+                            width: 0.75),
+                      ),
+                      child: Text(
+                        dateLabel,
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: tone),
+                      ),
+                    ),
+                  ),
+                child,
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

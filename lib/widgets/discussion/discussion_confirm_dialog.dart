@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_language.dart';
+import '../../theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 
 class DiscussionConfirmDialog {
@@ -75,6 +76,7 @@ class _ShellBodyState extends State<_ShellBody> {
   @override
   Widget build(BuildContext context) {
     const danger = Color(0xFFDC2626);
+    final palette = ExpoPalette.of(context);
     return AppModalShell(
       accent: danger,
       accentMid: const Color(0xFFEF4444),
@@ -96,10 +98,10 @@ class _ShellBodyState extends State<_ShellBody> {
       title: Text(
         widget.title,
         textAlign: TextAlign.center,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.bold,
-          color: Color(0xFF0F172A),
+          color: palette.textPrimary,
           decoration: TextDecoration.none,
         ),
       ),
@@ -109,9 +111,9 @@ class _ShellBodyState extends State<_ShellBody> {
         children: [
           Text(widget.message,
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 13,
-                  color: Color(0xFF475569),
+                  color: palette.textSecondary,
                   decoration: TextDecoration.none)),
           if (_error != null) ...[
             const SizedBox(height: 8),

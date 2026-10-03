@@ -279,7 +279,11 @@ class _DiscussionTabState extends State<DiscussionTab> {
           'यो काम फर्काउन मिल्दैन।'),
       onConfirm: () => DiscussionService.deleteDiscussion(post.id),
     );
-    if (ok) _load(silent: true);
+    if (!ok || !mounted) return;
+    // Optimistic: remove immediately so the UI updates instantly,
+    // then refresh in background to confirm.
+    setState(() => _posts.removeWhere((p) => p.id == post.id));
+    _load(silent: true);
   }
 
   Future<void> _togglePin(DiscussionPost post) async {

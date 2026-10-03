@@ -12,6 +12,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../theme/app_theme.dart';
+
 class AppModalShell extends StatelessWidget {
   /// Pre-built icon tile (e.g. a rounded square container with an icon).
   final Widget icon;
@@ -151,14 +153,16 @@ class AppModalShell extends StatelessWidget {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     // Body scrolls, footer stays fixed. When [contentMaxHeight] is set,
     // ONLY the body region is capped and scrolls internally — the gradient
     // header (icon, tag, title) stays fixed on top AND the footer (action
     // buttons) stays fixed below, so actions are always reachable without
     // scrolling.
     final bodyWidget = Container(
-      color: Colors.white,
+      color: palette.surface,
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
       child: body,
     );
@@ -212,7 +216,7 @@ class AppModalShell extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(borderRadius),
           child: Container(
-            color: Colors.white,
+            color: palette.surface,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,

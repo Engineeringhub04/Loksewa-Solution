@@ -21,6 +21,7 @@ import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/discussion_service.dart';
 import '../../services/profile_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/discussion/discussion_post_card.dart';
@@ -79,10 +80,9 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
     if (_isEdit) {
       _loadPost();
     } else {
-      // Brief opening preloading for new posts too (visual feedback
-      // that the page is opening).
+      // 2-second opening preloading for new posts (user request).
       _loadingPost = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
+      Future.delayed(const Duration(seconds: 2), () {
         if (mounted) setState(() => _loadingPost = false);
       });
     }
@@ -111,8 +111,15 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
 
   Future<void> _loadPost() async {
     setState(() => _loadingPost = true);
+    // Minimum 2-second preloading (user request) — fetch and timer run
+    // together, preloading hides when BOTH are done.
+    final minWait = Future.delayed(const Duration(seconds: 2));
     try {
-      final post = await DiscussionService.fetchDiscussion(widget.editId!);
+      final results = await Future.wait([
+        DiscussionService.fetchDiscussion(widget.editId!),
+        minWait.then((_) => true),
+      ]);
+      final post = results[0] as DiscussionPost?;
       if (!mounted) return;
       if (post == null) {
         showToast(
@@ -225,7 +232,7 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
   Widget build(BuildContext context) {
     // No outer SafeArea: SubpageHeader is full-bleed under the status bar.
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F6FA),
+      backgroundColor: ExpoPalette.of(context).background,
       body: Column(
         children: [
           SubpageHeader(
@@ -249,15 +256,16 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
   }
 
   Widget _sectionCard({required Widget child}) {
+    final palette = ExpoPalette.of(context);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _border.withValues(alpha: 0.7)),
+        border: Border.all(color: palette.border.withValues(alpha: 0.7)),
         boxShadow: [
           BoxShadow(
-            color: _navy.withValues(alpha: 0.05),
+            color: palette.textPrimary.withValues(alpha: 0.05),
             blurRadius: 16,
             offset: const Offset(0, 8),
           ),
@@ -551,14 +559,15 @@ class _Label extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return Row(
       children: [
         Text(
           text,
-          style: const TextStyle(
+          style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF0F172A),
+              color: palette.textPrimary,
               decoration: TextDecoration.none),
         ),
         if (optional) ...[
@@ -567,15 +576,15 @@ class _Label extends StatelessWidget {
             padding:
                 const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
             decoration: BoxDecoration(
-              color: const Color(0xFFF1F5F9),
+              color: palette.surfaceAlt,
               borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               AppLanguage.tr('Optional', 'ऐच्छिक'),
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w600,
-                  color: Color(0xFF64748B),
+                  color: palette.textSecondary,
                   decoration: TextDecoration.none),
             ),
           ),
@@ -600,6 +609,7 @@ class _TextInput extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
     return TextField(
       controller: controller,
       minLines: multiline ? 6 : 1,
@@ -612,16 +622,16 @@ class _TextInput extends StatelessWidget {
             color: Color(0xFF94A3B8),
             decoration: TextDecoration.none),
         filled: true,
-        fillColor: const Color(0xFFF8FAFC),
+        fillColor: palette.surfaceAlt,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderSide: BorderSide(color: palette.border),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+          borderSide: BorderSide(color: palette.border),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
@@ -629,8 +639,10 @@ class _TextInput extends StatelessWidget {
               color: Theme.of(context).colorScheme.primary, width: 1.5),
         ),
       ),
-      style: const TextStyle(
-          fontSize: 14, decoration: TextDecoration.none),
+      style: TextStyle(
+          fontSize: 14,
+          color: palette.textPrimary,
+          decoration: TextDecoration.none),
     );
   }
 }

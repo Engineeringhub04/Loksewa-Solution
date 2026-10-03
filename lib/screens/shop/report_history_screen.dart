@@ -51,10 +51,11 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
               .catchError((_) => null);
       // Filtered query (not a blind list): the security rule only allows
       // reading own reports (or all for admins), so constrain server-side.
+      // No ORDER BY — Firestore needs a composite index for where+orderBy;
+      // we sort client-side instead.
       final raw = await ExamRest.runQuery(
         'app_report_history',
         where: ExamRest.fieldFilter('reporterId', 'EQUAL', uid ?? ''),
-        orderBy: [ExamRest.orderField('createdAt', 'DESCENDING')],
         limit: 200,
       );
       final mine = raw

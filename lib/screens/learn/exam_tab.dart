@@ -1489,7 +1489,7 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
       // 50% height cap) with tighter text so more rules fit on screen.
       // Full blue gradient — accentMid/accentLight/tagColor must be blue
       // too, they default to logo orange.
-      maxWidth: 300,
+      maxWidth: 320,
       contentMaxHeight: MediaQuery.of(context).size.height * 0.5,
       scrollHint: true,
       scrollController: _scrollController,

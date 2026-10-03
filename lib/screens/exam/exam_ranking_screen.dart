@@ -7,6 +7,7 @@ import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/profile_avatar.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Leaderboard for a single exam set — mirrors app/exam/[setId]/ranking.tsx
 /// same-to-same.
@@ -202,7 +203,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
                   _set?.title ??
                       AppLanguage.tr(
                           'Loading exam…', 'परीक्षा लोड हुँदै…'),
-                  maxLines: 2,
+                  maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style:
                       const TextStyle(color: _textDim, fontSize: 12),
@@ -317,7 +318,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
         Padding(
           padding:
               const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 14),
-          child: _podium(),
+          child: SyllabusEntrance(delayMs: 0, child: _podium()),
         ),
         // The list scrolls inside a darker rounded sheet.
         Expanded(
@@ -334,7 +335,8 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  _myCard(),
+                  SyllabusEntrance(
+                      delayMs: 0, child: _myCard()),
                   const SizedBox(height: 14),
                   Text(
                     AppLanguage.tr('Rankings', 'र्याङ्किङहरू'),
@@ -355,7 +357,12 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
                         .map((e) => Padding(
                               padding:
                                   const EdgeInsets.only(bottom: 10),
-                              child: _row(e.key + 4, e.value),
+                              child: SyllabusEntrance(
+                                delayMs:
+                                    (e.key.clamp(0, 8)) * 60,
+                                child:
+                                    _row(e.key + 4, e.value),
+                              ),
                             )),
                 ],
               ),
@@ -508,18 +515,6 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
           ),
           child: Column(
             children: [
-              Container(
-                height: 4,
-                decoration: BoxDecoration(
-                  color: filled
-                      ? Colors.white.withValues(alpha: 0.55)
-                      : Colors.white.withValues(alpha: 0.18),
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(10),
-                    topRight: Radius.circular(10),
-                  ),
-                ),
-              ),
               const Spacer(),
               Text('${theme.place}',
                   style: TextStyle(

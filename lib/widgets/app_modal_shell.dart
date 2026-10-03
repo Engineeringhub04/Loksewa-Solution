@@ -49,10 +49,11 @@ class AppModalShell extends StatelessWidget {
   /// Card corner radius.
   final double borderRadius;
 
-  /// When set, the body + footer region is capped at this height and made
+  /// When set, only the body region is capped at this height and made
   /// internally scrollable, while the gradient header (icon, tag, title)
-  /// stays fixed. Null (default) keeps the size-to-content behavior —
-  /// existing callers like the daily-limit popup are unaffected.
+  /// stays fixed on top and the footer (action buttons) stays fixed below.
+  /// Null (default) keeps the size-to-content behavior — existing callers
+  /// like the daily-limit popup are unaffected.
   final double? contentMaxHeight;
 
   /// Opt-in scroll discoverability for a capped content region: a subtle
@@ -151,21 +152,43 @@ class AppModalShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Body + footer as one unit. When [contentMaxHeight] is set, this
-    // region is capped and scrolls internally while the gradient header
-    // (icon, tag, title) stays fixed — e.g. the report dialog, whose
-    // content is taller than the daily-limit-sized card.
+    // Body scrolls, footer stays fixed. When [contentMaxHeight] is set,
+    // ONLY the body region is capped and scrolls internally — the gradient
+    // header (icon, tag, title) stays fixed on top AND the footer (action
+    // buttons) stays fixed below, so actions are always reachable without
+    // scrolling.
+    final bodyWidget = Container(
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
+      child: body,
+    );
+    final Widget scrolledBody;
+    if (contentMaxHeight != null &&
+        (scrollHint || autoScroll) &&
+        scrollController != null) {
+      scrolledBody = _HintedScroll(
+        maxHeight: contentMaxHeight!,
+        controller: scrollController!,
+        autoScroll: autoScroll,
+        child: bodyWidget,
+      );
+    } else if (contentMaxHeight != null) {
+      scrolledBody = ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: contentMaxHeight!),
+        child: SingleChildScrollView(
+          controller: scrollController,
+          child: bodyWidget,
+        ),
+      );
+    } else {
+      scrolledBody = bodyWidget;
+    }
     final content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Body on white.
-        Container(
-          color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
-          child: body,
-        ),
-        // Footer on white.
+        scrolledBody,
+        // Footer on white — always fixed, never scrolls.
         Container(
           color: Colors.white,
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
@@ -173,27 +196,6 @@ class AppModalShell extends StatelessWidget {
         ),
       ],
     );
-    final Widget contentWidget;
-    if (contentMaxHeight != null &&
-        (scrollHint || autoScroll) &&
-        scrollController != null) {
-      contentWidget = _HintedScroll(
-        maxHeight: contentMaxHeight!,
-        controller: scrollController!,
-        autoScroll: autoScroll,
-        child: content,
-      );
-    } else if (contentMaxHeight != null) {
-      contentWidget = ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: contentMaxHeight!),
-        child: SingleChildScrollView(
-          controller: scrollController,
-          child: content,
-        ),
-      );
-    } else {
-      contentWidget = content;
-    }
     return ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: DecoratedBox(
@@ -326,8 +328,8 @@ class AppModalShell extends StatelessWidget {
                     ],
                   ),
                 ),
-                // Scrollable (or sized) body + footer below the fixed header.
-                contentWidget,
+                // Scrollable body + fixed footer below the fixed header.
+                content,
               ],
             ),
           ),

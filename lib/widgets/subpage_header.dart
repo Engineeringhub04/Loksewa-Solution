@@ -107,7 +107,9 @@ class SubpageHeader extends StatelessWidget {
                       ),
                     )
                   else
-                    _iconBox(),
+                    // Invisible spacer (same size): keeps the title
+                    // centered with no visible empty card.
+                    const SizedBox(width: 36, height: 36),
                   Expanded(
                     child: Text(
                       title,

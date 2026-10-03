@@ -6,6 +6,8 @@
 // "View Submitted PDF" buttons. When pending: a muted preview card with a
 // Pending Review badge and — inside the 1-hour edit window — an Edit /
 // Re-upload button routing to /exam-answer/upload?editId=<id>.
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
@@ -31,6 +33,22 @@ class ExamAnswerScreen extends StatefulWidget {
 
 class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   late final Future<Map<String, dynamic>?> _future = _load();
+  Timer? _countdownTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Ticks the edit-window countdown on the re-upload button.
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
+  }
 
   Future<Map<String, dynamic>?> _load() async {
     final token = await AuthService.getValidIdToken();
@@ -38,12 +56,27 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
         idToken: token);
   }
 
-  bool _canEdit(Map<String, dynamic> a) {
+  /// The edit section stays visible (button + countdown) for pending answers
+  /// with a valid upload timestamp; the button itself goes unclickable once
+  /// the 1-hour window expires.
+  bool _editSectionVisible(Map<String, dynamic> a) {
     if (a['status']?.toString() != 'pending') return false;
-    final created = DateTime.tryParse(a['createdAt']?.toString() ?? '');
-    if (created == null) return false;
-    return DateTime.now().difference(created).inMilliseconds <
-        _answerEditWindowMs;
+    return DateTime.tryParse(a['createdAt']?.toString() ?? '') != null;
+  }
+
+  Duration _editRemaining(Map<String, dynamic> a) {
+    final created =
+        DateTime.tryParse(a['createdAt']?.toString() ?? '');
+    if (created == null) return Duration.zero;
+    final elapsed = DateTime.now().difference(created);
+    final window = Duration(milliseconds: _answerEditWindowMs);
+    return elapsed >= window ? Duration.zero : window - elapsed;
+  }
+
+  String _editCountdownText(Duration remaining) {
+    final m = remaining.inMinutes;
+    final s = remaining.inSeconds % 60;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   /// "Download Checked PDF": real byte-counted download into the phone's
@@ -275,37 +308,59 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                                 a['examSetTitle']?.toString() ?? ''),
                           ),
                         ),
-                        if (_canEdit(a)) ...[
+                        if (_editSectionVisible(a)) ...[
                           const SizedBox(height: 8),
-                          SyllabusEntrance(
-                            delayMs: 200,
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.accent,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 14)),
-                              icon: const Icon(Icons.edit),
-                              label: Text(AppLanguage.tr(
-                                  'Edit / Re-upload Answer',
-                                  'उत्तर सम्पादन / पुनः अपलोड')),
-                              onPressed: () => context.push(
-                                  '/exam-answer/upload?editId=${widget.id}'),
-                            ),
-                          ),
+                          Builder(builder: (context) {
+                            final remaining = _editRemaining(a);
+                            final active = remaining > Duration.zero;
+                            return SyllabusEntrance(
+                              delayMs: 200,
+                              child: ElevatedButton.icon(
+                                style: ElevatedButton.styleFrom(
+                                    backgroundColor: active
+                                        ? AppColors.accent
+                                        : pal.textSecondary
+                                            .withValues(alpha: 0.25),
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 14)),
+                                icon: const Icon(Icons.edit),
+                                label: Text(active
+                                    ? AppLanguage.tr(
+                                        'Edit / Re-upload Answer · ${_editCountdownText(remaining)}',
+                                        'उत्तर सम्पादन / पुनः अपलोड · ${_editCountdownText(remaining)}')
+                                    : AppLanguage.tr(
+                                        'Edit / Re-upload Answer',
+                                        'उत्तर सम्पादन / पुनः अपलोड')),
+                                onPressed: active
+                                    ? () => context.push(
+                                        '/exam-answer/upload?editId=${widget.id}')
+                                    : null,
+                              ),
+                            );
+                          }),
                           SyllabusEntrance(
                             delayMs: 260,
                             child: Padding(
                               padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                AppLanguage.tr(
-                                    'You can edit your submission within 1 hour of uploading.',
-                                    'तपाईंले अपलोड गरेको १ घण्टाभित्र आफ्नो उत्तर सम्पादन गर्न सक्नुहुन्छ।'),
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                    color: pal.textSecondary,
-                                    fontSize: 13),
-                              ),
+                              child: Builder(builder: (context) {
+                                final remaining = _editRemaining(a);
+                                final active =
+                                    remaining > Duration.zero;
+                                return Text(
+                                  active
+                                      ? AppLanguage.tr(
+                                          'You can edit your submission for the next ${_editCountdownText(remaining)}.',
+                                          'तपाईंले अर्को ${_editCountdownText(remaining)} सम्म आफ्नो उत्तर सम्पादन गर्न सक्नुहुन्छ।')
+                                      : AppLanguage.tr(
+                                          'The 1-hour edit window has expired.',
+                                          '१ घण्टाको सम्पादन समय सकिएको छ।'),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      color: pal.textSecondary,
+                                      fontSize: 13),
+                                );
+                              }),
                             ),
                           ),
                         ],

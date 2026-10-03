@@ -54,7 +54,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
 
   /// Post-submit: 3s auto-redirect to My Answer Sheets.
   Timer? _redirectTimer;
-  int _redirectSecs = 3;
+  int _redirectSecs = 5;
 
   static const _maxPdfBytes = 8 * 1024 * 1024;
 
@@ -317,7 +317,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
     if (!mounted) return;
     setState(() {
       _done = true;
-      _redirectSecs = 3;
+      _redirectSecs = 5;
     });
     _redirectTimer?.cancel();
     _redirectTimer =

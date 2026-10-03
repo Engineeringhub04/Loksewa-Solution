@@ -35,6 +35,10 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
   String _filter = 'all'; // all | pending | active | rejected
   Future<List<Map<String, dynamic>>>? _future;
 
+  /// Session cache: subscriber uid → users/{uid} photo URL (null = no photo).
+  /// Keeps the per-card avatar lookup to one read per user per app session.
+  final Map<String, String?> _photoCache = {};
+
   @override
   void initState() {
     super.initState();
@@ -52,7 +56,29 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
         idToken: token, pageSize: 300);
     docs.sort(
         (a, b) => _date(b['submittedAt']).compareTo(_date(a['submittedAt'])));
+    await _prefetchPhotos(docs, token);
     return docs;
+  }
+
+  /// One batched lookup of every subscriber's profile photo; cards read from
+  /// the cache so no card triggers its own fetch.
+  Future<void> _prefetchPhotos(
+      List<Map<String, dynamic>> docs, String token) async {
+    final uids = <String>{};
+    for (final d in docs) {
+      final uid = '${d['uid'] ?? ''}';
+      if (uid.isNotEmpty && !_photoCache.containsKey(uid)) uids.add(uid);
+    }
+    await Future.wait(uids.map((uid) async {
+      try {
+        final doc =
+            await FirestoreRest.getDocument('users/$uid', idToken: token);
+        final url = (doc?['photoURL'] ?? doc?['photoUrl'] ?? '').toString();
+        _photoCache[uid] = url.isEmpty ? null : url;
+      } catch (_) {
+        _photoCache[uid] = null;
+      }
+    }));
   }
 
   static DateTime _date(dynamic v) {
@@ -592,6 +618,8 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
     final plan = '${r['planName'] ?? '—'}';
     final method = '${r['method'] ?? ''}'.toUpperCase();
     final amount = '${r['amount'] ?? '—'}';
+    final uid = '${r['uid'] ?? ''}';
+    final photoUrl = _photoCache[uid];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -619,7 +647,7 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
               children: [
                 Row(
                   children: [
-                    _avatar(initial, tone),
+                    _avatar(initial, tone, photoUrl),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -692,8 +720,9 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
     );
   }
 
-  Widget _avatar(String initial, Color tone) {
+  Widget _avatar(String initial, Color tone, String? photoUrl) {
     final deep = Color.lerp(tone, Colors.black, 0.25) ?? tone;
+    final hasPhoto = (photoUrl ?? '').isNotEmpty;
     return Container(
       width: 54,
       height: 54,
@@ -713,11 +742,25 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
           ),
         ],
       ),
-      child: Text(initial,
-          style: const TextStyle(
-              color: Colors.white,
-              fontSize: 20,
-              fontWeight: FontWeight.bold)),
+      child: hasPhoto
+          ? ClipOval(
+              child: Image.network(
+                photoUrl!,
+                width: 54,
+                height: 54,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Text(initial,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold)),
+              ),
+            )
+          : Text(initial,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold)),
     );
   }
 }

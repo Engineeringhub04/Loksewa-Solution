@@ -1,13 +1,13 @@
 // Regression tests for the shared modal shell + report dialog:
 // - the gradient header (icon, tag pill, title) stays pixel-centered even
 //   with a short title (Stack topStart used to left-shift narrow headers);
-// - the report dialog card matches the daily-limit popup card size;
+// - a capped dialog keeps its footer (action buttons) FIXED below the
+//   scrolling body — never inside the scroll region;
 // - the scroll hint (bottom fade + chevron) hides after scrolling to the
 //   bottom, and its bounce animation is finite (pumpAndSettle terminates).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
-import 'package:loksewa_solution/widgets/limit_dialog.dart';
 import 'package:loksewa_solution/widgets/report_dialog.dart';
 
 void main() {
@@ -42,48 +42,12 @@ void main() {
     expect((cardCx - titleCx).abs(), lessThan(1.0));
   });
 
-  testWidgets('report dialog card matches daily-limit card size',
+  testWidgets('report dialog keeps footer fixed below the capped body',
       (tester) async {
     tester.view.physicalSize = const Size(720, 1612);
     tester.view.devicePixelRatio = 2.0;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-
-    // Pumped exactly like subject_practice_screen._appDialog renders it:
-    // Center > SingleChildScrollView(padding 20) > LimitDialogCard.
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(
-        body: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: LimitDialogCard(
-              tagline: 'Daily Limit',
-              title: 'Your Daily Practice limit is reached',
-              message:
-                  'You have completed today\u2019s practice limit for this chapter.',
-              bodyExtra: const Text(
-                'To Crack Your Daily Limit! Subscribe to Our Pro Plan',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF0F172A),
-                  decoration: TextDecoration.none,
-                ),
-              ),
-              icon: Icons.diamond,
-              confirmLabel: 'Subscription',
-              confirmIcon: Icons.diamond_outlined,
-              cancelLabel: 'Close',
-              onConfirm: () {},
-              onCancel: () {},
-            ),
-          ),
-        ),
-      ),
-    ));
-    await tester.pumpAndSettle();
-    final limitSize = tester.getSize(find.byType(AppModalShell).first);
 
     await tester.pumpWidget(MaterialApp(
         home: Scaffold(body: Builder(builder: (ctx) {
@@ -108,18 +72,25 @@ void main() {
     // Expected in debug builds only: the dialog route carries no Material
     // ancestor, so TextField's debugCheckHasMaterial throws (release builds
     // render it fine, as production screenshots prove). Consume it so the
-    // size measurement below stays valid.
+    // assertions below stay valid.
     tester.takeException();
     // Finite animations (dialog fade/scale 200ms, chevron bounce 1.5s)
     // must settle — an infinite loop would hang this.
     await tester.pumpAndSettle();
-    final reportSize = tester.getSize(find.byType(AppModalShell).first);
 
-    debugPrint('limit=$limitSize report=$reportSize');
-    expect((limitSize.width - reportSize.width).abs(), lessThan(1.0));
-    expect((limitSize.height - reportSize.height).abs(), lessThan(12.0));
-
-    // The report dialog wires the scroll hint (chevron + bottom fade).
+    // Footer action buttons are fixed below the scrolling body region —
+    // never inside it — so they stay reachable without scrolling. (The
+    // outer dialog-level SingleChildScrollView wraps the whole card and
+    // lives OUTSIDE AppModalShell, so only inner scrolls are checked.)
+    final innerScrolls = find.descendant(
+        of: find.byType(AppModalShell),
+        matching: find.byType(SingleChildScrollView));
+    expect(innerScrolls, findsOneWidget); // the capped body region
+    expect(
+        find.descendant(of: innerScrolls, matching: find.text('Cancel')),
+        findsNothing);
+    // The card still caps the long body and wires the scroll hint
+    // (chevron + bottom fade).
     expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsOneWidget);
   });
 

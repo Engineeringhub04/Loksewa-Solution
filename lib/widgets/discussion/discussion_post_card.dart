@@ -24,6 +24,7 @@ import 'discussion_confirm_dialog.dart';
 import 'discussion_heart_like.dart';
 import 'discussion_link_text.dart';
 import 'discussion_pressed.dart';
+import '../../theme/app_theme.dart';
 
 class DiscussionPostCard extends StatelessWidget {
   final DiscussionPost post;
@@ -47,10 +48,10 @@ class DiscussionPostCard extends StatelessWidget {
     this.timestampOverride,
   });
 
-  static const _border = Color(0xFFE2E8F0);
-  static const _navy = Color(0xFF0F172A);
-  static const _grey = Color(0xFF64748B);
-  static const _bodyGrey = Color(0xFF475569);
+  Color _border(BuildContext context) => ExpoPalette.of(context).border;
+  Color _navy(BuildContext context) => ExpoPalette.of(context).textPrimary;
+  Color _grey(BuildContext context) => ExpoPalette.of(context).textSecondary;
+  Color _bodyGrey(BuildContext context) => ExpoPalette.of(context).textSecondary;
   static const _linkBlue = Color(0xFF2563EB);
   static const _likeRed = Color(0xFFE11D48);
   static const _adminBadgeBg = Color(0xFFFFEDD5);
@@ -85,7 +86,7 @@ class DiscussionPostCard extends StatelessWidget {
     final bodyBold = !post.isAdmin || !hasTitle;
     // React: secondary body color when (!isAdmin && title non-empty).
     final bodyColor =
-        (!post.isAdmin && hasTitle) ? _grey : _bodyGrey;
+        (!post.isAdmin && hasTitle) ? _grey(context) : _bodyGrey(context);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -93,12 +94,12 @@ class DiscussionPostCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(15),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border.all(color: _border),
+          color: ExpoPalette.of(context).surface,
+          border: Border.all(color: _border(context)),
           borderRadius: BorderRadius.circular(20),
           boxShadow: [
             BoxShadow(
-              color: _navy.withValues(alpha: 0.06),
+              color: _navy(context).withValues(alpha: 0.06),
               blurRadius: 14,
               offset: const Offset(0, 6),
             ),
@@ -129,10 +130,10 @@ class DiscussionPostCard extends StatelessWidget {
                               post.authorName,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
-                                color: _navy,
+                                color: _navy(context),
                                 decoration: TextDecoration.none,
                               ),
                             ),
@@ -177,9 +178,9 @@ class DiscussionPostCard extends StatelessWidget {
                           Text(
                             timestampOverride ??
                                 formatDiscussionFeedDate(post.createdAt),
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: _grey,
+                              color: _grey(context),
                               decoration: TextDecoration.none,
                             ),
                           ),
@@ -189,9 +190,9 @@ class DiscussionPostCard extends StatelessWidget {
                                 ' · $subcourse',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 12,
-                                  color: _grey,
+                                  color: _grey(context),
                                   decoration: TextDecoration.none,
                                 ),
                               ),
@@ -211,13 +212,13 @@ class DiscussionPostCard extends StatelessWidget {
                           Offset.zero;
                       onMenu(pos);
                     },
-                    child: const SizedBox(
+                    child: SizedBox(
                       width: 34,
                       height: 34,
                       child: Icon(
                         Icons.more_horiz,
                         size: 22,
-                        color: _grey,
+                        color: _grey(context),
                       ),
                     ),
                   ),
@@ -244,10 +245,10 @@ class DiscussionPostCard extends StatelessWidget {
                       post.title,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: _navy,
+                        color: _navy(context),
                         decoration: TextDecoration.none,
                       ),
                     ),
@@ -286,7 +287,7 @@ class DiscussionPostCard extends StatelessWidget {
                   height: 178,
                   decoration: BoxDecoration(
                     color: const Color(0xFFF1F5F8),
-                    border: Border.all(color: _border),
+                    border: Border.all(color: _border(context)),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   clipBehavior: Clip.antiAlias,
@@ -296,10 +297,10 @@ class DiscussionPostCard extends StatelessWidget {
                       Image.network(
                         imageUrl,
                         fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => const Icon(
+                        errorBuilder: (_, __, ___) => Icon(
                           Icons.broken_image_outlined,
                           size: 28,
-                          color: _grey,
+                          color: _grey(context),
                         ),
                       ),
                       Positioned(
@@ -380,9 +381,9 @@ class DiscussionPostCard extends StatelessWidget {
                             Text(
                               AppLanguage.tr('Link preview',
                                   'लिंक प्रस्तुति'),
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: _grey,
+                                color: _grey(context),
                                 decoration: TextDecoration.none,
                               ),
                             ),
@@ -414,10 +415,10 @@ class DiscussionPostCard extends StatelessWidget {
             // Action row.
             Container(
               padding: const EdgeInsets.only(top: 11),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
                     top: BorderSide(
-                        color: _border, width: 0.5)),
+                        color: _border(context), width: 0.5)),
               ),
               child: Row(
                 children: [
@@ -430,18 +431,18 @@ class DiscussionPostCard extends StatelessWidget {
                     compact: true,
                   ),
                   const SizedBox(width: 17),
-                  const Icon(
+                  Icon(
                     Icons.chat_bubble_outline,
                     size: 19,
-                    color: _grey,
+                    color: _grey(context),
                   ),
                   const SizedBox(width: 5),
                   Text(
                     '${post.commentCount}',
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: _grey,
+                      color: _grey(context),
                       decoration: TextDecoration.none,
                     ),
                   ),
@@ -463,10 +464,10 @@ class DiscussionPostCard extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                   ],
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 18,
-                    color: _grey,
+                    color: _grey(context),
                   ),
                 ],
               ),

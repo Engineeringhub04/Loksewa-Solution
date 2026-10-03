@@ -689,51 +689,18 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     );
   }
 
+  /// React parity: plain "Comments" heading (bodyLarge bold, top margin 24).
+  /// No accent bar, no count pill.
   Widget _buildCommentsHeading() {
-    final primary = Theme.of(context).colorScheme.primary;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 22, 16, 12),
-      child: Row(
-        children: [
-          Container(
-            width: 4,
-            height: 20,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [primary, primary.withValues(alpha: 0.4)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            AppLanguage.tr('Comments', 'कमेन्टहरू'),
-            style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-                color: _navy(context),
-                decoration: TextDecoration.none),
-          ),
-          const SizedBox(width: 8),
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-            decoration: BoxDecoration(
-              color: primary.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              '$_liveCommentCount',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: primary,
-                  decoration: TextDecoration.none),
-            ),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 12),
+      child: Text(
+        AppLanguage.tr('Comments', 'कमेन्टहरू'),
+        style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: _navy(context),
+            decoration: TextDecoration.none),
       ),
     );
   }
@@ -809,34 +776,24 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
 
   /// One comment thread: floating card + View replies/Reply buttons +
   /// gradient-railed replies + inline composer. Staggered entrance.
+  /// React parity: plain comment row with a hairline bottom divider —
+  /// no floating card, no entrance animation.
   Widget _buildThread(DiscussionComment c, int index) {
-    final primary = Theme.of(context).colorScheme.primary;
     final open = _openReplyId == c.id;
     final replies = _replies[c.id] ?? const <DiscussionReply>[];
     final loadingReplies = _repliesLoading.contains(c.id);
-    return SyllabusEntrance(
-      key: ValueKey('thread_${c.id}'),
-      delayMs: (index * 60).clamp(0, 480),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        border: Border(
+            bottom: BorderSide(color: _border(context), width: 1)),
+      ),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-        child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _border(context).withValues(alpha: 0.7)),
-            boxShadow: [
-              BoxShadow(
-                color: _navy(context).withValues(alpha: 0.06),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisSize: MainAxisSize.min,
-            children: [
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
               DiscussionCommentCard(
                 comment: DiscussionComment(
                   id: c.id,
@@ -855,7 +812,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 onMenu: (anchor) => _commentMenu(c, null, anchor),
               ),
               Padding(
-                padding: const EdgeInsets.only(left: 46, top: 10),
+                padding: const EdgeInsets.only(left: 32, top: 8, bottom: 8),
                 child: Row(
                   children: [
                     _TextButton(
@@ -876,27 +833,17 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 ),
               ),
               if (open) ...[
-                const SizedBox(height: 10),
+                const SizedBox(height: 4),
                 IntrinsicHeight(
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Refined gradient rail.
+                      // React parity: plain 2px left border (no gradient rail).
                       Container(
-                        width: 3,
+                        width: 2,
                         margin:
-                            const EdgeInsets.only(left: 21, right: 12),
-                        decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [
-                              primary.withValues(alpha: 0.55),
-                              primary.withValues(alpha: 0.08),
-                            ],
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                          ),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
+                            const EdgeInsets.only(left: 24, right: 8),
+                        color: _border(context),
                       ),
                       Expanded(
                         child: Column(
@@ -953,8 +900,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _buildInlineReplyComposer(DiscussionComment c) {

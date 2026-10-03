@@ -10,7 +10,10 @@ class AppColors {
 class AppTheme {
   static ThemeData get light => ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: AppColors.navy),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.navy,
+          primary: const Color(0xFF1D4ED8),
+        ),
       );
 
   static ThemeData get dark => ThemeData(
@@ -19,6 +22,7 @@ class AppTheme {
         colorScheme: ColorScheme.fromSeed(
           seedColor: AppColors.navy,
           brightness: Brightness.dark,
+          primary: const Color(0xFF3B82F6),
         ),
       );
 }

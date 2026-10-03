@@ -20,6 +20,7 @@ import '../../services/discussion_service.dart';
 import '../../services/prefs_service.dart';
 import '../../services/profile_service.dart';
 import '../../services/theme_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/discussion/discussion_signin_prompt.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/discussion/discussion_action_menu.dart';
@@ -125,24 +126,35 @@ class _DiscussionTabState extends State<DiscussionTab> {
         throw const _OfflineException();
       }
       final posts = await DiscussionService.fetchDiscussions(max: 30);
-      final likes = <String, bool>{};
-      if (_signedIn && posts.isNotEmpty) {
-        final results = await Future.wait(
-            posts.map((p) => DiscussionService.isDiscussionLiked(p.id)));
-        for (var i = 0; i < posts.length; i++) {
-          likes[posts[i].id] = results[i];
-        }
-      }
       if (!mounted) return;
+      // Show posts IMMEDIATELY — like statuses fill in afterwards so the
+      // feed never waits on up to 30 reaction reads (the lag on slow networks).
       setState(() {
         _posts = posts;
-        _liked
-          ..clear()
-          ..addAll(likes);
         _error = null;
         _offline = false;
         _loading = false;
       });
+      if (_signedIn && posts.isNotEmpty) {
+        final results = await Future.wait(
+            posts.map((p) => DiscussionService.isDiscussionLiked(p.id)));
+        if (!mounted) return;
+        final likes = <String, bool>{};
+        for (var i = 0; i < posts.length; i++) {
+          likes[posts[i].id] = results[i];
+        }
+        setState(() {
+          _liked
+            ..clear()
+            ..addAll(likes);
+        });
+      } else if (!mounted) {
+        return;
+      } else {
+        setState(() {
+          _liked.clear();
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -268,7 +280,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
     // (its own internal SafeArea pads the title row) — an outer SafeArea
     // would push the header down and leave a gap above it.
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: ExpoPalette.of(context).background,
       body: Column(
         children: [
           _buildHeader(),
@@ -597,7 +609,7 @@ class _ErrorState extends StatelessWidget {
             Icon(
               offline ? Icons.wifi_off_outlined : Icons.error_outline,
               size: 44,
-              color: const Color(0xFF94A3B8),
+              color: ExpoPalette.of(context).textSecondary,
             ),
             const SizedBox(height: 12),
             Text(
@@ -617,9 +629,9 @@ class _ErrorState extends StatelessWidget {
               AppLanguage.tr('Check your connection and try again.',
                   'आफ्नो जडान जाँचेर पुन: प्रयास गर्नुहोस्।'),
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xFF64748B),
+                  color: ExpoPalette.of(context).textSecondary,
                   decoration: TextDecoration.none),
             ),
             const SizedBox(height: 14),
@@ -648,8 +660,8 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.forum_outlined,
-                size: 44, color: Color(0xFF94A3B8)),
+            Icon(Icons.forum_outlined,
+                size: 44, color: ExpoPalette.of(context).textSecondary),
             const SizedBox(height: 12),
             Text(
               searching

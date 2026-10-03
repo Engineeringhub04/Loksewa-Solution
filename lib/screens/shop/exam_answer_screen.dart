@@ -200,6 +200,12 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                                   TextStyle(color: pal.textSecondary)),
                         ),
                       const SizedBox(height: 16),
+                      // Premium status timeline: Submitted -> Under Review
+                      // -> Result. Shows exactly where the answer stands.
+                      SyllabusEntrance(
+                          delayMs: 0,
+                          child: _statusTimeline(pal, a)),
+                      const SizedBox(height: 16),
                       if (reviewed) ...[
                         SyllabusEntrance(
                             delayMs: 0, child: _resultCard(a)),
@@ -321,8 +327,126 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     );
   }
 
-  Widget _resultCard(Map<String, dynamic> a) {
+  /// Premium status timeline: Submitted -> Under Review -> Result.
+  /// Shows exactly where this answer stands, with timestamps.
+  Widget _statusTimeline(ExpoPalette pal, Map<String, dynamic> a) {
+    final reviewed = a['status']?.toString() == 'reviewed';
     final passed = a['passed'] == true;
+    final dark = Theme.of(context).brightness == Brightness.dark;
+
+    String fmt(dynamic raw) {
+      final s = raw?.toString() ?? '';
+      if (s.isEmpty) return '';
+      final d = DateTime.tryParse(s);
+      if (d == null) return '';
+      const en = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+      ];
+      const ne = [
+        'जनवरी', 'फेब्रुअरी', 'मार्च', 'अप्रिल', 'मे', 'जुन',
+        'जुलाई', 'अगस्ट', 'सेप्टेम्बर', 'अक्टोबर', 'नोभेम्बर', 'डिसेम्बर'
+      ];
+      var label = '${d.day} ${en[d.month - 1]} ${d.year}';
+      if (AppLanguage.isNepali) {
+        label = '${d.day} ${ne[d.month - 1]} ${d.year}'.replaceAllMapped(
+            RegExp(r'[0-9]'),
+            (m) => '०१२३४५६७८९'[int.parse(m.group(0)!)]);
+      }
+      return label;
+    }
+
+    final steps = [
+      _AnswerTimelineStepData(
+        icon: Icons.check_rounded,
+        tone: pal.success,
+        state: _StepState.done,
+        title: AppLanguage.tr('Submitted', 'पेश भयो'),
+        subtitle: fmt(a['createdAt']).isNotEmpty
+            ? fmt(a['createdAt'])
+            : AppLanguage.tr('Your answer reached us.', 'तपाईंको उत्तर आयो।'),
+      ),
+      _AnswerTimelineStepData(
+        icon: reviewed ? Icons.check_rounded : Icons.hourglass_top_outlined,
+        tone: reviewed ? pal.success : pal.warning,
+        state: reviewed ? _StepState.done : _StepState.active,
+        title: AppLanguage.tr('Under Review', 'समीक्षामा छ'),
+        subtitle: reviewed
+            ? AppLanguage.tr(
+                'Checked by our team.', 'हाम्रो टोलीले जाँच्यो।')
+            : AppLanguage.tr('Our teachers are checking your answer.',
+                'हाम्रा शिक्षकहरू तपाईंको उत्तर जाँच्दै हुनुहुन्छ।'),
+      ),
+      _AnswerTimelineStepData(
+        icon: !reviewed
+            ? Icons.lock_outline
+            : (passed ? Icons.emoji_events_outlined : Icons.cancel_outlined),
+        tone: !reviewed
+            ? pal.textDisabled
+            : (passed ? pal.success : pal.danger),
+        state: !reviewed ? _StepState.locked : _StepState.done,
+        title: AppLanguage.tr('Result', 'नतिजा'),
+        subtitle: !reviewed
+            ? AppLanguage.tr(
+                'Waiting for review.', 'समीक्षाको प्रतीक्षामा।')
+            : (fmt(a['reviewedAt']).isNotEmpty
+                ? '${_num(a['score'])}/${_num(a['fullMarks'])} · ${fmt(a['reviewedAt'])}'
+                : '${_num(a['score'])}/${_num(a['fullMarks'])}'),
+      ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: dark
+              ? [const Color(0xFF1E293B), const Color(0xFF0F172A)]
+              : [Colors.white, const Color(0xFFF8FAFC)],
+        ),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(
+            color: pal.primary.withValues(alpha: 0.18), width: 1),
+        boxShadow: [
+          BoxShadow(
+            color: pal.primary.withValues(alpha: dark ? 0.18 : 0.10),
+            blurRadius: 18,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.timeline_outlined,
+                  size: 17, color: pal.primary),
+              const SizedBox(width: 8),
+              Text(
+                AppLanguage.tr('Answer Journey', 'उत्तर यात्रा'),
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: pal.textPrimary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          for (var i = 0; i < steps.length; i++)
+            _AnswerTimelineStep(
+              data: steps[i],
+              isLast: i == steps.length - 1,
+              pal: pal,
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+
+  Widget _resultCard(Map<String, dynamic> a) {    final passed = a['passed'] == true;
     final score = a['score'];
     final full = a['fullMarks'];
     return Container(
@@ -571,5 +695,171 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     return '${dt.day} ${m[dt.month - 1]} ${dt.year}';
+  }
+}
+
+enum _StepState { done, active, locked }
+
+class _AnswerTimelineStepData {
+  final IconData icon;
+  final Color tone;
+  final _StepState state;
+  final String title;
+  final String subtitle;
+
+  const _AnswerTimelineStepData({
+    required this.icon,
+    required this.tone,
+    required this.state,
+    required this.title,
+    required this.subtitle,
+  });
+}
+
+/// One row of the answer-journey timeline: glowing status dot on a vertical
+/// rail with a connector, content card to the right. The active step's dot
+/// breathes (finite, settles at rest).
+class _AnswerTimelineStep extends StatelessWidget {
+  final _AnswerTimelineStepData data;
+  final bool isLast;
+  final ExpoPalette pal;
+
+  const _AnswerTimelineStep({
+    required this.data,
+    required this.isLast,
+    required this.pal,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final active = data.state == _StepState.active;
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(
+            width: 40,
+            child: Column(
+              children: [
+                _dot(active),
+                if (!isLast)
+                  Expanded(
+                    child: Container(
+                      width: 2.5,
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(2),
+                        color: data.state == _StepState.locked
+                            ? pal.border
+                            : data.tone.withValues(alpha: 0.35),
+                      ),
+                    ),
+                  ),
+                if (isLast) const SizedBox(height: 4),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: isLast ? 0 : 14),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: active
+                      ? data.tone.withValues(alpha: 0.08)
+                      : pal.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: active
+                        ? data.tone.withValues(alpha: 0.35)
+                        : pal.border,
+                    width: 0.75,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            data.title,
+                            style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: data.state == _StepState.locked
+                                    ? pal.textDisabled
+                                    : pal.textPrimary),
+                          ),
+                        ),
+                        if (active)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: data.tone,
+                              borderRadius:
+                                  BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              AppLanguage.tr('NOW', 'अहिले'),
+                              style: const TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      data.subtitle,
+                      style: TextStyle(
+                          fontSize: 12.5, color: pal.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dot(bool active) {
+    final dot = Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: data.tone.withValues(
+            alpha: data.state == _StepState.locked ? 0.10 : 0.16),
+        border: Border.all(
+            color: data.tone.withValues(alpha: 0.45), width: 1.5),
+        boxShadow: active
+            ? [
+                BoxShadow(
+                  color: data.tone.withValues(alpha: 0.5),
+                  blurRadius: 12,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Icon(data.icon, size: 17, color: data.tone),
+    );
+    if (!active) return dot;
+    // The live step breathes: one finite 1.6s pulse that settles at rest.
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 1600),
+      builder: (context, t, child) {
+        final s = 1 + 0.08 * (1 - t) * (t < 0.5 ? t * 2 : (1 - t) * 2);
+        return Transform.scale(scale: s, child: child);
+      },
+      child: dot,
+    );
   }
 }

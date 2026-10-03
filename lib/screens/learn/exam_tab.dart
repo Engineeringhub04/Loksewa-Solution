@@ -1485,12 +1485,12 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
     const accent = Color(0xFF2563EB);
     final rules = _rules;
     return AppModalShell(
-      // Daily-limit-sized card (maxWidth 340): compact 60% height cap with
-      // internal scroll + auto-creep for long rule lists. Full blue
-      // gradient header — accentMid/accentLight/tagColor must be blue too,
-      // they default to logo orange.
-      maxWidth: 340,
-      contentMaxHeight: MediaQuery.of(context).size.height * 0.6,
+      // Compact card: smaller than the daily-limit popup (maxWidth 300,
+      // 50% height cap) with tighter text so more rules fit on screen.
+      // Full blue gradient — accentMid/accentLight/tagColor must be blue
+      // too, they default to logo orange.
+      maxWidth: 300,
+      contentMaxHeight: MediaQuery.of(context).size.height * 0.5,
       scrollHint: true,
       scrollController: _scrollController,
       autoScroll: true,
@@ -1499,19 +1499,19 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
       accentLight: const Color(0xFFBFDBFE),
       tagColor: accent,
       icon: Container(
-        width: 56,
-        height: 56,
+        width: 48,
+        height: 48,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(14),
         ),
         child: const Icon(Icons.shield_outlined,
-            color: Color(0xFF2563EB), size: 28),
+            color: Color(0xFF2563EB), size: 24),
       ),
       tagLabel: AppLanguage.tr('Exam Rules', 'परीक्षा नियमहरू'),
       title: Text(
         widget.set.title,
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
       ),
       body: rules == null
           ? const Padding(
@@ -1545,23 +1545,23 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                     for (var i = 0; i < rules.length; i++)
                       Padding(
                         padding: EdgeInsets.only(
-                            bottom: i == rules.length - 1 ? 0 : 12),
+                            bottom: i == rules.length - 1 ? 0 : 10),
                         child: Row(
                           crossAxisAlignment:
                               CrossAxisAlignment.start,
                           children: [
                             Container(
-                              width: 38,
-                              height: 38,
+                              width: 32,
+                              height: 32,
                               decoration: BoxDecoration(
                                 color: accent.withValues(alpha: 0.09),
                                 borderRadius:
-                                    BorderRadius.circular(12),
+                                    BorderRadius.circular(10),
                               ),
                               child: Icon(Icons.shield_outlined,
-                                  size: 18, color: accent),
+                                  size: 15, color: accent),
                             ),
-                            const SizedBox(width: 12),
+                            const SizedBox(width: 10),
                             Expanded(
                               child: Column(
                                 crossAxisAlignment:
@@ -1572,17 +1572,17 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                       Container(
                                         constraints:
                                             const BoxConstraints(
-                                                minWidth: 20),
-                                        height: 20,
+                                                minWidth: 18),
+                                        height: 18,
                                         padding:
                                             const EdgeInsets.symmetric(
-                                                horizontal: 5),
+                                                horizontal: 4),
                                         decoration: BoxDecoration(
                                           color: accent.withValues(
                                               alpha: 0.09),
                                           borderRadius:
                                               BorderRadius.circular(
-                                                  10),
+                                                  9),
                                         ),
                                         child: Center(
                                           child: Text(
@@ -1590,7 +1590,7 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                                 ? _npDigits('${i + 1}')
                                                 : '${i + 1}',
                                             style: TextStyle(
-                                              fontSize: 11,
+                                              fontSize: 10,
                                               fontWeight:
                                                   FontWeight.bold,
                                               color: accent,
@@ -1598,14 +1598,14 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
+                                      const SizedBox(width: 7),
                                       Expanded(
                                         child: Text(
                                           rules[i].title,
                                           style: const TextStyle(
                                             fontWeight:
                                                 FontWeight.bold,
-                                            fontSize: 14,
+                                            fontSize: 12.5,
                                             // Explicit ink color: never dim.
                                             color: Color(0xFF0F172A),
                                           ),
@@ -1617,8 +1617,8 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                   Text(
                                     rules[i].description,
                                     style: const TextStyle(
-                                      fontSize: 13,
-                                      height: 19 / 13,
+                                      fontSize: 11.5,
+                                      height: 17 / 11.5,
                                       // Slate-600: readable, never washed.
                                       color: Color(0xFF475569),
                                     ),

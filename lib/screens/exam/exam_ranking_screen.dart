@@ -135,22 +135,30 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
         statusBarIconBrightness: Brightness.light,
         statusBarBrightness: Brightness.dark,
       ),
-      child: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [_bgTop, _bgBottom],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
+      // Defensive: no inherited text decoration (underline) can reach any
+      // text on this page, whatever its source — merged over the ambient
+      // style so nothing else changes.
+      child: DefaultTextStyle(
+        style: DefaultTextStyle.of(context)
+            .style
+            .copyWith(decoration: TextDecoration.none),
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [_bgTop, _bgBottom],
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+            ),
           ),
-        ),
-        child: SafeArea(
-          top: true,
-          bottom: false,
-          child: Column(
-            children: [
-              _header(),
-              Expanded(child: _body()),
-            ],
+          child: SafeArea(
+            top: true,
+            bottom: false,
+            child: Column(
+              children: [
+                _header(),
+                Expanded(child: _body()),
+              ],
+            ),
           ),
         ),
       ),

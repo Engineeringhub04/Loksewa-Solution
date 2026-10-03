@@ -28,6 +28,7 @@ import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/discussion_service.dart';
 import '../../services/profile_service.dart';
+import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/discussion/discussion_action_menu.dart';
 import '../../widgets/discussion/discussion_comment_card.dart';
@@ -65,10 +66,12 @@ class _PendingItem {
 }
 
 class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
-  static const _bg = Color(0xFFF5F6FA);
-  static const _navy = Color(0xFF0F172A);
+  // Theme-aware (was hardcoded light): the header's theme toggle now
+  // visibly switches this page between light and dark.
+  Color _bg(BuildContext context) => ExpoPalette.of(context).background;
+  Color _navy(BuildContext context) => ExpoPalette.of(context).textPrimary;
   static const _grey = Color(0xFF64748B);
-  static const _border = Color(0xFFE2E8F0);
+  Color _border(BuildContext context) => ExpoPalette.of(context).border;
 
   DiscussionPost? _post;
   List<DiscussionComment> _comments = [];
@@ -95,6 +98,20 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
 
   bool get _signedIn => AuthService.currentUser != null;
   bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
+
+  /// Maps a write failure to an actionable message: 403/PERMISSION_DENIED
+  /// almost always means the Firebase console rules are older than the app's
+  /// firebase.rules (the user pastes them manually).
+  String _writeErrorMessage(Object e) {
+    final s = e.toString();
+    if (s.contains('403') || s.contains('PERMISSION_DENIED')) {
+      return AppLanguage.tr(
+        'Not allowed — please update Firebase rules from GitHub.',
+        'अनुमति छैन — GitHub बाट Firebase rules अपडेट गर्नुहोस्।',
+      );
+    }
+    return AppLanguage.tr('Something went wrong', 'केही समस्या भयो');
+  }
   String get _uid => AuthService.currentUser?.uid ?? '';
 
   int get _liveCommentCount => _comments.length + _pending.length;
@@ -323,13 +340,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           context,
           AppLanguage.tr('Comment posted', 'कमेन्ट पोस्ट भयो'),
           ToastVariant.success);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _sending = false);
-      showToast(
-          context,
-          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
-          ToastVariant.error);
+      showToast(context, _writeErrorMessage(e), ToastVariant.error);
     }
   }
 
@@ -373,13 +387,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           context,
           AppLanguage.tr('Reply posted', 'रिप्लाइ पोस्ट भयो'),
           ToastVariant.success);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _replySending.remove(c.id));
-      showToast(
-          context,
-          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
-          ToastVariant.error);
+      showToast(context, _writeErrorMessage(e), ToastVariant.error);
     }
   }
 
@@ -537,7 +548,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _bg,
+      backgroundColor: _bg(context),
       body: Column(
         children: [
           SubpageHeader(
@@ -572,10 +583,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   shape: BoxShape.circle,
-                  border: Border.all(color: _border),
+                  border: Border.all(color: _border(context)),
                   boxShadow: [
                     BoxShadow(
-                      color: _navy.withValues(alpha: 0.06),
+                      color: _navy(context).withValues(alpha: 0.06),
                       blurRadius: 16,
                       offset: const Offset(0, 8),
                     ),
@@ -593,10 +604,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                     : AppLanguage.tr(
                         'Something went wrong', 'केही समस्या भयो'),
                 textAlign: TextAlign.center,
-                style: const TextStyle(
+                style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
-                    color: _navy,
+                    color: _navy(context),
                     decoration: TextDecoration.none),
               ),
               const SizedBox(height: 16),
@@ -655,46 +666,26 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     );
   }
 
-  /// Gradient band with the shared post card floating over it.
+  /// Post card header — React parity: the shared post card sits directly on
+  /// the page background (no extra gradient band; the SubpageHeader above
+  /// is the only header).
   Widget _buildPostHeader() {
     final post = _post!;
     final imageUrl = (post.imageUrl ?? '').trim();
-    return Stack(
-      children: [
-        Container(
-          height: 132,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Color(0xFF2563EB),
-                Color(0xFF1D4ED8),
-                Color(0xFF0B1F5B),
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.only(
-              bottomLeft: Radius.circular(28),
-              bottomRight: Radius.circular(28),
-            ),
-          ),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(top: 72, left: 16, right: 16),
-          child: DiscussionPostCard(
-            post: post.copyWith(commentCount: _liveCommentCount),
-            liked: _postLiked,
-            onToggleLike: _togglePostLike,
-            onTap: () {}, // no-op on detail (Expo parity)
-            onMenu: _postMenu,
-            timestampOverride:
-                formatDiscussionDetailDateTime(post.createdAt),
-            onImageTap: imageUrl.isNotEmpty
-                ? () => showImageViewer(context, NetworkImage(imageUrl))
-                : null,
-          ),
-        ),
-      ],
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+      child: DiscussionPostCard(
+        post: post.copyWith(commentCount: _liveCommentCount),
+        liked: _postLiked,
+        onToggleLike: _togglePostLike,
+        onTap: () {}, // no-op on detail (Expo parity)
+        onMenu: _postMenu,
+        timestampOverride:
+            formatDiscussionDetailDateTime(post.createdAt),
+        onImageTap: imageUrl.isNotEmpty
+            ? () => showImageViewer(context, NetworkImage(imageUrl))
+            : null,
+      ),
     );
   }
 
@@ -719,10 +710,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           const SizedBox(width: 10),
           Text(
             AppLanguage.tr('Comments', 'कमेन्टहरू'),
-            style: const TextStyle(
+            style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.bold,
-                color: _navy,
+                color: _navy(context),
                 decoration: TextDecoration.none),
           ),
           const SizedBox(width: 8),
@@ -761,7 +752,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                 color: const Color(0xFFB45309).withValues(alpha: 0.3)),
             boxShadow: [
               BoxShadow(
-                color: _navy.withValues(alpha: 0.05),
+                color: _navy(context).withValues(alpha: 0.05),
                 blurRadius: 12,
                 offset: const Offset(0, 6),
               ),
@@ -833,10 +824,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: _border.withValues(alpha: 0.7)),
+            border: Border.all(color: _border(context).withValues(alpha: 0.7)),
             boxShadow: [
               BoxShadow(
-                color: _navy.withValues(alpha: 0.06),
+                color: _navy(context).withValues(alpha: 0.06),
                 blurRadius: 16,
                 offset: const Offset(0, 8),
               ),
@@ -1017,10 +1008,11 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   /// Bottom composer — focus elevation + 0.92 send micro-interaction.
   Widget _buildComposer() {
     final primary = Theme.of(context).colorScheme.primary;
+    final palette = ExpoPalette.of(context);
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(top: BorderSide(color: _border)),
+        color: palette.surface,
+        border: Border(top: BorderSide(color: _border(context))),
         boxShadow: _composerFocused
             ? [
                 BoxShadow(
@@ -1043,8 +1035,8 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                   duration: const Duration(milliseconds: 200),
                   decoration: BoxDecoration(
                     color: _composerFocused
-                        ? Colors.white
-                        : const Color(0xFFF1F5F9),
+                        ? palette.surface
+                        : palette.surfaceAlt,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: _composerFocused ? primary : Colors.transparent,

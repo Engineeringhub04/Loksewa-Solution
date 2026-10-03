@@ -722,6 +722,40 @@ class DiscussionService {
       List<String>.unmodifiable(
           lang == 'ne' ? _defaultGuidelineBulletsNe : _defaultGuidelineBulletsEn);
 
+  /// In-memory cache so the guidelines popup opens instantly when the
+  /// Discussion tab is opened (prefetched alongside the feed).
+  static DiscussionGuidelines? _guidelinesCache;
+  static Future<DiscussionGuidelines>? _guidelinesInFlight;
+
+  /// Fire-and-forget prefetch — call when the feed starts loading.
+  static void prefetchDiscussionGuidelines() {
+    if (_guidelinesCache != null || _guidelinesInFlight != null) return;
+    _guidelinesInFlight = fetchDiscussionGuidelines().then((g) {
+      _guidelinesCache = g;
+      _guidelinesInFlight = null;
+      return g;
+    }).catchError((_) {
+      _guidelinesInFlight = null;
+      return const DiscussionGuidelines(
+        title: _defaultGuidelineTitleEn,
+        body: _defaultGuidelineBodyEn,
+        bullets: _defaultGuidelineBulletsEn,
+        version: 1,
+        fromDefaults: true,
+      );
+    });
+  }
+
+  /// Cached-first fetch: instant when prefetched, otherwise fetches.
+  static Future<DiscussionGuidelines> fetchDiscussionGuidelinesCached() async {
+    if (_guidelinesCache != null) return _guidelinesCache!;
+    final inFlight = _guidelinesInFlight;
+    if (inFlight != null) return inFlight;
+    final g = await fetchDiscussionGuidelines();
+    _guidelinesCache = g;
+    return g;
+  }
+
   static Future<DiscussionGuidelines> fetchDiscussionGuidelines() async {
     final token = await AuthService.getValidIdToken();
     Map<String, dynamic>? doc;

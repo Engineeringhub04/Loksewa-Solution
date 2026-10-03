@@ -15,6 +15,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/discussion_service.dart';
+import '../../theme/app_theme.dart';
 import 'discussion_avatar.dart';
 import 'discussion_heart_like.dart';
 import 'discussion_link_text.dart';
@@ -36,17 +37,17 @@ class DiscussionCommentCard extends StatelessWidget {
     required this.onMenu,
   });
 
-  static const _border = Color(0xFFE2E8F0);
-  static const _navy = Color(0xFF0F172A);
+  Color _border(BuildContext context) => ExpoPalette.of(context).border;
+  Color _navy(BuildContext context) => ExpoPalette.of(context).textPrimary;
   static const _grey = Color(0xFF64748B);
-  static const _bodyGrey = Color(0xFF334155);
+  Color _bodyGrey(BuildContext context) => ExpoPalette.of(context).textSecondary;
 
   @override
   Widget build(BuildContext context) {
     final card = Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        border: Border.all(color: _border),
+        border: Border.all(color: _border(context)),
         borderRadius: BorderRadius.circular(12),
       ),
       padding: const EdgeInsets.all(10),
@@ -70,10 +71,10 @@ class DiscussionCommentCard extends StatelessWidget {
                       comment.authorName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: _navy,
+                        color: _navy(context),
                         decoration: TextDecoration.none,
                       ),
                     ),
@@ -115,10 +116,10 @@ class DiscussionCommentCard extends StatelessWidget {
           DiscussionLinkText(
             text: comment.body,
             confirmBeforeOpen: true,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 13,
               height: 1.5,
-              color: _bodyGrey,
+              color: _bodyGrey(context),
               decoration: TextDecoration.none,
             ),
           ),
@@ -156,7 +157,7 @@ class DiscussionCommentCard extends StatelessWidget {
             bottom: 6,
             child: Container(
               width: 2,
-              color: _border,
+              color: _border(context),
             ),
           ),
           card,

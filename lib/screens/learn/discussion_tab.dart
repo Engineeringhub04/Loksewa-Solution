@@ -111,6 +111,9 @@ class _DiscussionTabState extends State<DiscussionTab> {
 
   Future<void> _load({bool silent = false}) async {
     if (!mounted) return;
+    // Prefetch guidelines alongside the feed so the popup opens instantly
+    // when the tab is opened (no network delay on the popup itself).
+    DiscussionService.prefetchDiscussionGuidelines();
     if (!silent) {
       setState(() {
         _loading = true;
@@ -164,7 +167,8 @@ class _DiscussionTabState extends State<DiscussionTab> {
       return;
     }
     try {
-      final g = await DiscussionService.fetchDiscussionGuidelines();
+      // Cached-first: instant when prefetched during the feed load.
+      final g = await DiscussionService.fetchDiscussionGuidelinesCached();
       if (!mounted) return;
       // Mark seen BEFORE showing: a dismiss/crash must not re-trigger it.
       await PrefsService.setBool(key, true);
@@ -509,7 +513,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
   /// user explicitly asked to see them).
   Future<void> _showGuidelinesNow() async {
     try {
-      final g = await DiscussionService.fetchDiscussionGuidelines();
+      final g = await DiscussionService.fetchDiscussionGuidelinesCached();
       if (!mounted) return;
       await DiscussionGuidelinesDialog.show(
         context: context,

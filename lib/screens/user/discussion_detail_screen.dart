@@ -155,6 +155,42 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     }
   }
 
+  Future<void> _togglePin(DiscussionPost post) async {
+    final ok = await confirmDiscussionAction(
+      context: context,
+      title: post.isPinned
+          ? AppLanguage.tr('Unpin this post?', 'यो पोस्ट अनपिन गर्ने?')
+          : AppLanguage.tr('Pin this post?', 'यो पोस्ट पिन गर्ने?'),
+      message: post.isPinned
+          ? AppLanguage.tr('It will return to its normal position.',
+              'यो सामान्य स्थानमा फर्कनेछ।')
+          : AppLanguage.tr('It will stay at the top of the feed.',
+              'यो फिडको सबैभन्दा माथि रहनेछ।'),
+      confirmLabel: post.isPinned
+          ? AppLanguage.tr('Unpin', 'अनपिन गर्नुहोस्')
+          : AppLanguage.tr('Pin', 'पिन गर्नुहोस्'),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await DiscussionService.togglePinDiscussion(post.id, !post.isPinned);
+      if (!mounted) return;
+      setState(() => _post = post.copyWith(isPinned: !post.isPinned));
+      DiscussionTab.requestRefresh();
+      showToast(
+          context,
+          post.isPinned
+              ? AppLanguage.tr('Post unpinned', 'पोस्ट अनपिन भयो')
+              : AppLanguage.tr('Post pinned', 'पोस्ट पिन भयो'),
+          ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+          context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
+    }
+  }
+
   Future<void> _load() async {
     if (!mounted) return;
     setState(() {
@@ -441,6 +477,13 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
     final post = _post;
     if (post == null) return;
     final items = <DiscussionMenuItem>[
+      if (_isAdmin)
+        DiscussionMenuItem(
+          label: post.isPinned
+              ? AppLanguage.tr('Unpin', 'अनपिन गर्नुहोस्')
+              : AppLanguage.tr('Pin', 'पिन गर्नुहोस्'),
+          onSelect: () => _togglePin(post),
+        ),
       if (_canModerate(post.authorId))
         DiscussionMenuItem(
           label: AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्'),
@@ -931,7 +974,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                     color: Color(0xFF94A3B8),
                     decoration: TextDecoration.none),
                 filled: true,
-                fillColor: const Color(0xFFF1F5F9),
+                fillColor: ExpoPalette.of(context).surfaceAlt,
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12, vertical: 9),
                 border: OutlineInputBorder(

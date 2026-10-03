@@ -76,7 +76,16 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
   void initState() {
     super.initState();
     _checkOnline();
-    if (_isEdit) _loadPost();
+    if (_isEdit) {
+      _loadPost();
+    } else {
+      // Brief opening preloading for new posts too (visual feedback
+      // that the page is opening).
+      _loadingPost = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _loadingPost = false);
+      });
+    }
     for (final c in [_titleCtrl, _bodyCtrl, _imageCtrl, _linkCtrl]) {
       c.addListener(() => setState(() {}));
     }

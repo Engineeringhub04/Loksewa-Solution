@@ -53,6 +53,7 @@ class DiscussionPost {
   final String? linkUrl;
   final bool isAdmin;
   final bool isSeed;
+  final bool isPinned;
   final int likeCount;
   final int commentCount;
   final DateTime? createdAt;
@@ -74,6 +75,7 @@ class DiscussionPost {
     this.linkUrl,
     this.isAdmin = false,
     this.isSeed = false,
+    this.isPinned = false,
     this.likeCount = 0,
     this.commentCount = 0,
     this.createdAt,
@@ -97,7 +99,8 @@ class DiscussionPost {
 
   /// Display-only copy with an overridden field (e.g. live comment count
   /// on the detail header — the stored counter is not the source of truth).
-  DiscussionPost copyWith({int? commentCount}) => DiscussionPost(
+  DiscussionPost copyWith({int? commentCount, bool? isPinned}) =>
+      DiscussionPost(
         id: id,
         title: title,
         body: body,
@@ -113,6 +116,7 @@ class DiscussionPost {
         linkUrl: linkUrl,
         isAdmin: isAdmin,
         isSeed: isSeed,
+        isPinned: isPinned ?? this.isPinned,
         likeCount: likeCount,
         commentCount: commentCount ?? this.commentCount,
         createdAt: createdAt,
@@ -136,6 +140,7 @@ class DiscussionPost {
         linkUrl: _strOrNull(m['linkUrl']),
         isAdmin: m['isAdmin'] == true,
         isSeed: m['isSeed'] == true,
+        isPinned: m['isPinned'] == true,
         likeCount: _int(m['likeCount']),
         commentCount: _int(m['commentCount']),
         createdAt: _dt(m['createdAt']),
@@ -512,6 +517,16 @@ class DiscussionService {
     await FirestoreRest.deleteDocument('discussions/$id', idToken: token);
   }
 
+  /// Admin-only: pin or unpin a post. Pinned posts sort first in the feed.
+  static Future<void> togglePinDiscussion(String id, bool pinned) async {
+    final token = await AuthService.getValidIdToken();
+    await FirestoreRest.updateDocument(
+      'discussions/$id',
+      {'isPinned': pinned},
+      idToken: token,
+    );
+  }
+
   // ---------- Post likes ----------
 
   static String _postReactionPath(String postId) =>
@@ -834,6 +849,18 @@ class DiscussionService {
     ]);
     if (results.every((ok) => !ok)) {
       throw const DiscussionReportFailedException();
+    }
+    // Discord relay: fire independently (not tied to the history write).
+    // If the history write failed but the Form succeeded, admins still
+    // get the Discord alert.
+    final user = AuthService.currentUser;
+    if (user != null) {
+      unawaited(notifyAdminsOfReport(
+        reportId: _randomId(),
+        reporterName: user.displayName ?? 'Anonymous',
+        reason: reason,
+        targetTitle: title,
+      ));
     }
   }
 

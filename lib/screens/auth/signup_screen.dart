@@ -144,6 +144,9 @@ class _SignupScreenState extends State<SignupScreen>
         await FirestoreRest.setDocument(
           'users/${user.uid}',
           {
+            // Profile reads 'name' — writing only 'displayName' left the
+            // profile name blank after signup (user had to edit manually).
+            'name': _name.text.trim(),
             'displayName': _name.text.trim(),
             'email': user.email ?? _email.text.trim(),
           },

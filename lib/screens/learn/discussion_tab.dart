@@ -131,6 +131,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
       // feed never waits on up to 30 reaction reads (the lag on slow networks).
       setState(() {
         _posts = posts;
+        _sortPosts();
         _error = null;
         _offline = false;
         _loading = false;
@@ -227,6 +228,13 @@ class _DiscussionTabState extends State<DiscussionTab> {
     final canModerate =
         _isAdmin || (uid != null && uid.isNotEmpty && uid == post.authorId);
     final items = <DiscussionMenuItem>[
+      if (_isAdmin)
+        DiscussionMenuItem(
+          label: post.isPinned
+              ? AppLanguage.tr('Unpin', 'अनपिन गर्नुहोस्')
+              : AppLanguage.tr('Pin', 'पिन गर्नुहोस्'),
+          onSelect: () => _togglePin(post),
+        ),
       if (canModerate)
         DiscussionMenuItem(
           label: AppLanguage.tr('Edit', 'सम्पादन गर्नुहोस्'),
@@ -272,6 +280,57 @@ class _DiscussionTabState extends State<DiscussionTab> {
       onConfirm: () => DiscussionService.deleteDiscussion(post.id),
     );
     if (ok) _load(silent: true);
+  }
+
+  Future<void> _togglePin(DiscussionPost post) async {
+    final ok = await confirmDiscussionAction(
+      context: context,
+      title: post.isPinned
+          ? AppLanguage.tr('Unpin this post?', 'यो पोस्ट अनपिन गर्ने?')
+          : AppLanguage.tr('Pin this post?', 'यो पोस्ट पिन गर्ने?'),
+      message: post.isPinned
+          ? AppLanguage.tr('It will return to its normal position.',
+              'यो सामान्य स्थानमा फर्कनेछ।')
+          : AppLanguage.tr('It will stay at the top of the feed.',
+              'यो फिडको सबैभन्दा माथि रहनेछ।'),
+      confirmLabel: post.isPinned
+          ? AppLanguage.tr('Unpin', 'अनपिन गर्नुहोस्')
+          : AppLanguage.tr('Pin', 'पिन गर्नुहोस्'),
+    );
+    if (ok != true || !mounted) return;
+    try {
+      await DiscussionService.togglePinDiscussion(post.id, !post.isPinned);
+      if (!mounted) return;
+      // Optimistic local update + background refresh.
+      setState(() {
+        final i = _posts.indexWhere((p) => p.id == post.id);
+        if (i >= 0) _posts[i] = _posts[i].copyWith(isPinned: !post.isPinned);
+        _sortPosts();
+      });
+      _load(silent: true);
+      showToast(
+          context,
+          post.isPinned
+              ? AppLanguage.tr('Post unpinned', 'पोस्ट अनपिन भयो')
+              : AppLanguage.tr('Post pinned', 'पोस्ट पिन भयो'),
+          ToastVariant.success);
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+          context,
+          AppLanguage.tr('Something went wrong', 'केही समस्या भयो'),
+          ToastVariant.error);
+    }
+  }
+
+  void _sortPosts() {
+    // Pinned first, then by creation time (newest first).
+    _posts.sort((a, b) {
+      if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+      final at = a.createdAt?.millisecondsSinceEpoch ?? 0;
+      final bt = b.createdAt?.millisecondsSinceEpoch ?? 0;
+      return bt.compareTo(at);
+    });
   }
 
   @override

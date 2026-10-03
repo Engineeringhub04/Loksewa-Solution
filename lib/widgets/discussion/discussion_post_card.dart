@@ -170,6 +170,38 @@ class DiscussionPostCard extends StatelessWidget {
                               ),
                             ),
                           ],
+                          if (post.isPinned) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding:
+                                  const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: primary.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(7),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.push_pin,
+                                    size: 11,
+                                    color: primary,
+                                  ),
+                                  const SizedBox(width: 3),
+                                  Text(
+                                    AppLanguage.tr('Pinned', 'पिन गरिएको'),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      color: primary,
+                                      decoration: TextDecoration.none,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 2),

@@ -10,20 +10,38 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/discussion_service.dart';
 import '../../widgets/app_toast.dart';
 import '../../services/app_language.dart';
+import 'discussion_confirm_dialog.dart';
 
 class DiscussionLinkText extends StatelessWidget {
   final String text;
   final TextStyle style;
   final TextStyle? linkStyle;
 
+  /// React parity (DiscussionPostCard): show an "Open this link?" confirm
+  /// before leaving the app. Defaults to false so existing callers
+  /// (detail screen) keep their direct-open behavior.
+  final bool confirmBeforeOpen;
+
   const DiscussionLinkText({
     super.key,
     required this.text,
     required this.style,
     this.linkStyle,
+    this.confirmBeforeOpen = false,
   });
 
   Future<void> _open(BuildContext context, String raw) async {
+    if (confirmBeforeOpen && context.mounted) {
+      final ok = await confirmDiscussionAction(
+        context: context,
+        title: AppLanguage.tr('Open this link?', 'यो लिंक खोल्ने?'),
+        message: AppLanguage.tr(
+            'This link was posted by another user and will open outside the app.',
+            'यो लिंक अर्को प्रयोगकर्ताले राखेको हो र एप बाहिर खुल्नेछ।'),
+        confirmLabel: AppLanguage.tr('Open', 'खोल्नुहोस्'),
+      );
+      if (ok != true || !context.mounted) return;
+    }
     final url = normalizeDiscussionUrl(raw);
     final uri = Uri.tryParse(url);
     if (uri == null) return;

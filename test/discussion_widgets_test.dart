@@ -124,7 +124,7 @@ void main() {
   });
 
   group('DiscussionPostCard', () {
-    testWidgets('shows title, body, category chip and admin accent',
+    testWidgets('shows title, body, admin badge and title accent',
         (tester) async {
       final post = DiscussionPost(
         id: 'p1',
@@ -164,28 +164,28 @@ void main() {
       await tester.pump();
 
       expect(find.text('How to prepare for Kharidar?'), findsOneWidget);
-      expect(find.text('Start with the syllabus and past questions.'),
+      // Body renders via DiscussionLinkText (RichText spans).
+      expect(find.textContaining('Start with the syllabus', findRichText: true),
           findsOneWidget);
-      expect(find.text('Tips'), findsOneWidget); // category chip (en)
+      // React parity: no category chip on the card; admin badge instead.
+      expect(find.text('Tips'), findsNothing);
+      expect(find.text('Admin'), findsOneWidget);
 
-      // Admin treatment: 3px primary accent bar + primary-colored title.
+      // Title accent bar: 4px primary bar beside the title.
       final primary = Theme.of(tester.element(find.byType(DiscussionPostCard)))
           .colorScheme
           .primary;
       expect(
           find.byWidgetPredicate((w) =>
               w is Container &&
-              w.color == primary &&
-              w.constraints?.maxWidth == 3),
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color == primary &&
+              w.constraints?.minWidth == 4),
           findsOneWidget);
-      final titleWidget =
-          tester.widget<Text>(find.text('How to prepare for Kharidar?'));
-      expect(titleWidget.style?.color, primary);
 
-      // Footer: like count, comment count, feed date.
+      // Footer: like count, comment count; date lives in the meta line.
       expect(find.text('12'), findsOneWidget);
       expect(find.text('3'), findsOneWidget);
-      expect(find.text('2026-10-02'), findsOneWidget);
 
       // Card tap zone works; the like button bridges to onToggleLike.
       await tester.tap(find.text('How to prepare for Kharidar?'));
@@ -198,7 +198,7 @@ void main() {
       expect(menuTapped, isFalse);
 
       // The overflow menu reports the button's global anchor for the menu.
-      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.tap(find.byIcon(Icons.more_horiz));
       await tester.pump();
       expect(menuTapped, isTrue);
       expect(menuAnchor, isNotNull);
@@ -206,7 +206,8 @@ void main() {
       expect(menuAnchor!.dy, greaterThan(0));
     });
 
-    testWidgets('non-admin card has no accent bar', (tester) async {
+    testWidgets('non-admin titled card keeps the title accent bar',
+        (tester) async {
       final post = DiscussionPost(
         id: 'p2',
         title: 'Study group?',
@@ -228,10 +229,20 @@ void main() {
       ));
       await tester.pump();
       expect(find.byIcon(Icons.favorite), findsOneWidget);
+      // React parity: the 4px title accent bar renders for ANY post with a
+      // title (not just admins); there is no admin edge bar anymore.
+      final primary = Theme.of(tester.element(find.byType(DiscussionPostCard)))
+          .colorScheme
+          .primary;
       expect(
-          find.byWidgetPredicate(
-              (w) => w is Container && w.constraints?.maxWidth == 3),
-          findsNothing);
+          find.byWidgetPredicate((w) =>
+              w is Container &&
+              w.decoration is BoxDecoration &&
+              (w.decoration as BoxDecoration).color == primary &&
+              w.constraints?.minWidth == 4),
+          findsOneWidget);
+      // No admin badge on a non-admin card.
+      expect(find.text('Admin'), findsNothing);
     });
   });
 

@@ -147,3 +147,20 @@ Future<bool> confirmDiscussionDelete({
   );
   return ok;
 }
+
+/// Convenience for simple yes/no confirms with no async work
+/// (e.g. "Open this link?") — resolves true when the user confirms.
+Future<bool> confirmDiscussionAction({
+  required BuildContext context,
+  required String title,
+  required String message,
+  required String confirmLabel,
+}) {
+  return DiscussionConfirmDialog.show(
+    context: context,
+    title: title,
+    message: message,
+    confirmLabel: confirmLabel,
+    onConfirm: () async {},
+  );
+}

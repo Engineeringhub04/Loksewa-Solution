@@ -1,29 +1,35 @@
 // Discussion feed tab (bottom-nav "Discussion").
-// Mirrors app/(tabs)/discussion.tsx:
+// Mirrors app/(tabs)/discussion.tsx same-to-same:
+// - gradient header (icon box + title + subtitle, info/theme/avatar actions)
+//   with the search box INSIDE the header, full-bleed under the status bar
 // - latest 30 posts, orderBy createdAt desc, one-shot get (no listeners)
 // - like state preloaded per post (60s-cached reaction reads)
 // - client-side search across title/body/category/author/course/subcourse
 // - pull-to-refresh + refetch on tab refocus
 // - signed-out users browse only (no FAB, like taps → sign-in prompt)
-// - guidelines auto-popup on first visit per app start
+// - guidelines auto-popup once per user ever (persisted), only when the
+//   Discussion tab is actually opened
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/discussion_service.dart';
+import '../../services/prefs_service.dart';
 import '../../services/profile_service.dart';
+import '../../services/theme_service.dart';
 import '../../widgets/discussion/discussion_signin_prompt.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/discussion/discussion_action_menu.dart';
+import '../../widgets/discussion/discussion_avatar.dart';
 import '../../widgets/discussion/discussion_confirm_dialog.dart';
 import '../../widgets/discussion/discussion_guidelines_dialog.dart';
 import '../../widgets/discussion/discussion_post_card.dart';
 import '../../widgets/discussion/discussion_report_dialog.dart';
+import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
-import '../../widgets/subpage_header.dart';
-import '../../widgets/syllabus_entrance.dart';
 import '../tabs_screen.dart';
 
 class DiscussionTab extends StatefulWidget {
@@ -39,8 +45,6 @@ class DiscussionTab extends StatefulWidget {
 }
 
 class _DiscussionTabState extends State<DiscussionTab> {
-  static bool _guidelinesShownThisStart = false;
-
   List<DiscussionPost> _posts = [];
   final Map<String, bool> _liked = {};
   bool _loading = true;
@@ -48,6 +52,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
   bool _offline = false;
   String _query = '';
   bool _wasActive = false;
+  final TextEditingController _searchCtrl = TextEditingController();
 
   bool get _signedIn => AuthService.currentUser != null;
   bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
@@ -61,12 +66,21 @@ class _DiscussionTabState extends State<DiscussionTab> {
     TabsScreen.tabIndex.addListener(_onTabIndexChanged);
     DiscussionTab.refreshSignal.addListener(_onRefreshSignal);
     _load();
+    // Edge case: the app booted straight onto the Discussion tab (deep link
+    // / restored state) — no tab-change event will fire, so check once.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && TabsScreen.tabIndex.value == 2) {
+        _wasActive = true;
+        _maybeShowGuidelines();
+      }
+    });
   }
 
   @override
   void dispose() {
     TabsScreen.tabIndex.removeListener(_onTabIndexChanged);
     DiscussionTab.refreshSignal.removeListener(_onRefreshSignal);
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -79,6 +93,9 @@ class _DiscussionTabState extends State<DiscussionTab> {
     if (active && !_wasActive && mounted) {
       // Focus refresh — feed only (detail screens never auto-refetch).
       _load(silent: true);
+      // Guidelines: only when the user actually opens the Discussion tab,
+      // and only once per user ever (persisted — survives refresh/restarts).
+      _maybeShowGuidelines();
     }
     _wasActive = active;
   }
@@ -123,7 +140,6 @@ class _DiscussionTabState extends State<DiscussionTab> {
         _offline = false;
         _loading = false;
       });
-      _maybeShowGuidelines();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -134,11 +150,24 @@ class _DiscussionTabState extends State<DiscussionTab> {
     }
   }
 
+  /// Community Guidelines popup: shows ONLY when the user opens the
+  /// Discussion tab, and only ONCE per user ever — the "seen" flag is
+  /// persisted, so refresh / app restart never re-shows it.
   Future<void> _maybeShowGuidelines() async {
-    if (_guidelinesShownThisStart || !mounted) return;
-    _guidelinesShownThisStart = true;
+    if (!mounted) return;
+    final uid = AuthService.currentUser?.uid ?? '';
+    final key =
+        'discussion_guidelines_seen_${uid.isEmpty ? 'guest' : uid}';
+    try {
+      if (await PrefsService.getBool(key) == true) return;
+    } catch (_) {
+      return;
+    }
     try {
       final g = await DiscussionService.fetchDiscussionGuidelines();
+      if (!mounted) return;
+      // Mark seen BEFORE showing: a dismiss/crash must not re-trigger it.
+      await PrefsService.setBool(key, true);
       if (!mounted) return;
       final seeded = await DiscussionGuidelinesDialog.show(
         context: context,
@@ -231,30 +260,268 @@ class _DiscussionTabState extends State<DiscussionTab> {
 
   @override
   Widget build(BuildContext context) {
+    // No outer SafeArea: the header is full-bleed under the status bar
+    // (its own internal SafeArea pads the title row) — an outer SafeArea
+    // would push the header down and leave a gap above it.
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: Column(
-          children: [
-            SubpageHeader(
-              title: AppLanguage.tr('Discussion', 'छलफल'),
-              showBack: false,
-            ),
-            _SearchBar(
-              onChanged: (v) => setState(() => _query = v),
-            ),
-            Expanded(child: _buildBody()),
-          ],
-        ),
+      body: Column(
+        children: [
+          _buildHeader(),
+          Expanded(child: _buildBody()),
+        ],
       ),
       floatingActionButton: _signedIn
           ? FloatingActionButton(
               onPressed: () => context.push('/discussion/create'),
-              tooltip: AppLanguage.tr('New discussion', 'नयाँ छलफल'),
-              child: const Icon(Icons.add),
+              tooltip: AppLanguage.tr('Create Post', 'पोस्ट बनाउनुहोस्'),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add, size: 26),
             )
           : null,
     );
+  }
+
+  /// Gradient header — same-to-same with app/(tabs)/discussion.tsx:
+  /// icon box + title + guidelines subtitle, info/theme/avatar actions,
+  /// and the search box INSIDE the header. Full-bleed under the status bar.
+  Widget _buildHeader() {
+    final profile = ProfileStore.instance.profile;
+    final displayName = (profile?.name.isNotEmpty ?? false)
+        ? profile!.name
+        : (AuthService.currentUser?.displayName ?? '');
+    final photoURL = profile?.photoURL;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFF1D4ED8),
+          gradient: LinearGradient(
+            colors: [
+              Color(0xFF2563EB),
+              Color(0xFF1D4ED8),
+              Color(0xFF0B1F5B),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.only(
+            bottomLeft: Radius.circular(24),
+            bottomRight: Radius.circular(24),
+          ),
+        ),
+        child: SafeArea(
+          top: true,
+          bottom: false,
+          left: false,
+          right: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.17),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.22),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Icon(
+                        Icons.forum,
+                        size: 19,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            AppLanguage.tr('Discussion', 'छलफल'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 21,
+                              fontWeight: FontWeight.bold,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                          const SizedBox(height: 1),
+                          Text(
+                            AppLanguage.tr('Community Guidelines',
+                                'समुदायका नियमहरू'),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              color:
+                                  Colors.white.withValues(alpha: 0.72),
+                              fontSize: 12,
+                              decoration: TextDecoration.none,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    // Info → guidelines on demand.
+                    GestureDetector(
+                      onTap: _showGuidelinesNow,
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.info_outline,
+                          size: 21,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => ThemeService.toggle(context),
+                      child: Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.16),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        alignment: Alignment.center,
+                        child: Icon(
+                          isDark
+                              ? Icons.light_mode_outlined
+                              : Icons.dark_mode_outlined,
+                          size: 20,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => TabsScreen.tabIndex.value = 3,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.3),
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: DiscussionAvatar(
+                          photoUrl: photoURL,
+                          name: displayName,
+                          radius: 17,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 13),
+                Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(15),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.2),
+                    ),
+                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 13),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.search,
+                        size: 19,
+                        color: Colors.white.withValues(alpha: 0.78),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: TextField(
+                          controller: _searchCtrl,
+                          onChanged: (v) =>
+                              setState(() => _query = v),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            decoration: TextDecoration.none,
+                          ),
+                          decoration: InputDecoration(
+                            hintText: AppLanguage.tr(
+                                'Search discussions...',
+                                'छलफल खोज्नुहोस्...'),
+                            hintStyle: TextStyle(
+                              color:
+                                  Colors.white.withValues(alpha: 0.68),
+                              decoration: TextDecoration.none,
+                            ),
+                            border: InputBorder.none,
+                            contentPadding:
+                                const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                      if (_query.isNotEmpty)
+                        GestureDetector(
+                          onTap: () {
+                            _searchCtrl.clear();
+                            setState(() => _query = '');
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(4),
+                            child: Icon(
+                              Icons.cancel,
+                              size: 18,
+                              color:
+                                  Colors.white.withValues(alpha: 0.78),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Info-button path: guidelines on demand (no once-only gate here — the
+  /// user explicitly asked to see them).
+  Future<void> _showGuidelinesNow() async {
+    try {
+      final g = await DiscussionService.fetchDiscussionGuidelines();
+      if (!mounted) return;
+      await DiscussionGuidelinesDialog.show(
+        context: context,
+        guidelines: g,
+        showSeedButton: g.fromDefaults && _isAdmin,
+        onSeed: () async {
+          await DiscussionService.seedDiscussionGuidelines();
+        },
+      );
+    } catch (_) {
+      // Advisory only.
+    }
   }
 
   Widget _buildBody() {
@@ -275,19 +542,28 @@ class _DiscussionTabState extends State<DiscussionTab> {
     }
     return RefreshIndicator(
       onRefresh: () => _load(silent: true),
+      // React parity: no list entrance animations on the feed — plain list
+      // with 16px gaps, 16px horizontal padding.
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 88),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
         itemCount: posts.length,
         itemBuilder: (context, i) {
           final post = posts[i];
-          return SyllabusEntrance(
-            delayMs: (i * 40).clamp(0, 400),
+          return Padding(
+            padding: EdgeInsets.only(
+                bottom: i == posts.length - 1 ? 0 : 16),
             child: DiscussionPostCard(
               post: post,
               liked: _liked[post.id] ?? false,
               onToggleLike: (liked) => _onToggleLike(post, liked),
               onTap: () => context.push('/discussion/${post.id}'),
               onMenu: (anchor) => _onMenu(post, anchor),
+              // Global image viewer (app-wide rule): tap the post image →
+              // dimmed popup with pinch zoom.
+              onImageTap: (post.imageUrl ?? '').trim().isNotEmpty
+                  ? () => showImageViewer(
+                      context, NetworkImage(post.imageUrl!.trim()))
+                  : null,
             ),
           );
         },
@@ -298,45 +574,6 @@ class _DiscussionTabState extends State<DiscussionTab> {
 
 class _OfflineException implements Exception {
   const _OfflineException();
-}
-
-class _SearchBar extends StatelessWidget {
-  final ValueChanged<String> onChanged;
-
-  const _SearchBar({required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: TextField(
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          hintText: AppLanguage.tr(
-              'Search discussions...', 'छलफल खोज्नुहोस्...'),
-          hintStyle: const TextStyle(
-              color: Color(0xFF94A3B8),
-              decoration: TextDecoration.none),
-          prefixIcon: const Icon(Icons.search,
-              size: 20, color: Color(0xFF94A3B8)),
-          filled: true,
-          fillColor: Colors.white,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-          ),
-        ),
-        style: const TextStyle(
-            fontSize: 14, decoration: TextDecoration.none),
-      ),
-    );
-  }
 }
 
 class _ErrorState extends StatelessWidget {
@@ -422,7 +659,29 @@ class _EmptyState extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   decoration: TextDecoration.none),
             ),
-
+            // React parity: CTA → create page (only when not searching).
+            if (!searching) ...[
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () => context.push('/discussion/create'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      Theme.of(context).colorScheme.primary,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Text(
+                  AppLanguage.tr(
+                      'Create the first post', 'पहिलो पोस्ट बनाउनुहोस्'),
+                  style: const TextStyle(
+                      decoration: TextDecoration.none),
+                ),
+              ),
+            ],
           ],
         ),
       ),

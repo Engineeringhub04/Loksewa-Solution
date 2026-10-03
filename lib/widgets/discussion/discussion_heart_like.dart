@@ -24,6 +24,9 @@ class DiscussionHeartLike extends StatefulWidget {
   final double heartSize;
   final bool compact;
 
+  /// Liked heart color — React uses #E11D48 on the post card.
+  final Color activeColor;
+
   /// Heart-pop tuning: peak scale, ms up, ms back down.
   final double popScale;
   final int popUpMs;
@@ -36,6 +39,7 @@ class DiscussionHeartLike extends StatefulWidget {
     required this.onToggle,
     this.heartSize = 20,
     this.compact = false,
+    this.activeColor = const Color(0xFFEF4444),
     this.popScale = 1.22,
     this.popUpMs = 120,
     this.popDownMs = 120,
@@ -47,7 +51,6 @@ class DiscussionHeartLike extends StatefulWidget {
 
 class _DiscussionHeartLikeState extends State<DiscussionHeartLike>
     with SingleTickerProviderStateMixin {
-  static const _red = Color(0xFFEF4444);
   static const _grey = Color(0xFF94A3B8);
   static const _countGrey = Color(0xFF64748B);
 
@@ -152,7 +155,7 @@ class _DiscussionHeartLikeState extends State<DiscussionHeartLike>
               child: Icon(
                 _liked ? Icons.favorite : Icons.favorite_border,
                 size: widget.heartSize,
-                color: _liked ? _red : _grey,
+                color: _liked ? widget.activeColor : _grey,
               ),
             ),
             SizedBox(width: widget.compact ? 2 : 4),

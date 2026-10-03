@@ -4,7 +4,6 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_language.dart';
-import '../../theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 
 class DiscussionConfirmDialog {
@@ -76,7 +75,6 @@ class _ShellBodyState extends State<_ShellBody> {
   @override
   Widget build(BuildContext context) {
     const danger = Color(0xFFDC2626);
-    final palette = ExpoPalette.of(context);
     return AppModalShell(
       accent: danger,
       accentMid: const Color(0xFFEF4444),
@@ -98,10 +96,10 @@ class _ShellBodyState extends State<_ShellBody> {
       title: Text(
         widget.title,
         textAlign: TextAlign.center,
-        style: TextStyle(
+        style: const TextStyle(
           fontSize: 20,
           fontWeight: FontWeight.bold,
-          color: palette.textPrimary,
+          color: Color(0xFF0F172A),
           decoration: TextDecoration.none,
         ),
       ),
@@ -111,9 +109,9 @@ class _ShellBodyState extends State<_ShellBody> {
         children: [
           Text(widget.message,
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                   fontSize: 13,
-                  color: palette.textSecondary,
+                  color: Color(0xFF475569),
                   decoration: TextDecoration.none)),
           if (_error != null) ...[
             const SizedBox(height: 8),
@@ -131,6 +129,11 @@ class _ShellBodyState extends State<_ShellBody> {
           Expanded(
             child: OutlinedButton(
               onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+              style: OutlinedButton.styleFrom(
+                // Card is always white (v1.0.54 design) — force dark text
+                // so Cancel stays visible in dark mode too.
+                foregroundColor: const Color(0xFF0F172A),
+              ),
               child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
                   style:
                       const TextStyle(decoration: TextDecoration.none)),

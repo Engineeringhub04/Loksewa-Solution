@@ -155,14 +155,13 @@ class AppModalShell extends StatelessWidget {
   @override
   @override
   Widget build(BuildContext context) {
-    final palette = ExpoPalette.of(context);
     // Body scrolls, footer stays fixed. When [contentMaxHeight] is set,
     // ONLY the body region is capped and scrolls internally — the gradient
     // header (icon, tag, title) stays fixed on top AND the footer (action
     // buttons) stays fixed below, so actions are always reachable without
     // scrolling.
     final bodyWidget = Container(
-      color: palette.surface,
+      color: Colors.white,
       padding: const EdgeInsets.fromLTRB(20, 6, 20, 8),
       child: body,
     );
@@ -216,7 +215,7 @@ class AppModalShell extends StatelessWidget {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(borderRadius),
           child: Container(
-            color: palette.surface,
+            color: Colors.white,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,

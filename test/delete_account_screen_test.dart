@@ -124,7 +124,7 @@ void main() {
       expect(record['message'], 'Please delete my account now.');
       expect(record['status'], 'pending');
       expect(record['requestedAt'], isNotNull);
-      expect(record['appVersion'], '1.0.55');
+      expect(record['appVersion'], '1.0.56');
       expect(record.containsKey('uid'), isTrue);
 
       // One Discord post with the red deletion-request embed.
@@ -276,7 +276,7 @@ void main() {
         reason: 'r',
         message: long,
         requestedAt: 't',
-        appVersion: '1.0.55',
+        appVersion: '1.0.56',
       );
       final fields =
           (payload['embeds'] as List).single['fields'] as List;

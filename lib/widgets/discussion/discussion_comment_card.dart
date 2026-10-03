@@ -44,13 +44,10 @@ class DiscussionCommentCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final card = Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: _border(context)),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      padding: const EdgeInsets.all(10),
+    // React parity + FB/IG style: plain row, NO card — slight horizontal
+    // padding, avatar + content. The timeline is drawn by the parent thread.
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
@@ -146,10 +143,10 @@ class DiscussionCommentCard extends StatelessWidget {
       ),
     );
 
-    if (!isReply) return card;
+    if (!isReply) return content;
 
-    // Reply indentation: 40px left margin + a small vertical connector line
-    // in the gutter.
+    // Reply: FB/IG-style — indented with a vertical timeline connector
+    // in the gutter linking it to the parent thread.
     return Padding(
       padding: const EdgeInsets.only(left: 40),
       child: Stack(
@@ -164,7 +161,7 @@ class DiscussionCommentCard extends StatelessWidget {
               color: _border(context),
             ),
           ),
-          card,
+          content,
         ],
       ),
     );

@@ -1001,16 +1001,18 @@ class DiscussionService {
   /// Increments a counter field via read-modify-write (merge update).
   /// The atomic :commit transform form was failing against the security
   /// rules' changedOnly() check; a merge write of the new value satisfies
-  /// the rule (new == old ± 1) reliably.
+  /// the rule (new == old ± 1) reliably. Clamped at 0 — counts never go
+  /// negative even if the stored value drifted.
   static Future<void> _incrementField(
       String docPath, String field, int delta, String token) async {
     final doc =
         await FirestoreRest.getDocument(docPath, idToken: token);
     final current = doc?[field];
     final currentInt = current is num ? current.toInt() : 0;
+    final next = (currentInt + delta).clamp(0, 1 << 31);
     await FirestoreRest.updateDocument(
       docPath,
-      {field: currentInt + delta},
+      {field: next},
       idToken: token,
     );
   }

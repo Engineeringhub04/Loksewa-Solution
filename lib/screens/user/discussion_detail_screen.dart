@@ -41,6 +41,7 @@ import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
+import '../learn/discussion_tab.dart';
 
 class DiscussionDetailScreen extends StatefulWidget {
   final String id;
@@ -460,7 +461,10 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                   'यो काम फर्काउन मिल्दैन।'),
               onConfirm: () => DiscussionService.deleteDiscussion(post.id),
             );
-            if (ok && mounted) context.pop();
+            if (ok && mounted) {
+              DiscussionTab.requestRefresh();
+              context.pop();
+            }
           },
         ),
       if (!_canModerate(post.authorId))
@@ -852,14 +856,14 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (loadingReplies)
-                              const Padding(
+                              Padding(
                                 padding:
-                                    EdgeInsets.symmetric(vertical: 10),
-                                child: SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2),
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                child: PreloadingWidget(
+                                  tinted: false,
+                                  label: AppLanguage.tr(
+                                      'Loading replies...',
+                                      'रिप्लाइहरू लोड हुँदैछन्...'),
                                 ),
                               ),
                             for (final r in replies)

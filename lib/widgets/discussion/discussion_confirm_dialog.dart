@@ -16,7 +16,7 @@ class DiscussionConfirmDialog {
   }) async {
     final result = await AppModalShell.show<bool>(
       context: context,
-      builder: (pageContext) => _Body(
+      builder: (pageContext) => _ShellBody(
         title: title,
         message: message,
         confirmLabel: confirmLabel,
@@ -27,13 +27,16 @@ class DiscussionConfirmDialog {
   }
 }
 
-class _Body extends StatefulWidget {
+/// Wraps the confirm content in the shared AppModalShell card
+/// (daily-limit popup design) — the bare Column was rendering
+/// without a dialog card.
+class _ShellBody extends StatefulWidget {
   final String title;
   final String message;
   final String confirmLabel;
   final Future<void> Function() onConfirm;
 
-  const _Body({
+  const _ShellBody({
     required this.title,
     required this.message,
     required this.confirmLabel,
@@ -41,10 +44,10 @@ class _Body extends StatefulWidget {
   });
 
   @override
-  State<_Body> createState() => _BodyState();
+  State<_ShellBody> createState() => _ShellBodyState();
 }
 
-class _BodyState extends State<_Body> {
+class _ShellBodyState extends State<_ShellBody> {
   bool _busy = false;
   String? _error;
 
@@ -71,67 +74,93 @@ class _BodyState extends State<_Body> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(widget.title,
-            style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-                decoration: TextDecoration.none)),
-        const SizedBox(height: 8),
-        Text(widget.message,
-            style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF475569),
-                decoration: TextDecoration.none)),
-        if (_error != null) ...[
-          const SizedBox(height: 8),
-          Text(_error!,
-              style: const TextStyle(
-                  fontSize: 12,
-                  color: Color(0xFFDC2626),
-                  decoration: TextDecoration.none)),
-        ],
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: OutlinedButton(
-                onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
-                    style:
-                        const TextStyle(decoration: TextDecoration.none)),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFDC2626),
-                    foregroundColor: Colors.white),
-                onPressed: _busy ? null : _confirm,
-                child: _busy
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(widget.confirmLabel,
-                        style: const TextStyle(
-                            decoration: TextDecoration.none)),
-              ),
-            ),
-          ],
+    const danger = Color(0xFFDC2626);
+    return AppModalShell(
+      accent: danger,
+      accentMid: const Color(0xFFEF4444),
+      accentLight: const Color(0xFFFECACA),
+      tagColor: danger,
+      tagLabel: AppLanguage.tr('CONFIRM', 'पुष्टि गर्नुहोस्'),
+      onClose: _busy ? null : () => Navigator.of(context).pop(false),
+      icon: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: danger,
         ),
-      ],
+        child: const Icon(Icons.delete_outline_rounded,
+            size: 28, color: Colors.white),
+      ),
+      title: Text(
+        widget.title,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF0F172A),
+          decoration: TextDecoration.none,
+        ),
+      ),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(widget.message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  fontSize: 13,
+                  color: Color(0xFF475569),
+                  decoration: TextDecoration.none)),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    fontSize: 12,
+                    color: Color(0xFFDC2626),
+                    decoration: TextDecoration.none)),
+          ],
+        ],
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                  style:
+                      const TextStyle(decoration: TextDecoration.none)),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: danger,
+                  foregroundColor: Colors.white),
+              onPressed: _busy ? null : _confirm,
+              child: _busy
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : Text(widget.confirmLabel,
+                      style: const TextStyle(
+                          decoration: TextDecoration.none)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
-/// Convenience for delete confirmations; shows a success toast on confirm.
+/// Convenience for destructive confirms (delete post/comment/reply).
+/// Follows the standing popup-action pattern via [DiscussionConfirmDialog].
 Future<bool> confirmDiscussionDelete({
   required BuildContext context,
   required String title,

@@ -39,7 +39,7 @@ class DiscussionCommentCard extends StatelessWidget {
 
   Color _border(BuildContext context) => ExpoPalette.of(context).border;
   Color _navy(BuildContext context) => ExpoPalette.of(context).textPrimary;
-  static const _grey = Color(0xFF64748B);
+  Color _grey(BuildContext context) => ExpoPalette.of(context).textSecondary;
   Color _bodyGrey(BuildContext context) => ExpoPalette.of(context).textSecondary;
 
   @override
@@ -64,26 +64,30 @@ class DiscussionCommentCard extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                // React parity: horizontal author row — name (flex 1, 1 line)
+                // + timestamp (caption) + menu, all center-aligned.
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Text(
-                      comment.authorName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: _navy(context),
-                        decoration: TextDecoration.none,
+                    Expanded(
+                      child: Text(
+                        comment.authorName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: _navy(context),
+                          decoration: TextDecoration.none,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 1),
+                    const SizedBox(width: 6),
                     Text(
                       formatDiscussionCommentDate(comment.createdAt),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 10,
-                        color: _grey,
+                        color: _grey(context),
                         decoration: TextDecoration.none,
                       ),
                     ),
@@ -100,12 +104,12 @@ class DiscussionCommentCard extends StatelessWidget {
                         Offset.zero;
                     onMenu(pos);
                   },
-                  child: const Padding(
+                  child: Padding(
                     padding: EdgeInsets.all(4),
                     child: Icon(
                       Icons.more_vert,
                       size: 16,
-                      color: _grey,
+                      color: _grey(context),
                     ),
                   ),
                 ),

@@ -565,7 +565,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   Widget _buildBody() {
     if (_loading) {
       return Center(
-          child: PreloadingWidget(
+          child: PreloadingWidget(tinted: false,
               label: AppLanguage.tr(
                   'Loading comments...', 'कमेन्टहरू लोड हुँदैछन्...')));
     }

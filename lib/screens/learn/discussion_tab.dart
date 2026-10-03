@@ -542,7 +542,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
 
   Widget _buildBody() {
     if (_loading) {
-      return Center(child: PreloadingWidget(label: AppLanguage.tr('Loading discussions...', 'छलफलहरू लोड हुँदैछन्...')));
+      return Center(child: PreloadingWidget(tinted: false, label: AppLanguage.tr('Loading discussions...', 'छलफलहरू लोड हुँदैछन्...')));
     }
     if (_error != null) {
       return _ErrorState(

@@ -229,7 +229,7 @@ class _DiscussionCreateScreenState extends State<DiscussionCreateScreen> {
           Expanded(
             child: _loadingPost
                 ? Center(
-                    child: PreloadingWidget(
+                    child: PreloadingWidget(tinted: false,
                         label: AppLanguage.tr(
                             'Loading...', 'लोड हुँदैछ...')))
                 : _buildForm(),

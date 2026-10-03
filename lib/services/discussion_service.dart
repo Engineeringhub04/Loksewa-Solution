@@ -998,32 +998,20 @@ class DiscussionService {
 
   /// Atomic `increment(delta)` via the `:commit` field transform — the same
   /// operation the React `increment()` performs, never read-then-write.
+  /// Increments a counter field via read-modify-write (merge update).
+  /// The atomic :commit transform form was failing against the security
+  /// rules' changedOnly() check; a merge write of the new value satisfies
+  /// the rule (new == old ± 1) reliably.
   static Future<void> _incrementField(
       String docPath, String field, int delta, String token) async {
-    const base =
-        'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
-    final res = await http.post(
-      Uri.parse('$base:commit'),
-      headers: {
-        'Content-Type': 'application/json',
-        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-      },
-      body: jsonEncode({
-        'writes': [
-          {
-            'update': {'name': '$base/$docPath'},
-            'updateTransforms': [
-              {
-                'fieldPath': field,
-                'increment': {'integerValue': '$delta'},
-              },
-            ],
-          },
-        ],
-      }),
+    final doc =
+        await FirestoreRest.getDocument(docPath, idToken: token);
+    final current = doc?[field];
+    final currentInt = current is num ? current.toInt() : 0;
+    await FirestoreRest.updateDocument(
+      docPath,
+      {field: currentInt + delta},
+      idToken: token,
     );
-    if (res.statusCode != 200) {
-      throw Exception('_incrementField $docPath.$field: ${res.statusCode}');
-    }
   }
 }

@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 
 import '../../services/app_language.dart';
+import '../popup_action_button.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 
 class DiscussionConfirmDialog {
@@ -127,35 +128,19 @@ class _ShellBodyState extends State<_ShellBody> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-              style: OutlinedButton.styleFrom(
-                // Card is always white (v1.0.54 design) — force dark text
-                // so Cancel stays visible in dark mode too.
-                foregroundColor: const Color(0xFF0F172A),
-              ),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
-                  style:
-                      const TextStyle(decoration: TextDecoration.none)),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _busy,
+              onTap: () => Navigator.of(context).pop(false),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: danger,
-                  foregroundColor: Colors.white),
-              onPressed: _busy ? null : _confirm,
-              child: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text(widget.confirmLabel,
-                      style: const TextStyle(
-                          decoration: TextDecoration.none)),
+            child: PopupActionButton(
+              label: widget.confirmLabel,
+              backgroundColor: danger,
+              loading: _busy,
+              onTap: _confirm,
             ),
           ),
         ],

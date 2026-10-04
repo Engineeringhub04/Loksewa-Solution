@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/screens/learn/profile_tab.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 
 /// The strong red every filled danger surface uses in both themes.
 const _strongRed = Color(0xFFDC2626);
@@ -106,10 +107,11 @@ void main() {
 
       final cta = find.descendant(
         of: find.byType(AppModalShell),
-        matching: find.widgetWithText(FilledButton, 'Logout'),
+        matching: find.byType(PopupActionButton),
       );
       expect(cta, findsOneWidget);
-      expect(_filledBg(tester, cta), _strongRed);
+      final btn = tester.widget<PopupActionButton>(cta);
+      expect(btn.backgroundColor, _strongRed);
     });
   });
 }

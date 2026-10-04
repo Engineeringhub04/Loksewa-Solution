@@ -18,6 +18,7 @@ import 'package:loksewa_solution/widgets/animated_star_rating.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import 'package:loksewa_solution/widgets/disk_cached_image.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/profile_header.dart';
 import 'package:loksewa_solution/widgets/profile_rows.dart';
@@ -411,41 +412,25 @@ class _ProfileTabState extends State<ProfileTab> {
             footer: Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    // Cancel is disabled while logging out.
-                    onPressed: loggingOut
-                        ? null
-                        : () => Navigator.of(dialogContext).pop(false),
-                    child:
-                        Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                  child: PopupCancelButton(
+                    label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                    loading: loggingOut,
+                    onTap: () => Navigator.of(dialogContext).pop(false),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _dangerFill,
-                      foregroundColor: Colors.white,
-                    ),
-                    onPressed: loggingOut
-                        ? null
-                        : () async {
-                            setDialogState(() => loggingOut = true);
-                            await _performLogout();
-                            if (dialogContext.mounted) {
-                              Navigator.of(dialogContext).pop(true);
-                            }
-                          },
-                    child: loggingOut
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(AppLanguage.tr('Logout', 'लगआउट')),
+                  child: PopupActionButton(
+                    label: AppLanguage.tr('Logout', 'लगआउट'),
+                    backgroundColor: _dangerFill,
+                    loading: loggingOut,
+                    onTap: () async {
+                      setDialogState(() => loggingOut = true);
+                      await _performLogout();
+                      if (dialogContext.mounted) {
+                        Navigator.of(dialogContext).pop(true);
+                      }
+                    },
                   ),
                 ),
               ],

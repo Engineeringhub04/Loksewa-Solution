@@ -223,9 +223,18 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           .split(RegExp(r'\s+'))
           .where((p) => p.isNotEmpty)
           .toList();
+      // Signup writes 'name' (full name); older docs have firstName/lastName.
+      // Fall back to splitting 'name' so new accounts prefill correctly.
+      final nameParts = ((doc?['name'] as String?) ?? '')
+          .trim()
+          .split(RegExp(r'\s+'))
+          .where((p) => p.isNotEmpty)
+          .toList();
       final firstName = (doc?['firstName'] as String?) ??
+          (nameParts.isNotEmpty ? nameParts.first : '') ??
           (sessionParts.isNotEmpty ? sessionParts.first : '');
       final lastName = (doc?['lastName'] as String?) ??
+          (nameParts.length > 1 ? nameParts.skip(1).join(' ') : '') ??
           (sessionParts.length > 1 ? sessionParts.skip(1).join(' ') : '');
       setState(() {
         _firstCtrl.text = firstName;

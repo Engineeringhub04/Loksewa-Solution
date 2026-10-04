@@ -134,7 +134,7 @@ service cloud.firestore {
           request.resource.data.token.size() > 0 &&
           request.resource.data.token.size() <= 300 &&
           request.resource.data.platform in ['android', 'ios'] &&
-          (request.resource.data.language == null || request.resource.data.language is string);
+          (!('language' in request.resource.data.keys()) || request.resource.data.language is string);
         allow delete: if isOwner(userId) || isAdmin();
       }
       // One account = one device (normal users). Exactly one document is allowed
@@ -635,7 +635,7 @@ service cloud.firestore {
         request.resource.data.message.size() > 0 &&
         request.resource.data.requestedAt is timestamp &&
         request.resource.data.status == 'pending' &&
-        (request.resource.data.appVersion == null ||
+        (!('appVersion' in request.resource.data.keys()) ||
           request.resource.data.appVersion is string);
       allow update, delete: if isAdmin();
     }
@@ -699,8 +699,8 @@ service cloud.firestore {
         request.resource.data.token.size() > 0 &&
         request.resource.data.token.size() <= 300 &&
         request.resource.data.platform in ['android', 'ios'] &&
-        (request.resource.data.language == null || request.resource.data.language is string) &&
-        (request.resource.data.appVersion == null || request.resource.data.appVersion is string);
+        (!('language' in request.resource.data.keys()) || request.resource.data.language is string) &&
+        (!('appVersion' in request.resource.data.keys()) || request.resource.data.appVersion is string);
       allow delete: if isAdmin();
     }
 

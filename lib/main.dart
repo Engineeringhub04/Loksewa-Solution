@@ -4,11 +4,22 @@ import 'router/app_router.dart';
 import 'theme/app_theme.dart';
 import 'services/theme_service.dart';
 import 'services/app_language.dart';
+import 'services/push_notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   await AppLanguage.init();
+  // FCM push: token registration (best-effort, never blocks startup).
+  PushNotificationService.init().catchError((_) {});
+  // Notification tap → route. deepLink values come from the admin panel
+  // (e.g. "/notifications"); anything else falls back to the inbox.
+  PushNotificationService.onNotificationTap = (deepLink) {
+    final path = (deepLink != null && deepLink.startsWith('/'))
+        ? deepLink
+        : '/notifications';
+    appRouter.go(path);
+  };
   runApp(const LoksewaSolutionApp());
 }
 

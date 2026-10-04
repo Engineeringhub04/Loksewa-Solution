@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'firestore_rest.dart';
 import 'prefs_service.dart';
+import 'push_notification_service.dart';
 
 /// Firebase Identity Toolkit REST wrapper — mirrors src/core/firebase/auth.ts.
 /// Session is persisted in SharedPreferences (like the Expo app's session.ts).
@@ -192,6 +193,8 @@ class AuthService {
       'returnSecureToken': true,
     });
     await _storeSession(res);
+    // Move FCM token to the user collection (best effort).
+    PushNotificationService.onSignIn().catchError((_) {});
     return _session!.user;
   }
 
@@ -202,6 +205,8 @@ class AuthService {
       'returnSecureToken': true,
     });
     await _storeSession(res);
+    // Move FCM token to the user collection (best effort).
+    PushNotificationService.onSignIn().catchError((_) {});
     return _session!.user;
   }
 
@@ -239,6 +244,8 @@ class AuthService {
       throw AuthError('auth/google-account-creation-blocked');
     }
     await _storeSession(res);
+    // Move FCM token to the user collection (best effort).
+    PushNotificationService.onSignIn().catchError((_) {});
     return (user: _session!.user, isNewUser: isNewUser);
   }
 
@@ -274,6 +281,8 @@ class AuthService {
     if (uid != null) {
       // Release the one-device claim (best effort).
       await FirestoreRest.deleteDocument('users/$uid/session/active').catchError((_) {});
+      // Move FCM token from user collection to anonymous (best effort).
+      await PushNotificationService.onSignOut(uid).catchError((_) {});
     }
   }
 

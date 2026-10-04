@@ -276,13 +276,16 @@ class AuthService {
 
   static Future<void> logout() async {
     final uid = _session?.user.uid;
+    // Capture the ID token BEFORE clearing the session — onSignOut needs it
+    // for the Firestore token move (after _session = null the token is gone).
+    final idToken = await getValidIdToken().catchError((_) => '');
     _session = null;
     await PrefsService.remove(PrefsService.sessionKey);
     if (uid != null) {
       // Release the one-device claim (best effort).
       await FirestoreRest.deleteDocument('users/$uid/session/active').catchError((_) {});
       // Move FCM token from user collection to anonymous (best effort).
-      await PushNotificationService.onSignOut(uid).catchError((_) {});
+      await PushNotificationService.onSignOut(uid, idToken: idToken).catchError((_) {});
     }
   }
 

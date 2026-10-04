@@ -179,13 +179,17 @@ class PushNotificationService {
   }
 
   /// Call on sign-out: remove from user collection, save as anonymous.
-  static Future<void> onSignOut(String uid) async {
+  /// Pass the idToken captured BEFORE the session was cleared — after logout
+  /// getValidIdToken() returns empty and Firestore denies the writes.
+  static Future<void> onSignOut(String uid, {String idToken = ''}) async {
     try {
       final deviceId = await _getDeviceId();
-      final idToken = await AuthService.getValidIdToken().catchError((_) => '');
+      final token = idToken.isNotEmpty
+          ? idToken
+          : await AuthService.getValidIdToken().catchError((_) => '');
       await FirestoreRest.deleteDocument(
         'users/$uid/push_tokens/$deviceId',
-        idToken: idToken,
+        idToken: token,
       ).catchError((_) {});
     } catch (_) {}
     await _setLastUid(null);

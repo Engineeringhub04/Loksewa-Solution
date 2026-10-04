@@ -2,10 +2,13 @@
 // pushNotifications.ts. Same Firestore structure:
 //   - Signed-in:  users/{uid}/push_tokens/{deviceId}
 //   - Signed-out: app_device_push_tokens/{deviceId}
-// Tokens move between the two on login/logout (never duplicated).
-// The admin website reads these paths and sends via FCM API.
+//
+// STABLE DEVICE ID (v1.0.60+): Uses ANDROID_ID which survives reinstalls,
+// so one physical device = one document. No duplicates on reinstall.
+// Account switches clean up the old user's token via last_uid tracking.
 import 'dart:io';
 
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -23,23 +26,57 @@ class PushNotificationService {
   static bool _initialized = false;
   static String? _deviceId;
 
+  static const _lastUidKey = 'push_last_uid';
+  static const _legacyDeviceIdKey = 'push_device_id';
+
   /// Callback for notification taps — set by the router layer.
   static void Function(String? deepLink)? onNotificationTap;
 
-  /// Stable per-install device id for token keying
-  /// (mirrors getDeviceInstallationId in the React app).
+  /// Stable per-device id. ANDROID_ID survives reinstalls (unlike a random
+  /// UUID), so reinstalling the app updates the SAME document instead of
+  /// creating a duplicate. Falls back to persisted UUID on iOS/other.
   static Future<String> _getDeviceId() async {
     if (_deviceId != null) return _deviceId!;
-    const key = 'push_device_id';
-    final prefs = await SharedPreferences.getInstance();
-    var id = prefs.getString(key);
+    String? id;
+    try {
+      if (Platform.isAndroid) {
+        final info = await DeviceInfoPlugin().androidInfo;
+        // ignore: avoid_dynamic_calls
+        id = (info as dynamic).id as String?;
+      }
+    } catch (_) {}
     if (id == null || id.isEmpty) {
-      id =
-          '${DateTime.now().millisecondsSinceEpoch}_${(DateTime.now().microsecondsSinceEpoch % 1296).toRadixString(36)}';
-      await prefs.setString(key, id);
+      // Fallback: persisted random UUID (iOS, or ANDROID_ID unavailable).
+      final prefs = await SharedPreferences.getInstance();
+      id = prefs.getString(_legacyDeviceIdKey);
+      if (id == null || id.isEmpty) {
+        id =
+            '${DateTime.now().millisecondsSinceEpoch}_${(DateTime.now().microsecondsSinceEpoch % 1296).toRadixString(36)}';
+        await prefs.setString(_legacyDeviceIdKey, id);
+      }
     }
     _deviceId = id;
     return id;
+  }
+
+  static Future<String?> _getLastUid() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getString(_lastUidKey);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> _setLastUid(String? uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (uid == null) {
+        await prefs.remove(_lastUidKey);
+      } else {
+        await prefs.setString(_lastUidKey, uid);
+      }
+    } catch (_) {}
   }
 
   /// Call once at app startup (after Firebase.initializeApp).
@@ -93,19 +130,9 @@ class PushNotificationService {
         'updatedAt': DateTime.now().toIso8601String(),
       };
       if (uid != null && uid.isNotEmpty) {
-        // Signed-in: save under user, clean up anonymous row.
-        await FirestoreRest.setDocument(
-          'users/$uid/push_tokens/$deviceId',
-          payload,
-          idToken: idToken,
-          merge: true,
-        ).catchError((_) {});
-        await FirestoreRest.deleteDocument(
-          'app_device_push_tokens/$deviceId',
-          idToken: idToken,
-        ).catchError((_) {});
+        await _saveForUser(uid, deviceId, payload, idToken);
       } else {
-        // Signed-out: anonymous collection.
+        // Signed-out: anonymous collection (merge = update in place).
         await FirestoreRest.setDocument(
           'app_device_push_tokens/$deviceId',
           payload,
@@ -119,6 +146,38 @@ class PushNotificationService {
     }
   }
 
+  /// Saves token for a user: cleans up old user's doc (account switch),
+  /// removes guest doc, saves to new user's doc. All merge/best-effort.
+  static Future<void> _saveForUser(
+    String uid,
+    String deviceId,
+    Map<String, dynamic> payload,
+    String idToken,
+  ) async {
+    // 1. Account switch? Remove from the previous user's collection.
+    final lastUid = await _getLastUid();
+    if (lastUid != null && lastUid.isNotEmpty && lastUid != uid) {
+      await FirestoreRest.deleteDocument(
+        'users/$lastUid/push_tokens/$deviceId',
+        idToken: idToken,
+      ).catchError((_) {});
+    }
+    // 2. Remove guest doc (no duplicate across collections).
+    await FirestoreRest.deleteDocument(
+      'app_device_push_tokens/$deviceId',
+      idToken: idToken,
+    ).catchError((_) {});
+    // 3. Save to the current user's collection (merge = update in place).
+    await FirestoreRest.setDocument(
+      'users/$uid/push_tokens/$deviceId',
+      payload,
+      idToken: idToken,
+      merge: true,
+    ).catchError((_) {});
+    // 4. Remember this uid for the next switch.
+    await _setLastUid(uid);
+  }
+
   /// Call on sign-out: remove from user collection, save as anonymous.
   static Future<void> onSignOut(String uid) async {
     try {
@@ -129,6 +188,7 @@ class PushNotificationService {
         idToken: idToken,
       ).catchError((_) {});
     } catch (_) {}
+    await _setLastUid(null);
     await registerToken();
   }
 

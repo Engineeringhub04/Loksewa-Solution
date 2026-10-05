@@ -51,11 +51,11 @@ class _Notif {
   final String? imageUrl;
   final String source; // 'personal' | 'global' | 'exam'
   final bool updatedNotice;
-  // Exam-push auto-expiry (Point 3): worker sets type='exam' + expiresAt
-  // (ISO8601, ~60 min after creation) on app_notifications rows. Null =
-  // never expires (normal notifications).
+  // Exam-push rows: worker writes type='exam' to app_exam_notifications.
+  // No expiresAt from the worker — the app computes expiry from the exam
+  // set's real durationMinutes (see _load). Null = never expires (normal
+  // notifications).
   final String? notifType;
-  final DateTime? expiresAt;
 
   _Notif({
     required this.id,
@@ -70,17 +70,7 @@ class _Notif {
     required this.source,
     this.updatedNotice = false,
     this.notifType,
-    this.expiresAt,
   });
-
-  /// Silent expiry check — expired exam rows are hidden, never shown with
-  /// an "expired" label. Missing/null expiresAt = never expires.
-  bool get isExpired {
-    if (notifType != 'exam') return false;
-    final exp = expiresAt;
-    if (exp == null) return false;
-    return exp.isBefore(DateTime.now());
-  }
 }
 
 String _normalizeCategory(dynamic value) {
@@ -93,9 +83,31 @@ String _normalizeCategory(dynamic value) {
 
 DateTime? _asDate(dynamic v) {
   if (v is DateTime) return v;
-  // Backward compat: old docs saved expiresAt as ISO string (worker bug).
   if (v is String) return DateTime.tryParse(v);
   return null;
+}
+
+/// Batch-fetch exam set durations (durationMinutes) for expiry computation.
+/// Returns setId → durationMinutes. Missing/failed docs fall back to 60.
+/// Best-effort: never throws.
+Future<Map<String, int>> _fetchExamDurations(
+    List<String> setIds, String idToken) async {
+  final result = <String, int>{};
+  if (setIds.isEmpty) return result;
+  await Future.wait(setIds.map((setId) async {
+    try {
+      final doc = await FirestoreRest.getDocument(
+        'app_exam_sets/$setId',
+        idToken: idToken,
+      );
+      final dur = doc?['durationMinutes'];
+      result[setId] =
+          dur is num ? dur.toInt() : int.tryParse('$dur') ?? 60;
+    } catch (_) {
+      result[setId] = 60;
+    }
+  }));
+  return result;
 }
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
@@ -156,10 +168,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 idToken: token, pageSize: 100)
             : Future.value(<Map<String, dynamic>>[]),
         _getGlobalReadIds(),
-        // Exam-push rows (Point 3): worker writes type='exam' + expiresAt
-        // (~60 min after creation) to app_notifications. Readable by any
-        // signed-in user; filtered client-side below.
-        FirestoreRest.listDocuments('app_notifications', idToken: token),
+        // Exam-push rows: worker writes type='exam' rows (no expiresAt) to
+        // app_exam_notifications. Readable by any signed-in user; expiry is
+        // computed client-side from the exam set's durationMinutes below.
+        FirestoreRest.listDocuments('app_exam_notifications', idToken: token),
       ]);
 
       final personalRows = results[0] as List<Map<String, dynamic>>;
@@ -241,34 +253,97 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final adminTop =
           adminReports.length > 30 ? adminReports.sublist(0, 30) : adminReports;
 
-      // Exam-push inbox rows (Point 3): only type='exam' rows from
-      // app_notifications. Expired ones are hidden silently AND queued for
-      // background deletion — the user never sees an "expired" label.
+      // Exam-push inbox rows: only type='exam' rows from
+      // app_exam_notifications. Expiry is computed from the exam set's REAL
+      // durationMinutes (not a hardcoded value): expiry = createdAt +
+      // duration. Expired ones are hidden silently AND queued for background
+      // deletion — the user never sees an "expired" label.
+      //
+      // Durations are batch-fetched once for all unique setIds (typically
+      // <10 notifications), with a 60-minute fallback when a set doc can't
+      // be read. Best-effort: expiry logic never breaks the list.
       final List<_Notif> expiredExam = [];
       final exams = <_Notif>[];
-      for (final row in examRows) {
-        if ((row['type'] ?? '').toString() != 'exam') continue;
-        final docId = (row['id'] ?? '').toString();
-        if (docId.isEmpty) continue;
-        final id = 'exam:$docId';
-        final item = _Notif(
-          id: id,
-          docId: docId,
-          title: (row['title'] ?? 'New Model Set is Live!').toString(),
-          preview: (row['bodyLogin'] ?? row['body'] ?? '').toString(),
-          read: readIds.contains(id),
-          createdAt: _asDate(row['createdAt']),
-          deepLink: (row['deepLink'] as String?),
-          category: 'Exam',
-          imageUrl: (row['imageUrl'] as String?),
-          source: 'exam',
-          notifType: 'exam',
-          expiresAt: _asDate(row['expiresAt']),
-        );
-        if (item.isExpired) {
-          expiredExam.add(item);
-        } else {
-          exams.add(item);
+      final now = DateTime.now();
+      // Temp lists so a mid-loop failure can't leave partial duplicates.
+      final okExams = <_Notif>[];
+      final okExpired = <_Notif>[];
+      var computed = false;
+      try {
+        // Collect unique exam set IDs (first ID per notification).
+        final setIds = <String>{};
+        final examCandidates = <Map<String, dynamic>>[];
+        for (final row in examRows) {
+          if ((row['type'] ?? '').toString() != 'exam') continue;
+          final docId = (row['id'] ?? '').toString();
+          if (docId.isEmpty) continue;
+          examCandidates.add(row);
+          final ids = row['examSetIds'];
+          if (ids is List && ids.isNotEmpty) {
+            setIds.add(ids.first.toString());
+          }
+        }
+        final durations =
+            await _fetchExamDurations(setIds.toList(), token);
+        for (final row in examCandidates) {
+          final docId = (row['id'] ?? '').toString();
+          final id = 'exam:$docId';
+          final createdAt = _asDate(row['createdAt']);
+          int durationMin = 60; // safe fallback
+          final ids = row['examSetIds'];
+          if (ids is List && ids.isNotEmpty) {
+            durationMin = durations[ids.first.toString()] ?? 60;
+          }
+          // Null createdAt = can't compute expiry → keep visible (safe).
+          final isExpired = createdAt != null &&
+              now.isAfter(
+                  createdAt.add(Duration(minutes: durationMin)));
+          final item = _Notif(
+            id: id,
+            docId: docId,
+            title: (row['title'] ?? 'New Model Set is Live!').toString(),
+            preview: (row['bodyLogin'] ?? row['body'] ?? '').toString(),
+            read: readIds.contains(id),
+            createdAt: createdAt,
+            deepLink: (row['deepLink'] as String?),
+            category: 'Exam',
+            imageUrl: (row['imageUrl'] as String?),
+            source: 'exam',
+            notifType: 'exam',
+          );
+          if (isExpired) {
+            okExpired.add(item);
+          } else {
+            okExams.add(item);
+          }
+        }
+        computed = true;
+      } catch (_) {
+        // Duration lookup failed entirely — fall through to the safe
+        // fallback below (show all exam rows unexpired).
+      }
+      if (computed) {
+        exams.addAll(okExams);
+        expiredExam.addAll(okExpired);
+      } else {
+        for (final row in examRows) {
+          if ((row['type'] ?? '').toString() != 'exam') continue;
+          final docId = (row['id'] ?? '').toString();
+          if (docId.isEmpty) continue;
+          final id = 'exam:$docId';
+          exams.add(_Notif(
+            id: id,
+            docId: docId,
+            title: (row['title'] ?? 'New Model Set is Live!').toString(),
+            preview: (row['bodyLogin'] ?? row['body'] ?? '').toString(),
+            read: readIds.contains(id),
+            createdAt: _asDate(row['createdAt']),
+            deepLink: (row['deepLink'] as String?),
+            category: 'Exam',
+            imageUrl: (row['imageUrl'] as String?),
+            source: 'exam',
+            notifType: 'exam',
+          ));
         }
       }
 
@@ -293,9 +368,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       }
 
       // Background cleanup (best effort, never blocks UI): delete expired
-      // exam rows so the inbox stays lean. Non-admins get a permission
-      // error until the firebase.rules update is published — silently
-      // ignored; the rows stay hidden client-side regardless.
+      // exam rows from app_exam_notifications so the inbox stays lean.
+      // Failures are silently ignored; the rows stay hidden client-side
+      // regardless.
       if (expiredExam.isNotEmpty) {
         _cleanupExpiredExam(examRows: expiredExam, token: token);
       }
@@ -307,9 +382,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  /// Fire-and-forget deletion of expired exam rows. Best effort: failures
-  /// (e.g. non-admin before the rules update) are swallowed — rows stay
-  /// hidden client-side regardless.
+  /// Fire-and-forget deletion of expired exam rows from
+  /// app_exam_notifications. Best effort: failures are swallowed — rows
+  /// stay hidden client-side regardless.
   void _cleanupExpiredExam(
       {required List<_Notif> examRows, required String token}) {
     Future(() async {
@@ -317,7 +392,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         final docId = n.docId;
         if (docId == null || docId.isEmpty) continue;
         try {
-          await FirestoreRest.deleteDocument('app_notifications/$docId',
+          await FirestoreRest.deleteDocument('app_exam_notifications/$docId',
               idToken: token);
         } catch (_) {
           // Best effort — keep going with the rest.

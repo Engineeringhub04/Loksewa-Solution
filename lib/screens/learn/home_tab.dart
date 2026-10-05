@@ -248,6 +248,42 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     return null;
   }
 
+  /// Parses Firestore timestamp-ish values to DateTime. Best-effort.
+  static DateTime? _asDateTime(dynamic v) {
+    if (v is DateTime) return v;
+    if (v is String) return DateTime.tryParse(v);
+    return null;
+  }
+
+  /// Batch-fetch exam set durations for badge expiry filtering.
+  /// Returns setId → durationMinutes (60-min fallback). Never throws.
+  static Future<Map<String, int>> _fetchExamDurationsForBadge(
+      List<Map<String, dynamic>> examRows, String token) async {
+    final result = <String, int>{};
+    final setIds = <String>{};
+    for (final n in examRows) {
+      if ((n['type'] ?? '').toString() != 'exam') continue;
+      final ids = n['examSetIds'];
+      if (ids is List && ids.isNotEmpty) {
+        setIds.add(ids.first.toString());
+      }
+    }
+    if (setIds.isEmpty) return result;
+    await Future.wait(setIds.map((setId) async {
+      try {
+        final doc = await FirestoreRest.getDocument(
+          'app_exam_sets/$setId',
+          idToken: token,
+        );
+        final dur = doc?['durationMinutes'];
+        result[setId] = dur is num ? dur.toInt() : int.tryParse('$dur') ?? 60;
+      } catch (_) {
+        result[setId] = 60;
+      }
+    }));
+    return result;
+  }
+
   /// Mirrors the read-tracking in notifications_screen.dart so the header
   /// badge matches what the Notifications page considers unread.
   Future<int> _unreadNotificationCount(String token, String? uid) async {
@@ -257,11 +293,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           : FirestoreRest.listDocuments('users/$uid/notifications',
               idToken: token),
       FirestoreRest.listDocuments('app_global_notification', idToken: token),
-      // Exam-push rows (Point 3): count non-expired ones so the badge
-      // matches the inbox. Expired rows are hidden silently everywhere.
+      // Exam-push rows: count non-expired ones so the badge matches the
+      // inbox. Expiry = createdAt + the exam set's durationMinutes (same
+      // logic as notifications_screen.dart). Expired rows are hidden
+      // silently everywhere.
       uid == null
           ? Future.value(<Map<String, dynamic>>[])
-          : FirestoreRest.listDocuments('app_notifications',
+          : FirestoreRest.listDocuments('app_exam_notifications',
               idToken: token),
     ]);
     final personal =
@@ -271,17 +309,21 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         .map((n) => {...n, '_source': 'global'})
         .toList();
     final now = DateTime.now();
+    // Batch-fetch durations for exam rows (best effort; 60-min fallback).
+    final Map<String, int> durations = await _fetchExamDurationsForBadge(
+        results[2], token);
     final exams = results[2]
         .where((n) => (n['type'] ?? '').toString() == 'exam')
         .where((n) {
-          final exp = n['expiresAt'];
-          final expDt = exp is DateTime
-              ? exp
-              : exp is String
-                  ? DateTime.tryParse(exp)
-                  : null;
-          // Null/missing expiresAt = never expires.
-          return expDt == null || !expDt.isBefore(now);
+          final created = _asDateTime(n['createdAt']);
+          if (created == null) return true; // can't compute → keep (safe)
+          int durationMin = 60;
+          final ids = n['examSetIds'];
+          if (ids is List && ids.isNotEmpty) {
+            durationMin = durations[ids.first.toString()] ?? 60;
+          }
+          return !now.isAfter(
+              created.add(Duration(minutes: durationMin)));
         })
         .map((n) => {...n, '_source': 'exam'})
         .toList();

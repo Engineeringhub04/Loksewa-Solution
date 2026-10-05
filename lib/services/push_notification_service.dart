@@ -148,6 +148,10 @@ class PushNotificationService {
   /// Registers this device's FCM token in Firestore for the current
   /// auth state. Call on startup and whenever the uid changes.
   /// `uid` null → anonymous collection. Best-effort: never throws.
+  ///
+  /// NEW FLOW (v1.0.64+): User tokens carry `courseId`, `subcourseId` and
+  /// `userName` so the push worker can filter by subcourse WITHOUT a
+  /// batchGet — the token doc is self-contained.
   static Future<String?> registerToken() async {
     try {
       final token = await _messaging.getToken();
@@ -163,9 +167,15 @@ class PushNotificationService {
         'updatedAt': DateTime.now().toIso8601String(),
       };
       if (uid != null && uid.isNotEmpty) {
+        // Logged in: attach course info so the worker can filter directly.
+        final courseInfo = await _getUserCourseInfo(uid, idToken);
+        payload['courseId'] = courseInfo['courseId'];
+        payload['subcourseId'] = courseInfo['subcourseId'];
+        payload['userName'] = courseInfo['userName'];
         await _saveForUser(uid, deviceId, payload, idToken);
       } else {
         // Signed-out: anonymous collection (merge = update in place).
+        // No course info — guest has no user doc.
         await FirestoreRest.setDocument(
           'app_device_push_tokens/$deviceId',
           payload,
@@ -176,6 +186,26 @@ class PushNotificationService {
       return token;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Best-effort fetch of the user's course info for the token payload.
+  /// Returns empty strings when unavailable — never throws.
+  static Future<Map<String, String>> _getUserCourseInfo(
+    String uid,
+    String idToken,
+  ) async {
+    try {
+      final doc = await FirestoreRest.getDocument('users/$uid', idToken: idToken)
+          .catchError((_) => null);
+      final data = doc is Map<String, dynamic> ? doc : <String, dynamic>{};
+      return {
+        'courseId': '${data['courseId'] ?? ''}',
+        'subcourseId': '${data['subcourseId'] ?? ''}',
+        'userName': '${data['name'] ?? data['displayName'] ?? ''}',
+      };
+    } catch (_) {
+      return {'courseId': '', 'subcourseId': '', 'userName': ''};
     }
   }
 

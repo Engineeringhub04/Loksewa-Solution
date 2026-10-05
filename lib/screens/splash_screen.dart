@@ -98,6 +98,12 @@ class _SplashScreenState extends State<SplashScreen> {
       // React's splash doesn't gate, but the user wants setup enforced here
       // as well). Verified-incomplete → course-setup (initial mode);
       // verified-complete OR unknown (offline/error) → home.
+      //
+      // FCM token fix: PushNotificationService.init() runs before the session
+      // is restored, so the token lands in the guest collection. Move it to
+      // the user's collection now that we know they're logged in — otherwise
+      // the worker sends them the "please log in" guest notification too.
+      PushNotificationService.onSignIn().catchError((_) {});
       final setupDone =
           await _withTimeout(CourseSetupGate.isComplete(user.uid), null);
       if (!mounted) return;

@@ -737,6 +737,20 @@ service cloud.firestore {
           && resource.data.expiresAt is timestamp
           && resource.data.expiresAt < request.time;
     }
+    // NEW (v1.0.66+): User-facing exam notifications. Worker writes,
+    // app reads + deletes after exam duration (app computes expiry from
+    // real exam duration, no expiresAt field needed).
+    match /app_exam_notifications/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+      allow delete: if isSignedIn() && resource.data.type == 'exam';
+    }
+    // NEW (v1.0.66+): Permanent admin history for exam notifications.
+    // Worker writes, admin reads. App never touches this. Never deleted.
+    match /app_examnotifications_history/{docId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
     match /app_home_banners/{docId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

@@ -701,7 +701,11 @@ service cloud.firestore {
         request.resource.data.platform in ['android', 'ios'] &&
         (!('language' in request.resource.data.keys()) || request.resource.data.language is string) &&
         (!('appVersion' in request.resource.data.keys()) || request.resource.data.appVersion is string);
-      allow delete: if isAdmin();
+      // Any signed-in user may delete guest tokens (they're transient —
+      // recreated on every app open). Needed so login can clean up the
+      // guest doc; previously admin-only, which left stale guest docs
+      // for normal users.
+      allow delete: if isSignedIn();
     }
 
     match /app_quiz_results/{docId} {

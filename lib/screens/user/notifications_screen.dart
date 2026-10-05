@@ -91,7 +91,12 @@ String _normalizeCategory(dynamic value) {
   return s.isEmpty ? 'App Notice' : s;
 }
 
-DateTime? _asDate(dynamic v) => v is DateTime ? v : null;
+DateTime? _asDate(dynamic v) {
+  if (v is DateTime) return v;
+  // Backward compat: old docs saved expiresAt as ISO string (worker bug).
+  if (v is String) return DateTime.tryParse(v);
+  return null;
+}
 
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<_Notif>? _items;

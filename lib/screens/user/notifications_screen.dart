@@ -9,6 +9,8 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../learn/exam_tab.dart';
+import '../tabs_screen.dart';
 
 /// Notification inbox — mirrors app/notifications.tsx +
 /// src/core/firebase/services/notifications.ts.
@@ -21,7 +23,17 @@ import '../../widgets/preloading.dart';
 /// `app_report_history` (newest 30, read state shared with the global set).
 /// Rows sort newest-first by createdAt.
 class NotificationsScreen extends StatefulWidget {
-  const NotificationsScreen({super.key});
+  /// When set (notification-tap flow), the list auto-opens the matching
+  /// notification's details once loaded. Falls back to [fallbackDeepLink]
+  /// when the id isn't found in the inbox.
+  final String? autoOpenId;
+  final String? fallbackDeepLink;
+
+  const NotificationsScreen({
+    super.key,
+    this.autoOpenId,
+    this.fallbackDeepLink,
+  });
 
   @override
   State<NotificationsScreen> createState() => _NotificationsScreenState();
@@ -37,8 +49,13 @@ class _Notif {
   final String? deepLink;
   final String category;
   final String? imageUrl;
-  final String source; // 'personal' | 'global'
+  final String source; // 'personal' | 'global' | 'exam'
   final bool updatedNotice;
+  // Exam-push auto-expiry (Point 3): worker sets type='exam' + expiresAt
+  // (ISO8601, ~60 min after creation) on app_notifications rows. Null =
+  // never expires (normal notifications).
+  final String? notifType;
+  final DateTime? expiresAt;
 
   _Notif({
     required this.id,
@@ -52,7 +69,18 @@ class _Notif {
     this.imageUrl,
     required this.source,
     this.updatedNotice = false,
+    this.notifType,
+    this.expiresAt,
   });
+
+  /// Silent expiry check — expired exam rows are hidden, never shown with
+  /// an "expired" label. Missing/null expiresAt = never expires.
+  bool get isExpired {
+    if (notifType != 'exam') return false;
+    final exp = expiresAt;
+    if (exp == null) return false;
+    return exp.isBefore(DateTime.now());
+  }
 }
 
 String _normalizeCategory(dynamic value) {
@@ -68,6 +96,7 @@ DateTime? _asDate(dynamic v) => v is DateTime ? v : null;
 class _NotificationsScreenState extends State<NotificationsScreen> {
   List<_Notif>? _items;
   Object? _error;
+  bool _autoOpenDone = false;
 
   String get _globalReadKey =>
       'loksewa:globalNotificationReadIds:${AuthService.currentUser?.uid ?? 'guest'}';
@@ -122,12 +151,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 idToken: token, pageSize: 100)
             : Future.value(<Map<String, dynamic>>[]),
         _getGlobalReadIds(),
+        // Exam-push rows (Point 3): worker writes type='exam' + expiresAt
+        // (~60 min after creation) to app_notifications. Readable by any
+        // signed-in user; filtered client-side below.
+        FirestoreRest.listDocuments('app_notifications', idToken: token),
       ]);
 
       final personalRows = results[0] as List<Map<String, dynamic>>;
       final globalRows = results[1] as List<Map<String, dynamic>>;
       final reportRows = results[2] as List<Map<String, dynamic>>;
       final readIds = results[3] as Set<String>;
+      final examRows = results[4] as List<Map<String, dynamic>>;
 
       final personal = personalRows
           .map((row) => _Notif(
@@ -202,7 +236,38 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final adminTop =
           adminReports.length > 30 ? adminReports.sublist(0, 30) : adminReports;
 
-      final all = [...personal, ...global, ...adminTop];
+      // Exam-push inbox rows (Point 3): only type='exam' rows from
+      // app_notifications. Expired ones are hidden silently AND queued for
+      // background deletion — the user never sees an "expired" label.
+      final List<_Notif> expiredExam = [];
+      final exams = <_Notif>[];
+      for (final row in examRows) {
+        if ((row['type'] ?? '').toString() != 'exam') continue;
+        final docId = (row['id'] ?? '').toString();
+        if (docId.isEmpty) continue;
+        final id = 'exam:$docId';
+        final item = _Notif(
+          id: id,
+          docId: docId,
+          title: (row['title'] ?? 'New Model Set is Live!').toString(),
+          preview: (row['bodyLogin'] ?? row['body'] ?? '').toString(),
+          read: readIds.contains(id),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: (row['deepLink'] as String?),
+          category: 'Exam',
+          imageUrl: (row['imageUrl'] as String?),
+          source: 'exam',
+          notifType: 'exam',
+          expiresAt: _asDate(row['expiresAt']),
+        );
+        if (item.isExpired) {
+          expiredExam.add(item);
+        } else {
+          exams.add(item);
+        }
+      }
+
+      final all = [...personal, ...global, ...adminTop, ...exams];
       all.sort((a, b) => (b.createdAt?.millisecondsSinceEpoch ?? 0)
           .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
 
@@ -211,6 +276,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _items = all;
         _error = null;
       });
+
+      // Notification-tap flow (Point 1): auto-open the tapped notification
+      // once the list is ready. Runs once only — pull-to-refresh must not
+      // re-trigger it.
+      if (widget.autoOpenId != null && !_autoOpenDone) {
+        _autoOpenDone = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _autoOpenNotification();
+        });
+      }
+
+      // Background cleanup (best effort, never blocks UI): delete expired
+      // exam rows so the inbox stays lean. Non-admins get a permission
+      // error until the firebase.rules update is published — silently
+      // ignored; the rows stay hidden client-side regardless.
+      if (expiredExam.isNotEmpty) {
+        _cleanupExpiredExam(examRows: expiredExam, token: token);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -219,13 +302,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
+  /// Fire-and-forget deletion of expired exam rows. Best effort: failures
+  /// (e.g. non-admin before the rules update) are swallowed — rows stay
+  /// hidden client-side regardless.
+  void _cleanupExpiredExam(
+      {required List<_Notif> examRows, required String token}) {
+    Future(() async {
+      for (final n in examRows) {
+        final docId = n.docId;
+        if (docId == null || docId.isEmpty) continue;
+        try {
+          await FirestoreRest.deleteDocument('app_notifications/$docId',
+              idToken: token);
+        } catch (_) {
+          // Best effort — keep going with the rest.
+        }
+      }
+    });
+  }
+
   Future<void> _markRead(_Notif item) async {
     if (item.read) return;
     final uid = AuthService.currentUser?.uid;
     setState(() => item.read = true);
     if (uid == null) return;
     try {
-      if (item.source == 'global') {
+      // Exam rows share the local read-id set with global rows (same key
+      // the home-tab badge uses).
+      if (item.source == 'global' || item.source == 'exam') {
         final ids = await _getGlobalReadIds();
         ids.add(item.id);
         await _saveGlobalReadIds(ids);
@@ -255,8 +359,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     showToast(context, 'All notifications marked as read', ToastVariant.success);
     try {
       final token = await AuthService.getValidIdToken();
-      final globalIds =
-          items.where((i) => i.source == 'global').map((i) => i.id).toList();
+      final globalIds = items
+          .where((i) => i.source == 'global' || i.source == 'exam')
+          .map((i) => i.id)
+          .toList();
       final ids = await _getGlobalReadIds();
       ids.addAll(globalIds);
       await _saveGlobalReadIds(ids);
@@ -288,6 +394,56 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         'createdAtMs': item.createdAt?.millisecondsSinceEpoch ?? 0,
       },
     );
+  }
+
+  /// Notification-tap flow (Point 1): open the tapped notification's
+  /// details. Matches by raw id, document id, or the derived `exam:` /
+  /// `global:` prefixed ids. When the item isn't in the inbox (e.g. the
+  /// push arrived before the inbox write), falls back to the FCM deep link
+  /// so the user still lands on the right exam page.
+  void _autoOpenNotification() {
+    final targetId = widget.autoOpenId;
+    if (targetId == null || targetId.isEmpty) return;
+    final items = _items;
+    if (items == null) return;
+    _Notif? match;
+    for (final item in items) {
+      if (item.id == targetId || item.docId == targetId) {
+        match = item;
+        break;
+      }
+    }
+    match ??= () {
+      for (final item in items) {
+        if (item.id == 'exam:$targetId' || item.id == 'global:$targetId') {
+          return item;
+        }
+      }
+      return null;
+    }();
+    if (match != null) {
+      _open(match);
+      return;
+    }
+    final fallback = widget.fallbackDeepLink;
+    if (fallback != null && fallback.isNotEmpty) {
+      _openExamFallback(fallback);
+    }
+  }
+
+  /// Fallback when the tapped notification isn't in the inbox: follow its
+  /// deep link. Exam links open the exam tab scrolled to the set's card;
+  /// anything else pushes the link as-is.
+  void _openExamFallback(String deepLink) {
+    final examMatch = RegExp(r'^/exam/([^/?#]+)$').firstMatch(deepLink);
+    if (examMatch != null) {
+      final setId = examMatch.group(1)!;
+      ExamTab.pendingHighlightSetId = setId;
+      TabsScreen.tabIndex.value = 1; // Exam tab
+      context.go('/');
+      return;
+    }
+    context.push(deepLink);
   }
 
   @override

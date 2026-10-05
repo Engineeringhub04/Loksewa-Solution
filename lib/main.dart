@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'router/app_router.dart';
 import 'theme/app_theme.dart';
+import 'services/auth_service.dart';
 import 'services/theme_service.dart';
 import 'services/app_language.dart';
+import 'services/prefs_service.dart';
 import 'services/push_notification_service.dart';
 
 Future<void> main() async {
@@ -12,13 +14,38 @@ Future<void> main() async {
   await AppLanguage.init();
   // FCM push: token registration (best-effort, never blocks startup).
   PushNotificationService.init().catchError((_) {});
-  // Notification tap → route. deepLink values come from the admin panel
-  // (e.g. "/notifications"); anything else falls back to the inbox.
-  PushNotificationService.onNotificationTap = (deepLink) {
-    final path = (deepLink != null && deepLink.startsWith('/'))
-        ? deepLink
-        : '/notifications';
-    appRouter.go(path);
+  // Notification tap → stash the payload for the splash on cold start;
+  // navigate immediately when the app is already running (warm tap).
+  // The splash consumes the stash after the auth check:
+  //   logged in  → home → notification list → auto-open the tapped details
+  //   logged out → stash cleared, normal onboarding/login flow.
+  // Back stack after a tap: details → list → home (never straight to close).
+  PushNotificationService.onNotificationTap = (data) async {
+    final id = data['notificationId']?.trim();
+    final link = data['deepLink']?.trim();
+    if (id != null && id.isNotEmpty) {
+      await PrefsService.setString(
+          PushNotificationService.pendingNotificationIdKey, id);
+    }
+    if (link != null && link.isNotEmpty) {
+      await PrefsService.setString(
+          PushNotificationService.pendingNotificationLinkKey, link);
+    }
+    // Warm tap (app already past the splash): navigate right away.
+    // Cold start: splashHasRouted is still false — the splash picks the
+    // stash up after auth.
+    if (splashHasRouted) {
+      final pending = await PushNotificationService.consumePendingTap();
+      final pendingId = pending.id;
+      if (pendingId != null && AuthService.currentUser != null) {
+        appRouter.go('/');
+        appRouter.push('/notifications', extra: {
+          'autoOpenId': pendingId,
+          if (pending.deepLink != null)
+            'fallbackDeepLink': pending.deepLink!,
+        });
+      }
+    }
   };
   runApp(const LoksewaSolutionApp());
 }

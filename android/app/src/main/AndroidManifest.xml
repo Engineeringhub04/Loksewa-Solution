@@ -41,6 +41,15 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- FCM: white notification small icon + brand color for the
+             status bar on all devices (incl. older phones that don't
+             tint the launcher icon). -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/notification_color" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

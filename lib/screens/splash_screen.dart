@@ -8,6 +8,7 @@ import '../services/course_setup_gate.dart';
 import '../services/device_session.dart';
 import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
+import '../services/push_notification_service.dart';
 import '../services/remote_config.dart';
 
 /// Splash — first screen on launch; initializes the app and routes correctly.
@@ -100,9 +101,27 @@ class _SplashScreenState extends State<SplashScreen> {
       final setupDone =
           await _withTimeout(CourseSetupGate.isComplete(user.uid), null);
       if (!mounted) return;
+      // Cold-start notification tap: the FCM tap handler stashed the
+      // payload before the splash ran. Go home → notification list →
+      // auto-open the tapped notification's details.
+      // Back stack: details → list → home (never straight to app close).
+      final pending = await PushNotificationService.consumePendingTap();
+      final pendingId = pending.id;
+      if (pendingId != null && setupDone != false) {
+        context.go('/');
+        context.push('/notifications', extra: {
+          'autoOpenId': pendingId,
+          if (pending.deepLink != null)
+            'fallbackDeepLink': pending.deepLink!,
+        });
+        return;
+      }
       context.go(setupDone == false ? '/course-setup' : '/');
       return;
     }
+    // Not logged in: notification taps are meaningless (the inbox needs a
+    // user), so drop any stash and continue with the normal flow.
+    await PushNotificationService.consumePendingTap();
     // Warm the onboarding image cache (disk + memory) so the onboarding
     // screen shows instantly. Hard deadline: the splash never hangs.
     if (!mounted) return;

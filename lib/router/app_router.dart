@@ -468,7 +468,21 @@ final appRouter = GoRouter(
     ),
     GoRoute(path: '/downloads', builder: (_, __) => const DownloadsScreen()),
     GoRoute(
-        path: '/notifications', builder: (_, __) => const NotificationsScreen()),
+      path: '/notifications',
+      builder: (_, s) {
+        final extra = s.extra;
+        final map = extra is Map ? extra : const {};
+        return NotificationsScreen(
+          autoOpenId: (map['autoOpenId'] as String?)?.trim().isNotEmpty == true
+              ? (map['autoOpenId'] as String).trim()
+              : null,
+          fallbackDeepLink:
+              (map['fallbackDeepLink'] as String?)?.trim().isNotEmpty == true
+                  ? (map['fallbackDeepLink'] as String).trim()
+                  : null,
+        );
+      },
+    ),
     GoRoute(
       path: '/notification/:id',
       builder: (_, s) =>

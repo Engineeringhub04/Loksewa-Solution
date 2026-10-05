@@ -257,6 +257,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           : FirestoreRest.listDocuments('users/$uid/notifications',
               idToken: token),
       FirestoreRest.listDocuments('app_global_notification', idToken: token),
+      // Exam-push rows (Point 3): count non-expired ones so the badge
+      // matches the inbox. Expired rows are hidden silently everywhere.
+      uid == null
+          ? Future.value(<Map<String, dynamic>>[])
+          : FirestoreRest.listDocuments('app_notifications',
+              idToken: token),
     ]);
     final personal =
         results[0].map((n) => {...n, '_source': 'personal'}).toList();
@@ -264,13 +270,28 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         .where((n) => (n['segment'] ?? '').toString() != 'nonlogin')
         .map((n) => {...n, '_source': 'global'})
         .toList();
+    final now = DateTime.now();
+    final exams = results[2]
+        .where((n) => (n['type'] ?? '').toString() == 'exam')
+        .where((n) {
+          final exp = n['expiresAt'];
+          final expDt = exp is DateTime
+              ? exp
+              : exp is String
+                  ? DateTime.tryParse(exp)
+                  : null;
+          // Null/missing expiresAt = never expires.
+          return expDt == null || !expDt.isBefore(now);
+        })
+        .map((n) => {...n, '_source': 'exam'})
+        .toList();
     final raw = await PrefsService.getString(
         'loksewa:notificationReadIds:${uid ?? 'guest'}');
     final Set<String> readIds = raw == null || raw.isEmpty
         ? <String>{}
         : (json.decode(raw) as List).map((e) => e.toString()).toSet();
     var count = 0;
-    for (final n in [...personal, ...global]) {
+    for (final n in [...personal, ...global, ...exams]) {
       final created = n['createdAt'];
       final ms = created is DateTime
           ? created.millisecondsSinceEpoch

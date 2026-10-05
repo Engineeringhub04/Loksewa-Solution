@@ -30,6 +30,11 @@ String _npDigits(String s) => s.replaceAllMapped(
 class ExamTab extends StatefulWidget {
   const ExamTab({super.key});
 
+  /// Set before navigating to the exam tab to auto-scroll to a model set's
+  /// card and briefly highlight it (Point 4 — notification "Click here").
+  /// Consumed (cleared) once applied.
+  static String? pendingHighlightSetId;
+
   @override
   State<ExamTab> createState() => _ExamTabState();
 }
@@ -46,6 +51,10 @@ class _ExamTabState extends State<ExamTab> {
   Timer? _ticker;
   bool _shellLoaded = false;
   final Map<String, _SectionCache> _sectionCache = {};
+  // Point 4: scroll-to-card + highlight for notification deep links.
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _cardKeys = {};
+  String? _highlightedSetId;
 
   String get _cacheKey => '${_sectionId ?? ''}|$_provinceId';
 
@@ -66,6 +75,7 @@ class _ExamTabState extends State<ExamTab> {
   @override
   void dispose() {
     _ticker?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -348,6 +358,32 @@ class _ExamTabState extends State<ExamTab> {
     }
   }
 
+  /// Point 4: scrolls the card list to [ExamTab.pendingHighlightSetId]'s
+  /// card and flashes a highlight ring on it. Consumes the pending id, so
+  /// this runs once. Silently no-ops when the set isn't in the current
+  /// section/province filter.
+  void _applyHighlight() {
+    final target = ExamTab.pendingHighlightSetId;
+    ExamTab.pendingHighlightSetId = null;
+    if (target == null || target.isEmpty) return;
+    if (!mounted) return;
+    final key = _cardKeys[target];
+    final ctx = key?.currentContext;
+    if (ctx == null) return;
+    Scrollable.ensureVisible(
+      ctx,
+      duration: const Duration(milliseconds: 650),
+      curve: Curves.easeInOut,
+      alignment: 0.25,
+    );
+    setState(() => _highlightedSetId = target);
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (mounted && _highlightedSetId == target) {
+        setState(() => _highlightedSetId = null);
+      }
+    });
+  }
+
   String _countdownLabel(DateTime? start, DateTime now) {
     if (start == null) return '--:--';
     var s = start.difference(now).inSeconds;
@@ -361,6 +397,15 @@ class _ExamTabState extends State<ExamTab> {
 
   @override
   Widget build(BuildContext context) {
+    // Point 4: consume a pending highlight request (notification "Click
+    // here"). Runs once the cards are laid out; the ticker's per-second
+    // rebuilds re-check harmlessly until the pending id is consumed.
+    if (ExamTab.pendingHighlightSetId != null &&
+        _cards.isNotEmpty &&
+        !_loading &&
+        _error == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _applyHighlight());
+    }
     final palette = ExpoPalette.of(context);
     return Scaffold(
       backgroundColor: palette.background,
@@ -651,6 +696,7 @@ class _ExamTabState extends State<ExamTab> {
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView(
+        controller: _scrollController,
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           if (_activeSection != null) _sectionBanner(_activeSection!),
@@ -662,21 +708,45 @@ class _ExamTabState extends State<ExamTab> {
             ..._cards.asMap().entries.map((me) {
               final i = me.key;
               final e = me.value;
+              // Point 4: glowing ring while this card is the highlight
+              // target of a notification deep link.
+              final highlighted = e.set.id == _highlightedSetId;
               return Padding(
+                key: _cardKeys.putIfAbsent(e.set.id, () => GlobalKey()),
                 padding: const EdgeInsets.only(bottom: 12),
-                child: SyllabusEntrance(
-                  delayMs: (i.clamp(0, 8)) * 60,
-                  child: _ExamCard(
-                    entry: e,
-                    accentColor: Color(
-                        _activeSection?.colorValue ?? 0xFF2563EB),
-                    subcourseLabel: _subcourseLabel,
-                    countdownLabel:
-                        _countdownLabel(e.set.startTime, DateTime.now()),
-                    onRulesPress: () => _openRules(e.set, _RulesMode.info),
-                    onPrimaryPress: () => _onPrimaryPress(e),
-                    onRankingPress: () =>
-                        context.push('/exam/${e.set.id}/ranking'),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 300),
+                  decoration: highlighted
+                      ? BoxDecoration(
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: const Color(0xFF2563EB),
+                            width: 2.5,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: const Color(0xFF2563EB)
+                                  .withValues(alpha: 0.35),
+                              blurRadius: 16,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        )
+                      : null,
+                  child: SyllabusEntrance(
+                    delayMs: (i.clamp(0, 8)) * 60,
+                    child: _ExamCard(
+                      entry: e,
+                      accentColor: Color(
+                          _activeSection?.colorValue ?? 0xFF2563EB),
+                      subcourseLabel: _subcourseLabel,
+                      countdownLabel:
+                          _countdownLabel(e.set.startTime, DateTime.now()),
+                      onRulesPress: () => _openRules(e.set, _RulesMode.info),
+                      onPrimaryPress: () => _onPrimaryPress(e),
+                      onRankingPress: () =>
+                          context.push('/exam/${e.set.id}/ranking'),
+                    ),
                   ),
                 ),
               );

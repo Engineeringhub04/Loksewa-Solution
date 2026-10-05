@@ -725,6 +725,13 @@ service cloud.firestore {
     match /app_notifications/{docId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+      // Point 3 (exam auto-expiry): any signed-in user may delete an exam
+      // row whose expiresAt has passed — keeps the inbox lean without
+      // admin intervention. Normal rows still require admin.
+      allow delete: if isSignedIn()
+          && resource.data.type == 'exam'
+          && resource.data.expiresAt is timestamp
+          && resource.data.expiresAt < request.time;
     }
     match /app_home_banners/{docId} {
       allow read: if isSignedIn();

@@ -30,7 +30,40 @@ class PushNotificationService {
   static const _legacyDeviceIdKey = 'push_device_id';
 
   /// Callback for notification taps — set by the router layer.
-  static void Function(String? deepLink)? onNotificationTap;
+  /// Receives the full FCM data payload as strings (deepLink,
+  /// notificationId, examSetId, kind, type, ...).
+  static void Function(Map<String, String?> data)? onNotificationTap;
+
+  /// SharedPreferences keys for a tap that arrived while the app was
+  /// terminated (cold start). The splash consumes these after the auth
+  /// check; see main.dart for the full flow.
+  static const pendingNotificationIdKey = 'pending_notification_id';
+  static const pendingNotificationLinkKey = 'pending_notification_deeplink';
+
+  /// FCM data values arrive as dynamic — normalize to strings.
+  static Map<String, String?> _stringData(Map<String, dynamic> data) =>
+      data.map((key, value) => MapEntry(key, value?.toString()));
+
+  /// Reads and clears a stashed notification tap (see
+  /// [pendingNotificationIdKey]). Returns the (notificationId, deepLink);
+  /// either may be null when nothing was stashed. Callers decide what to
+  /// do based on auth state — the splash (cold start) and main.dart (warm
+  /// tap) both use this.
+  static Future<({String? id, String? deepLink})> consumePendingTap() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final id = prefs.getString(pendingNotificationIdKey);
+      final link = prefs.getString(pendingNotificationLinkKey);
+      await prefs.remove(pendingNotificationIdKey);
+      await prefs.remove(pendingNotificationLinkKey);
+      return (
+        id: (id != null && id.isNotEmpty) ? id : null,
+        deepLink: (link != null && link.isNotEmpty) ? link : null,
+      );
+    } catch (_) {
+      return (id: null, deepLink: null);
+    }
+  }
 
   /// Stable per-device id. ANDROID_ID survives reinstalls (unlike a random
   /// UUID), so reinstalling the app updates the SAME document instead of
@@ -95,13 +128,13 @@ class PushNotificationService {
 
     // Tap while app is in background.
     FirebaseMessaging.onMessageOpenedApp.listen((message) {
-      onNotificationTap?.call(message.data['deepLink'] as String?);
+      onNotificationTap?.call(_stringData(message.data));
     });
 
     // Tap that cold-started the app from terminated state.
     _messaging.getInitialMessage().then((message) {
       if (message != null) {
-        onNotificationTap?.call(message.data['deepLink'] as String?);
+        onNotificationTap?.call(_stringData(message.data));
       }
     });
 

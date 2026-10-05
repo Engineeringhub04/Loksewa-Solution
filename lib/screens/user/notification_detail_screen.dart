@@ -5,6 +5,8 @@ import '../../services/app_language.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../learn/exam_tab.dart';
+import '../tabs_screen.dart';
 
 /// Notification detail — mirrors app/notification/[id].tsx.
 ///
@@ -180,7 +182,7 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
                                         BorderRadius.circular(ExpoRadius.md),
                                   ),
                                 ),
-                                onPressed: () => context.push(deepLink),
+                                onPressed: () => _openDeepLink(context, deepLink),
                                 icon: const Icon(Icons.open_in_new_outlined,
                                     size: 18),
                                 label: const Text('Click here',
@@ -240,6 +242,22 @@ class _NotificationDetailScreenState extends State<NotificationDetailScreen> {
 
   void _openViewer(BuildContext context, String url) {
     showImageViewer(context, NetworkImage(url));
+  }
+
+  /// "Click here" (Point 4): exam deep links (`/exam/{setId}`) open the
+  /// exam tab scrolled straight to that model set's card (with a brief
+  /// highlight); anything else pushes the link as-is.
+  void _openDeepLink(BuildContext context, String deepLink) {
+    final link = deepLink.trim();
+    if (link.isEmpty) return;
+    final examMatch = RegExp(r'^/exam/([^/?#]+)$').firstMatch(link);
+    if (examMatch != null) {
+      ExamTab.pendingHighlightSetId = examMatch.group(1);
+      TabsScreen.tabIndex.value = 1; // Exam tab
+      context.go('/');
+      return;
+    }
+    context.push(link);
   }
 }
 

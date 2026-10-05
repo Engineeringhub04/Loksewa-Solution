@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Accent color used for FCM notification small icon background on
+         Android 5.0+. Matches the app's primary brand blue. -->
+    <color name="notification_color">#1D4ED8</color>
+</resources>

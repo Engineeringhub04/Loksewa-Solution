@@ -458,7 +458,10 @@ service cloud.firestore {
         request.resource.data.keys().hasOnly([
           'slug', 'title', 'sourceUrl', 'publishedAt', 'dateLabel', 'coverImage',
           'excerpt', 'blocks', 'isQuestionSet', 'tag', 'category', 'status', 'source',
-          'fetchedAt', 'updatedAt'
+          'fetchedAt', 'updatedAt',
+          // Gorkhapatra push delivery stats (auto Action + admin manual send).
+          'pushSentAt', 'pushSource', 'pushRecipients', 'pushOk', 'pushFailed',
+          'pushStatus', 'pushErrors'
         ]) &&
         request.resource.data.slug == docId &&
         request.resource.data.title is string &&

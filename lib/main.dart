@@ -44,6 +44,10 @@ Future<void> main() async {
           if (pending.deepLink != null)
             'fallbackDeepLink': pending.deepLink!,
         });
+      } else if (pending.deepLink != null) {
+        // Push-only notifications (e.g. Gorkhapatra) carry a deepLink but no
+        // notificationId — push it directly instead of dropping the tap.
+        appRouter.push(pending.deepLink!);
       }
     }
   };

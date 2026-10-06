@@ -131,17 +131,9 @@ class _SplashScreenState extends State<SplashScreen> {
       context.go(setupDone == false ? '/course-setup' : '/');
       return;
     }
-    // Not logged in: inbox taps are meaningless (the inbox needs a user), so
-    // drop those — but push-only deepLinks (e.g. public Gorkhapatra posts)
-    // are still honored once onboarding was already seen.
-    final pendingTap = await PushNotificationService.consumePendingTap();
-    final onboardingSeen =
-        await PrefsService.getBool(PrefsService.onboardingSeen) ?? false;
-    if (pendingTap.deepLink != null && onboardingSeen) {
-      if (!mounted) return;
-      context.go(pendingTap.deepLink!);
-      return;
-    }
+    // Not logged in: notification taps are meaningless (the inbox needs a
+    // user), so drop any stash and continue with the normal flow.
+    await PushNotificationService.consumePendingTap();
     // Warm the onboarding image cache (disk + memory) so the onboarding
     // screen shows instantly. Hard deadline: the splash never hangs.
     if (!mounted) return;

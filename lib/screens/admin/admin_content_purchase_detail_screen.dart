@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
@@ -30,6 +33,9 @@ class _Denied implements Exception {}
 class _AdminContentPurchaseDetailScreenState
     extends State<AdminContentPurchaseDetailScreen> {
   Future<Map<String, dynamic>?>? _future;
+  // Latest loaded record (cached in _load so _save can ping the buyer
+  // without an extra read or an async gap before using context).
+  Map<String, dynamic>? _record;
   final _adminMessage = TextEditingController();
   final _customReason = TextEditingController();
   String? _decision; // 'reject' | 'approve' | 'other'
@@ -71,6 +77,7 @@ class _AdminContentPurchaseDetailScreenState
             await FirestoreRest.getDocument('users/$uid', idToken: token);
       }
     } catch (_) {}
+    _record = record;
     return record;
   }
 
@@ -186,6 +193,26 @@ class _AdminContentPurchaseDetailScreenState
     );
     if (!mounted) return;
     if (ok == true) {
+      // Fire-and-forget push to the BUYER's devices — the decision is
+      // already saved; never blocks the admin UI.
+      final rec = _record;
+      final buyerUid = rec?['uid']?.toString() ?? '';
+      if (buyerUid.isNotEmpty) {
+        final contentTitle = (rec!['contentTitle'] ?? '').toString();
+        final reason = isApprove
+            ? ''
+            : (decision == 'other'
+                ? customReason
+                : 'Payment could not be verified.');
+        unawaited(AdminNotifyService.notifyUser(
+          uid: buyerUid,
+          title: isApprove ? 'खरिद स्वीकृत ✅' : 'खरिद अस्वीकृत ❌',
+          body: isApprove
+              ? 'तपाईंको खरिद "$contentTitle" स्वीकृत भयो। अब तपाईंले सामग्री प्रयोग गर्न सक्नुहुन्छ।'
+              : 'तपाईंको खरिद "$contentTitle" अस्वीकृत भयो। कारण: $reason',
+          deepLink: '/purchase-details/content/${widget.id}',
+        ));
+      }
       showToast(
           context,
           isApprove

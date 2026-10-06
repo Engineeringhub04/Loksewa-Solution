@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:loksewa_solution/screens/auth/app_info_screen.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
@@ -278,6 +280,16 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       );
       return false;
     }
+    // Fire-and-forget admin push — the delete request is recorded in
+    // app_deleterequest; never blocks the caller. (deepLink: '/' — no
+    // admin delete-request route exists; do NOT invent one.)
+    final reporterName = name.isEmpty ? email : name;
+    unawaited(AdminNotifyService.notifyAdmin(
+      kind: 'delete_request',
+      title: 'खाता मेटाउने अनुरोध ⚠️',
+      body: '$reporterName ले खाता मेटाउन अनुरोध गरे: $reason',
+      deepLink: '/',
+    ));
     try {
       final body = DeleteAccountScreen.buildDiscordPayload(
         uid: uid,

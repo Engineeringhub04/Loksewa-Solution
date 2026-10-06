@@ -6,6 +6,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
@@ -231,7 +232,17 @@ class ReportService {
 
     // Best-effort history copy — the report already reached support.
     try {
-      await _createReportHistory(category, body);
+      final reporterName = await _createReportHistory(category, body);
+      // Fire-and-forget admin push — reached only when the history write
+      // succeeded; never blocks the caller.
+      final oneLine = body.replaceAll(RegExp(r'\s+'), ' ').trim();
+      final preview = oneLine.length > 80 ? '${oneLine.substring(0, 80)}…' : oneLine;
+      unawaited(AdminNotifyService.notifyAdmin(
+        kind: 'report',
+        title: 'नयाँ रिपोर्ट 📝',
+        body: '$reporterName ले समस्या रिपोर्ट गरे: $category — $preview',
+        deepLink: '/admin/report-history',
+      ));
     } catch (_) {}
   }
 
@@ -279,6 +290,7 @@ class ReportService {
   }) async {
     final ref = questionRef.trim();
     final body = description.trim();
+    String? reporterName;
     await Future.wait([
       _submitToGoogleForm(
         type: 'report',
@@ -290,13 +302,27 @@ class ReportService {
         questionRef: ref,
         issue: issue,
         description: body,
-      ),
+      ).then((name) => reporterName = name),
     ]);
+    // Fire-and-forget admin push — reached only when BOTH writes above
+    // succeeded (Future.wait rethrows on any failure), never blocks caller.
+    final preview = body.isEmpty
+        ? ref
+        : (body.length > 80 ? '${body.substring(0, 80)}…' : body);
+    unawaited(AdminNotifyService.notifyAdmin(
+      kind: 'report',
+      title: 'नयाँ रिपोर्ट 📝',
+      body: '$reporterName ले प्रश्न रिपोर्ट गरे: $issue — $preview',
+      deepLink: '/admin/report-history',
+    ));
   }
 
   /// Mirrors the `createReportHistory` call inside the Expo
   /// `submitQuestionReport` — fixed source/target for the manual screen.
-  static Future<void> _createQuestionReportHistory({
+  ///
+  /// Returns the reporter name (used for the admin push) after the history
+  /// write succeeds.
+  static Future<String> _createQuestionReportHistory({
     required String questionRef,
     required String issue,
     required String description,
@@ -307,13 +333,14 @@ class ReportService {
     final userDoc =
         await FirestoreRest.getDocument('users/${user.uid}', idToken: idToken)
             .catchError((_) => null);
+    final reporterName =
+        (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
 
     await FirestoreRest.setDocument(
       'app_report_history/${_randomId()}',
       {
         'reporterId': user.uid,
-        'reporterName':
-            (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString(),
+        'reporterName': reporterName,
         'reporterEmail': userDoc?['email'] ?? user.email,
         'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
         'reporterCourseId': userDoc?['courseId'],
@@ -338,6 +365,7 @@ class ReportService {
       },
       idToken: idToken,
     );
+    return reporterName;
   }
 
   static Future<void> _submitToGoogleForm({
@@ -386,21 +414,22 @@ class ReportService {
 
   /// Mirrors `createReportHistory` in
   /// `src/core/firebase/services/reportHistory.ts`.
-  static Future<void> _createReportHistory(
+  static Future<String> _createReportHistory(
       String category, String message) async {
     final user = AuthService.currentUser;
-    if (user == null) return;
+    if (user == null) return '';
     final idToken = await AuthService.getValidIdToken();
     final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
             idToken: idToken)
         .catchError((_) => null);
+    final reporterName =
+        (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
 
     await FirestoreRest.setDocument(
       'app_report_history/${_randomId()}',
       {
         'reporterId': user.uid,
-        'reporterName':
-            (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString(),
+        'reporterName': reporterName,
         'reporterEmail': userDoc?['email'] ?? user.email,
         'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
         'reporterCourseId': userDoc?['courseId'],
@@ -423,6 +452,7 @@ class ReportService {
       },
       idToken: idToken,
     );
+    return reporterName;
   }
 
   static String _randomId() {

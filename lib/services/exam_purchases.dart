@@ -6,6 +6,9 @@
 // newest-first), the submit guard (one pending request per user/exam,
 // doc id `{uid}_{examSetId}_{Date.now()}`), updates, and the admin
 // approve / reject / price-seeding writes.
+import 'package:loksewa_solution/services/admin_notify_service.dart';
+import 'dart:async';
+
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
@@ -225,6 +228,15 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
     'createdAt': FirestoreRest.serverTimestamp(),
     'updatedAt': FirestoreRest.serverTimestamp(),
   });
+  // Fire-and-forget admin push — the request is recorded; never blocks.
+  final buyerName = (input.userName ?? '').trim();
+  unawaited(AdminNotifyService.notifyAdmin(
+    kind: 'exam_purchase',
+    title: 'नयाँ खरिद अनुरोध 💳',
+    body:
+        '${buyerName.isEmpty ? 'कसैले' : buyerName} ले "${input.examTitle}" को खरिद अनुरोध गरे — रु. ${input.amount}',
+    deepLink: '/admin/exam-purchases/$id',
+  ));
   return id;
 }
 

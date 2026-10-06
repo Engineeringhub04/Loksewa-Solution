@@ -7,6 +7,9 @@
 // user/contentType/contentId, doc id
 // `{uid}_{contentType}_{contentId}_{Date.now()}`), updates, and the admin
 // approve / reject writes.
+import 'package:loksewa_solution/services/admin_notify_service.dart';
+import 'dart:async';
+
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
@@ -245,6 +248,15 @@ Future<String> submitContentPurchase(
     'createdAt': FirestoreRest.serverTimestamp(),
     'updatedAt': FirestoreRest.serverTimestamp(),
   });
+  // Fire-and-forget admin push — the request is recorded; never blocks.
+  final buyerName = (input.userName ?? '').trim();
+  unawaited(AdminNotifyService.notifyAdmin(
+    kind: 'content_purchase',
+    title: 'नयाँ खरिद अनुरोध 💳',
+    body:
+        '${buyerName.isEmpty ? 'कसैले' : buyerName} ले "${input.contentTitle}" को खरिद अनुरोध गरे — रु. ${input.amount}',
+    deepLink: '/admin/content-purchases/$id',
+  ));
   return id;
 }
 

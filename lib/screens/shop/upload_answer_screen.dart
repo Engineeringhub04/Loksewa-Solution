@@ -11,6 +11,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
@@ -287,6 +288,15 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           idToken: token,
         );
         _doneId = id;
+        // Admin push ping — fire-and-forget, never blocks. (Edit mode is
+        // excluded, same as the Discord alert below.)
+        final answerTitle = (_examSet?['title'] ?? '').toString();
+        unawaited(AdminNotifyService.notifyAdmin(
+          kind: 'exam_answer',
+          title: 'उत्तर पेश गरियो ✍️',
+          body: '${_nameCtrl.text.trim()} ले "$answerTitle" को उत्तर पठाए',
+          deepLink: '/admin/exam-answer/$id',
+        ));
         // Admin Discord alert — best-effort, never blocks.
         // React parity (upload.tsx): course/subcourse come from the USER's
         // profile courseInfo, not the exam set — theory sets carry no

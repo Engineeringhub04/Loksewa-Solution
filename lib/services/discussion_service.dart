@@ -17,6 +17,7 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import 'admin_notify_service.dart';
 import 'app_config.dart';
 import 'auth_service.dart';
 import 'exam_service.dart';
@@ -849,6 +850,19 @@ class DiscussionService {
     ]);
     if (results.every((ok) => !ok)) {
       throw const DiscussionReportFailedException();
+    }
+    // Push ping to admin devices when the history write succeeded
+    // (results[1]) — fire-and-forget, never blocks the caller.
+    if (results[1]) {
+      final reporterName =
+          (AuthService.currentUser?.displayName ?? 'Anonymous').trim();
+      final targetKind = targetType == 'post' ? 'पोस्ट' : 'कमेंट';
+      unawaited(AdminNotifyService.notifyAdmin(
+        kind: 'report',
+        title: 'नयाँ रिपोर्ट 📝',
+        body: '$reporterName ले $targetKind रिपोर्ट गरे: $reason',
+        deepLink: '/admin/report-history',
+      ));
     }
     // Discord relay: fire independently (not tied to the history write).
     // If the history write failed but the Form succeeded, admins still

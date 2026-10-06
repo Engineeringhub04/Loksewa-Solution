@@ -16,6 +16,7 @@
 //
 // Writes mirror submitPayment / submitExamPurchase / submitContentPurchase
 // exactly (via the existing services), then route to the detail screen.
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
@@ -798,6 +800,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'createdAt': FirestoreRest.serverTimestamp(),
       'updatedAt': FirestoreRest.serverTimestamp(),
     }, idToken: token);
+    // Fire-and-forget admin push — the subscription request is recorded;
+    // never blocks the checkout flow.
+    final buyerName = (userName ?? '').trim();
+    unawaited(AdminNotifyService.notifyAdmin(
+      kind: 'subscription',
+      title: 'सब्सक्रिप्सन अनुरोध 🎫',
+      body:
+          '${buyerName.isEmpty ? 'कसैले' : buyerName} ले ${plan['name']} योजना मागे — रु. $finalAmount',
+      deepLink: '/admin/subscriptions/$id',
+    ));
     if (_couponApplied != null) {
       await CouponService.incrementCouponUsage(_couponApplied!.code);
     }

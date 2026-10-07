@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import '../services/app_config.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
 import '../services/device_session_service.dart';
+import '../services/google_auth.dart';
 import '../widgets/auth/auth_buttons.dart';
 import '../widgets/auth/auth_screen_layout.dart';
 import '../widgets/auth/floating_label_field.dart';
@@ -41,7 +41,6 @@ class _LoginScreenState extends State<LoginScreen>
 
   late final AnimationController _shakeController;
   late final AnimationController _termsShakeController;
-  late final GoogleSignIn _googleSignIn;
 
   static final _emailRegex = RegExp(r'^\S+@\S+\.\S+$');
 
@@ -55,7 +54,6 @@ class _LoginScreenState extends State<LoginScreen>
         vsync: this, duration: const Duration(milliseconds: 400));
     _termsShakeController = AnimationController(
         vsync: this, duration: const Duration(milliseconds: 400));
-    _googleSignIn = GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
     // Eviction notice: claimed on mount, shown after the transition settles
     // (480ms) so it lands on a finished screen, not over the entry animation.
     // Shows exactly once (consumed on read).
@@ -194,16 +192,26 @@ class _LoginScreenState extends State<LoginScreen>
       _flagTermsRequired();
       return;
     }
+    // Button shows its own spinner + the screen dims (no white-card popup).
     setState(() => _googleLoading = true);
     try {
+      // v7: singleton must be initialized exactly once before use.
+      await GoogleAuth.ensureInitialized();
       // Force the account chooser (mirrors the Expo auth-session prompt).
       try {
-        await _googleSignIn.signOut();
+        await GoogleSignIn.instance.signOut();
       } catch (_) {}
-      final account = await _googleSignIn.signIn();
-      if (account == null) return; // user cancelled
-      final auth = await account.authentication;
-      final idToken = auth.idToken;
+      // v7: Credential Manager bottom sheet on Android. Throws
+      // GoogleSignInException(code: canceled) when the user dismisses it.
+      final GoogleSignInAccount account;
+      try {
+        account = await GoogleSignIn.instance.authenticate();
+      } catch (e) {
+        if (GoogleAuth.isUserCancelled(e)) return; // user cancelled
+        rethrow;
+      }
+      // v7: authentication is a sync getter — tokens arrive with authenticate().
+      final idToken = account.authentication.idToken;
       if (!mounted) return;
       if (idToken == null || idToken.isEmpty) {
         showAuthToast(
@@ -393,7 +401,10 @@ class _LoginScreenState extends State<LoginScreen>
                 ),
               ),
             ),
-            if (_googleLoading) const GoogleLoadingOverlay(),
+            // Dim only while Google Sign-In is in flight (button carries its
+            // own spinner; the white-card popup was removed per user request).
+            if (_googleLoading)
+              Container(color: Colors.black.withValues(alpha: 0.18)),
           ],
         ),
       ),

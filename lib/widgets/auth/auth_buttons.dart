@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import '../app_toast.dart';
 import 'google_icon.dart';
-import '../preloading.dart';
 
 /// Shared auth buttons + divider + toast helper — mirrors the styles in
 /// login.tsx / signup.tsx / forgot-password.tsx.
@@ -221,36 +220,6 @@ class AuthBottomLink extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Full-screen overlay shown while Google Sign-In is in flight —
-/// mirrors PageLoaderOverlay ("Signing in with Google...").
-class GoogleLoadingOverlay extends StatelessWidget {
-  const GoogleLoadingOverlay({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black.withValues(alpha: 0.35),
-      child: const Center(
-        child: Card(
-          color: Colors.white,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: 28, vertical: 22),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                PreloadingWidget(
-                  tinted: false,
-                  label: 'Signing in with Google...',
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

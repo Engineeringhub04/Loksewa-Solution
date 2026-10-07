@@ -1,5 +1,4 @@
 {
-  "_comment": "PLACEHOLDER FILE — replace with the real google-services.json downloaded from Firebase Console (Project Settings → Your apps → Android app) before running `npx expo prebuild` or an EAS native build. This file is only used for native Android builds (needed for FCM push notifications); it is NOT read by the Firebase JS SDK used at runtime in this Expo Go / dev-client setup. See README.md 'Firebase Setup'.",
   "project_info": {
     "project_number": "289131368873",
     "project_id": "loksewa-solution-app",
@@ -13,7 +12,31 @@
           "package_name": "com.loksewasolutionnp.hub"
         }
       },
-         "oauth_client": [
+      "oauth_client": [
+        {
+          "client_id": "289131368873-jmvklm8ipgmhaq14rvpe0ontekkhb0av.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.loksewasolutionnp.hub",
+            "certificate_hash": "98f95f620148f8f4a7536c0444e8c11a5bbd918c"
+          }
+        },
+        {
+          "client_id": "289131368873-oif197u0gobb57e5jn9che6s42glaav6.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.loksewasolutionnp.hub",
+            "certificate_hash": "fff689e4a0ece126a830d5068b6853a9ee521437"
+          }
+        },
+        {
+          "client_id": "289131368873-vm0aqr7af1igep4tintphfdcqvll9p6p.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.loksewasolutionnp.hub",
+            "certificate_hash": "983987f021d8f53e639271b39f1abf3df5a2336b"
+          }
+        },
         {
           "client_id": "289131368873-kqt9sn4bqcdnq640gt46hmfh8469plie.apps.googleusercontent.com",
           "client_type": 3
@@ -30,6 +53,13 @@
             {
               "client_id": "289131368873-kqt9sn4bqcdnq640gt46hmfh8469plie.apps.googleusercontent.com",
               "client_type": 3
+            },
+            {
+              "client_id": "289131368873-avmocvjesentv6drhp1j01sojk184q2m.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.loksewasolutionnp.hub"
+              }
             }
           ]
         }

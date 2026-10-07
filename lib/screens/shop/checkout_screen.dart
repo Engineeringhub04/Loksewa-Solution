@@ -800,6 +800,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'createdAt': FirestoreRest.serverTimestamp(),
       'updatedAt': FirestoreRest.serverTimestamp(),
     }, idToken: token);
+    // Index the subscription ID on the user's doc for per-user history.
+    // Rules deny LIST queries on app_subscriptions for non-admins, so the
+    // app resolves the user's IDs from their own doc and getDocuments each.
+    // Best-effort: the subscription itself is saved; index failure only
+    // affects the history list (the admin backfill can repair it).
+    try {
+      final userDoc = await FirestoreRest.getDocument('users/$uid', idToken: token);
+      final ids = <String>[
+        for (final e in (userDoc?['subscriptionIds'] as List? ?? [])) e.toString(),
+      ];
+      if (!ids.contains(id)) {
+        ids.add(id);
+        await FirestoreRest.updateDocument(
+            'users/$uid', {'subscriptionIds': ids},
+            idToken: token);
+      }
+    } catch (_) {
+      // Best-effort only; never blocks checkout.
+    }
     // Fire-and-forget admin push — the subscription request is recorded;
     // never blocks the checkout flow.
     final buyerName = (userName ?? '').trim();

@@ -416,20 +416,29 @@ class SubscriptionService {
   }
 
   /// All of the current user's subscription requests, newest first.
-  /// Mirrors fetchMySubscriptionHistory().
+  /// Per-user index: rules deny LIST queries on app_subscriptions for
+  /// non-admins (resource.data is unavailable on lists), so the user's
+  /// subscription IDs are read from their own doc and each is fetched
+  /// with getDocument (which the rules allow for the owner).
   static Future<List<SubscriptionRecord>> fetchMySubscriptionHistory(
       String uid) async {
     final token = await AuthService.getValidIdToken();
-    final docs = await FirestoreRest.listDocuments(
-      'app_subscriptions',
-      idToken: token,
-      pageSize: 200,
-    );
-    final records = docs
-        .map(SubscriptionRecord.fromMap)
-        .where((r) => r.uid == uid)
-        .toList()
-      ..sort((a, b) => _cmpDesc(a.submittedAt, b.submittedAt));
+    final userDoc = await FirestoreRest.getDocument('users/$uid', idToken: token);
+    final ids = <String>[
+      for (final e in (userDoc?['subscriptionIds'] as List? ?? [])) e.toString(),
+    ];
+    if (ids.isEmpty) return [];
+    final records = <SubscriptionRecord>[];
+    for (final sid in ids) {
+      try {
+        final doc =
+            await FirestoreRest.getDocument('app_subscriptions/$sid', idToken: token);
+        if (doc != null) records.add(SubscriptionRecord.fromMap(doc));
+      } catch (_) {
+        // Skip docs that fail to load; never crash the whole list.
+      }
+    }
+    records.sort((a, b) => _cmpDesc(a.submittedAt, b.submittedAt));
     return records;
   }
 

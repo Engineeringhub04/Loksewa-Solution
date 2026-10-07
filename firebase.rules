@@ -81,7 +81,7 @@ service cloud.firestore {
         (isOwner(userId) && changedOnly([
           'firstName', 'lastName', 'name', 'dob', 'gender', 'photoURL', 'photoURLSource',
           'courseId', 'subcourseId', 'courseSetupComplete', 'stats', 'updatedAt',
-          'unlockedAchievements'
+          'unlockedAchievements', 'subscriptionIds'
         ]) && validPhotoURLSource(request.resource.data));
       allow delete: if isOwner(userId) || isAdmin();
 

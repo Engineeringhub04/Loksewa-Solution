@@ -35,6 +35,12 @@ class FirestoreRest {  static String get _base =>
     if (updateTime != null) {
       result['__updateTime'] = updateTime.toString();
     }
+    // Inject the document id from the resource name, like listDocuments
+    // does (docs store no `id` field themselves). getDocument callers
+    // (per-user index fetches) rely on d['id'] for detail navigation.
+    final name = body['name'] as String? ?? '';
+    final id = name.split('/').last;
+    if (id.isNotEmpty) result['id'] = id;
     return result;
   }
 

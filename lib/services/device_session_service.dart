@@ -286,8 +286,9 @@ class DeviceSessionService {
       final deviceId = await getDeviceId();
       await _writeClaim(uid);
       // Notify BEFORE deleting the token row — the row is the only address
-      // we have for the displaced phone.
-      _notifyDisplacedDevice(uid, deviceId);
+      // we have for the displaced phone. AWAITED: the delete below must not
+      // win the race, or no push ever reaches the old device.
+      await _notifyDisplacedDevice(uid, deviceId);
       final prevId = previous?['deviceId']?.toString() ?? '';
       if (prevId.isNotEmpty && prevId != deviceId) {
         final idToken = await AuthService.getValidIdToken().catchError((_) => '');
@@ -303,16 +304,20 @@ class DeviceSessionService {
   }
 
   /// Tells the displaced phone right now, over FCM via the Cloudflare worker.
-  /// Fire-and-forget: the takeover stands whether or not this lands.
+  ///
+  /// MUST be awaited by the caller BEFORE deleting the old token row — the
+  /// row is the only address we have for the displaced phone. (Race fix:
+  /// fire-and-forget let the delete win, so no push ever reached the old
+  /// device.)
   ///
   /// Differentiated messages (user request):
   /// - OTHER devices get the security alert ("🔐 New Sign-In Detected").
   /// - THIS device gets a confirmation ("✅ Signed In on This Device") for
   ///   the premium feel, plus an in-app toast from the caller.
   /// Falls back to the old /send-to-uid broadcast if the token read fails.
-  static void _notifyDisplacedDevice(String uid, String selfDeviceId) {
-    () async {
-      try {
+  static Future<void> _notifyDisplacedDevice(
+      String uid, String selfDeviceId) async {
+    try {
         final name = await _userName(uid);
         final who = name.trim().isEmpty ? 'there' : name.trim();
         final idToken =
@@ -362,7 +367,6 @@ class DeviceSessionService {
           );
         }
       } catch (_) {}
-    }();
   }
 
   /// Security-alert body for the DISPLACED device.

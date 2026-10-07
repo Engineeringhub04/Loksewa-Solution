@@ -6,10 +6,13 @@
 // STABLE DEVICE ID (v1.0.60+): Uses ANDROID_ID which survives reinstalls,
 // so one physical device = one document. No duplicates on reinstall.
 // Account switches clean up the old user's token via last_uid tracking.
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
@@ -29,6 +32,14 @@ class PushNotificationService {
   static const _lastUidKey = 'push_last_uid';
   static const _legacyDeviceIdKey = 'push_device_id';
 
+  /// Android channel for foreground (app-open) notifications.
+  static const _fgChannelId = 'loksewa_foreground';
+  static const _fgChannelName = 'Loksewa Notifications';
+
+  static final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
+  static bool _localNotificationsReady = false;
+
   /// Callback for notification taps — set by the router layer.
   /// Receives the full FCM data payload as strings (deepLink,
   /// notificationId, examSetId, kind, type, ...).
@@ -43,6 +54,115 @@ class PushNotificationService {
   /// FCM data values arrive as dynamic — normalize to strings.
   static Map<String, String?> _stringData(Map<String, dynamic> data) =>
       data.map((key, value) => MapEntry(key, value?.toString()));
+
+  /// Resolves the title/body to display for a foreground (app-open) FCM
+  /// message. Pure logic — unit-testable.
+  ///
+  /// Prefers the FCM `notification` payload (sent by the server in English
+  /// per the user's push-language rule — never translated or modified
+  /// here), falls back to `data['title']`/`data['body']`/`data['message']`
+  /// for data-only messages. Returns null when there is nothing sensible
+  /// to show — callers skip gracefully instead of crashing.
+  @visibleForTesting
+  static ({String title, String body})? resolveForegroundContent(
+      RemoteMessage message) {
+    final n = message.notification;
+    final data = message.data;
+    String? pick(String? primary, List<String> keys) {
+      final p = primary?.trim();
+      if (p != null && p.isNotEmpty) return p;
+      for (final k in keys) {
+        final v = data[k]?.toString().trim();
+        if (v != null && v.isNotEmpty) return v;
+      }
+      return null;
+    }
+
+    final title = pick(n?.title, const ['title']);
+    final body = pick(n?.body, const ['body', 'message']);
+    if (title == null && body == null) return null;
+    return (title: title ?? 'Loksewa Solution', body: body ?? '');
+  }
+
+  /// Encodes the FCM data payload for a local-notification tap payload.
+  /// Pure logic — unit-testable.
+  @visibleForTesting
+  static String encodeTapPayload(Map<String, dynamic> data) =>
+      jsonEncode(_stringData(data));
+
+  /// Decodes a tap payload back to the string map the
+  /// [onNotificationTap] callback expects. Never throws.
+  @visibleForTesting
+  static Map<String, String?> decodeTapPayload(String? payload) {
+    if (payload == null || payload.isEmpty) return const {};
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is Map<String, dynamic>) return _stringData(decoded);
+    } catch (_) {}
+    return const {};
+  }
+
+  /// Initializes flutter_local_notifications (Android channel + tap
+  /// routing). Best-effort: never throws, never blocks startup.
+  static Future<void> _initLocalNotifications() async {
+    if (_localNotificationsReady) return;
+    try {
+      const androidInit = AndroidInitializationSettings('ic_notification');
+      const initSettings = InitializationSettings(android: androidInit);
+      await _localNotifications.initialize(
+        settings: initSettings,
+        onDidReceiveNotificationResponse: (response) {
+          final data = decodeTapPayload(response.payload);
+          if (data.isNotEmpty) onNotificationTap?.call(data);
+        },
+      );
+      const channel = AndroidNotificationChannel(
+        _fgChannelId,
+        _fgChannelName,
+        description: 'Notifications received while the app is open',
+        importance: Importance.max,
+      );
+      await _localNotifications
+          .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(channel);
+      _localNotificationsReady = true;
+    } catch (_) {
+      // Foreground tray is a nice-to-have — never break startup.
+    }
+  }
+
+  /// Shows a tray notification for a foreground FCM message, carrying the
+  /// full FCM data payload so taps route exactly like background taps.
+  /// Best-effort: never throws.
+  static Future<void> _showForegroundNotification(
+      RemoteMessage message) async {
+    try {
+      if (!_localNotificationsReady) await _initLocalNotifications();
+      if (!_localNotificationsReady) return;
+      final content = resolveForegroundContent(message);
+      if (content == null) return;
+      final id =
+          (message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch)
+              .abs() %
+              0x7fffffff;
+      const androidDetails = AndroidNotificationDetails(
+        _fgChannelId,
+        _fgChannelName,
+        channelDescription: 'Notifications received while the app is open',
+        importance: Importance.max,
+        priority: Priority.high,
+      );
+      await _localNotifications.show(
+        id: id,
+        title: content.title,
+        body: content.body,
+        notificationDetails:
+            const NotificationDetails(android: androidDetails),
+        payload: encodeTapPayload(message.data),
+      );
+    } catch (_) {}
+  }
 
   /// Reads and clears a stashed notification tap (see
   /// [pendingNotificationIdKey]). Returns the (notificationId, deepLink);
@@ -122,9 +242,16 @@ class PushNotificationService {
     // Request permission (no-op on older Android, required on iOS/Android 13+).
     await _messaging.requestPermission();
 
-    // Foreground messages: nothing to show manually — the inbox screen
-    // already displays them; tray push is for background/terminated.
-    FirebaseMessaging.onMessage.listen((_) {});
+    // Prepare the foreground tray channel early (best-effort, non-blocking).
+    _initLocalNotifications();
+
+    // Foreground messages: the system tray does NOT show anything while
+    // the app is open, so display a local notification (same title/body
+    // the server sent) with the FCM data payload attached — taps route
+    // through onNotificationTap exactly like background taps.
+    FirebaseMessaging.onMessage.listen((message) {
+      _showForegroundNotification(message);
+    });
 
     // Tap while app is in background.
     FirebaseMessaging.onMessageOpenedApp.listen((message) {

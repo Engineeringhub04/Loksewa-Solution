@@ -81,11 +81,23 @@ class _TabsScreenState extends State<TabsScreen> with WidgetsBindingObserver {
       );
       if (!mounted || result.verdict != SessionVerdict.evicted) return;
       _evictionShowing = true;
-      await showBlockingEvictionDialog(context, deviceName: result.deviceName);
+      // The blocking dialog IS the explanation — it replaces any parked
+      // "you were signed out" notice, never duplicates it. Clear first so
+      // the notice can never surface on the next login after this path.
+      await DeviceSessionService.clearEvictionNotice().catchError((_) {});
+      if (!mounted) {
+        _evictionShowing = false;
+        return;
+      }
+      await showBlockingEvictionDialog(
+        context,
+        deviceName: result.deviceName,
+        // The button shows its loading spinner until the sign-out finishes
+        // (standing popup rule); the dialog dismisses itself afterwards.
+        onConfirm: () => AuthService.logout().catchError((_) {}),
+      );
       if (!mounted) return;
-      // The one button IS the dialog — it signs out.
-      await AuthService.logout().catchError((_) {});
-      if (mounted) context.go('/login');
+      context.go('/login');
     } finally {
       _checking = false;
       _evictionShowing = false;

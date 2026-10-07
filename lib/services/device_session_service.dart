@@ -24,6 +24,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -303,26 +304,112 @@ class DeviceSessionService {
 
   /// Tells the displaced phone right now, over FCM via the Cloudflare worker.
   /// Fire-and-forget: the takeover stands whether or not this lands.
+  ///
+  /// Differentiated messages (user request):
+  /// - OTHER devices get the security alert ("🔐 New Sign-In Detected").
+  /// - THIS device gets a confirmation ("✅ Signed In on This Device") for
+  ///   the premium feel, plus an in-app toast from the caller.
+  /// Falls back to the old /send-to-uid broadcast if the token read fails.
   static void _notifyDisplacedDevice(String uid, String selfDeviceId) {
     () async {
       try {
         final name = await _userName(uid);
         final who = name.trim().isEmpty ? 'there' : name.trim();
+        final idToken =
+            await AuthService.getValidIdToken().catchError((_) => '');
+        List<Map<String, dynamic>> tokenDocs = [];
+        try {
+          tokenDocs = await FirestoreRest.listDocuments(
+            'users/$uid/push_tokens',
+            idToken: idToken,
+            pageSize: 100,
+          );
+        } catch (_) {
+          // Fall through to the legacy broadcast below.
+        }
+        if (tokenDocs.isEmpty) {
+          await _sendToUid(uid, _evictionPushTitle,
+              'Hi $who, you were signed in on another device. Open the app.');
+          return;
+        }
+        final otherTokens = <String>[];
+        final selfTokens = <String>[];
+        for (final d in tokenDocs) {
+          final token = d['token']?.toString() ?? '';
+          if (token.isEmpty) continue;
+          final did = (d['deviceId']?.toString() ?? d['id']?.toString() ?? '');
+          if (did == selfDeviceId) {
+            selfTokens.add(token);
+          } else {
+            otherTokens.add(token);
+          }
+        }
+        // 1. Displaced devices → security alert.
+        if (otherTokens.isNotEmpty) {
+          await _sendToTokens(
+            otherTokens,
+            _evictionPushTitle,
+            evictionPushBody(who),
+          );
+        }
+        // 2. This device → confirmation (premium feel). No deepLink — tap
+        // opens the app normally.
+        if (selfTokens.isNotEmpty) {
+          await _sendToTokens(
+            selfTokens,
+            '✅ Signed In on This Device',
+            takeOverConfirmBody(who),
+          );
+        }
+      } catch (_) {}
+    }();
+  }
+
+  /// Security-alert body for the DISPLACED device.
+  @visibleForTesting
+  static String evictionPushBody(String who) =>
+      'Hi $who, your account was just signed in on another device.';
+
+  /// Confirmation body for the NEW device (this phone).
+  @visibleForTesting
+  static String takeOverConfirmBody(String who) =>
+      'Hi $who, this device is now your active login. Your other device has been signed out.';
+
+  /// POSTs to {worker}/send with an explicit token list (500/chunk).
+  static Future<void> _sendToTokens(
+      List<String> tokens, String title, String body) async {
+    for (var i = 0; i < tokens.length; i += 500) {
+      final chunk = tokens.sublist(
+          i, i + 500 > tokens.length ? tokens.length : i + 500);
+      try {
         await http
             .post(
-              Uri.parse('$_workerBase/send-to-uid'),
+              Uri.parse('$_workerBase/send'),
               headers: {'Content-Type': 'application/json'},
               body: jsonEncode({
-                'uid': uid,
-                'title': _evictionPushTitle,
-                'body': 'Hi $who, you were signed in on another device. Open the app.',
+                'tokens': chunk,
+                'title': title,
+                'body': body,
                 // No deepLink on purpose — tap must open the app normally so
                 // splash runs the session check on its way to login.
               }),
             )
             .timeout(const Duration(seconds: 10));
       } catch (_) {}
-    }();
+    }
+  }
+
+  /// Legacy fallback: broadcast via /send-to-uid (worker fans out itself).
+  static Future<void> _sendToUid(String uid, String title, String body) async {
+    try {
+      await http
+          .post(
+            Uri.parse('$_workerBase/send-to-uid'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'uid': uid, 'title': title, 'body': body}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {}
   }
 
   // ------------------------------------------------------- displaced-device

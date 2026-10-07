@@ -47,7 +47,7 @@ class _SplashScreenState extends State<SplashScreen> {
     // the token lazily via getValidIdToken. A link tap (or any cold start)
     // can therefore never log the user out: the worst case is a failed
     // refresh surfacing as an API error later, never a silent logout.
-    final user = await AuthService.peekSavedSession();
+    var user = await AuthService.peekSavedSession();
 
     // One account = one device — NON-DESTRUCTIVE. If another device claimed
     // the account, park the notice and send this device to the login screen
@@ -75,16 +75,28 @@ class _SplashScreenState extends State<SplashScreen> {
     final remaining = _minSplashMs - elapsed;
     if (remaining > 0) await Future.delayed(Duration(milliseconds: remaining));
 
+    if (evicted) {
+      // The eviction notice is parked; it shows once on the login screen via
+      // consumeEvictionNotice. Routing depends on how the app was opened:
+      // - Notification tap → straight to login (the tap IS the context).
+      // - Normal open → the NORMAL logged-out flow (onboarding → login),
+      //   never a short-circuit. The notice appears when login is reached.
+      final pendingTap = await PushNotificationService.consumePendingTap();
+      if (!mounted) return;
+      if (pendingTap.id != null || pendingTap.deepLink != null) {
+        context.go('/login');
+        return;
+      }
+      // Fall through: treat as not-logged-in for routing (onboarding flow
+      // below). The saved session stays on disk; logging in again re-claims.
+      user = null;
+    }
     if (!evicted && splashHasRouted) return;
     if (!evicted) splashHasRouted = true;
     if (!mounted) return;
 
     if (config.maintenanceMode) {
       context.go('/blocking/maintenance');
-      return;
-    }
-    if (evicted) {
-      context.go('/login');
       return;
     }
     final connectivity = await Connectivity().checkConnectivity();

@@ -107,9 +107,14 @@ Future<bool> showDeviceTakeoverDialog(
 /// 2. Guard (app open): this device just lost the account.
 /// Blocking — no dismiss, no back button, no cancel. The single button is
 /// the only way forward.
+///
+/// [onConfirm] performs the sign-out. The button shows its loading spinner
+/// until [onConfirm] completes (standing popup rule: action buttons show
+/// loading state for the whole action), then the dialog dismisses itself.
 Future<void> showBlockingEvictionDialog(
   BuildContext context, {
   String? deviceName,
+  required Future<void> Function() onConfirm,
 }) {
   var busy = false;
   return showGeneralDialog<void>(
@@ -161,7 +166,11 @@ Future<void> showBlockingEvictionDialog(
                           ? null
                           : () async {
                               setState(() => busy = true);
-                              Navigator.of(ctx).pop();
+                              try {
+                                await onConfirm();
+                              } finally {
+                                if (ctx.mounted) Navigator.of(ctx).pop();
+                              }
                             },
                     ),
                     // No onClose → no X button.

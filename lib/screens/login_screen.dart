@@ -12,6 +12,7 @@ import '../widgets/auth/floating_label_field.dart';
 import '../widgets/auth/shake.dart';
 import '../widgets/auth/terms_checkbox.dart';
 import '../widgets/device_session_dialogs.dart';
+import '../widgets/app_toast.dart';
 
 /// Login — mirrors app/(auth)/login.tsx pixel-close.
 /// Collapsed state (Continue with Google / or / Continue with Email / terms /
@@ -142,6 +143,9 @@ class _LoginScreenState extends State<LoginScreen>
         await AuthService.logout().catchError((_) {});
         return;
       }
+      // Premium feel: confirm on this device too (push also sent).
+      showToast(context, 'This device is now your active login.',
+          ToastVariant.success);
     }
     await DeviceSessionService.clearEvictionNotice();
     // React parity: no course setup on this account → course-setup

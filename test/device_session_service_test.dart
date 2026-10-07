@@ -91,4 +91,28 @@ void main() {
       expect(loginOk.outcome, LoginSessionOutcome.ok);
     });
   });
+
+  group('differentiated push messages', () {
+    test('evictionPushBody addresses the displaced device', () {
+      expect(
+        DeviceSessionService.evictionPushBody('Ram'),
+        'Hi Ram, your account was just signed in on another device.',
+      );
+    });
+
+    test('takeOverConfirmBody confirms the new device', () {
+      expect(
+        DeviceSessionService.takeOverConfirmBody('Ram'),
+        'Hi Ram, this device is now your active login. '
+        'Your other device has been signed out.',
+      );
+    });
+
+    test('messages differ between old and new phone', () {
+      expect(
+        DeviceSessionService.evictionPushBody('Ram'),
+        isNot(DeviceSessionService.takeOverConfirmBody('Ram')),
+      );
+    });
+  });
 }

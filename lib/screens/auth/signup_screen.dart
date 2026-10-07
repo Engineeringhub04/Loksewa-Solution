@@ -7,6 +7,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/course_setup_gate.dart';
 import 'package:loksewa_solution/services/device_session_service.dart';
 import 'package:loksewa_solution/widgets/device_session_dialogs.dart';
+import 'package:loksewa_solution/widgets/app_toast.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
@@ -131,6 +132,8 @@ class _SignupScreenState extends State<SignupScreen>
         await AuthService.logout().catchError((_) {});
         return;
       }
+      showToast(context, 'This device is now your active login.',
+          ToastVariant.success);
     }
     await DeviceSessionService.clearEvictionNotice();
     // Fresh email signup: React routes straight to course-setup
@@ -251,6 +254,8 @@ class _SignupScreenState extends State<SignupScreen>
           await AuthService.logout().catchError((_) {});
           return;
         }
+        showToast(context, 'This device is now your active login.',
+            ToastVariant.success);
       }
       await DeviceSessionService.clearEvictionNotice();
       final done = await CourseSetupGate.isComplete(result.user.uid);

@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/device_session_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/screens/learn/home_tab.dart';
 import 'package:loksewa_solution/screens/learn/exam_tab.dart';
 import 'package:loksewa_solution/screens/learn/discussion_tab.dart';
 import 'package:loksewa_solution/screens/learn/profile_tab.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/device_session_dialogs.dart';
 import 'package:loksewa_solution/widgets/popup_action_button.dart';
 
 /// Main tab shell — mirrors app/(tabs): Home, Exam, Discussion, Profile.
@@ -22,22 +26,71 @@ class TabsScreen extends StatefulWidget {
   State<TabsScreen> createState() => _TabsScreenState();
 }
 
-class _TabsScreenState extends State<TabsScreen> {
+class _TabsScreenState extends State<TabsScreen> with WidgetsBindingObserver {
   int get _index => TabsScreen.tabIndex.value;
+  bool _evictionShowing = false;
+  bool _checking = false;
 
   @override
   void initState() {
     super.initState();
     TabsScreen.tabIndex.addListener(_onTabIndexChanged);
+    WidgetsBinding.instance.addObserver(this);
+    // Push-triggered recheck (eviction push from the new device).
+    DeviceSessionService.onRecheck(_onPushRecheck);
   }
 
   @override
   void dispose() {
     TabsScreen.tabIndex.removeListener(_onTabIndexChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    DeviceSessionService.offRecheck(_onPushRecheck);
     super.dispose();
   }
 
-  void _onTabIndexChanged() => setState(() {});
+  void _onTabIndexChanged() {
+    setState(() {});
+    // Route change inside tabs → verify (throttled).
+    _verifySession();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Foreground return → verify with the shorter throttle.
+      _verifySession(
+          throttleMs: DeviceSessionService.foregroundVerifyThrottleMs);
+    }
+  }
+
+  void _onPushRecheck() {
+    // Unthrottled: a push naming this very event is evidence the answer
+    // changed — a skipped check would waste the only signal we get.
+    _verifySession(throttleMs: 0);
+  }
+
+  Future<void> _verifySession({int? throttleMs}) async {
+    if (_checking || _evictionShowing || !mounted) return;
+    final uid = AuthService.currentUser?.uid;
+    if (uid == null || uid.isEmpty) return;
+    _checking = true;
+    try {
+      final result = await DeviceSessionService.verifyDeviceSession(
+        uid,
+        throttleMs: throttleMs,
+      );
+      if (!mounted || result.verdict != SessionVerdict.evicted) return;
+      _evictionShowing = true;
+      await showBlockingEvictionDialog(context, deviceName: result.deviceName);
+      if (!mounted) return;
+      // The one button IS the dialog — it signs out.
+      await AuthService.logout().catchError((_) {});
+      if (mounted) context.go('/login');
+    } finally {
+      _checking = false;
+      _evictionShowing = false;
+    }
+  }
 
   /// App close confirmation popup (shared AppModalShell design).
   Future<bool?> _confirmExit(BuildContext context) {

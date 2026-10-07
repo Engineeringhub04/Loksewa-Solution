@@ -5,12 +5,13 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../services/app_config.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
-import '../services/device_session.dart';
+import '../services/device_session_service.dart';
 import '../widgets/auth/auth_buttons.dart';
 import '../widgets/auth/auth_screen_layout.dart';
 import '../widgets/auth/floating_label_field.dart';
 import '../widgets/auth/shake.dart';
 import '../widgets/auth/terms_checkbox.dart';
+import '../widgets/device_session_dialogs.dart';
 
 /// Login — mirrors app/(auth)/login.tsx pixel-close.
 /// Collapsed state (Continue with Google / or / Continue with Email / terms /
@@ -56,25 +57,12 @@ class _LoginScreenState extends State<LoginScreen>
     _googleSignIn = GoogleSignIn(serverClientId: AppConfig.googleWebClientId);
     // Eviction notice: claimed on mount, shown after the transition settles
     // (480ms) so it lands on a finished screen, not over the entry animation.
-    DeviceSession.consumeEvictionNotice().then((notice) {
+    // Shows exactly once (consumed on read).
+    DeviceSessionService.consumeEvictionNotice().then((notice) {
       if (!mounted || notice == null) return;
       Future.delayed(const Duration(milliseconds: 480), () {
         if (!mounted) return;
-        showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Signed out'),
-            content: Text(notice.isEmpty
-                ? 'Your account was signed in on another device, so this phone was signed out.'
-                : 'Your account was signed in on "$notice", so this phone was signed out.'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('OK'),
-              ),
-            ],
-          ),
-        );
+        showEvictionNoticeDialog(context, deviceName: notice.deviceName);
       });
     });
   }
@@ -128,8 +116,34 @@ class _LoginScreenState extends State<LoginScreen>
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
   Future<void> _afterSignIn(String uid) async {
-    // Claim this device for the account (one account = one device).
-    await DeviceSession.claimSession(uid);
+    // One account = one device. Check AFTER auth (rules only let the owner
+    // read their own session doc). Conflict → takeover dialog; the guard is
+    // held off while the dialog is on screen.
+    final check = await DeviceSessionService.checkDeviceSessionForLogin(uid);
+    if (!mounted) return;
+    if (check.outcome == LoginSessionOutcome.conflict &&
+        check.existing != null) {
+      final c = check.existing!;
+      final takeOver = await showDeviceTakeoverDialog(
+        context,
+        deviceName: c.deviceName,
+        lastActiveLabel: c.lastActiveLabel,
+      );
+      if (!mounted) return;
+      if (!takeOver) {
+        // Cancel = real sign-out, not just a dismissed dialog.
+        await AuthService.logout().catchError((_) {});
+        return;
+      }
+      final claimed =
+          await DeviceSessionService.takeOverDeviceSession(uid).catchError((_) => false);
+      if (!mounted) return;
+      if (!claimed) {
+        await AuthService.logout().catchError((_) {});
+        return;
+      }
+    }
+    await DeviceSessionService.clearEvictionNotice();
     // React parity: no course setup on this account → course-setup
     // (initial mode), not home. Unknown (offline) → setup, like React's
     // .catch(() => false).

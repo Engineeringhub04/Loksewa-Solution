@@ -5,6 +5,16 @@ plugins {
     id "com.google.gms.google-services"
 }
 
+// Local Maven repo for project dependencies: holds artifacts that are
+// neither in the Gradle cache nor downloadable through the egress proxy
+// (TLS fail). Only added when the dir exists.
+repositories {
+    def localMaven = new File("/home/hatch/workspace/flutter-build/local-maven")
+    if (localMaven.isDirectory()) {
+        maven { url = localMaven.toURI() }
+    }
+}
+
 android {
     namespace = "com.loksewasolutionnp.hub"
     compileSdk = 36
@@ -12,6 +22,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by flutter_local_notifications (AAR metadata check).
+        coreLibraryDesugaringEnabled = true
     }
 
     defaultConfig {
@@ -19,8 +31,8 @@ android {
         applicationId = "com.loksewasolutionnp.hub"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 75
-        versionName = "1.0.74"
+        versionCode = 76
+        versionName = "1.0.75"
     }
 
     signingConfigs {
@@ -47,4 +59,10 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Required by flutter_local_notifications (core library desugaring).
+    // Artifact cached in flutter-build/local-maven (egress proxy TLS fail).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }

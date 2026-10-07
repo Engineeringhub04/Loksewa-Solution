@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
-import '../services/device_session.dart';
+import '../services/device_session_service.dart';
 import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
 import '../services/push_notification_service.dart';
@@ -57,13 +57,13 @@ class _SplashScreenState extends State<SplashScreen> {
     var evicted = false;
     if (user != null) {
       final session = await _withTimeout(
-        DeviceSession.verifyDeviceSession(user.uid),
+        DeviceSessionService.verifyDeviceSession(user.uid),
         const SessionCheck(SessionVerdict.skipped, null),
       );
       if (session.verdict == SessionVerdict.evicted) {
         evicted = true;
         splashHasRouted = true;
-        await DeviceSession.markEvictionNotice(session.deviceName);
+        await DeviceSessionService.markEvictionNotice(session.deviceName);
       }
     }
 

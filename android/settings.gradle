@@ -27,6 +27,13 @@ pluginManagement {
     }
 
     repositories {
+        // Local Maven repo FIRST: holds artifacts that are neither in the
+        // Gradle cache nor downloadable through the egress proxy (TLS fail).
+        // Only added when the dir exists, so other machines are unaffected.
+        def localMaven = new File("/home/hatch/workspace/flutter-build/local-maven")
+        if (localMaven.isDirectory()) {
+            maven { url = localMaven.toURI() }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()

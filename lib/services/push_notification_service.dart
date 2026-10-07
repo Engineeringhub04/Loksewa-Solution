@@ -16,6 +16,7 @@ import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
+import 'device_session_service.dart';
 import 'firestore_rest.dart';
 import 'app_language.dart';
 
@@ -249,7 +250,10 @@ class PushNotificationService {
     // the app is open, so display a local notification (same title/body
     // the server sent) with the FCM data payload attached — taps route
     // through onNotificationTap exactly like background taps.
+    // ALSO: any foreground push is evidence the session claim may have
+    // changed (e.g. an eviction push) — trigger a throttled recheck.
     FirebaseMessaging.onMessage.listen((message) {
+      DeviceSessionService.requestRecheck();
       _showForegroundNotification(message);
     });
 

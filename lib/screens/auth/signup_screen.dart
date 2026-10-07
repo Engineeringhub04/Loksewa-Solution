@@ -5,7 +5,8 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:loksewa_solution/services/app_config.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/course_setup_gate.dart';
-import 'package:loksewa_solution/services/device_session.dart';
+import 'package:loksewa_solution/services/device_session_service.dart';
+import 'package:loksewa_solution/widgets/device_session_dialogs.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
@@ -107,7 +108,31 @@ class _SignupScreenState extends State<SignupScreen>
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
   Future<void> _afterSignIn(String uid) async {
-    await DeviceSession.claimSession(uid);
+    // One account = one device (same flow as login screen).
+    final check = await DeviceSessionService.checkDeviceSessionForLogin(uid);
+    if (!mounted) return;
+    if (check.outcome == LoginSessionOutcome.conflict &&
+        check.existing != null) {
+      final c = check.existing!;
+      final takeOver = await showDeviceTakeoverDialog(
+        context,
+        deviceName: c.deviceName,
+        lastActiveLabel: c.lastActiveLabel,
+      );
+      if (!mounted) return;
+      if (!takeOver) {
+        await AuthService.logout().catchError((_) {});
+        return;
+      }
+      final claimed =
+          await DeviceSessionService.takeOverDeviceSession(uid).catchError((_) => false);
+      if (!mounted) return;
+      if (!claimed) {
+        await AuthService.logout().catchError((_) {});
+        return;
+      }
+    }
+    await DeviceSessionService.clearEvictionNotice();
     // Fresh email signup: React routes straight to course-setup
     // (initial mode — no back button, "Save Course").
     if (mounted) context.go('/course-setup');
@@ -201,7 +226,33 @@ class _SignupScreenState extends State<SignupScreen>
       showAuthToast(context, 'Google account signed in successfully');
       // Google on the signup screen can be a new OR an existing account:
       // route on the course-setup gate (new users land on setup).
-      await DeviceSession.claimSession(result.user.uid);
+      // One account = one device (same flow as login screen).
+      final check =
+          await DeviceSessionService.checkDeviceSessionForLogin(result.user.uid);
+      if (!mounted) return;
+      if (check.outcome == LoginSessionOutcome.conflict &&
+          check.existing != null) {
+        final c = check.existing!;
+        final takeOver = await showDeviceTakeoverDialog(
+          context,
+          deviceName: c.deviceName,
+          lastActiveLabel: c.lastActiveLabel,
+        );
+        if (!mounted) return;
+        if (!takeOver) {
+          await AuthService.logout().catchError((_) {});
+          return;
+        }
+        final claimed = await DeviceSessionService.takeOverDeviceSession(
+                result.user.uid)
+            .catchError((_) => false);
+        if (!mounted) return;
+        if (!claimed) {
+          await AuthService.logout().catchError((_) {});
+          return;
+        }
+      }
+      await DeviceSessionService.clearEvictionNotice();
       final done = await CourseSetupGate.isComplete(result.user.uid);
       if (!mounted) return;
       context.go(done == true ? '/' : '/course-setup');

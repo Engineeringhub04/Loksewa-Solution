@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
+import 'device_session_service.dart';
 import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'push_notification_service.dart';
@@ -282,11 +283,13 @@ class AuthService {
     _session = null;
     await PrefsService.remove(PrefsService.sessionKey);
     if (uid != null) {
-      // Release the one-device claim (best effort).
-      await FirestoreRest.deleteDocument('users/$uid/session/active').catchError((_) {});
+      // Release the one-device claim (best effort) — only when it still
+      // names THIS device, so a displaced phone never wipes the new holder.
+      await DeviceSessionService.releaseDeviceSession(uid).catchError((_) {});
       // Move FCM token from user collection to anonymous (best effort).
       await PushNotificationService.onSignOut(uid, idToken: idToken).catchError((_) {});
     }
+    DeviceSessionService.resetCaches();
   }
 
   /// Permanently deletes the Firebase Auth identity (Identity Toolkit

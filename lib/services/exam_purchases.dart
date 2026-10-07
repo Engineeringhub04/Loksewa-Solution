@@ -9,7 +9,7 @@
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'dart:async';
 
-import 'package:loksewa_solution/services/exam_service.dart';
+import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
 /// Edit window after submission during which the user may still change the
@@ -114,15 +114,30 @@ List<ExamPurchaseRecord> _newestFirst(List<ExamPurchaseRecord> records) {
   return records;
 }
 
-/// Mirrors fetchMyExamPurchases: server-side `uid ==` filter (React's runQuery),
-/// newest first.
+/// Mirrors fetchMyExamPurchases: newest first.
+/// Per-user index: rules deny LIST queries on app_exam_purchases for
+/// non-admins (resource.data is unavailable on lists), so the user's
+/// purchase IDs are read from their own doc and each is fetched with
+/// getDocument (which the rules allow for the owner).
 Future<List<ExamPurchaseRecord>> fetchMyExamPurchases(String uid) async {
-  final docs = await ExamRest.runQuery(
-    'app_exam_purchases',
-    where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
-    limit: 200,
-  );
-  return _newestFirst(docs.map(ExamPurchaseRecord.fromMap).toList());
+  final token = await AuthService.getValidIdToken();
+  final userDoc =
+      await FirestoreRest.getDocument('users/$uid', idToken: token);
+  final ids = <String>[
+    for (final e in (userDoc?['examPurchaseIds'] as List? ?? [])) e.toString(),
+  ];
+  if (ids.isEmpty) return [];
+  final records = <ExamPurchaseRecord>[];
+  for (final pid in ids) {
+    try {
+      final doc = await FirestoreRest.getDocument('app_exam_purchases/$pid',
+          idToken: token);
+      if (doc != null) records.add(ExamPurchaseRecord.fromMap(doc));
+    } catch (_) {
+      // Skip docs that fail to load; never crash the whole list.
+    }
+  }
+  return _newestFirst(records);
 }
 
 /// Mirrors fetchMyApprovedExamSetIds.
@@ -228,6 +243,27 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
     'createdAt': FirestoreRest.serverTimestamp(),
     'updatedAt': FirestoreRest.serverTimestamp(),
   });
+  // Index the purchase ID on the user's doc for per-user history.
+  // Rules deny LIST queries on app_exam_purchases for non-admins, so the
+  // app resolves the user's IDs from their own doc and getDocuments each.
+  // Best-effort: the purchase itself is saved; index failure only affects
+  // the history list (the admin backfill can repair it).
+  try {
+    final token = await AuthService.getValidIdToken();
+    final userDoc =
+        await FirestoreRest.getDocument('users/${input.uid}', idToken: token);
+    final ids = <String>[
+      for (final e in (userDoc?['examPurchaseIds'] as List? ?? [])) e.toString(),
+    ];
+    if (!ids.contains(id)) {
+      ids.add(id);
+      await FirestoreRest.updateDocument(
+          'users/${input.uid}', {'examPurchaseIds': ids},
+          idToken: token);
+    }
+  } catch (_) {
+    // Best-effort only; never blocks the submit flow.
+  }
   // Fire-and-forget admin push — the request is recorded; never blocks.
   final buyerName = (input.userName ?? '').trim();
   unawaited(AdminNotifyService.notifyAdmin(

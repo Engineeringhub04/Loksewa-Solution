@@ -166,20 +166,34 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         _previewUrl = a?['pdfUrl']?.toString();
         _nameCtrl.text = a?['studentName']?.toString() ?? _nameCtrl.text;
       } else if (_examSetId != null && _examSetId!.isNotEmpty) {
-        final results = await Future.wait([
-          FirestoreRest.getDocument('app_exam_sets/$_examSetId',
-              idToken: token),
-          FirestoreRest.listDocuments('app_exam_answers',
-              idToken: token, pageSize: 200),
-        ]);
-        _examSet = results[0] as Map<String, dynamic>?;
-        final mine = (results[1] as List<Map<String, dynamic>>).where((d) =>
-            d['uid']?.toString() == user?.uid &&
-            d['examSetId']?.toString() == _examSetId);
-        if (mine.isNotEmpty) {
+        // Duplicate guard via the per-user index: rules deny LIST queries
+        // on app_exam_answers for non-admins, so resolve the user's answer
+        // IDs from their own doc and getDocument each.
+        _examSet = await FirestoreRest.getDocument('app_exam_sets/$_examSetId',
+            idToken: token);
+        final userDoc = await FirestoreRest.getDocument('users/${user?.uid}',
+            idToken: token);
+        final ids = <String>[
+          for (final e in (userDoc?['examAnswerIds'] as List? ?? []))
+            e.toString(),
+        ];
+        String? existingId;
+        for (final aid in ids) {
+          try {
+            final d = await FirestoreRest.getDocument('app_exam_answers/$aid',
+                idToken: token);
+            if (d != null &&
+                d['examSetId']?.toString() == _examSetId) {
+              existingId = aid;
+              break;
+            }
+          } catch (_) {
+            // Skip docs that fail to load.
+          }
+        }
+        if (existingId != null) {
           // Duplicate guard: route to the existing submission instead.
-          final id = mine.first['id']?.toString() ?? '';
-          if (mounted) context.go('/exam-answer/$id');
+          if (mounted) context.go('/exam-answer/$existingId');
           return;
         }
       }
@@ -288,6 +302,28 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           idToken: token,
         );
         _doneId = id;
+        // Index the answer ID on the user's doc for per-user history.
+        // Rules deny LIST queries on app_exam_answers for non-admins, so
+        // the app resolves the user's IDs from their own doc and
+        // getDocuments each. Best-effort: the answer itself is saved;
+        // index failure only affects the history list (admin backfill
+        // can repair it).
+        try {
+          final uDoc = await FirestoreRest.getDocument('users/$uid',
+              idToken: token);
+          final aIds = <String>[
+            for (final e in (uDoc?['examAnswerIds'] as List? ?? []))
+              e.toString(),
+          ];
+          if (!aIds.contains(id)) {
+            aIds.add(id);
+            await FirestoreRest.updateDocument(
+                'users/$uid', {'examAnswerIds': aIds},
+                idToken: token);
+          }
+        } catch (_) {
+          // Best-effort only; never blocks the submit flow.
+        }
         // Admin push ping — fire-and-forget, never blocks. (Edit mode is
         // excluded, same as the Discord alert below.)
         final answerTitle = (_examSet?['title'] ?? '').toString();

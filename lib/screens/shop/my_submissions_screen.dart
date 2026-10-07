@@ -35,22 +35,33 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
     _load();
   }
 
-  /// Mirrors `fetchMyExamAnswers`: the student's own docs from the flat
-  /// `app_exam_answers` collection (ownership is a `uid` field, not a
-  /// subcollection), newest first. Security rules only ever return this
-  /// user's docs for non-admins, so the client-side filter is a no-op.
+  /// The student's own docs from the flat `app_exam_answers` collection,
+  /// newest first. Per-user index: rules deny LIST queries on
+  /// app_exam_answers for non-admins (resource.data is unavailable on
+  /// lists), so the user's answer IDs are read from their own doc and each
+  /// is fetched with getDocument (which the rules allow for the owner).
   Future<void> _load({bool refresh = false}) async {
     if (!refresh) setState(() => _loading = true);
     try {
       final uid = AuthService.currentUser?.uid;
       final idToken = await AuthService.getValidIdToken();
-      final raw = await FirestoreRest.listDocuments('app_exam_answers',
-          idToken: idToken, pageSize: 200);
-      final mine = raw
-          .where((d) => d['uid']?.toString() == uid)
-          .toList()
-        ..sort((a, b) => _millis(b['createdAt'])
-            .compareTo(_millis(a['createdAt'])));
+      final userDoc = await FirestoreRest.getDocument('users/$uid',
+          idToken: idToken);
+      final ids = <String>[
+        for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
+      ];
+      final mine = <Map<String, dynamic>>[];
+      for (final aid in ids) {
+        try {
+          final doc = await FirestoreRest.getDocument('app_exam_answers/$aid',
+              idToken: idToken);
+          if (doc != null) mine.add(doc);
+        } catch (_) {
+          // Skip docs that fail to load; never crash the whole list.
+        }
+      }
+      mine.sort((a, b) => _millis(b['createdAt'])
+          .compareTo(_millis(a['createdAt'])));
       if (!mounted) return;
       setState(() {
         _items = mine;

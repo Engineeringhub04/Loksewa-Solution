@@ -11,6 +11,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
+import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'server_clock.dart';
 
@@ -1248,17 +1249,27 @@ class ExamAnswer {
 
 /// Mirrors fetchMyExamAnswersBySet (examAnswers.ts): the user's own answer
 /// docs keyed by examSetId, so PDF cards can look up "did I already submit?"
-/// in O(1).
+/// in O(1). Per-user index: rules deny LIST queries on app_exam_answers for
+/// non-admins (resource.data is unavailable on lists), so the user's answer
+/// IDs are read from their own doc and each is fetched with getDocument.
 Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
-  final docs = await ExamRest.runQuery(
-    'app_exam_answers',
-    where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
-    limit: 200,
-  );
+  final token = await AuthService.getValidIdToken();
+  final userDoc =
+      await FirestoreRest.getDocument('users/$uid', idToken: token);
+  final ids = <String>[
+    for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
+  ];
   final bySet = <String, ExamAnswer>{};
-  for (final d in docs) {
-    final a = ExamAnswer.fromMap(d);
-    if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
+  for (final aid in ids) {
+    try {
+      final d = await FirestoreRest.getDocument('app_exam_answers/$aid',
+          idToken: token);
+      if (d == null) continue;
+      final a = ExamAnswer.fromMap(d);
+      if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
+    } catch (_) {
+      // Skip docs that fail to load.
+    }
   }
   return bySet;
 }

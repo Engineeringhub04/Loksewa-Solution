@@ -9,7 +9,6 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
@@ -49,18 +48,25 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
       final userDoc =
           await FirestoreRest.getDocument('users/$uid', idToken: idToken)
               .catchError((_) => null);
-      // Filtered query (not a blind list): the security rule only allows
-      // reading own reports (or all for admins), so constrain server-side.
-      // No ORDER BY — Firestore needs a composite index for where+orderBy;
-      // we sort client-side instead.
-      final raw = await ExamRest.runQuery(
-        'app_report_history',
-        where: ExamRest.fieldFilter('reporterId', 'EQUAL', uid ?? ''),
-        limit: 200,
-      );
-      final mine = raw
-        ..sort((a, b) => _millis(b['createdAt'])
-            .compareTo(_millis(a['createdAt'])));
+      // Per-user index: rules deny LIST queries on app_report_history for
+      // non-admins (resource.data is unavailable on lists), so the user's
+      // report IDs are read from their own doc and each is fetched with
+      // getDocument (which the rules allow for the reporter).
+      final ids = <String>[
+        for (final e in (userDoc?['reportIds'] as List? ?? [])) e.toString(),
+      ];
+      final mine = <Map<String, dynamic>>[];
+      for (final rid in ids) {
+        try {
+          final doc = await FirestoreRest.getDocument('app_report_history/$rid',
+              idToken: idToken);
+          if (doc != null) mine.add(doc);
+        } catch (_) {
+          // Skip docs that fail to load; never crash the whole list.
+        }
+      }
+      mine.sort((a, b) => _millis(b['createdAt'])
+          .compareTo(_millis(a['createdAt'])));
       if (!mounted) return;
       setState(() {
         _items = mine;

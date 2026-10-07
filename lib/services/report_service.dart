@@ -336,8 +336,9 @@ class ReportService {
     final reporterName =
         (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
 
+    final reportId = _randomId();
     await FirestoreRest.setDocument(
-      'app_report_history/${_randomId()}',
+      'app_report_history/$reportId',
       {
         'reporterId': user.uid,
         'reporterName': reporterName,
@@ -365,6 +366,9 @@ class ReportService {
       },
       idToken: idToken,
     );
+    // Index the report ID on the user's doc for per-user history.
+    // Rules deny LIST queries on app_report_history for non-admins.
+    await _indexReportId(user.uid, reportId, idToken);
     return reporterName;
   }
 
@@ -425,8 +429,9 @@ class ReportService {
     final reporterName =
         (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
 
+    final reportId = _randomId();
     await FirestoreRest.setDocument(
-      'app_report_history/${_randomId()}',
+      'app_report_history/$reportId',
       {
         'reporterId': user.uid,
         'reporterName': reporterName,
@@ -452,7 +457,31 @@ class ReportService {
       },
       idToken: idToken,
     );
+    // Index the report ID on the user's doc for per-user history.
+    // Rules deny LIST queries on app_report_history for non-admins.
+    await _indexReportId(user.uid, reportId, idToken);
     return reporterName;
+  }
+
+  /// Best-effort index of a report ID into the reporter's own doc.
+  /// Never throws — the report itself is already saved.
+  static Future<void> _indexReportId(
+      String uid, String reportId, String idToken) async {
+    try {
+      final userDoc = await FirestoreRest.getDocument('users/$uid',
+          idToken: idToken);
+      final ids = <String>[
+        for (final e in (userDoc?['reportIds'] as List? ?? [])) e.toString(),
+      ];
+      if (!ids.contains(reportId)) {
+        ids.add(reportId);
+        await FirestoreRest.updateDocument(
+            'users/$uid', {'reportIds': ids},
+            idToken: idToken);
+      }
+    } catch (_) {
+      // Best-effort only; the admin backfill can repair it.
+    }
   }
 
   static String _randomId() {

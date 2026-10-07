@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/notification_tracks.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -51,6 +53,10 @@ class _Notif {
   final String? imageUrl;
   final String source; // 'personal' | 'global' | 'exam'
   final bool updatedNotice;
+  /// Admin-only derived rows (reports, purchase requests, ...) — used by
+  /// the track partition logic (see notification_tracks.dart). Normal
+  /// user rows are always false.
+  final bool adminOnly;
   // Exam-push rows: worker writes type='exam' to app_exam_notifications.
   // No expiresAt from the worker — the app computes expiry from the exam
   // set's real durationMinutes (see _load). Null = never expires (normal
@@ -70,6 +76,7 @@ class _Notif {
     required this.source,
     this.updatedNotice = false,
     this.notifType,
+    this.adminOnly = false,
   });
 }
 
@@ -114,6 +121,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   List<_Notif>? _items;
   Object? _error;
   bool _autoOpenDone = false;
+  // Active filter track (see notification_tracks.dart). Resolved against
+  // the built tracks after every load so a vanished track never renders
+  // an empty filter.
+  String _selectedTrack = allTrack;
 
   String get _globalReadKey =>
       'loksewa:globalNotificationReadIds:${AuthService.currentUser?.uid ?? 'guest'}';
@@ -172,6 +183,29 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         // app_exam_notifications. Readable by any signed-in user; expiry is
         // computed client-side from the exam set's durationMinutes below.
         FirestoreRest.listDocuments('app_exam_notifications', idToken: token),
+        // Admin-only derived feeds for the track chips (see
+        // notification_tracks.dart). Normal users never pay for these
+        // queries. Pending items only — filtered client-side.
+        isAdmin
+            ? FirestoreRest.listDocuments('app_subscriptions',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
+        isAdmin
+            ? FirestoreRest.listDocuments('app_exam_purchases',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
+        isAdmin
+            ? FirestoreRest.listDocuments('app_content_purchases',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
+        isAdmin
+            ? FirestoreRest.listDocuments('app_deleterequest',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
+        isAdmin
+            ? FirestoreRest.listDocuments('app_exam_answers',
+                idToken: token, pageSize: 100)
+            : Future.value(<Map<String, dynamic>>[]),
       ]);
 
       final personalRows = results[0] as List<Map<String, dynamic>>;
@@ -179,6 +213,11 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final reportRows = results[2] as List<Map<String, dynamic>>;
       final readIds = results[3] as Set<String>;
       final examRows = results[4] as List<Map<String, dynamic>>;
+      final subscriptionRows = results[5] as List<Map<String, dynamic>>;
+      final examPurchaseRows = results[6] as List<Map<String, dynamic>>;
+      final contentPurchaseRows = results[7] as List<Map<String, dynamic>>;
+      final deleteRequestRows = results[8] as List<Map<String, dynamic>>;
+      final examAnswerRows = results[9] as List<Map<String, dynamic>>;
 
       final personal = personalRows
           .map((row) => _Notif(
@@ -245,6 +284,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               deepLink: '/admin/report-history/$docId',
               category: 'New Report',
               source: 'global',
+              adminOnly: true,
             );
           })
           .toList()
@@ -252,6 +292,112 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
       final adminTop =
           adminReports.length > 30 ? adminReports.sublist(0, 30) : adminReports;
+
+      // Admin-only derived feeds for the remaining review queues — same
+      // pattern as the report feed above. Pending items only (delete
+      // requests have no status field: all are shown).
+      final adminExtra = <_Notif>[];
+      String strOf(dynamic v) => (v ?? '').toString().trim();
+      for (final row in subscriptionRows) {
+        if (strOf(row['status']) != 'pending') continue;
+        final docId = strOf(row['id']);
+        if (docId.isEmpty) continue;
+        final name = strOf(row['userName']);
+        final plan = strOf(row['planName']);
+        final amount = strOf(row['amount']);
+        adminExtra.add(_Notif(
+          id: 'adminsub:$docId',
+          title: 'नयाँ सब्सक्रिप्सन',
+          preview:
+              '${name.isEmpty ? 'कसैले' : name} — $plan (रु. $amount)',
+          read: readIds.contains('adminsub:$docId'),
+          createdAt: _asDate(row['submittedAt']) ?? _asDate(row['createdAt']),
+          deepLink: '/admin/subscriptions/$docId',
+          category: 'New Subscription',
+          source: 'global',
+          adminOnly: true,
+        ));
+      }
+      for (final row in examPurchaseRows) {
+        if (strOf(row['status']) != 'pending') continue;
+        final docId = strOf(row['id']);
+        if (docId.isEmpty) continue;
+        final name = strOf(row['userName']);
+        final title = strOf(row['examTitle']);
+        final amount = strOf(row['amount']);
+        adminExtra.add(_Notif(
+          id: 'adminexamp:$docId',
+          title: 'नयाँ खरिद अनुरोध',
+          preview:
+              '${name.isEmpty ? 'कसैले' : name} — $title (रु. $amount)',
+          read: readIds.contains('adminexamp:$docId'),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: '/admin/exam-purchases/$docId',
+          category: 'New Purchase',
+          source: 'global',
+          adminOnly: true,
+        ));
+      }
+      for (final row in contentPurchaseRows) {
+        if (strOf(row['status']) != 'pending') continue;
+        final docId = strOf(row['id']);
+        if (docId.isEmpty) continue;
+        final name = strOf(row['userName']);
+        final title = strOf(row['contentTitle']);
+        final amount = strOf(row['amount']);
+        adminExtra.add(_Notif(
+          id: 'admincontentp:$docId',
+          title: 'नयाँ खरिद अनुरोध',
+          preview:
+              '${name.isEmpty ? 'कसैले' : name} — $title (रु. $amount)',
+          read: readIds.contains('admincontentp:$docId'),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: '/admin/content-purchases/$docId',
+          category: 'New Purchase',
+          source: 'global',
+          adminOnly: true,
+        ));
+      }
+      for (final row in deleteRequestRows) {
+        final docId = strOf(row['id']);
+        if (docId.isEmpty) continue;
+        final name = strOf(row['name']);
+        final email = strOf(row['email']);
+        final reason = strOf(row['reason']);
+        final who = name.isEmpty ? (email.isEmpty ? 'कसैले' : email) : name;
+        adminExtra.add(_Notif(
+          id: 'admindel:$docId',
+          title: 'खाता मेटाउने अनुरोध',
+          preview: '$who — ${reason.isEmpty ? 'कारण उल्लेख छैन' : reason}',
+          read: readIds.contains('admindel:$docId'),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: '/admin',
+          category: 'Delete Request',
+          source: 'global',
+          adminOnly: true,
+        ));
+      }
+      for (final row in examAnswerRows) {
+        if (strOf(row['status']) != 'pending') continue;
+        final docId = strOf(row['id']);
+        if (docId.isEmpty) continue;
+        final name = strOf(row['studentName']);
+        final title = strOf(row['examSetTitle']);
+        adminExtra.add(_Notif(
+          id: 'admingrade:$docId',
+          title: 'उत्तर ग्रेडिङ बाँकी',
+          preview:
+              '${name.isEmpty ? 'कसैले' : name} — $title',
+          read: readIds.contains('admingrade:$docId'),
+          createdAt: _asDate(row['createdAt']),
+          deepLink: '/admin/exam-answer/$docId',
+          category: 'Grading',
+          source: 'global',
+          adminOnly: true,
+        ));
+      }
+      adminExtra.sort((a, b) => (b.createdAt?.millisecondsSinceEpoch ?? 0)
+          .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
 
       // Exam-push inbox rows: only type='exam' rows from
       // app_exam_notifications. Expiry is computed from the exam set's REAL
@@ -347,7 +493,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         }
       }
 
-      final all = [...personal, ...global, ...adminTop, ...exams];
+      final all = [...personal, ...global, ...adminTop, ...adminExtra, ...exams];
       all.sort((a, b) => (b.createdAt?.millisecondsSinceEpoch ?? 0)
           .compareTo(a.createdAt?.millisecondsSinceEpoch ?? 0));
 
@@ -530,6 +676,34 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
   Widget build(BuildContext context) {
     final items = _items;
     final hasUnread = items?.any((i) => !i.read) ?? false;
+
+    // Track partition (see notification_tracks.dart): admins get filter
+    // chips (All | User | per-category); normal users have no admin-only
+    // rows, so hasUsefulTracks is false and no chips are drawn —
+    // byte-for-byte the page it has always been.
+    List<NotificationTrack> tracks = const [];
+    String activeTrack = allTrack;
+    List<_Notif> visible = items ?? const [];
+    if (items != null) {
+      tracks = buildNotificationTracks(
+        items
+            .map((i) => TrackableRow(
+                adminOnly: i.adminOnly, category: i.category))
+            .toList(),
+        allLabel: AppLanguage.tr('All', 'सबै'),
+        userLabel: AppLanguage.tr('User', 'प्रयोगकर्ता'),
+        otherLabel: AppLanguage.tr('Other', 'अन्य'),
+      );
+      activeTrack = resolveTrack(tracks, _selectedTrack);
+      visible = filterByTrack<_Notif>(
+        items,
+        activeTrack,
+        isAdminOnly: (i) => i.adminOnly,
+        categoryOf: (i) => i.category,
+      );
+    }
+    final showTracks = hasUsefulTracks(tracks);
+
     return Scaffold(
       body: Column(
         children: [
@@ -563,6 +737,15 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   hasUnread: hasUnread, onTap: _markAllRead),
             ],
           ),
+          // Filter track chips (admin-only) — sits between the header and
+          // the list, mirroring app/notifications.tsx.
+          if (showTracks)
+            NotificationTrackChips(
+              tracks: tracks,
+              active: activeTrack,
+              onSelect: (value) =>
+                  setState(() => _selectedTrack = value),
+            ),
           Expanded(
             child: items == null && _error == null
                 ? _loadingState(context)
@@ -570,25 +753,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                     ? _errorState(context)
                     : RefreshIndicator(
                         onRefresh: _load,
-                        child: items!.isEmpty
+                        child: visible.isEmpty
                             ? ListView(
                                 physics:
                                     const AlwaysScrollableScrollPhysics(),
-                                children: const [
-                                  SizedBox(height: 120),
-                                  _EmptyInbox(),
+                                children: [
+                                  const SizedBox(height: 120),
+                                  _EmptyInbox(
+                                      isFilterEmpty: items!.isNotEmpty),
                                 ],
                               )
                             : ListView.builder(
                                 padding: const EdgeInsets.only(
                                     top: 16, bottom: 32),
-                                itemCount: items.length,
+                                itemCount: visible.length,
                                 itemBuilder: (context, i) =>
                                     _NotificationRow(
                                   key: ValueKey(
-                                      '${items[i].source}:${items[i].id}'),
-                                  item: items[i],
-                                  onTap: () => _open(items[i]),
+                                      '${visible[i].source}:${visible[i].id}'),
+                                  item: visible[i],
+                                  onTap: () => _open(visible[i]),
                                 ),
                               ),
                       ),
@@ -733,8 +917,104 @@ class _MarkAllButtonState extends State<_MarkAllButton> {
   }
 }
 
+/// Horizontal filter-track chips (admin-only) — mirrors the FilterTrack
+/// row in app/notifications.tsx. Sits between the header and the list.
+///
+/// Public for widget tests; the screen only renders it when
+/// [hasUsefulTracks] is true (admin with admin-only rows).
+class NotificationTrackChips extends StatelessWidget {
+  final List<NotificationTrack> tracks;
+  final String active;
+  final ValueChanged<String> onSelect;
+
+  const NotificationTrackChips({
+    super.key,
+    required this.tracks,
+    required this.active,
+    required this.onSelect,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    final primary = palette.primary;
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        itemCount: tracks.length,
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        itemBuilder: (context, i) {
+          final track = tracks[i];
+          final selected = track.value == active;
+          return GestureDetector(
+            onTap: () => onSelect(track.value),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: selected
+                    ? primary
+                    : palette.surface,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color: selected ? primary : palette.divider,
+                  width: 0.5,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    track.label,
+                    style: TextStyle(
+                      color: selected
+                          ? Colors.white
+                          : palette.textPrimary,
+                      fontSize: 12,
+                      fontWeight:
+                          selected ? FontWeight.bold : FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: selected
+                          ? Colors.white.withValues(alpha: 0.25)
+                          : primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '${track.count}',
+                      style: TextStyle(
+                        color: selected
+                            ? Colors.white
+                            : primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _EmptyInbox extends StatelessWidget {
-  const _EmptyInbox();
+  /// True when the inbox has rows but the active filter shows none —
+  /// mirrors the two silences in app/notifications.tsx.
+  final bool isFilterEmpty;
+
+  const _EmptyInbox({this.isFilterEmpty = false});
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
@@ -746,7 +1026,10 @@ class _EmptyInbox extends StatelessWidget {
           Icon(Icons.inbox_outlined,
               size: 64, color: palette.textDisabled),
           const SizedBox(height: 12),
-          Text('No notifications yet',
+          Text(
+              isFilterEmpty
+                  ? 'No notifications in this filter'
+                  : 'No notifications yet',
               textAlign: TextAlign.center,
               style: TextStyle(
                   color: palette.textPrimary,

@@ -286,8 +286,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     final reporterName = name.isEmpty ? email : name;
     unawaited(AdminNotifyService.notifyAdmin(
       kind: 'delete_request',
-      title: 'खाता मेटाउने अनुरोध ⚠️',
-      body: '$reporterName ले खाता मेटाउन अनुरोध गरे: $reason',
+      title: 'Delete Account Request ⚠️',
+      body: '$reporterName requested account deletion: $reason',
       deepLink: '/',
     ));
     try {

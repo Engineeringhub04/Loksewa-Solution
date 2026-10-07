@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
@@ -116,6 +119,24 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
         merge: true,
       );
       _adminMessage.clear();
+      // Best-effort push to the reporter — never blocks.
+      final reporterId = (record['reporterId'] ?? '').toString();
+      if (reporterId.isNotEmpty) {
+        final titleMap = {
+          'resolved': 'Report resolved ✅',
+          'reviewed': 'Report reviewed',
+          'dismissed': 'Report dismissed',
+        };
+        final summary = message.trim().isEmpty
+            ? 'Your report has been reviewed.'
+            : "Admin's decision: ${message.trim()}";
+        unawaited(AdminNotifyService.notifyUser(
+          uid: reporterId,
+          title: titleMap[status] ?? 'Report reviewed',
+          body: summary,
+          deepLink: '/report-history/${widget.id}',
+        ));
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Report marked as $actionLabel.')));

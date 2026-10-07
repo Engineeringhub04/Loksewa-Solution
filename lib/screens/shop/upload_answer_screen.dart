@@ -293,8 +293,8 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         final answerTitle = (_examSet?['title'] ?? '').toString();
         unawaited(AdminNotifyService.notifyAdmin(
           kind: 'exam_answer',
-          title: 'उत्तर पेश गरियो ✍️',
-          body: '${_nameCtrl.text.trim()} ले "$answerTitle" को उत्तर पठाए',
+          title: 'Answer Submitted ✍️',
+          body: '${_nameCtrl.text.trim()} submitted an answer for "$answerTitle"',
           deepLink: '/admin/exam-answer/$id',
         ));
         // Admin Discord alert — best-effort, never blocks.

@@ -252,9 +252,9 @@ Future<String> submitContentPurchase(
   final buyerName = (input.userName ?? '').trim();
   unawaited(AdminNotifyService.notifyAdmin(
     kind: 'content_purchase',
-    title: 'नयाँ खरिद अनुरोध 💳',
+    title: 'New Purchase Request 💳',
     body:
-        '${buyerName.isEmpty ? 'कसैले' : buyerName} ले "${input.contentTitle}" को खरिद अनुरोध गरे — रु. ${input.amount}',
+        '${buyerName.isEmpty ? 'Someone' : buyerName} requested to purchase "${input.contentTitle}" — Rs. ${input.amount}',
     deepLink: '/admin/content-purchases/$id',
   ));
   return id;

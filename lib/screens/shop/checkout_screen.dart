@@ -805,9 +805,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final buyerName = (userName ?? '').trim();
     unawaited(AdminNotifyService.notifyAdmin(
       kind: 'subscription',
-      title: 'सब्सक्रिप्सन अनुरोध 🎫',
+      title: 'New Subscription Request 🎫',
       body:
-          '${buyerName.isEmpty ? 'कसैले' : buyerName} ले ${plan['name']} योजना मागे — रु. $finalAmount',
+          '${buyerName.isEmpty ? 'Someone' : buyerName} requested the ${plan['name']} plan — Rs. $finalAmount',
       deepLink: '/admin/subscriptions/$id',
     ));
     if (_couponApplied != null) {

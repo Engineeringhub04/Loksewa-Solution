@@ -239,8 +239,8 @@ class ReportService {
       final preview = oneLine.length > 80 ? '${oneLine.substring(0, 80)}…' : oneLine;
       unawaited(AdminNotifyService.notifyAdmin(
         kind: 'report',
-        title: 'नयाँ रिपोर्ट 📝',
-        body: '$reporterName ले समस्या रिपोर्ट गरे: $category — $preview',
+        title: 'New Report 📝',
+        body: '$reporterName reported an issue: $category — $preview',
         deepLink: '/admin/report-history',
       ));
     } catch (_) {}
@@ -311,8 +311,8 @@ class ReportService {
         : (body.length > 80 ? '${body.substring(0, 80)}…' : body);
     unawaited(AdminNotifyService.notifyAdmin(
       kind: 'report',
-      title: 'नयाँ रिपोर्ट 📝',
-      body: '$reporterName ले प्रश्न रिपोर्ट गरे: $issue — $preview',
+      title: 'New Report 📝',
+      body: '$reporterName reported a question: $issue — $preview',
       deepLink: '/admin/report-history',
     ));
   }

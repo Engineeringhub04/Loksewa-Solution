@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import '../../widgets/subpage_header.dart';
@@ -83,7 +86,7 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
         : '$who, your answer has been reviewed. A few areas need more work to meet the required standard — please check the marked points and try again next time.';
   }
 
-  Future<void> _save() async {
+  Future<void> _save(Map<String, dynamic> record) async {
     final score = double.tryParse(_score.text.trim());
     final fullMarks = double.tryParse(_fullMarks.text.trim());
     if (score == null || score < 0) {
@@ -134,6 +137,18 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
       if (checked.isNotEmpty) data['checkedPdfUrl'] = checked;
       await FirestoreRest.setDocument('app_exam_answers/${widget.id}', data,
           idToken: token, merge: true);
+      // Best-effort push to the student — never blocks.
+      final studentUid = (record['uid'] ?? '').toString();
+      if (studentUid.isNotEmpty) {
+        final result = _passed == true ? 'Pass' : 'Fail';
+        unawaited(AdminNotifyService.notifyUser(
+          uid: studentUid,
+          title: 'Answer graded ✅',
+          body:
+              'Your answer was graded: ${score.toStringAsFixed(score.truncateToDouble() == score ? 0 : 1)}/${fullMarks.toStringAsFixed(fullMarks.truncateToDouble() == fullMarks ? 0 : 1)} ($result).',
+          deepLink: '/exam-answer/my-submissions',
+        ));
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Submission graded and updated.')));
@@ -340,7 +355,7 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
         ),
         const SizedBox(height: 16),
         ElevatedButton(
-          onPressed: _saving ? null : _save,
+          onPressed: _saving ? null : () => _save(a),
           style: ElevatedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 14)),
           child: _saving

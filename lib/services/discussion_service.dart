@@ -859,8 +859,8 @@ class DiscussionService {
       final targetKind = targetType == 'post' ? 'पोस्ट' : 'कमेंट';
       unawaited(AdminNotifyService.notifyAdmin(
         kind: 'report',
-        title: 'नयाँ रिपोर्ट 📝',
-        body: '$reporterName ले $targetKind रिपोर्ट गरे: $reason',
+        title: 'New Report 📝',
+        body: '$reporterName reported $targetKind: $reason',
         deepLink: '/admin/report-history',
       ));
     }

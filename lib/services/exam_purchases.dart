@@ -232,9 +232,9 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
   final buyerName = (input.userName ?? '').trim();
   unawaited(AdminNotifyService.notifyAdmin(
     kind: 'exam_purchase',
-    title: 'नयाँ खरिद अनुरोध 💳',
+    title: 'New Purchase Request 💳',
     body:
-        '${buyerName.isEmpty ? 'कसैले' : buyerName} ले "${input.examTitle}" को खरिद अनुरोध गरे — रु. ${input.amount}',
+        '${buyerName.isEmpty ? 'Someone' : buyerName} requested to purchase "${input.examTitle}" — Rs. ${input.amount}',
     deepLink: '/admin/exam-purchases/$id',
   ));
   return id;

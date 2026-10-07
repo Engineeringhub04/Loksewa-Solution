@@ -203,10 +203,10 @@ class _AdminExamPurchaseDetailScreenState
                 : 'Payment could not be verified.');
         unawaited(AdminNotifyService.notifyUser(
           uid: buyerUid,
-          title: isApprove ? 'खरिद स्वीकृत ✅' : 'खरिद अस्वीकृत ❌',
+          title: isApprove ? 'Purchase approved ✅' : 'Purchase rejected ❌',
           body: isApprove
-              ? 'तपाईंको खरिद "$examTitle" स्वीकृत भयो। अब तपाईंले सामग्री प्रयोग गर्न सक्नुहुन्छ।'
-              : 'तपाईंको खरिद "$examTitle" अस्वीकृत भयो। कारण: $reason',
+              ? 'Your purchase "$examTitle" was approved. You can now access the content.'
+              : 'Your purchase "$examTitle" was rejected. Reason: $reason',
           deepLink: '/subscription/exam-purchase/${widget.id}',
         ));
       }

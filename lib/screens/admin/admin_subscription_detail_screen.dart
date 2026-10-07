@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
@@ -281,6 +284,19 @@ class _AdminSubscriptionDetailScreenState
       ),
     );
     if (saved != true || !mounted) return;
+    // Best-effort push to the subscriber — never blocks.
+    final subscriberUid = (record['uid'] ?? '').toString();
+    if (subscriberUid.isNotEmpty) {
+      final isApprove = decision == 'approve';
+      unawaited(AdminNotifyService.notifyUser(
+        uid: subscriberUid,
+        title: isApprove ? 'Subscription approved 🎉' : 'Subscription rejected ❌',
+        body: isApprove
+            ? 'Your subscription is now active. Enjoy your premium access!'
+            : 'Your subscription was rejected. Reason: ${decision == 'other' ? _customReason.text.trim() : 'Payment could not be verified.'}',
+        deepLink: '/subscription/${widget.id}',
+      ));
+    }
     showToast(
         context,
         decision == 'approve'

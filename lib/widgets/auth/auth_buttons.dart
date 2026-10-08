@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../app_toast.dart';
+import '../preloading.dart';
 import 'google_icon.dart';
 
 /// Shared auth buttons + divider + toast helper — mirrors the styles in
@@ -40,12 +41,7 @@ class AuthGoogleButton extends StatelessWidget {
           ),
         ),
         child: loading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Color(0xFF374151)),
-              )
+            ? const IosActivitySpinner(color: Color(0xFF374151))
             : const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
@@ -129,12 +125,7 @@ class AuthPrimaryButton extends StatelessWidget {
           ),
         ),
         child: loading
-            ? const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white),
-              )
+            ? const IosActivitySpinner(color: Colors.white)
             : Text(
                 label,
                 style: const TextStyle(

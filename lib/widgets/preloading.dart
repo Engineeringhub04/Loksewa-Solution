@@ -111,6 +111,57 @@ class _PreloadingWidgetState extends State<PreloadingWidget>
   }
 }
 
+/// Standalone iOS-style 12-spoke activity spinner for inline use (e.g.
+/// inside buttons). Same painter/animation as [PreloadingWidget], without the
+/// label/hint chrome.
+class IosActivitySpinner extends StatefulWidget {
+  final double size;
+  final Color color;
+
+  const IosActivitySpinner({
+    super.key,
+    this.size = 20,
+    required this.color,
+  });
+
+  @override
+  State<IosActivitySpinner> createState() => _IosActivitySpinnerState();
+}
+
+class _IosActivitySpinnerState extends State<IosActivitySpinner>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    // One revolution per second, like the iOS activity indicator.
+    _c = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1000))
+      ..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (context, _) => SizedBox(
+        width: widget.size,
+        height: widget.size,
+        child: CustomPaint(
+          painter: _SpokesPainter(progress: _c.value, color: widget.color),
+        ),
+      ),
+    );
+  }
+}
+
 /// iOS-style activity indicator: 12 rounded spokes; the head spoke is fully
 /// opaque and the trail fades behind it, rotating once per second.
 class _SpokesPainter extends CustomPainter {

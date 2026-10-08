@@ -197,10 +197,10 @@ class _LoginScreenState extends State<LoginScreen>
     try {
       // v7: singleton must be initialized exactly once before use.
       await GoogleAuth.ensureInitialized();
-      // Force the account chooser (mirrors the Expo auth-session prompt).
-      try {
-        await GoogleSignIn.instance.signOut();
-      } catch (_) {}
+      // v7: authenticate() uses the button flow on Android, which ALWAYS
+      // shows the Credential Manager chooser UI (no silent auto-select), so
+      // no pre-signOut is needed — Google runs its full native flow
+      // (account tap -> system row spinner -> consent -> return).
       // v7: Credential Manager bottom sheet on Android. Throws
       // GoogleSignInException(code: canceled) when the user dismisses it.
       final GoogleSignInAccount account;

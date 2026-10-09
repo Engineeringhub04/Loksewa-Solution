@@ -7,10 +7,11 @@
 # — everything else works.
 #
 # SETUP (one time, in Codemagic dashboard > Environment variables, encrypted):
-#   FIREBASE_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_AUTH_DOMAIN,
-#   FIREBASE_STORAGE_BUCKET, FIREBASE_MESSAGING_SENDER_ID, FIREBASE_APP_ID,
-#   GOOGLE_WEB_CLIENT_ID
-# (same values as the Android build; the app reads them via --dart-define)
+#   GOOGLE_SERVICES_JSON = the WHOLE google-services.json file content
+# That's it — ONE variable! The build script extracts the 7 Firebase values
+# from it automatically (FIREBASE_APP_ID comes from the iOS
+# GoogleService-Info.plist already in the repo). The app reads them via
+# --dart-define, same as the Android build.
 #
 # NOTE: `flutter build ipa --no-codesign` SKIPS the .ipa export in current
 # Flutter, so we build the .app bundle and package Payload/*.ipa manually —
@@ -30,15 +31,51 @@ workflows:
       - name: Flutter packages
         script: flutter pub get
       - name: Build unsigned iOS app bundle
-        script: >
-          flutter build ios --release --no-codesign
-          --dart-define=FIREBASE_API_KEY=$FIREBASE_API_KEY
-          --dart-define=FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID
-          --dart-define=FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN
-          --dart-define=FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET
-          --dart-define=FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID
-          --dart-define=FIREBASE_APP_ID=$FIREBASE_APP_ID
-          --dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID
+        script: |
+          set -e
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "ERROR: GOOGLE_SERVICES_JSON env var is not set."
+            echo "Add it in Codemagic dashboard > Environment variables (encrypted),"
+            echo "pasting the WHOLE google-services.json content."
+            exit 1
+          fi
+          # Extract the 7 Firebase values from the single JSON blob.
+          # FIREBASE_APP_ID is read from the iOS plist already in the repo.
+          echo "$GOOGLE_SERVICES_JSON" > /tmp/google-services.json
+          python3 - <<'PYEOF' > /tmp/firebase.env
+          import json, plistlib, shlex
+          gs = json.load(open('/tmp/google-services.json'))
+          client = gs['client'][0]
+          project_id = gs['project_info']['project_id']
+          web_client_id = next(
+              c['client_id'] for c in client['oauth_client'] if c['client_type'] == 3
+          )
+          with open('ios/Runner/GoogleService-Info.plist', 'rb') as f:
+              app_id = plistlib.load(f)['GOOGLE_APP_ID']
+          defs = {
+              'FIREBASE_API_KEY': client['api_key'][0]['current_key'],
+              'FIREBASE_PROJECT_ID': project_id,
+              'FIREBASE_AUTH_DOMAIN': project_id + '.firebaseapp.com',
+              'FIREBASE_STORAGE_BUCKET': gs['project_info']['storage_bucket'],
+              'FIREBASE_MESSAGING_SENDER_ID': gs['project_info']['project_number'],
+              'FIREBASE_APP_ID': app_id,
+              'GOOGLE_WEB_CLIENT_ID': web_client_id,
+          }
+          for k, v in defs.items():
+              print('%s=%s' % (k, shlex.quote(str(v))))
+          PYEOF
+          set -a
+          . /tmp/firebase.env
+          set +a
+          rm -f /tmp/google-services.json /tmp/firebase.env
+          flutter build ios --release --no-codesign \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=FIREBASE_AUTH_DOMAIN="$FIREBASE_AUTH_DOMAIN" \
+            --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
+            --dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID"
       - name: Package unsigned IPA for TrollStore
         script: |
           set -e

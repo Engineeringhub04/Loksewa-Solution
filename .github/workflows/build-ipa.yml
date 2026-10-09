@@ -22,15 +22,54 @@ jobs:
         # NOTE: `flutter build ipa --no-codesign` SKIPS the .ipa export in
         # current Flutter, so we build the .app and package Payload/*.ipa
         # manually — the standard TrollStore recipe.
-        run: >
-          flutter build ios --release --no-codesign
-          --dart-define=FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
-          --dart-define=FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          --dart-define=FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }}
-          --dart-define=FIREBASE_STORAGE_BUCKET=${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          --dart-define=FIREBASE_MESSAGING_SENDER_ID=${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
-          --dart-define=FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
-          --dart-define=GOOGLE_WEB_CLIENT_ID=${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+        #
+        # SETUP (one time): repo Settings > Secrets and variables > Actions >
+        # New repository secret: GOOGLE_SERVICES_JSON = whole google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          set -e
+          if [ -z "$GOOGLE_SERVICES_JSON" ]; then
+            echo "ERROR: GOOGLE_SERVICES_JSON secret is not set."
+            echo "Add it at: repo Settings > Secrets and variables > Actions,"
+            echo "pasting the WHOLE google-services.json content."
+            exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON" > /tmp/google-services.json
+          python3 - <<'PYEOF' > /tmp/firebase.env
+          import json, plistlib, shlex
+          gs = json.load(open('/tmp/google-services.json'))
+          client = gs['client'][0]
+          project_id = gs['project_info']['project_id']
+          web_client_id = next(
+              c['client_id'] for c in client['oauth_client'] if c['client_type'] == 3
+          )
+          with open('ios/Runner/GoogleService-Info.plist', 'rb') as f:
+              app_id = plistlib.load(f)['GOOGLE_APP_ID']
+          defs = {
+              'FIREBASE_API_KEY': client['api_key'][0]['current_key'],
+              'FIREBASE_PROJECT_ID': project_id,
+              'FIREBASE_AUTH_DOMAIN': project_id + '.firebaseapp.com',
+              'FIREBASE_STORAGE_BUCKET': gs['project_info']['storage_bucket'],
+              'FIREBASE_MESSAGING_SENDER_ID': gs['project_info']['project_number'],
+              'FIREBASE_APP_ID': app_id,
+              'GOOGLE_WEB_CLIENT_ID': web_client_id,
+          }
+          for k, v in defs.items():
+              print('%s=%s' % (k, shlex.quote(str(v))))
+          PYEOF
+          set -a
+          . /tmp/firebase.env
+          set +a
+          rm -f /tmp/google-services.json /tmp/firebase.env
+          flutter build ios --release --no-codesign \
+            --dart-define=FIREBASE_API_KEY="$FIREBASE_API_KEY" \
+            --dart-define=FIREBASE_PROJECT_ID="$FIREBASE_PROJECT_ID" \
+            --dart-define=FIREBASE_AUTH_DOMAIN="$FIREBASE_AUTH_DOMAIN" \
+            --dart-define=FIREBASE_STORAGE_BUCKET="$FIREBASE_STORAGE_BUCKET" \
+            --dart-define=FIREBASE_MESSAGING_SENDER_ID="$FIREBASE_MESSAGING_SENDER_ID" \
+            --dart-define=FIREBASE_APP_ID="$FIREBASE_APP_ID" \
+            --dart-define=GOOGLE_WEB_CLIENT_ID="$GOOGLE_WEB_CLIENT_ID"
 
       - name: Package unsigned IPA for TrollStore
         run: |

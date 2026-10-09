@@ -103,13 +103,27 @@ class PushNotificationService {
     return const {};
   }
 
-  /// Initializes flutter_local_notifications (Android channel + tap
-  /// routing). Best-effort: never throws, never blocks startup.
+  /// Initializes flutter_local_notifications (Android channel + iOS Darwin
+  /// settings + tap routing). Best-effort: never throws, never blocks
+  /// startup.
+  ///
+  /// iOS FUTURE-PROOFING: Push activates automatically once an APNs key is
+  /// added in the Firebase console — no app update needed. Without the key,
+  /// FCM token fetch fails gracefully (caught below) and the app runs fine.
   static Future<void> _initLocalNotifications() async {
     if (_localNotificationsReady) return;
     try {
       const androidInit = AndroidInitializationSettings('ic_notification');
-      const initSettings = InitializationSettings(android: androidInit);
+      const darwinInit = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+      const initSettings = InitializationSettings(
+        android: androidInit,
+        iOS: darwinInit,
+        macOS: darwinInit,
+      );
       await _localNotifications.initialize(
         settings: initSettings,
         onDidReceiveNotificationResponse: (response) {

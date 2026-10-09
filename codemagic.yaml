@@ -1,0 +1,54 @@
+# Codemagic CI — Loksewa Solution (TrollStore-ready unsigned IPA)
+#
+# Manual builds only: trigger from the Codemagic dashboard ("Start new build").
+# Produces an UNSIGNED .ipa that installs via TrollStore (CoreTrust bypass,
+# no Apple Developer account needed). Push notifications will NOT work until
+# an APNs key is added in the Firebase console ($99 Apple Developer required)
+# — everything else works.
+#
+# SETUP (one time, in Codemagic dashboard > Environment variables, encrypted):
+#   FIREBASE_API_KEY, FIREBASE_PROJECT_ID, FIREBASE_AUTH_DOMAIN,
+#   FIREBASE_STORAGE_BUCKET, FIREBASE_MESSAGING_SENDER_ID, FIREBASE_APP_ID,
+#   GOOGLE_WEB_CLIENT_ID
+# (same values as the Android build; the app reads them via --dart-define)
+#
+# NOTE: `flutter build ipa --no-codesign` SKIPS the .ipa export in current
+# Flutter, so we build the .app bundle and package Payload/*.ipa manually —
+# this is the standard TrollStore recipe.
+workflows:
+  ios-unsigned:
+    name: iOS unsigned IPA (TrollStore)
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      vars:
+        BUNDLE_ID: com.loksewasolutionnp.hub
+    scripts:
+      - name: Flutter packages
+        script: flutter pub get
+      - name: Build unsigned iOS app bundle
+        script: >
+          flutter build ios --release --no-codesign
+          --dart-define=FIREBASE_API_KEY=$FIREBASE_API_KEY
+          --dart-define=FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID
+          --dart-define=FIREBASE_AUTH_DOMAIN=$FIREBASE_AUTH_DOMAIN
+          --dart-define=FIREBASE_STORAGE_BUCKET=$FIREBASE_STORAGE_BUCKET
+          --dart-define=FIREBASE_MESSAGING_SENDER_ID=$FIREBASE_MESSAGING_SENDER_ID
+          --dart-define=FIREBASE_APP_ID=$FIREBASE_APP_ID
+          --dart-define=GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID
+      - name: Package unsigned IPA for TrollStore
+        script: |
+          set -e
+          cd build/ios/iphoneos
+          rm -rf Payload
+          mkdir Payload
+          cp -r Runner.app Payload/
+          mkdir -p ../ipa
+          zip -qry ../ipa/Loksewa-Solution-unsigned.ipa Payload
+          rm -rf Payload
+          ls -la ../ipa/
+    artifacts:
+      - build/ios/ipa/*.ipa

@@ -9,6 +9,7 @@ import 'package:loksewa_solution/screens/learn/home_tab.dart';
 import 'package:loksewa_solution/screens/learn/exam_tab.dart';
 import 'package:loksewa_solution/screens/learn/discussion_tab.dart';
 import 'package:loksewa_solution/screens/learn/profile_tab.dart';
+import 'package:loksewa_solution/widgets/animated_bottom_nav.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/device_session_dialogs.dart';
 import 'package:loksewa_solution/widgets/popup_action_button.dart';
@@ -198,34 +199,9 @@ class _TabsScreenState extends State<TabsScreen> with WidgetsBindingObserver {
         },
         child: Scaffold(
           body: IndexedStack(index: _index, children: _tabs),
-      bottomNavigationBar: BottomNavigationBar(
+      bottomNavigationBar: AnimatedBottomNav(
         currentIndex: _index,
         onTap: (i) => TabsScreen.tabIndex.value = i,
-        type: BottomNavigationBarType.fixed,
-        selectedItemColor: AppColors.navy,
-        unselectedItemColor: Colors.grey,
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.assignment_outlined),
-            activeIcon: Icon(Icons.assignment),
-            label: 'Exam',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.forum_outlined),
-            activeIcon: Icon(Icons.forum),
-            label: 'Discussion',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Profile',
-          ),
-        ],
       ),
       ),
       ),

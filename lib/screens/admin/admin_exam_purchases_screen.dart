@@ -137,7 +137,7 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
                 final filtered = _filter == 'all'
                     ? records
                     : records.where((r) => r['status'] == _filter).toList();
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async => _refresh(),
                   child: ListView(
                     padding: const EdgeInsets.all(16),

@@ -9,6 +9,7 @@ import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
+import '../learn/exam_tab.dart';
 import '../tabs_screen.dart';
 
 /// Result summary shown straight after submitting — mirrors
@@ -506,6 +507,9 @@ class _ExamSummaryScreenState extends State<ExamSummaryScreen> {
           label: AppLanguage.tr(
               'Practice Other Exams', 'अन्य परीक्षा अभ्यास'),
           onTap: () {
+            // The exam tab keeps its state — request a real-time refresh so
+            // the just-finished exam's new state shows without a manual pull.
+            ExamTab.pendingRefresh = true;
             TabsScreen.tabIndex.value = 1;
             context.go('/');
           },

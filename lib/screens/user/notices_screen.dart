@@ -101,7 +101,7 @@ class _NoticesScreenState extends State<NoticesScreen> {
                   return _errorState(context, palette);
                 }
                 final items = snap.data ?? [];
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async {
                     final next = _load();
                     setState(() => _future = next);

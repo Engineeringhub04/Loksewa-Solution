@@ -330,7 +330,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
                 topRight: Radius.circular(26),
               ),
             ),
-            child: RefreshIndicator(
+            child: RefreshIndicator.adaptive(
               onRefresh: () => _load(),
               child: ListView(
                 padding: const EdgeInsets.all(16),
@@ -382,40 +382,53 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
   }
 
   /// Podium — display order 2nd, 1st, 3rd.
+  /// The fixed podium metrics (avatar/block sizes) scale down on narrow
+  /// screens via LayoutBuilder so the three slots never overflow — the
+  /// avatar photo always sits snug inside its ring (no floaty gap).
   Widget _podium() {
     final second = _rows.length > 1 ? _rows[1] : null;
     final first = _rows.isNotEmpty ? _rows[0] : null;
     final third = _rows.length > 2 ? _rows[2] : null;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(child: _slot(second, _places[2]!)),
-        Expanded(child: _slot(first, _places[1]!)),
-        Expanded(child: _slot(third, _places[3]!)),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 380pt is the comfortable full-size width; shrink proportionally
+        // below it (never below 82% — keeps the design intact on 320pt).
+        final scale = (constraints.maxWidth / 380).clamp(0.82, 1.0);
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(child: _slot(second, _places[2]!, scale)),
+            Expanded(child: _slot(first, _places[1]!, scale)),
+            Expanded(child: _slot(third, _places[3]!, scale)),
+          ],
+        );
+      },
     );
   }
 
-  Widget _slot(RankingRow? row, _PlaceTheme theme) {
+  Widget _slot(RankingRow? row, _PlaceTheme theme, double scale) {
     final filled = row != null;
     final isWinner = theme.place == 1;
+    final avatarD = theme.avatar * scale;
+    final blockH = theme.height * scale;
     return Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         SizedBox(
-          height: isWinner ? 24 : 17,
+          height: (isWinner ? 24 : 17) * scale,
           child: filled
               ? Icon(theme.icon,
-                  size: isWinner ? 24 : 17, color: theme.ring)
+                  size: (isWinner ? 24 : 17) * scale, color: theme.ring)
               : null,
         ),
         const SizedBox(height: 4),
         Stack(
           alignment: Alignment.center,
+          clipBehavior: Clip.none,
           children: [
             Container(
-              width: theme.avatar,
-              height: theme.avatar,
+              width: avatarD,
+              height: avatarD,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
@@ -428,19 +441,21 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
                     ? Colors.white.withValues(alpha: 0.14)
                     : Colors.white.withValues(alpha: 0.06),
               ),
+              // Snug fit: the photo fills the ring edge-to-edge (3px ring
+              // + 1px breathing room each side) so it never looks floaty.
               child: Center(
                 child: filled &&
                         (row!.photoURL ?? '').isNotEmpty
                     ? ProfileAvatar(
                         uri: row.photoURL,
                         name: row.name,
-                        size: theme.avatar - 12,
+                        size: avatarD - 8,
                         pro: row.isPro,
                       )
                     : Text(
                         filled ? _initials(row!.name) : '—',
                         style: TextStyle(
-                          fontSize: 20,
+                          fontSize: 20 * scale,
                           fontWeight: FontWeight.bold,
                           color: filled ? _text : _textDim,
                         ),
@@ -448,7 +463,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
               ),
             ),
             Positioned(
-              bottom: 0,
+              bottom: -2,
               child: Container(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 7, vertical: 2),
@@ -467,7 +482,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: _nameWithTick(
@@ -496,7 +511,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
         const SizedBox(height: 8),
         // The block.
         Container(
-          height: theme.height,
+          height: blockH,
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: filled
@@ -518,7 +533,7 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
               const Spacer(),
               Text('${theme.place}',
                   style: TextStyle(
-                      fontSize: 34,
+                      fontSize: 34 * scale,
                       fontWeight: FontWeight.bold,
                       color: filled
                           ? Colors.white.withValues(alpha: 0.92)

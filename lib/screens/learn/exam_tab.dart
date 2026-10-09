@@ -35,6 +35,11 @@ class ExamTab extends StatefulWidget {
   /// Consumed (cleared) once applied.
   static String? pendingHighlightSetId;
 
+  /// Set before switching to the exam tab when its data may be stale
+  /// (e.g. "Practice Other Exams" on the quiz summary page). The tab's
+  /// ticker consumes it and runs a full refresh once.
+  static bool pendingRefresh = false;
+
   @override
   State<ExamTab> createState() => _ExamTabState();
 }
@@ -66,6 +71,13 @@ class _ExamTabState extends State<ExamTab> {
     // cache, without re-fetching.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
+      // A pending refresh (e.g. "Practice Other Exams" from the quiz
+      // summary) runs a full reload once, then clears itself.
+      if (ExamTab.pendingRefresh) {
+        ExamTab.pendingRefresh = false;
+        _load();
+        return;
+      }
       final cache = _sectionCache[_cacheKey];
       if (cache == null) return;
       setState(() => _cards = _resolveCards(cache, DateTime.now()));
@@ -639,7 +651,7 @@ class _ExamTabState extends State<ExamTab> {
       );
     }
     if (_error != null) {
-      return RefreshIndicator(
+      return RefreshIndicator.adaptive(
         onRefresh: _load,
         child: ListView(
           children: [
@@ -693,7 +705,7 @@ class _ExamTabState extends State<ExamTab> {
         ),
       );
     }
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: _load,
       child: ListView(
         controller: _scrollController,

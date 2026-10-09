@@ -136,7 +136,7 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
                     hint: AppLanguage.tr(
                         'Fetching your content', 'सामग्री ल्याउँदै'),
                   )
-                : RefreshIndicator(
+                : RefreshIndicator.adaptive(
                     onRefresh: () => _load(refresh: true),
                     color: pal.primary,
                     child: _body(pal),

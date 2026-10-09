@@ -183,7 +183,11 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     final qs = params.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
         .join('&');
-    context.push('$route?$qs');
+    // Refresh progress when coming back — the just-finished practice
+    // changes the % shown on this page.
+    context.push('$route?$qs').then((_) {
+      if (mounted) _reload();
+    });
   }
 
   /// True while the premium gate or the mode bottom-sheet is on screen.
@@ -247,7 +251,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                         );
                       }
                       final d = snap.data!;
-                      return RefreshIndicator(
+                      return RefreshIndicator.adaptive(
                         onRefresh: () async => _reload(),
                         child: ListView(
                           padding: const EdgeInsets.all(16),

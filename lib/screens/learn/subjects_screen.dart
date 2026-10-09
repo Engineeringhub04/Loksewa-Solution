@@ -169,7 +169,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                     d.subjects.where((s) => s['pro'] == true).length;
                 return Stack(
                   children: [
-                    RefreshIndicator(
+                    RefreshIndicator.adaptive(
                       onRefresh: () async =>
                           setState(() => _future = _load()),
                       child: ListView(

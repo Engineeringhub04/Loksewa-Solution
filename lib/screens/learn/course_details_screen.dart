@@ -164,7 +164,7 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
         children: [
           SubpageHeader(title: _Strings.title),
           Expanded(
-            child: RefreshIndicator(
+            child: RefreshIndicator.adaptive(
               onRefresh: _refresh,
               color: colors.primary,
               child: _body(context, colors),

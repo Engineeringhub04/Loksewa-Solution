@@ -163,7 +163,7 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
     final pending = statuses.where((s) => s == 'pending').length;
     final active = statuses.where((s) => s == 'active').length;
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: _refresh,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),

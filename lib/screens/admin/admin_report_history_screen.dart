@@ -92,7 +92,7 @@ class _AdminReportHistoryScreenState extends State<AdminReportHistoryScreen> {
               all.where((r) => r['status'] == 'pending').length;
           final resolved =
               all.where((r) => r['status'] == 'resolved').length;
-          return RefreshIndicator(
+          return RefreshIndicator.adaptive(
             onRefresh: () async => _refresh(),
             child: ListView(
               padding: const EdgeInsets.all(16),

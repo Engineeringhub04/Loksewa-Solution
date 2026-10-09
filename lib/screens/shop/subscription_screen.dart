@@ -140,7 +140,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                 final savePercent =
                     SubscriptionService.yearlySavePercent(data.plans);
 
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async {
                     setState(() {
                       _future = _load();

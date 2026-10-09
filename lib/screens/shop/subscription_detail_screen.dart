@@ -337,7 +337,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
     final record = _record!;
     final showEditBar = record.status != SubscriptionStatus.active &&
         record.status != SubscriptionStatus.expired;
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: _refresh,
       child: ListView(
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),

@@ -161,7 +161,7 @@ class _ExamDetailScreenState extends State<ExamDetailScreen> {
                           ],
                         ),
                       )
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: _load,
                         child: _body(palette),
                       ),

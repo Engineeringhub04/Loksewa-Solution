@@ -159,7 +159,7 @@ class _DailyTestHistoryScreenState extends State<DailyTestHistoryScreen> {
     final secondary =
         isDark ? const Color(0xFF94A3B8) : const Color(0xFF6B7280);
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () async => _load(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),

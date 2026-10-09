@@ -124,7 +124,7 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
     final Map<String, dynamic> imageMap =
         images is Map ? Map<String, dynamic>.from(images) : {};
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () async {
         final next = _load();
         setState(() => _future = next);

@@ -524,7 +524,7 @@ class _ProfileTabState extends State<ProfileTab> {
 
               return Stack(
                 children: [
-                  RefreshIndicator(
+                  RefreshIndicator.adaptive(
                     // Same job as progressViewOffset on the Expo side: the
                     // fixed header would otherwise cover the native spinner.
                     edgeOffset: headerH,

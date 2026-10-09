@@ -1321,7 +1321,7 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       ),
     ];
 
-    final list = RefreshIndicator(
+    final list = RefreshIndicator.adaptive(
       onRefresh: _reload,
       child: ListView.separated(
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),

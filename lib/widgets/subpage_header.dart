@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/theme_service.dart';
+import 'theme_toggle.dart';
 
 /// Shared curved blue gradient header used across sub-pages.
 /// Mirrors `SubpageHeader.tsx` from the Expo app: diagonal gradient
@@ -138,17 +139,14 @@ class SubpageHeader extends StatelessWidget {
                       // right slot like Expo's rightSlot) a phantom box would
                       // render visibly at the far right.
                       if (showThemeToggle)
-                        GestureDetector(
-                          onTap: () => ThemeService.toggle(context),
-                          child: _iconBox(
-                            child: Icon(
-                              isDark
-                                  ? Icons.light_mode_outlined
-                                  : Icons.dark_mode_outlined,
-                              size: 20,
-                              color: Colors.white,
-                            ),
-                          ),
+                        ThemeToggle(
+                          size: 36,
+                          isDark: isDark,
+                          onToggle: () => ThemeService.toggle(context),
+                          // Legacy subpage look: moon in light, sun in dark,
+                          // with the same 10px rounding as _iconBox.
+                          showCurrentMode: false,
+                          borderRadius: 10,
                         )
                       else if (actions == null)
                         _iconBox(),

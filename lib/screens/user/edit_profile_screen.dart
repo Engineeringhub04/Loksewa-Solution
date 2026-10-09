@@ -711,7 +711,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           label: _Strings.loadingProfile,
                           hint: _Strings.loadingHint,
                         )
-                      : RefreshIndicator(
+                      : RefreshIndicator.adaptive(
                           onRefresh: _refresh,
                           color: colors.primary,
                           child: ListView(

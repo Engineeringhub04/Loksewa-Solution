@@ -643,7 +643,7 @@ class _DiscussionTabState extends State<DiscussionTab> {
         searching: _query.trim().isNotEmpty,
       );
     }
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () => _load(silent: true),
       // React parity: no list entrance animations on the feed — plain list
       // with 16px gaps, 16px horizontal padding.

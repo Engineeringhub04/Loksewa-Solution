@@ -313,7 +313,7 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
           children: [
             _header(topPad),
             Expanded(
-              child: RefreshIndicator(
+              child: RefreshIndicator.adaptive(
                 onRefresh: _loadCourses,
                 color: const Color(0xFF2563EB),
                 child: SingleChildScrollView(

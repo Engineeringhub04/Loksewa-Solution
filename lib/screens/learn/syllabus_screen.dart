@@ -218,7 +218,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       );
     }
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () async => _load(),
       child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),

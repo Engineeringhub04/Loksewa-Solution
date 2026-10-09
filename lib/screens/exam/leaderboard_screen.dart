@@ -573,7 +573,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               color: Color(0x47081436), // rgba(8,20,54,0.28)
               borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
             ),
-            child: RefreshIndicator(
+            child: RefreshIndicator.adaptive(
               onRefresh: () {
                 // Pull-to-refresh = explicit ask for fresh numbers: force the
                 // next publish through instead of waiting out the throttle.

@@ -97,7 +97,7 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
                   )
                 : _record == null
                     ? _errorBody(pal)
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: () => _load(refresh: true),
                         color: pal.primary,
                         child: _body(pal, _record!),

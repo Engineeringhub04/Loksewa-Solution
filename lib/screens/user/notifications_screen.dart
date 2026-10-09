@@ -5,12 +5,14 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/notification_tracks.dart';
+import 'package:loksewa_solution/services/notification_badge.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/theme_toggle.dart';
 import '../learn/exam_tab.dart';
 import '../tabs_screen.dart';
 
@@ -502,6 +504,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         _items = all;
         _error = null;
       });
+      // Keep the home header bell badge in sync with this inbox.
+      NotificationBadge.set(all.where((i) => !i.read).length);
 
       // Notification-tap flow (Point 1): auto-open the tapped notification
       // once the list is ready. Runs once only — pull-to-refresh must not
@@ -551,6 +555,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     if (item.read) return;
     final uid = AuthService.currentUser?.uid;
     setState(() => item.read = true);
+    NotificationBadge.decrement();
     if (uid == null) return;
     try {
       // Exam rows share the local read-id set with global rows (same key
@@ -582,6 +587,9 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         i.read = true;
       }
     });
+    // The home header bell listens to this — the badge drops to zero
+    // instantly, no home reload needed.
+    NotificationBadge.clear();
     showToast(context, 'All notifications marked as read', ToastVariant.success);
     try {
       final token = await AuthService.getValidIdToken();
@@ -713,24 +721,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             actions: [
               // Theme toggle first, then the mark-all pill — same order as
               // the Expo rightSlot (which also uses gap 4 between them).
-              GestureDetector(
-                onTap: () => ThemeService.toggle(context),
-                child: Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  alignment: Alignment.center,
-                  child: Icon(
-                    Theme.of(context).brightness == Brightness.dark
-                        ? Icons.light_mode_outlined
-                        : Icons.dark_mode_outlined,
-                    size: 20,
-                    color: Colors.white,
-                  ),
-                ),
+              ThemeToggle(
+                size: 36,
+                isDark: Theme.of(context).brightness == Brightness.dark,
+                onToggle: () => ThemeService.toggle(context),
+                showCurrentMode: false,
+                borderRadius: 10,
               ),
               const SizedBox(width: 4),
               _MarkAllButton(
@@ -751,7 +747,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 ? _loadingState(context)
                 : _error != null && items == null
                     ? _errorState(context)
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: _load,
                         child: visible.isEmpty
                             ? ListView(

@@ -1,10 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
 
 import 'profile_avatar.dart';
+import 'theme_toggle.dart';
 
 /// Collapsing curved blue header for the Profile tab.
 ///
@@ -171,105 +170,6 @@ class ProfileHeader extends StatelessWidget {
   }
 }
 
-/// Animated theme toggle — mirrors misc/ThemeToggleButton.tsx: shows the icon
-/// for the CURRENT theme mode (sun in light, moon in dark), and toggles with
-/// a full 360° spin + fade + scale flourish (650ms). A full turn, not 180 —
-/// the moon glyph is not vertically symmetric, so resting at 180° left it
-/// visibly upside-down.
-class ProfileThemeToggle extends StatefulWidget {
-  final double size;
-  final bool isDark;
-  final VoidCallback onToggle;
-
-  const ProfileThemeToggle({
-    super.key,
-    required this.size,
-    required this.isDark,
-    required this.onToggle,
-  });
-
-  @override
-  State<ProfileThemeToggle> createState() => _ProfileThemeToggleState();
-}
-
-class _ProfileThemeToggleState extends State<ProfileThemeToggle>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  bool _wasDark = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _wasDark = widget.isDark;
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 650),
-    );
-  }
-
-  @override
-  void didUpdateWidget(covariant ProfileThemeToggle oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Don't animate on mount — only on an actual toggle.
-    if (widget.isDark != _wasDark) {
-      _wasDark = widget.isDark;
-      _c.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white.withValues(alpha: 0.2),
-      borderRadius: BorderRadius.circular(widget.size * 0.32),
-      child: InkWell(
-        onTap: widget.onToggle,
-        borderRadius: BorderRadius.circular(widget.size * 0.32),
-        child: SizedBox(
-          width: widget.size,
-          height: widget.size,
-          child: Center(
-            child: AnimatedBuilder(
-              animation: _c,
-              builder: (context, _) {
-                final t = _c.value;
-                final opacity = t < 0.38
-                    ? 1 - (0.65 * t / 0.38)
-                    : 0.35 + (0.65 * (t - 0.38) / 0.62);
-                final scale = t < 0.38
-                    ? 1 - (0.3 * t / 0.38)
-                    : 0.7 + (0.3 * (t - 0.38) / 0.62);
-                return Opacity(
-                  opacity: opacity.clamp(0.0, 1.0),
-                  child: Transform.scale(
-                    scale: scale,
-                    child: Transform.rotate(
-                      angle: t * 2 * math.pi,
-                      child: Icon(
-                        widget.isDark
-                            ? Icons.dark_mode_outlined
-                            : Icons.light_mode_outlined,
-                        size: widget.size * 0.52,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// The lucide "Pencil" glyph (user-requested), drawn with the same path data —
 /// no new dependency.
 class _PencilPainter extends CustomPainter {
@@ -400,7 +300,7 @@ class _ExpandedContent extends StatelessWidget {
                 ),
               ),
               // Theme toggle sits to the LEFT of the language switcher.
-              ProfileThemeToggle(
+              ThemeToggle(
                   size: 36, isDark: isDark, onToggle: onToggleTheme),
               const SizedBox(width: 8),
               _LanguagePill(
@@ -560,9 +460,11 @@ class _CollapsedContent extends StatelessWidget {
                 uri: photoURL, name: displayName, size: 30, pro: pro),
             const SizedBox(width: 8),
             // THE NAME IS THE LOWEST-PRIORITY element: it shrinks and
-            // ellipsises from its tail first. The Edit Profile button and the
-            // toggles always keep their full size.
-            Flexible(
+            // ellipsises from its tail first. Expanded (not Flexible) pins
+            // the Edit Profile button and the toggles to the trailing edge
+            // in a FIXED position — a short name must not shift them around.
+            // NameWithTick keeps the verified tick visible beside the name.
+            Expanded(
               child: NameWithTick(
                 name: displayName ?? '',
                 pro: pro,
@@ -603,7 +505,7 @@ class _CollapsedContent extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             // Same order once collapsed: theme toggle, then language.
-            ProfileThemeToggle(
+            ThemeToggle(
                 size: 32, isDark: isDark, onToggle: onToggleTheme),
             const SizedBox(width: 8),
             _LanguagePill(

@@ -120,7 +120,7 @@ class _UnderConstructionScreenState extends State<UnderConstructionScreen>
           Expanded(
             child: _preloading
                 ? _preloadingBody()
-                : RefreshIndicator(
+                : RefreshIndicator.adaptive(
                     color: palette.primary,
                     onRefresh: _onRefresh,
                     child: SingleChildScrollView(

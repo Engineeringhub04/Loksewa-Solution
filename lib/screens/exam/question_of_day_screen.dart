@@ -238,7 +238,7 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen>
     } else if (_error != null && q == null) {
       body = _notFound(palette, onRetry: () => _load(force: true));
     } else if (q == null) {
-      body = RefreshIndicator(
+      body = RefreshIndicator.adaptive(
         onRefresh: () => _load(force: true),
         child: ListView(
           padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
@@ -259,7 +259,7 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen>
         ),
       );
     } else {
-      body = RefreshIndicator(
+      body = RefreshIndicator.adaptive(
         onRefresh: () => _load(force: true),
         child: _questionView(palette, validDay!, q),
       );

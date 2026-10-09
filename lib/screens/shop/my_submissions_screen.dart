@@ -125,7 +125,7 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
                     hint: AppLanguage.tr('Fetching your submissions',
                         'तपाईंका उत्तरहरू ल्याउँदै'),
                   )
-                : RefreshIndicator(
+                : RefreshIndicator.adaptive(
                     onRefresh: () => _load(refresh: true),
                     color: pal.primary,
                     child: _items.isEmpty

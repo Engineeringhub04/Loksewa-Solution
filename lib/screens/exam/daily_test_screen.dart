@@ -514,7 +514,7 @@ class _DailyTestScreenState extends State<DailyTestScreen>
 
     final todayModels = modelsForDate(_models, _dayKey);
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () => _load(refreshing: true),
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),

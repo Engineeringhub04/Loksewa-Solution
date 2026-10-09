@@ -213,7 +213,7 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
                   )
                 : _error && _items.isEmpty
                     ? _errorBody(pal)
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: _load,
                         color: pal.primary,
                         child: _listBody(pal),

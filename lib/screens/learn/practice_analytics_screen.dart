@@ -308,7 +308,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
                 }
                 final data = snap.data!;
                 if (data.rows.isEmpty) return _emptyState(context);
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async => _reload(),
                   child: ListView(
                     padding: const EdgeInsets.fromLTRB(16, 16, 16, 40),
@@ -428,7 +428,7 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
   }
 
   Widget _emptyState(BuildContext context) {
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () async => _reload(),
       child: ListView(
         padding: const EdgeInsets.all(32),

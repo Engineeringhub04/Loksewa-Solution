@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../theme/app_theme.dart';
 import '../../services/theme_service.dart';
 import '../disk_cached_image.dart';
+import '../theme_toggle.dart';
 
 /// Collapsing curved gradient header for Home.
 ///
@@ -261,24 +262,6 @@ class _Avatar extends StatelessWidget {
       );
 }
 
-class _ThemeToggle extends StatelessWidget {
-  final double size;
-  const _ThemeToggle({required this.size});
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return _IconBox(
-      size: size,
-      onTap: () => ThemeService.toggle(context),
-      icon: Icon(
-        isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-        size: size * 0.52,
-        color: Colors.white,
-      ),
-    );
-  }
-}
 
 class _IconBox extends StatelessWidget {
   final double size;
@@ -444,7 +427,12 @@ class _ExpandedContent extends StatelessWidget {
                   ),
                 ),
               ),
-              const _ThemeToggle(size: 38),
+              ThemeToggle(
+                size: 38,
+                isDark: Theme.of(context).brightness == Brightness.dark,
+                onToggle: () => ThemeService.toggle(context),
+                showCurrentMode: false,
+              ),
               const SizedBox(width: 10),
               _Bell(
                 size: 38,
@@ -726,7 +714,12 @@ class _CollapsedContent extends StatelessWidget {
                 ),
               ),
             ),
-            const _ThemeToggle(size: 32),
+            ThemeToggle(
+              size: 32,
+              isDark: Theme.of(context).brightness == Brightness.dark,
+              onToggle: () => ThemeService.toggle(context),
+              showCurrentMode: false,
+            ),
             const SizedBox(width: 10),
             _Bell(
               size: 32,

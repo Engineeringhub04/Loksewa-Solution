@@ -7,6 +7,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/notification_badge.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/widgets/home/home_header.dart';
@@ -178,6 +179,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     } catch (_) {}
     try {
       notificationCount = await _unreadNotificationCount(token, user?.uid);
+      // Publish to the shared badge so the header bell stays live even
+      // when the count changes elsewhere (notifications page mark-all-read).
+      NotificationBadge.set(notificationCount);
     } catch (_) {}
 
     // Subjects — mirrors loadSubjectDetails() in subjectDetails.ts: deterministic
@@ -403,7 +407,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
               position: _entranceSlide,
               child: Stack(
                 children: [
-                  RefreshIndicator(
+                  RefreshIndicator.adaptive(
+                    // The header overlays the top of the list (Stack), so the
+                    // spinner would hide behind it — settle it below the
+                    // header instead, like the other pages show it.
+                    displacement: expandedH + 40,
                     onRefresh: () async {
                       setState(() => _future = _load());
                       // Keep the shared store fresh too, so the header (and
@@ -539,26 +547,32 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                         final storeProfile = ProfileStore.instance.profile;
                         final storeName = storeProfile?.name.trim() ?? '';
                         final storePhoto = storeProfile?.photoURL;
-                        return HomeHeader(
-                          scrollOffset: offset < 0 ? 0 : offset,
-                          displayName: storeName.isNotEmpty
-                              ? storeName
-                              : (user?.displayName ?? user?.email),
-                          photoURL:
-                              (storePhoto != null && storePhoto.isNotEmpty)
-                                  ? storePhoto
-                                  : d.photoURL,
-                          pro: storeProfile != null
-                              ? hasActivePremium(storeProfile)
-                              : d.isPremium,
-                          notificationCount: d.notificationCount,
-                          courseName: d.courseName,
-                          subcourseName: d.subcourseName,
-                          onNotificationsPress: () =>
-                              context.push('/notifications'),
-                          onProfilePress: () => context.push('/profile'),
-                          onCoursePress: () =>
-                              context.push('/course-setup?mode=update'),
+                        // Live badge: the bell count follows the shared
+                        // notifier so mark-all-read on the notifications
+                        // page updates it instantly, no home reload needed.
+                        return ValueListenableBuilder<int>(
+                          valueListenable: NotificationBadge.unreadCount,
+                          builder: (context, liveCount, _) => HomeHeader(
+                            scrollOffset: offset < 0 ? 0 : offset,
+                            displayName: storeName.isNotEmpty
+                                ? storeName
+                                : (user?.displayName ?? user?.email),
+                            photoURL:
+                                (storePhoto != null && storePhoto.isNotEmpty)
+                                    ? storePhoto
+                                    : d.photoURL,
+                            pro: storeProfile != null
+                                ? hasActivePremium(storeProfile)
+                                : d.isPremium,
+                            notificationCount: liveCount,
+                            courseName: d.courseName,
+                            subcourseName: d.subcourseName,
+                            onNotificationsPress: () =>
+                                context.push('/notifications'),
+                            onProfilePress: () => context.push('/profile'),
+                            onCoursePress: () =>
+                                context.push('/course-setup?mode=update'),
+                          ),
                         );
                       },
                     ),

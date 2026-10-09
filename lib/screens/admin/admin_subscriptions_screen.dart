@@ -184,7 +184,7 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
                 final filtered = _filter == 'all'
                     ? all
                     : all.where((r) => r['status'] == _filter).toList();
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async => _refresh(),
                   child: ListView(
                     padding: const EdgeInsets.all(16),

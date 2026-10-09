@@ -220,7 +220,11 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
     final qs = params.entries
         .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
         .join('&');
-    context.push('$route?$qs');
+    // Refresh progress when coming back — the just-finished practice
+    // changes the % shown on this page.
+    context.push('$route?$qs').then((_) {
+      if (mounted) _reload();
+    });
   }
 
   List<Map<String, dynamic>> _allChapters(_UnitPage d) =>
@@ -277,7 +281,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                       final d = snap.data!;
                       final all = _allChapters(d);
                       if (all.isEmpty) {
-                        return RefreshIndicator(
+                        return RefreshIndicator.adaptive(
                           onRefresh: () async => _reload(),
                           child: ListView(
                             padding: const EdgeInsets.all(16),
@@ -293,7 +297,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
                           ),
                         );
                       }
-                      return RefreshIndicator(
+                      return RefreshIndicator.adaptive(
                         onRefresh: () async => _reload(),
                         child: CustomScrollView(
                           controller: _scrollController,

@@ -99,7 +99,7 @@ class _ExamHistoryScreenState extends State<ExamHistoryScreen> {
                         ],
                       ),
                     )
-                  : RefreshIndicator(
+                  : RefreshIndicator.adaptive(
                       onRefresh: _load,
                       child: ListView.builder(
                         padding: const EdgeInsets.all(12),

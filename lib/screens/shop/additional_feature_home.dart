@@ -332,7 +332,7 @@ class _AdditionalFeatureHomeScreenState
                     label: 'Loading topics...',
                   )
                 : _error != null
-                    ? RefreshIndicator(
+                    ? RefreshIndicator.adaptive(
                         onRefresh: _load,
                         child: ListView(
                           children: [
@@ -350,7 +350,7 @@ class _AdditionalFeatureHomeScreenState
                           ],
                         ),
                       )
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: _load,
                         child: ListView(
                           padding: const EdgeInsets.all(16),

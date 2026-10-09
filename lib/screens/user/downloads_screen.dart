@@ -180,7 +180,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
                                           fontSize: 15),
                                     ),
                                   )
-                                : RefreshIndicator(
+                                : RefreshIndicator.adaptive(
                                     onRefresh: _load,
                                     child: ListView.builder(
                                       padding: const EdgeInsets.fromLTRB(

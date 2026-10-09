@@ -685,7 +685,7 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
         ),
       );
     }
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () async {
         await _load();
         await _flushPending();

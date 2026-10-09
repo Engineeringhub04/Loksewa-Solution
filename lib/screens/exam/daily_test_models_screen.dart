@@ -343,7 +343,7 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
       running += byDate[d]!.length;
     }
 
-    return RefreshIndicator(
+    return RefreshIndicator.adaptive(
       onRefresh: () => _load(refreshing: true),
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),

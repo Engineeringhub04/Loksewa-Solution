@@ -137,7 +137,7 @@ class _AdminAnswersReviewScreenState extends State<AdminAnswersReviewScreen> {
                           ),
                         ),
                       )
-                    : RefreshIndicator(
+                    : RefreshIndicator.adaptive(
                         onRefresh: _load,
                         child: ListView(
                           padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),

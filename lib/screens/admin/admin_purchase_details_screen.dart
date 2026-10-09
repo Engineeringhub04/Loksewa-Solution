@@ -189,7 +189,7 @@ class _AdminPurchaseDetailsScreenState
                 final visible = _track == 'all'
                     ? items
                     : items.where((i) => i.kind == _track).toList();
-                return RefreshIndicator(
+                return RefreshIndicator.adaptive(
                   onRefresh: () async => _refresh(),
                   child: ListView(
                     padding: const EdgeInsets.all(16),

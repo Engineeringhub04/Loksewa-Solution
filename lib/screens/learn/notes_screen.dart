@@ -471,7 +471,7 @@ class _NotesScreenState extends State<NotesScreen> {
                         tinted: false,
                         label: AppLanguage.tr(
                             'Loading notes...', 'नोटहरू लोड हुँदैछन्...')))
-                : RefreshIndicator(
+                : RefreshIndicator.adaptive(
                     onRefresh: () async => _reload(),
                     child: ListView(
                       padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),

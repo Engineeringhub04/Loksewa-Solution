@@ -25,6 +25,10 @@ workflows:
       flutter: stable
       xcode: latest
       cocoapods: default
+      groups:
+        # Variable group created in Codemagic dashboard holding GOOGLE_SERVICES_JSON.
+        # The group MUST be added here or the build cannot see the variable.
+        - firebase
       vars:
         BUNDLE_ID: com.loksewasolutionnp.hub
     scripts:

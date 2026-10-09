@@ -1,17 +1,27 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
-/// Video-style animated bottom navigation bar.
+/// Video-exact animated bottom navigation bar.
 ///
-/// When a tab is selected:
-/// - a blue pill indicator SLIDES smoothly to the tab (one animation value
-///   drives everything at 60fps),
-/// - the selected icon LIFTS UP into the pill (translate + slight scale,
-///   color lerps grey -> white),
-/// - the bar background has a curved concave NOTCH hugging the pill
-///   (drawn by [_NavBarPainter]).
+/// The reference video shows:
+/// - unselected tabs: small GRAY icons sitting in the bar,
+/// - selected tab: a WHITE circle popping UP ABOVE the bar's top edge with
+///   the DARK icon inside it,
+/// - behind/below the circle: an APP-BLUE shape whose top edge is a smooth
+///   CURVE hugging the circle (a concave dip — the circle sits in a curved
+///   valley of blue, like the video's red shape),
+/// - animation: the white circle + blue curved shape SLIDE TOGETHER
+///   horizontally as ONE unit (~350ms, easeInOut), never separating,
+/// - icons animate: the selected icon scales UP + turns dark as it enters
+///   the circle; unselected icons scale down + stay gray.
 ///
-/// Colors follow the app's own blue theme (NOT red): light 0xFF1D4ED8,
-/// dark 0xFF3B82F6. Unselected tabs stay grey.
+/// One [AnimationController] drives circle position, blue shape
+/// position/curve and icon scale/color — all in sync at 60fps. Mid-flight
+/// retargets restart smoothly from the current value (rapid taps are fine).
+///
+/// Colors are the app's own BLUE theme (NOT red): light 0xFF1D4ED8,
+/// dark 0xFF3B82F6.
 class AnimatedBottomNav extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
@@ -58,7 +68,7 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 380),
+      duration: const Duration(milliseconds: 350),
     );
     _position = _makeTween(_target, _target);
     _controller.addListener(() => setState(() {}));
@@ -84,20 +94,21 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final pillColor =
-        isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
     final barColor = theme.colorScheme.surface;
     const unselectedColor = Colors.grey;
+    const circleIconColor = Color(0xFF1F2937);
     final bottomPad = MediaQuery.of(context).padding.bottom;
 
-    // Geometry: pill sits in the top area, bar below it.
-    const barTop = 40.0;
-    const barContentH = 58.0;
-    final totalH = barTop + barContentH + bottomPad;
-    const pillCenterY = barTop - 10; // 30
-    // Default icon center within the bar content row:
-    const iconCenterY = barTop + 26;
-    const lift = iconCenterY - pillCenterY; // 36
+    // Geometry. The white circle + blue mound live ABOVE the bar's top edge
+    // (barTop) — like the video, the circle pops up out of the bar.
+    const barTop = 48.0;
+    const barContentH = 60.0;
+    const aboveBar = 44.0; // room for the raised circle
+    final totalH = aboveBar + barContentH + bottomPad;
+    const circleR = 26.0;
+    const circleY = barTop - 16.0; // circle center: above the bar top edge
+    const iconY = barTop + 32.0; // unselected icons sit in the bar
 
     final pos = _position.value;
 
@@ -105,70 +116,109 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
       height: totalH,
       child: Stack(
         children: [
+          // Bar background + blue curved mound (slides with the circle).
           Positioned.fill(
             child: CustomPaint(
               painter: _NavBarPainter(
                 position: pos,
                 count: _items.length,
                 barColor: barColor,
-                pillColor: pillColor,
+                blue: blue,
                 barTop: barTop,
-                pillCenterY: pillCenterY,
+                circleY: circleY,
+                circleR: circleR,
               ),
             ),
           ),
-          Positioned(
-            top: barTop,
-            left: 0,
-            right: 0,
-            bottom: bottomPad,
-            child: Row(
-              children: List.generate(_items.length, (i) {
-                final item = _items[i];
-                // 1 when this tab is the selected one, fading to 0 for others.
-                final t = (1.0 - (pos - i).abs()).clamp(0.0, 1.0);
-                final te = Curves.easeOutCubic.transform(t);
-                final selected = t > 0.5;
-                return Expanded(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTap: () => widget.onTap(i),
-                    child: Semantics(
-                      button: true,
-                      selected: selected,
-                      label: item.label,
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Transform.translate(
-                            offset: Offset(0, -te * lift),
-                            child: Transform.scale(
-                              scale: 1 + te * 0.12,
-                              child: Icon(
-                                te > 0.5 ? item.activeIcon : item.icon,
-                                size: 26,
-                                color: Color.lerp(
-                                    unselectedColor, Colors.white, te),
+          // White circle (slides as one unit with the blue mound).
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _CirclePainter(
+                position: pos,
+                count: _items.length,
+                circleY: circleY,
+                circleR: circleR,
+              ),
+            ),
+          ),
+          // Icons: unselected gray in the bar; the selected one rides in
+          // the white circle, dark and scaled up.
+          Positioned.fill(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final slotW = constraints.maxWidth / _items.length;
+                final cx = slotW * (pos + 0.5);
+                return Stack(
+                  children: [
+                    // Bar icons.
+                    ...List.generate(_items.length, (i) {
+                      final item = _items[i];
+                      final t =
+                          (1.0 - (pos - i).abs()).clamp(0.0, 1.0);
+                      final te = Curves.easeOutCubic.transform(t);
+                      final selected = t > 0.5;
+                      return Positioned(
+                        left: slotW * i,
+                        width: slotW,
+                        top: iconY - 13,
+                        height: 26,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => widget.onTap(i),
+                          child: Semantics(
+                            button: true,
+                            selected: selected,
+                            label: item.label,
+                            child: Center(
+                              child: Opacity(
+                                opacity: 1.0 - te,
+                                child: Transform.scale(
+                                  scale: 1.0 + 0.08 * te,
+                                  child: Icon(
+                                    item.icon,
+                                    size: 26,
+                                    color: unselectedColor,
+                                  ),
+                                ),
                               ),
                             ),
                           ),
-                          const SizedBox(height: 3),
-                          Text(
-                            item.label,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: selected
-                                  ? FontWeight.bold
-                                  : FontWeight.w500,
-                              color: selected ? pillColor : unselectedColor,
+                        ),
+                      );
+                    }),
+                    // Selected icon inside the white circle.
+                    Positioned(
+                      left: cx - 20,
+                      width: 40,
+                      top: circleY - 20,
+                      height: 40,
+                      child: Builder(
+                        builder: (context) {
+                          final settle = (1.0 - (pos - widget.currentIndex).abs())
+                              .clamp(0.0, 1.0);
+                          final se =
+                              Curves.easeOutCubic.transform(settle);
+                          return GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () =>
+                                widget.onTap(widget.currentIndex),
+                            child: Center(
+                              child: Transform.scale(
+                                scale: 0.8 + 0.3 * se,
+                                child: Icon(
+                                  _items[widget.currentIndex].activeIcon,
+                                  size: 26,
+                                  color: circleIconColor,
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          );
+                        },
                       ),
                     ),
-                  ),
+                  ],
                 );
-              }),
+              },
             ),
           ),
         ],
@@ -177,23 +227,28 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
   }
 }
 
-/// Paints the bar background (rounded top corners + concave notch that tracks
-/// the animated pill) and the pill circle itself.
+/// Paints the bar background and the app-blue mound behind the selected tab.
+///
+/// The mound rises above the bar's top edge and its top edge is a smooth
+/// concave circular seat hugging the white circle — the circle sits in a
+/// curved valley of blue, exactly like the video's red shape.
 class _NavBarPainter extends CustomPainter {
   final double position;
   final int count;
   final Color barColor;
-  final Color pillColor;
+  final Color blue;
   final double barTop;
-  final double pillCenterY;
+  final double circleY;
+  final double circleR;
 
   const _NavBarPainter({
     required this.position,
     required this.count,
     required this.barColor,
-    required this.pillColor,
+    required this.blue,
     required this.barTop,
-    required this.pillCenterY,
+    required this.circleY,
+    required this.circleR,
   });
 
   @override
@@ -201,44 +256,55 @@ class _NavBarPainter extends CustomPainter {
     final slotW = size.width / count;
     final cx = slotW * (position + 0.5);
 
+    // Bar with rounded top corners.
     const cornerR = 20.0;
-    const notchHalfW = 46.0;
-    const notchDepth = 20.0;
-    const pillR = 26.0;
-
-    // Bar with concave notch.
-    final path = Path()
+    final barPath = Path()
       ..moveTo(0, size.height)
       ..lineTo(0, barTop + cornerR)
       ..quadraticBezierTo(0, barTop, cornerR, barTop)
-      ..lineTo(cx - notchHalfW - 18, barTop)
-      ..cubicTo(
-        cx - notchHalfW + 2, barTop,
-        cx - 24, barTop + notchDepth,
-        cx, barTop + notchDepth,
-      )
-      ..cubicTo(
-        cx + 24, barTop + notchDepth,
-        cx + notchHalfW - 2, barTop,
-        cx + notchHalfW + 18, barTop,
-      )
       ..lineTo(size.width - cornerR, barTop)
       ..quadraticBezierTo(size.width, barTop, size.width, barTop + cornerR)
       ..lineTo(size.width, size.height)
       ..close();
-
     canvas.drawShadow(
-        path, Colors.black.withValues(alpha: 0.16), 8, true);
-    canvas.drawPath(path, Paint()..color = barColor);
+        barPath, Colors.black.withValues(alpha: 0.16), 8, true);
+    canvas.drawPath(barPath, Paint()..color = barColor);
 
-    // Pill (blue circle the selected icon lifts into).
-    final pillC = Offset(cx, pillCenterY);
-    canvas.drawCircle(
-      pillC + const Offset(0, 4),
-      pillR,
-      Paint()..color = Colors.black.withValues(alpha: 0.18),
-    );
-    canvas.drawCircle(pillC, pillR, Paint()..color = pillColor);
+    // Blue mound with a concave circular seat for the white circle.
+    const moundHalfW = 56.0;
+    final seatR = circleR + 7;
+    // Seat arc: cradles the bottom of the circle — from 160° to 20° going
+    // counter-clockwise through the bottom (90° in y-down coordinates).
+    const startA = 160 * math.pi / 180;
+    const sweepA = -140 * math.pi / 180;
+    final lipLX = cx + seatR * math.cos(startA);
+    final lipLY = circleY + seatR * math.sin(startA);
+
+    final mound = Path()
+      ..moveTo(cx - moundHalfW, barTop + 38)
+      ..lineTo(cx - moundHalfW, barTop - 2)
+      // Left flank rising to the seat's left lip.
+      ..cubicTo(
+        cx - moundHalfW + 16, barTop - 24,
+        cx - seatR - 16, circleY - 12,
+        lipLX, lipLY,
+      )
+      // Concave seat hugging the white circle.
+      ..arcTo(
+        Rect.fromCircle(center: Offset(cx, circleY), radius: seatR),
+        startA,
+        sweepA,
+        false,
+      )
+      // Right flank coming back down.
+      ..cubicTo(
+        cx + seatR + 16, circleY - 12,
+        cx + moundHalfW - 16, barTop - 24,
+        cx + moundHalfW, barTop - 2,
+      )
+      ..lineTo(cx + moundHalfW, barTop + 38)
+      ..close();
+    canvas.drawPath(mound, Paint()..color = blue);
   }
 
   @override
@@ -246,5 +312,38 @@ class _NavBarPainter extends CustomPainter {
       old.position != position ||
       old.count != count ||
       old.barColor != barColor ||
-      old.pillColor != pillColor;
+      old.blue != blue;
+}
+
+/// Paints the white circle that pops above the bar. Painted separately so it
+/// always renders above the blue mound it sits in.
+class _CirclePainter extends CustomPainter {
+  final double position;
+  final int count;
+  final double circleY;
+  final double circleR;
+
+  const _CirclePainter({
+    required this.position,
+    required this.count,
+    required this.circleY,
+    required this.circleR,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final slotW = size.width / count;
+    final cx = slotW * (position + 0.5);
+    final c = Offset(cx, circleY);
+    canvas.drawCircle(
+      c + const Offset(0, 3),
+      circleR,
+      Paint()..color = Colors.black.withValues(alpha: 0.18),
+    );
+    canvas.drawCircle(c, circleR, Paint()..color = Colors.white);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CirclePainter old) =>
+      old.position != position || old.count != count;
 }

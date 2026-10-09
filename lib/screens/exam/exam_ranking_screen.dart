@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
+import '../../widgets/leaderboard_podium.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/profile_avatar.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -33,59 +34,6 @@ const _cardBorder = Color(0x2EFFFFFF); // rgba(255,255,255,0.18)
 const _text = Colors.white;
 const _textDim = Color(0xB8FFFFFF); // rgba(255,255,255,0.72)
 
-class _PlaceTheme {
-  final int place;
-  final Color ring;
-  final List<Color> block;
-  final Color onRing;
-  final Color pill;
-  final IconData icon;
-  final double height;
-  final double avatar;
-  const _PlaceTheme({
-    required this.place,
-    required this.ring,
-    required this.block,
-    required this.onRing,
-    required this.pill,
-    required this.icon,
-    required this.height,
-    required this.avatar,
-  });
-}
-
-const _places = {
-  1: _PlaceTheme(
-    place: 1,
-    ring: Color(0xFF34D399),
-    block: [Color(0xFF34D399), Color(0xFF047857)],
-    onRing: Color(0xFF052E1A),
-    pill: Color(0x5910B981),
-    icon: Icons.emoji_events,
-    height: 112,
-    avatar: 78,
-  ),
-  2: _PlaceTheme(
-    place: 2,
-    ring: Color(0xFF7DD3FC),
-    block: [Color(0xFF7DD3FC), Color(0xFF0369A1)],
-    onRing: Color(0xFF052E45),
-    pill: Color(0x4D38BDF8),
-    icon: Icons.military_tech,
-    height: 82,
-    avatar: 64,
-  ),
-  3: _PlaceTheme(
-    place: 3,
-    ring: Color(0xFFFBBF24),
-    block: [Color(0xFFFBBF24), Color(0xFFB45309)],
-    onRing: Color(0xFF3D2103),
-    pill: Color(0x4DF59E0B),
-    icon: Icons.military_tech,
-    height: 64,
-    avatar: 64,
-  ),
-};
 
 class _ExamRankingScreenState extends State<ExamRankingScreen> {
   ExamSet? _set;
@@ -315,10 +263,22 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
     return Column(
       children: [
         // FIXED podium — pinned above the scrolling list.
+        // Shared podium UI with the main leaderboard — same UI, only the
+        // data differs (exam ranking rows instead of main board rows).
         Padding(
           padding:
               const EdgeInsets.symmetric(horizontal: 16).copyWith(bottom: 14),
-          child: SyllabusEntrance(delayMs: 0, child: _podium()),
+          child: SyllabusEntrance(
+            delayMs: 0,
+            child: LeaderboardPodium(
+              entries: [
+                _rows.length > 1 ? _toPodiumEntry(_rows[1]) : null,
+                _rows.isNotEmpty ? _toPodiumEntry(_rows[0]) : null,
+                _rows.length > 2 ? _toPodiumEntry(_rows[2]) : null,
+              ],
+              emptyLabel: AppLanguage.tr('Open spot', 'खाली स्थान'),
+            ),
+          ),
         ),
         // The list scrolls inside a darker rounded sheet.
         Expanded(
@@ -381,189 +341,14 @@ class _ExamRankingScreenState extends State<ExamRankingScreen> {
     return (position: index + 1, row: _rows[index]);
   }
 
-  /// Podium — display order 2nd, 1st, 3rd.
-  /// The fixed podium metrics (avatar/block sizes) scale down on narrow
-  /// screens via LayoutBuilder so the three slots never overflow — the
-  /// avatar photo always sits snug inside its ring (no floaty gap).
-  Widget _podium() {
-    final second = _rows.length > 1 ? _rows[1] : null;
-    final first = _rows.isNotEmpty ? _rows[0] : null;
-    final third = _rows.length > 2 ? _rows[2] : null;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // 380pt is the comfortable full-size width; shrink proportionally
-        // below it (never below 82% — keeps the design intact on 320pt).
-        final scale = (constraints.maxWidth / 380).clamp(0.82, 1.0);
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(child: _slot(second, _places[2]!, scale)),
-            Expanded(child: _slot(first, _places[1]!, scale)),
-            Expanded(child: _slot(third, _places[3]!, scale)),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _slot(RankingRow? row, _PlaceTheme theme, double scale) {
-    final filled = row != null;
-    final isWinner = theme.place == 1;
-    final avatarD = theme.avatar * scale;
-    final blockH = theme.height * scale;
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        SizedBox(
-          height: (isWinner ? 24 : 17) * scale,
-          child: filled
-              ? Icon(theme.icon,
-                  size: (isWinner ? 24 : 17) * scale, color: theme.ring)
-              : null,
-        ),
-        const SizedBox(height: 4),
-        Stack(
-          alignment: Alignment.center,
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              width: avatarD,
-              height: avatarD,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: filled
-                      ? theme.ring
-                      : Colors.white.withValues(alpha: 0.22),
-                  width: 3,
-                ),
-                color: filled
-                    ? Colors.white.withValues(alpha: 0.14)
-                    : Colors.white.withValues(alpha: 0.06),
-              ),
-              // Snug fit: the photo fills the ring edge-to-edge (3px ring
-              // + 1px breathing room each side) so it never looks floaty.
-              child: Center(
-                child: filled &&
-                        (row!.photoURL ?? '').isNotEmpty
-                    ? ProfileAvatar(
-                        uri: row.photoURL,
-                        name: row.name,
-                        size: avatarD - 8,
-                        pro: row.isPro,
-                      )
-                    : Text(
-                        filled ? _initials(row!.name) : '—',
-                        style: TextStyle(
-                          fontSize: 20 * scale,
-                          fontWeight: FontWeight.bold,
-                          color: filled ? _text : _textDim,
-                        ),
-                      ),
-              ),
-            ),
-            Positioned(
-              bottom: -2,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                  color: filled
-                      ? theme.ring
-                      : Colors.white.withValues(alpha: 0.25),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text('${theme.place}',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: filled ? theme.onRing : _text)),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: _nameWithTick(
-            filled ? row!.name : AppLanguage.tr('Open spot', 'खाली स्थान'),
-            pro: filled && row!.isPro,
-            filled: filled,
-            centered: true,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: filled
-                ? theme.pill
-                : Colors.white.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(999),
-          ),
-          child: Text(filled ? '${row!.score}%' : '--',
-              style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: filled ? _text : _textDim)),
-        ),
-        const SizedBox(height: 8),
-        // The block.
-        Container(
-          height: blockH,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: filled
-                  ? theme.block
-                  : [
-                      Colors.white.withValues(alpha: 0.14),
-                      Colors.white.withValues(alpha: 0.05)
-                    ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
-            borderRadius: const BorderRadius.only(
-              topLeft: Radius.circular(10),
-              topRight: Radius.circular(10),
-            ),
-          ),
-          child: Column(
-            children: [
-              const Spacer(),
-              Text('${theme.place}',
-                  style: TextStyle(
-                      fontSize: 34 * scale,
-                      fontWeight: FontWeight.bold,
-                      color: filled
-                          ? Colors.white.withValues(alpha: 0.92)
-                          : Colors.white.withValues(alpha: 0.45))),
-              Text(
-                  theme.place == 1
-                      ? 'FIRST'
-                      : theme.place == 2
-                          ? 'SECOND'
-                          : 'THIRD',
-                  style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white.withValues(alpha: 0.65))),
-              const SizedBox(height: 8),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  String _initials(String name) {
-    final parts = name.trim().split(RegExp(r'\s+'));
-    if (parts.isEmpty || parts.first.isEmpty) return '?';
-    final first = parts.first[0];
-    final last =
-        parts.length > 1 && parts.last.isNotEmpty ? parts.last[0] : '';
-    return (first + last).toUpperCase();
-  }
+  /// Maps an exam ranking row to the shared podium entry.
+  /// The exam score IS the percent (e.g. 38 -> "38%"), same as before.
+  PodiumEntry _toPodiumEntry(RankingRow row) => PodiumEntry(
+        name: row.name,
+        photoURL: row.photoURL,
+        isPro: row.isPro,
+        stat: '${row.score}%',
+      );
 
   Widget _nameWithTick(String name,
       {required bool pro,

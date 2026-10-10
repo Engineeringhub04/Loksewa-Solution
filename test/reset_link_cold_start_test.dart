@@ -11,7 +11,7 @@ import 'package:loksewa_solution/services/reset_link_service.dart';
 /// SplashScreen (which consumes ResetLinkService's stash in _decide).
 ///
 /// The production bug: GoRouter(overridePlatformDefaultLocation: true)
-/// forces every cold start to /splash, discarding the tapped link's oobCode.
+/// forces every cold start to /splash, discarding the tapped link's token.
 /// These tests pin the fix: a reset link lands on the reset form, while a
 /// plain-domain link (or a reset path without a code) keeps the normal
 /// splash flow.
@@ -29,11 +29,11 @@ GoRouter _testRouter() {
           path: '/onboarding',
           builder: (_, __) => const Scaffold(body: Text('onboarding-stub'))),
       // No redirect here on purpose: we assert the splash navigated to the
-      // exact location, oobCode included.
+      // exact location, token included.
       GoRoute(
         path: '/auth/reset-password',
         builder: (_, s) => Scaffold(
-          body: Text('reset-stub:${s.uri.queryParameters['oobCode']}'),
+          body: Text('reset-stub:${s.uri.queryParameters['token']}'),
         ),
       ),
     ],
@@ -67,7 +67,7 @@ void main() {
     // Production path minus the platform channel: the plugin's URI is fed
     // through the same filter the real getInitialLink() result goes through.
     ResetLinkService.handleInitialUri(Uri.parse(
-        'https://kbr.com.np/auth/reset-password?oobCode=abc123'));
+        'https://kbr.com.np/auth/reset-password?token=abc123'));
     _mockPlatform(tester);
 
     await tester.pumpWidget(MaterialApp.router(routerConfig: _testRouter()));
@@ -110,7 +110,7 @@ void main() {
     expect(find.textContaining('reset-stub'), findsNothing);
   });
 
-  testWidgets('reset path without oobCode keeps the normal splash flow',
+  testWidgets('reset path without token keeps the normal splash flow',
       (tester) async {
     // Not a reset link (no code) → nothing is stashed → normal flow.
     ResetLinkService.handleInitialUri(

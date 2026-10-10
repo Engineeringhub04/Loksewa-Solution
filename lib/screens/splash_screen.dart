@@ -52,10 +52,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // Password-reset App Link (cold start): the router boots every cold start
     // at /splash (overridePlatformDefaultLocation), so the tapped link's
-    // oobCode was captured by ResetLinkService before runApp. Route straight
+    // token was captured by ResetLinkService before runApp. Route straight
     // to the reset form — ahead of every routing decision below — so the
-    // one-time code is never lost. Only the exact /auth/reset-password path
-    // with an oobCode is intercepted; plain-domain links keep the normal
+    // one-time token is never lost. Only the exact /auth/reset-password path
+    // with a token is intercepted; plain-domain links keep the normal
     // flow. Placed after the first await so context.go() never runs during
     // build (go() during initState would markNeedsBuild during build).
     final resetLocation = ResetLinkService.consumePendingResetLocation();

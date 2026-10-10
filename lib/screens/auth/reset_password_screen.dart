@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
@@ -9,11 +9,13 @@ import '../../services/app_language.dart';
 import '../../widgets/preloading.dart';
 
 /// In-app password reset completion.
-/// Served at `/auth/reset-password` — the router redirects here without an
-/// `oobCode` back to `/`, so this screen always has a code to attempt.
-/// The code is completed with Identity Toolkit `accounts:resetPassword`
-/// (see [AuthService.confirmPasswordReset], which reads the Firebase API
-/// key from [AppConfig.firebaseApiKey]).
+/// Served at `/auth/reset-password` — the router redirects here without a
+/// `token` back to `/`, so this screen always has a token to attempt.
+/// The token is completed server-side: the screen POSTs it to the
+/// loksewa-push-worker (`/complete-password-reset`), which validates the
+/// one-time token and updates the password via the Firebase Admin SDK
+/// (see [PasswordResetService.completeReset]). The app never touches
+/// Identity Toolkit directly.
 class ResetPasswordScreen extends StatefulWidget {
   const ResetPasswordScreen({super.key});
 
@@ -31,6 +33,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   bool _loading = false;
   bool _preloading = true;
   _ResetStatus _status = _ResetStatus.form;
+  // Dynamic error copy: invalid/expired links get the "request a new link"
+  // hint, transport/server failures get the generic retry message.
+  String? _errorTitle;
+  String? _errorHint;
 
   @override
   void initState() {
@@ -50,15 +56,33 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     super.dispose();
   }
 
-  String? get _oobCode {
-    final code = GoRouterState.of(context).uri.queryParameters['oobCode'];
-    return (code == null || code.isEmpty) ? null : code;
+  String? get _token {
+    final token = GoRouterState.of(context).uri.queryParameters['token'];
+    return (token == null || token.isEmpty) ? null : token;
+  }
+
+  void _showLinkError() {
+    _errorTitle = AppLanguage.tr('This link is invalid or has expired.',
+        'यो लिङ्क अमान्य वा म्याद सकिएको छ।');
+    _errorHint = AppLanguage.tr(
+        'Please request a new reset link from the login screen.',
+        'कृपया लगइन स्क्रिनबाट नयाँ रिसेट लिङ्क माग्नुहोस्।');
+    setState(() => _status = _ResetStatus.error);
+  }
+
+  void _showServerError() {
+    _errorTitle = AppLanguage.tr('Something went wrong.',
+        'केही गडबड भयो।');
+    _errorHint = AppLanguage.tr(
+        'Please check your connection and try again, or request a new reset link.',
+        'कृपया आफ्नो कनेक्सन जाँचेर पुनः प्रयास गर्नुहोस् वा नयाँ रिसेट लिङ्क माग्नुहोस्।');
+    setState(() => _status = _ResetStatus.error);
   }
 
   Future<void> _reset() async {
-    final oobCode = _oobCode;
-    if (oobCode == null) {
-      setState(() => _status = _ResetStatus.error);
+    final token = _token;
+    if (token == null) {
+      _showLinkError();
       return;
     }
     if (_password.text.length < 6) {
@@ -78,19 +102,25 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       return;
     }
     setState(() => _loading = true);
-    try {
-      await AuthService.confirmPasswordReset(oobCode, _password.text);
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _status = _ResetStatus.success;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _status = _ResetStatus.error;
-      });
+    final result =
+        await PasswordResetService.completeReset(token, _password.text);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    switch (result) {
+      case PasswordResetCompleteResult.success:
+        setState(() => _status = _ResetStatus.success);
+      case PasswordResetCompleteResult.invalidToken:
+      case PasswordResetCompleteResult.expiredToken:
+        _showLinkError();
+      case PasswordResetCompleteResult.weakPassword:
+        showAuthToast(
+            context,
+            AppLanguage.tr(
+                'This password is too weak. Please choose a stronger password.',
+                'यो पासवर्ड कमजोर छ। कृपया बलियो पासवर्ड छान्नुहोस्।'),
+            isError: true);
+      case PasswordResetCompleteResult.failed:
+        _showServerError();
     }
   }
 
@@ -169,6 +199,13 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   }
 
   Widget _error() {
+    final title = _errorTitle ??
+        AppLanguage.tr('This link is invalid or has expired.',
+            'यो लिङ्क अमान्य वा म्याद सकिएको छ।');
+    final hint = _errorHint ??
+        AppLanguage.tr(
+            'Please request a new reset link from the login screen.',
+            'कृपया लगइन स्क्रिनबाट नयाँ रिसेट लिङ्क माग्नुहोस्।');
     return Column(
       key: const ValueKey('error'),
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -185,8 +222,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          AppLanguage.tr('This link is invalid or has expired.',
-              'यो लिङ्क अमान्य वा म्याद सकिएको छ।'),
+          title,
           style: const TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.bold,
@@ -196,9 +232,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 12),
         Text(
-          AppLanguage.tr(
-              'Please request a new reset link from the login screen.',
-              'कृपया लगइन स्क्रिनबाट नयाँ रिसेट लिङ्क माग्नुहोस्।'),
+          hint,
           style: const TextStyle(
               fontSize: 15, color: Color(0xFF6B7280), height: 22 / 15),
           textAlign: TextAlign.center,

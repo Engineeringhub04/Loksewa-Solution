@@ -16,7 +16,7 @@ Future<void> main() async {
   await AppLanguage.init();
   // Password-reset App Link cold start: the router forces every cold start
   // to /splash (overridePlatformDefaultLocation), which would discard the
-  // tapped link's oobCode. Capture it first — the splash consumes the stash
+  // tapped link's token. Capture it first — the splash consumes the stash
   // and routes to the reset form. Best-effort, never blocks startup.
   await ResetLinkService.captureInitialLink();
   // FCM push: token registration (best-effort, never blocks startup).
@@ -81,7 +81,7 @@ Future<void> main() async {
 /// start (app in recents) simply resumes where the user was — the OS
 /// delivers the intent to the existing activity and Dart deliberately does
 /// nothing with it. The one exception is
-/// https://kbr.com.np/auth/reset-password?oobCode=..., which the
+/// https://kbr.com.np/auth/reset-password?token=..., which the
 /// ResetLinkService routes to the reset form (cold start via the splash,
 /// warm start via the link stream).
 

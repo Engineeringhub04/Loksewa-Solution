@@ -9,7 +9,9 @@ import 'package:http/http.dart' as http;
 /// POSTs the user's email to the loksewa-push-worker
 /// (`/request-password-reset`). The worker rate-limits requests (one per
 /// day per email), reads its SMTP provider key from Firestore, and sends
-/// the reset link `https://kbr.com.np/auth/reset-password?oobCode=...`.
+/// the reset link `https://kbr.com.np/auth/reset-password?token=...`
+/// (the token is a one-time 64-hex string minted by the worker, NOT a
+/// Firebase oobCode).
 ///
 /// The worker ALWAYS answers HTTP 200 with `{ok: bool, reason?: string}`:
 /// - `{ok: true}` — the reset email was queued/sent.
@@ -19,9 +21,10 @@ import 'package:http/http.dart' as http;
 ///   configured on the worker yet.
 /// - `{ok: false, reason: "invalid_email"}` — the email failed validation.
 ///
-/// Unlike [AdminNotifyService] this call is NOT fire-and-forget: the
-/// forgot-password screen needs the result to decide what to show, so it
-/// awaits it and maps transport failures to [PasswordResetResult.failed].
+/// Unlike [AdminNotifyService] the request call is NOT fire-and-forget:
+/// the forgot-password screen needs the result to decide what to show, so
+/// it awaits it and maps transport failures to [PasswordResetResult.failed].
+/// The same applies to [completeReset], which the reset form awaits.
 class PasswordResetService {
   /// Base URL of the push worker. Defined ONCE here (see also
   /// AdminNotifyService._workerBase — same worker, different endpoint).
@@ -61,6 +64,37 @@ class PasswordResetService {
       return PasswordResetResult.failed;
     }
   }
+
+  /// Completes a password reset with the one-time [token] from the reset
+  /// link. POSTs to the worker (`/complete-password-reset`); the worker
+  /// validates the token server-side and updates the password via the
+  /// Firebase Admin SDK — the app never touches Identity Toolkit directly.
+  ///
+  /// Never throws — transport/parse failures map to
+  /// [PasswordResetCompleteResult.failed].
+  static Future<PasswordResetCompleteResult> completeReset(
+      String token, String newPassword) async {
+    final client = _testClient ?? http.Client();
+    try {
+      final res = await client
+          .post(
+            Uri.parse('$_workerBase/complete-password-reset'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'token': token, 'newPassword': newPassword}),
+          )
+          .timeout(_timeout);
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      if (data['ok'] == true) return PasswordResetCompleteResult.success;
+      return switch (data['reason']) {
+        'invalid_token' => PasswordResetCompleteResult.invalidToken,
+        'expired_token' => PasswordResetCompleteResult.expiredToken,
+        'weak_password' => PasswordResetCompleteResult.weakPassword,
+        _ => PasswordResetCompleteResult.failed,
+      };
+    } catch (_) {
+      return PasswordResetCompleteResult.failed;
+    }
+  }
 }
 
 /// Outcome of [PasswordResetService.requestReset].
@@ -80,5 +114,25 @@ enum PasswordResetResult {
   invalidEmail,
 
   /// Transport error, non-JSON answer, or unknown reason.
+  failed,
+}
+
+/// Outcome of [PasswordResetService.completeReset].
+enum PasswordResetCompleteResult {
+  /// The password was updated — show the success state.
+  success,
+
+  /// The token is unknown — show the invalid/expired link state.
+  invalidToken,
+
+  /// The token expired — show the invalid/expired link state.
+  expiredToken,
+
+  /// The new password is too weak — show inline validation.
+  weakPassword,
+
+  /// Transport error, non-JSON answer, or unknown reason
+  /// (`update_failed`, `internal_error`, `invalid_request`, ...) —
+  /// show the generic error state.
   failed,
 }

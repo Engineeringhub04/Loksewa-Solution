@@ -250,27 +250,6 @@ class AuthService {
     return (user: _session!.user, isNewUser: isNewUser);
   }
 
-  /// Validates a Firebase action-link oobCode — mirrors
-  /// verifyPasswordResetCode in auth.ts.
-  ///
-  /// Kept for other auth actions; the password-reset flow now goes through
-  /// the worker-backed [PasswordResetService] + [confirmPasswordReset].
-  static Future<({String? email, String? requestType})>
-      verifyPasswordResetCode(String oobCode) async {
-    final res = await _identityRequest('resetPassword', {'oobCode': oobCode});
-    return (
-      email: res['email'] as String?,
-      requestType: res['requestType'] as String?,
-    );
-  }
-
-  /// Completes a password reset — mirrors confirmPasswordReset in auth.ts.
-  static Future<void> confirmPasswordReset(
-      String oobCode, String newPassword) async {
-    await _identityRequest(
-        'resetPassword', {'oobCode': oobCode, 'newPassword': newPassword});
-  }
-
   static Future<void> logout() async {
     final uid = _session?.user.uid;
     // Capture the ID token BEFORE clearing the session — onSignOut needs it

@@ -122,7 +122,7 @@ final appRouter = GoRouter(
   // check, no user loaded. Forcing the initial location keeps EVERY cold
   // start (link or manual) on the splash's normal session check.
   // One exception: the password-reset link
-  // (https://kbr.com.np/auth/reset-password?oobCode=...). Its oobCode would
+  // (https://kbr.com.np/auth/reset-password?token=...). Its token would
   // be discarded by the forced /splash, so ResetLinkService captures the
   // initial URI via the app_links plugin before the router boots and the
   // splash routes it to the reset form. See lib/services/reset_link_service.dart.
@@ -140,13 +140,13 @@ final appRouter = GoRouter(
         path: '/forgot-password',
         builder: (_, __) => const ForgotPasswordScreen()),
     // Password-reset completion link:
-    // https://kbr.com.np/auth/reset-password?oobCode=...
-    // No oobCode = a normal app open (not a reset link) → back to home.
+    // https://kbr.com.np/auth/reset-password?token=...
+    // No token = a normal app open (not a reset link) → back to home.
     GoRoute(
         path: '/auth/reset-password',
         redirect: (_, state) {
-          final oobCode = state.uri.queryParameters['oobCode'];
-          return (oobCode == null || oobCode.isEmpty) ? '/' : null;
+          final token = state.uri.queryParameters['token'];
+          return (token == null || token.isEmpty) ? '/' : null;
         },
         builder: (_, __) => const ResetPasswordScreen()),
     GoRoute(

@@ -68,6 +68,21 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Worker-backed password-reset email flow. The worker stores its SMTP
+    // provider key (app_email_keys), per-day rate-limit counters
+    // (app_email_ratelimit) and flow config (app_email_config) here.
+    // Keys + config are admin-only; rate-limit counters are fully
+    // worker-managed (the worker uses the Admin SDK, bypassing rules).
+    match /app_email_keys/{k} {
+      allow read, write: if isAdmin();
+    }
+    match /app_email_ratelimit/{r} {
+      allow read, write: if false;
+    }
+    match /app_email_config/{c} {
+      allow read, write: if isAdmin();
+    }
+
     // User profile. Privilege and subscription fields are never client-writable.
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();

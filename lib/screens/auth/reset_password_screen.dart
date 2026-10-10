@@ -5,12 +5,15 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
-import 'package:loksewa_solution/widgets/preloading.dart';
 import '../../services/app_language.dart';
+import '../../widgets/preloading.dart';
 
-/// In-app password reset completion — mirrors app/reset-password.tsx.
-/// Reads the Firebase action-link params (oobCode, mode) from the route,
-/// validates the code, then lets the user set a new password.
+/// In-app password reset completion.
+/// Served at `/auth/reset-password` — the router redirects here without an
+/// `oobCode` back to `/`, so this screen always has a code to attempt.
+/// The code is completed with Identity Toolkit `accounts:resetPassword`
+/// (see [AuthService.confirmPasswordReset], which reads the Firebase API
+/// key from [AppConfig.firebaseApiKey]).
 class ResetPasswordScreen extends StatefulWidget {
   const ResetPasswordScreen({super.key});
 
@@ -18,7 +21,7 @@ class ResetPasswordScreen extends StatefulWidget {
   State<ResetPasswordScreen> createState() => _ResetPasswordScreenState();
 }
 
-enum _CodeStatus { checking, valid, invalid }
+enum _ResetStatus { form, success, error }
 
 class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   static const _purple = Color(0xFF7C3AED);
@@ -27,19 +30,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   final _confirmFocus = FocusNode();
   bool _loading = false;
   bool _preloading = true;
-  _CodeStatus _status = _CodeStatus.checking;
-  String? _oobCode;
+  _ResetStatus _status = _ResetStatus.form;
 
   @override
   void initState() {
     super.initState();
-    // 1s premium preloading shimmer: shown before the reset-link check UI,
-    // so the page doesn't pop in instantly. Separate from [_loading],
-    // which drives the Change Password action button.
+    // 1s premium preloading shimmer: shown before the form so the page
+    // doesn't pop in instantly — same treatment as the other auth screens.
     Future.delayed(const Duration(milliseconds: 1000), () {
       if (mounted) setState(() => _preloading = false);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _validateCode());
   }
 
   @override
@@ -50,109 +50,48 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     super.dispose();
   }
 
-  Future<void> _validateCode() async {
-    final params = GoRouterState.of(context).uri.queryParameters;
-    final oobCode = params['oobCode'];
-    final mode = params['mode'];
-    // Allow manual testing with only oobCode, but reject an action link
-    // explicitly meant for another Firebase action.
-    if (oobCode == null ||
-        oobCode.isEmpty ||
-        (mode != null && mode != 'resetPassword')) {
-      if (mounted) setState(() => _status = _CodeStatus.invalid);
-      return;
-    }
-    try {
-      final result = await AuthService.verifyPasswordResetCode(oobCode);
-      if (!mounted) return;
-      setState(() {
-        _oobCode = oobCode;
-        _status = (result.requestType == null ||
-                result.requestType == 'PASSWORD_RESET')
-            ? _CodeStatus.valid
-            : _CodeStatus.invalid;
-      });
-    } catch (_) {
-      if (mounted) setState(() => _status = _CodeStatus.invalid);
-    }
+  String? get _oobCode {
+    final code = GoRouterState.of(context).uri.queryParameters['oobCode'];
+    return (code == null || code.isEmpty) ? null : code;
   }
 
   Future<void> _reset() async {
-    if (_status != _CodeStatus.valid || _oobCode == null) {
-      showAuthToast(context, 'This reset link is invalid or has expired',
-          isError: true);
+    final oobCode = _oobCode;
+    if (oobCode == null) {
+      setState(() => _status = _ResetStatus.error);
       return;
     }
     if (_password.text.length < 6) {
-      showAuthToast(context, 'Password must be at least 6 characters',
+      showAuthToast(
+          context,
+          AppLanguage.tr('Password must be at least 6 characters',
+              'पासवर्ड कम्तीमा ६ अक्षरको हुनुपर्छ'),
           isError: true);
       return;
     }
     if (_password.text != _confirm.text) {
-      showAuthToast(context, 'Passwords do not match', isError: true);
+      showAuthToast(
+          context,
+          AppLanguage.tr(
+              'Passwords do not match', 'पासवर्डहरू मिलेनन्'),
+          isError: true);
       return;
     }
     setState(() => _loading = true);
     try {
-      await AuthService.confirmPasswordReset(_oobCode!, _password.text);
+      await AuthService.confirmPasswordReset(oobCode, _password.text);
       if (!mounted) return;
-      context.go('/login');
-      showAuthToast(context, 'Password changed successfully');
+      setState(() {
+        _loading = false;
+        _status = _ResetStatus.success;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _loading = false;
-        _status = _CodeStatus.invalid;
+        _status = _ResetStatus.error;
       });
-      showAuthToast(context, 'This reset link is invalid or has expired',
-          isError: true);
     }
-  }
-
-  Widget _checking() {
-    return const Column(
-      key: ValueKey('checking'),
-      children: [
-        PreloadingWidget(
-          key: ValueKey('checking'),
-          tinted: false,
-          label: 'Checking reset link...',
-        ),
-      ],
-    );
-  }
-
-  Widget _invalid() {
-    return Column(
-      key: const ValueKey('invalid'),
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        const SizedBox(height: 24),
-        const Text(
-          'Reset Link Unavailable',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-            color: Color(0xFF1F2937),
-          ),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'This reset link is invalid or has expired. Request a new link and open it after the app-link setup is enabled.',
-          style: TextStyle(
-              fontSize: 15, color: Color(0xFF6B7280), height: 22 / 15),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 16),
-        AuthPrimaryButton(
-          label: 'Request New Link',
-          color: _purple,
-          disabledColor: _purple,
-          onPressed: () => context.go('/forgot-password'),
-        ),
-      ],
-    );
   }
 
   Widget _form() {
@@ -161,7 +100,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         FloatingLabelField(
-          label: 'New Password',
+          label: AppLanguage.tr('New Password', 'नयाँ पासवर्ड'),
           controller: _password,
           leftIcon: Icons.lock_outline,
           secureToggle: true,
@@ -171,7 +110,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 16),
         FloatingLabelField(
-          label: 'Confirm Password',
+          label: AppLanguage.tr('Confirm Password', 'पासवर्ड पुष्टि गर्नुहोस्'),
           controller: _confirm,
           focusNode: _confirmFocus,
           leftIcon: Icons.lock_outline,
@@ -182,11 +121,94 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 16),
         AuthPrimaryButton(
-          label: 'Change Password',
+          label:
+              AppLanguage.tr('Change Password', 'पासवर्ड परिवर्तन गर्नुहोस्'),
           loading: _loading,
           color: _purple,
           disabledColor: _purple,
           onPressed: _reset,
+        ),
+      ],
+    );
+  }
+
+  Widget _success() {
+    return Column(
+      key: const ValueKey('success'),
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            color: const Color(0xFFDCFCE7),
+            borderRadius: BorderRadius.circular(40),
+          ),
+          child: const Icon(Icons.check, size: 44, color: Color(0xFF16A34A)),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          AppLanguage.tr(
+              'Password reset successful', 'पासवर्ड सफलतापूर्वक रिसेट भयो'),
+          style: const TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1F2937),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        AuthPrimaryButton(
+          label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+          color: _purple,
+          disabledColor: _purple,
+          onPressed: () => context.go('/login'),
+        ),
+      ],
+    );
+  }
+
+  Widget _error() {
+    return Column(
+      key: const ValueKey('error'),
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 80,
+          height: 80,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFEE2E2),
+            borderRadius: BorderRadius.circular(40),
+          ),
+          child:
+              const Icon(Icons.error_outline, size: 44, color: Color(0xFFDC2626)),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          AppLanguage.tr('This link is invalid or has expired.',
+              'यो लिङ्क अमान्य वा म्याद सकिएको छ।'),
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF1F2937),
+          ),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          AppLanguage.tr(
+              'Please request a new reset link from the login screen.',
+              'कृपया लगइन स्क्रिनबाट नयाँ रिसेट लिङ्क माग्नुहोस्।'),
+          style: const TextStyle(
+              fontSize: 15, color: Color(0xFF6B7280), height: 22 / 15),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 24),
+        AuthPrimaryButton(
+          label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+          color: _purple,
+          disabledColor: _purple,
+          onPressed: () => context.go('/login'),
         ),
       ],
     );
@@ -217,8 +239,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFFF9FAFB),
         body: AuthScreenLayout(
-          title: 'Set New Password',
-          subtitle: 'Choose a strong new password for your account',
+          title: AppLanguage.tr('Set New Password', 'नयाँ पासवर्ड सेट गर्नुहोस्'),
+          subtitle: AppLanguage.tr(
+              'Choose a strong new password for your account',
+              'आफ्नो खाताको लागि बलियो नयाँ पासवर्ड छान्नुहोस्'),
           child: _preloading
               ? _preloadingBody()
               : AnimatedSwitcher(
@@ -228,9 +252,9 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
                     child: child,
                   ),
                   child: switch (_status) {
-                    _CodeStatus.checking => _checking(),
-                    _CodeStatus.invalid => _invalid(),
-                    _CodeStatus.valid => _form(),
+                    _ResetStatus.form => _form(),
+                    _ResetStatus.success => _success(),
+                    _ResetStatus.error => _error(),
                   },
                 ),
         ),

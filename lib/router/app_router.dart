@@ -134,8 +134,15 @@ final appRouter = GoRouter(
     GoRoute(
         path: '/forgot-password',
         builder: (_, __) => const ForgotPasswordScreen()),
+    // Password-reset completion link:
+    // https://kbr.com.np/auth/reset-password?oobCode=...
+    // No oobCode = a normal app open (not a reset link) → back to home.
     GoRoute(
-        path: '/reset-password',
+        path: '/auth/reset-password',
+        redirect: (_, state) {
+          final oobCode = state.uri.queryParameters['oobCode'];
+          return (oobCode == null || oobCode.isEmpty) ? '/' : null;
+        },
         builder: (_, __) => const ResetPasswordScreen()),
     GoRoute(
         path: '/blocking/maintenance',

@@ -250,15 +250,11 @@ class AuthService {
     return (user: _session!.user, isNewUser: isNewUser);
   }
 
-  static Future<void> sendPasswordReset(String email) async {
-    await _identityRequest('sendOobCode', {
-      'requestType': 'PASSWORD_RESET',
-      'email': email,
-    });
-  }
-
   /// Validates a Firebase action-link oobCode — mirrors
   /// verifyPasswordResetCode in auth.ts.
+  ///
+  /// Kept for other auth actions; the password-reset flow now goes through
+  /// the worker-backed [PasswordResetService] + [confirmPasswordReset].
   static Future<({String? email, String? requestType})>
       verifyPasswordResetCode(String oobCode) async {
     final res = await _identityRequest('resetPassword', {'oobCode': oobCode});

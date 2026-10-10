@@ -27,6 +27,7 @@ dependencies:
   http_parser: ^4.0.2
   flutter_local_notifications: ^22.3.1
   curved_navigation_bar: ^1.0.6
+  lottie: ^3.6.1
 
 dev_dependencies:
   flutter_test:
@@ -41,3 +42,7 @@ flutter:
     - assets/images/ws-leaderboard_analytics.png
     - assets/images/ws-dailytest.png
     - assets/images/ws-discussion.png
+    - assets/icons/nav_home.json
+    - assets/icons/nav_exam.json
+    - assets/icons/nav_discussion.json
+    - assets/icons/nav_profile.json

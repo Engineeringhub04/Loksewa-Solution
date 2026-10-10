@@ -198,6 +198,9 @@ class _TabsScreenState extends State<TabsScreen> with WidgetsBindingObserver {
           }
         },
         child: Scaffold(
+          // Body renders behind the bottom nav so the nav's transparent
+          // notch shows the page content through.
+          extendBody: true,
           body: IndexedStack(index: _index, children: _tabs),
       bottomNavigationBar: AnimatedBottomNav(
         currentIndex: _index,

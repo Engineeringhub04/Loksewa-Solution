@@ -46,6 +46,25 @@ class ResetLinkService {
   static const _resetPath = '/auth/reset-password';
   static const _allowedHosts = {'kbr.com.np', 'www.kbr.com.np'};
 
+  /// Deep-link paths this app handles. ONLY registered paths deep-link —
+  /// everything else (contact pages, marketing URLs, unknown paths) is
+  /// ignored: the app boots normally to `/splash` (via the router's
+  /// initialLocation + overridePlatformDefaultLocation) where the splash
+  /// runs its normal login check. Register a new link type here AND in
+  /// the Android intent-filter / iOS AASA paths.
+  static const kHandledDeepLinkPaths = {'/auth/reset-password'};
+
+  /// Logs when a kbr.com.np link with an unhandled path is discarded, so
+  /// "the app opened but ignored my link" is visible in logs instead of
+  /// silent.
+  static void _logDiscardedLink(Uri? uri) {
+    if (uri == null) return;
+    if (!_allowedHosts.contains(uri.host.toLowerCase())) return;
+    if (kHandledDeepLinkPaths.contains(uri.path)) return;
+    debugPrint('[DeepLink] discarded unhandled kbr.com.np path: '
+        '${uri.path} — normal launch (splash login check)');
+  }
+
   /// Cold-start stash: the token from the tapped link, consumed once by
   /// the splash.
   static String? _pendingToken;
@@ -80,7 +99,10 @@ class ResetLinkService {
   /// [captureInitialLink] so tests can feed URIs without the platform
   /// channel.
   static void handleInitialUri(Uri? uri) {
-    if (!isResetLink(uri)) return;
+    if (!isResetLink(uri)) {
+      _logDiscardedLink(uri);
+      return;
+    }
     _pendingToken = uri!.queryParameters['token'];
   }
 
@@ -275,7 +297,10 @@ class ResetLinkService {
   /// the splashHasRouted guard, the silent validation and the actual
   /// navigation.
   static void handleIncomingUri(Uri? uri) {
-    if (!isResetLink(uri)) return;
+    if (!isResetLink(uri)) {
+      _logDiscardedLink(uri);
+      return;
+    }
     final token = uri!.queryParameters['token']!;
     if (token == _lastWarmToken) return;
     _lastWarmToken = token;

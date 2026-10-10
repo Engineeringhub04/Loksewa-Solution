@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../services/auth_service.dart';
 import '../screens/splash_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/tabs_screen.dart';
@@ -120,10 +121,56 @@ String? _qp(GoRouterState s, String key) => s.uri.queryParameters[key];
 /// screen is currently showing.
 final rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Routes that stay reachable WITHOUT a signed-in user. Everything else
+/// requires login — enforced by [authGuardRedirect] below, so no page
+/// (home included) can ever open without an account, no matter which
+/// link, button, or back-navigation led there.
+const _kPublicPaths = {
+  '/splash',
+  '/onboarding',
+  '/login',
+  '/signup',
+  '/forgot-password',
+  // Logged-out users NEED this for email reset links.
+  '/auth/reset-password',
+  '/blocking/maintenance',
+  '/blocking/no-internet',
+  // Public info pages reachable from the login screen.
+  '/about',
+  '/contact-us',
+  '/privacy-policy',
+  '/terms-conditions',
+  '/terms-of-service',
+  '/help-center',
+  '/settings/help-center',
+  '/help',
+  '/app-info',
+  '/feedback',
+  '/under-construction',
+};
+
+/// Global auth-guard decision — pure function so tests can cover the whole
+/// matrix without a session. Returns the redirect location, or null for
+/// "no redirect". Fresh logged-out users land on /onboarding, matching the
+/// splash's own logged-out destination.
+String? authGuardRedirect({required bool loggedIn, required String path}) {
+  if (loggedIn) return null;
+  if (_kPublicPaths.contains(path)) return null;
+  return '/onboarding';
+}
+
 /// Full route table — mirrors the Expo app/ directory 1:1.
 final appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
   initialLocation: '/splash',
+  // GLOBAL AUTH GUARD: without an account, every protected page (home
+  // included) bounces to /onboarding. The splash still runs its own
+  // session check on cold start; this guard is the backstop that makes
+  // "home without login" structurally impossible afterwards.
+  redirect: (context, state) => authGuardRedirect(
+    loggedIn: AuthService.currentUser != null,
+    path: state.uri.path,
+  ),
   // App Links (https://www.kbr.com.np) carry no in-app routing: the shared
   // link just opens the app. Android hands the tapped link to the engine as
   // the platform's initial route, and go_router would otherwise boot

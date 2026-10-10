@@ -29,8 +29,9 @@ GoRouter _router(String initialLocation) {
   );
 }
 
-/// The shimmer shows first (~1s), then the form reveals.
-/// NEVER pumpAndSettle — the preloading spinner is an infinite animation.
+/// The form shows instantly (no preloading shimmer since 2026-10-10).
+/// Extra pumps are harmless; kept for router redirect timing.
+/// NEVER pumpAndSettle — other spinners on screen are infinite animations.
 Future<void> _pumpScreen(WidgetTester tester, String initialLocation) async {
   await tester.pumpWidget(MaterialApp.router(routerConfig: _router(initialLocation)));
   await tester.pump(const Duration(milliseconds: 100));

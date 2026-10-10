@@ -6,7 +6,6 @@ import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
 import '../../services/app_language.dart';
-import '../../widgets/preloading.dart';
 
 /// In-app password reset completion.
 /// Served at `/auth/reset-password` — the router redirects here without a
@@ -31,22 +30,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   final _confirm = TextEditingController();
   final _confirmFocus = FocusNode();
   bool _loading = false;
-  bool _preloading = true;
   _ResetStatus _status = _ResetStatus.form;
   // Dynamic error copy: invalid/expired links get the "request a new link"
   // hint, transport/server failures get the generic retry message.
   String? _errorTitle;
   String? _errorHint;
-
-  @override
-  void initState() {
-    super.initState();
-    // 1s premium preloading shimmer: shown before the form so the page
-    // doesn't pop in instantly — same treatment as the other auth screens.
-    Future.delayed(const Duration(milliseconds: 1000), () {
-      if (mounted) setState(() => _preloading = false);
-    });
-  }
 
   @override
   void dispose() {
@@ -248,17 +236,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
     );
   }
 
-  /// 1s preloading shimmer shown on first build before the page content.
-  Widget _preloadingBody() {
-    return Center(
-      child: PreloadingWidget(
-        // Theme-coloured page: theme-grey spokes, not white.
-        tinted: false,
-        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // Transparent status bar with dark icons so the light background flows
@@ -277,20 +254,20 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           subtitle: AppLanguage.tr(
               'Choose a strong new password for your account',
               'आफ्नो खाताको लागि बलियो नयाँ पासवर्ड छान्नुहोस्'),
-          child: _preloading
-              ? _preloadingBody()
-              : AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: child,
-                  ),
-                  child: switch (_status) {
-                    _ResetStatus.form => _form(),
-                    _ResetStatus.success => _success(),
-                    _ResetStatus.error => _error(),
-                  },
-                ),
+          // The form shows instantly — no preloading shimmer (user asked for
+          // direct display on 2026-10-10).
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: child,
+            ),
+            child: switch (_status) {
+              _ResetStatus.form => _form(),
+              _ResetStatus.success => _success(),
+              _ResetStatus.error => _error(),
+            },
+          ),
         ),
       ),
     );

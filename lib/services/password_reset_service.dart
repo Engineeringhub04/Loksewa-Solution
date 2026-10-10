@@ -16,7 +16,7 @@ import 'package:http/http.dart' as http;
 /// The worker ALWAYS answers HTTP 200 with `{ok: bool, reason?: string}`:
 /// - `{ok: true}` — the reset email was queued/sent.
 /// - `{ok: false, reason: "rate_limited"}` — one link already requested
-///   today; the previously sent link stays valid for 1 hour.
+///   today; the previously sent link stays valid for 10 minutes.
 /// - `{ok: false, reason: "no_provider"}` — the email provider is not
 ///   configured on the worker yet.
 /// - `{ok: false, reason: "invalid_email"}` — the email failed validation.

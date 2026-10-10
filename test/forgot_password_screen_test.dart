@@ -124,6 +124,20 @@ void main() {
     await _submitEmail(tester, 'user@example.com');
 
     expect(find.text('Check Your Email'), findsOneWidget);
-    expect(find.textContaining('valid for 1 hour'), findsOneWidget);
+    expect(find.textContaining('valid for 10 minutes'), findsOneWidget);
+    expect(find.textContaining('valid for 1 hour'), findsNothing);
+  });
+
+  testWidgets('rate-limit banner says 10 minutes, not 1 hour', (tester) async {
+    PasswordResetService.setTestClient(
+      MockClient(
+          (_) async => http.Response('{"ok":false,"reason":"rate_limited"}', 200)),
+    );
+    await _pumpScreen(tester);
+
+    await _submitEmail(tester, 'user@example.com');
+
+    expect(find.textContaining('valid for 10 minutes'), findsOneWidget);
+    expect(find.textContaining('valid for 1 hour'), findsNothing);
   });
 }

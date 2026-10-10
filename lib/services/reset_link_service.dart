@@ -24,8 +24,10 @@ import '../widgets/popup_action_button.dart';
 ///     NO confirmation popup)
 ///   valid + logged in, warm (app already open, link on the app_links
 ///     stream) → directly navigate to `/auth/reset-password?token=…`
-///   invalid/expired + logged out → splash → `/login` + AppModalShell popup
-///   invalid/expired + logged in → splash → `/home` + the same popup
+///   invalid/expired + logged out → splash → `/login`, THEN the
+///     AppModalShell popup (after /login lands — never over the splash)
+///   invalid/expired + logged in → splash → `/home`, THEN the same popup
+///     (after home lands — never over the splash)
 ///   validation network failure + logged out → still open the reset page
 ///     (the submit call surfaces the real error)
 ///   validation network failure + logged in → stay on home, no auto-open
@@ -127,7 +129,7 @@ class ResetLinkService {
   }
 
   /// Cold-start handling with all effects injected (the splash passes the
-  /// real navigation/popup; tests pass fakes). [validate] is
+  /// real navigation; tests pass fakes). [validate] is
   /// [PasswordResetService.validateToken] in production. Returns the
   /// disposition so the splash knows whether navigation already happened:
   /// [go] is invoked for the terminal dispositions
@@ -136,13 +138,19 @@ class ResetLinkService {
   /// [ResetLinkDisposition.networkLoggedOut]); [stashAutoOpen] for
   /// [ResetLinkDisposition.openReset] when logged in (the splash routes
   /// home normally and pushes the stashed location after home lands).
+  ///
+  /// POPUP TIMING (v1.0.88+): this method NEVER shows the invalid-link
+  /// popup itself. For the invalid/expired dispositions it navigates (or
+  /// lets the splash continue its normal routing) FIRST, and the caller
+  /// shows the popup AFTER the destination route lands — see
+  /// [needsInvalidPopup] and the splash's post-frame popup. Showing it
+  /// here would put the popup over the splash (the v1.0.87 bug).
   static Future<ResetLinkDisposition> handleColdToken(
     String token, {
     required bool loggedIn,
     required Future<TokenValidationResult> Function(String) validate,
     required void Function(String location) go,
     required void Function(String location) stashAutoOpen,
-    required Future<void> Function() showInvalidPopup,
   }) async {
     final validation = await validate(token);
     final disposition =
@@ -155,12 +163,12 @@ class ResetLinkService {
           go(locationFor(token));
         }
       case ResetLinkDisposition.invalidLoggedOut:
-        await showInvalidPopup();
+        // Navigate FIRST; the splash shows the popup after /login lands.
         go('/login');
       case ResetLinkDisposition.invalidLoggedIn:
-        // The splash continues its normal routing below (lands on /home);
-        // the popup is already dismissed.
-        await showInvalidPopup();
+        // The splash continues its normal routing below (lands on /home)
+        // and shows the popup after home lands.
+        break;
       case ResetLinkDisposition.networkLoggedOut:
         // Validation unreachable — still open the form; the submit call
         // surfaces the real error.
@@ -171,6 +179,13 @@ class ResetLinkService {
     }
     return disposition;
   }
+
+  /// True when the disposition owes the user the invalid/expired-link
+  /// popup. The popup must be shown AFTER the destination route has landed
+  /// (post-frame), never over the splash — the splash owns the timing.
+  static bool needsInvalidPopup(ResetLinkDisposition disposition) =>
+      disposition == ResetLinkDisposition.invalidLoggedOut ||
+      disposition == ResetLinkDisposition.invalidLoggedIn;
 
   /// Warm-start handling with all effects injected (main.dart passes the
   /// real router + popup; tests pass fakes).

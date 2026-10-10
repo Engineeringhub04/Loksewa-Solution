@@ -255,69 +255,69 @@ void main() {
     test('valid + logged out → go(reset location)', () async {
       final went = <String>[];
       var stashed = 0;
-      var popups = 0;
       final d = await ResetLinkService.handleColdToken(
         'tok1',
         loggedIn: false,
         validate: validateAs(TokenValidationResult.valid),
         go: went.add,
         stashAutoOpen: (_) => stashed++,
-        showInvalidPopup: () async => popups++,
       );
       expect(d, ResetLinkDisposition.openReset);
       expect(went, ['/auth/reset-password?token=tok1']);
       expect(stashed, 0);
-      expect(popups, 0);
+      expect(ResetLinkService.needsInvalidPopup(d), isFalse);
     });
 
     test('valid + logged in → stash for post-home auto-open (no popup)',
         () async {
       final went = <String>[];
       final stashed = <String>[];
-      var popups = 0;
       final d = await ResetLinkService.handleColdToken(
         'tok2',
         loggedIn: true,
         validate: validateAs(TokenValidationResult.valid),
         go: went.add,
         stashAutoOpen: stashed.add,
-        showInvalidPopup: () async => popups++,
       );
       expect(d, ResetLinkDisposition.openReset);
       expect(went, isEmpty);
       expect(stashed, ['/auth/reset-password?token=tok2']);
-      expect(popups, 0);
+      expect(ResetLinkService.needsInvalidPopup(d), isFalse);
     });
 
-    test('invalid + logged out → popup then go(/login)', () async {
-      final order = <String>[];
+    test('invalid + logged out → go(/login); popup owed AFTER landing',
+        () async {
+      // v1.0.88: the service navigates FIRST and never shows the popup
+      // itself — the splash shows it after /login lands (never over the
+      // splash). needsInvalidPopup tells the splash a popup is owed.
+      final went = <String>[];
       final d = await ResetLinkService.handleColdToken(
         'tok3',
         loggedIn: false,
         validate: validateAs(TokenValidationResult.expired),
-        go: (l) => order.add('go:$l'),
+        go: went.add,
         stashAutoOpen: (_) {},
-        showInvalidPopup: () async => order.add('popup'),
       );
       expect(d, ResetLinkDisposition.invalidLoggedOut);
-      expect(order, ['popup', 'go:/login']);
+      expect(went, ['/login']);
+      expect(ResetLinkService.needsInvalidPopup(d), isTrue);
     });
 
-    test('invalid + logged in → popup, no navigation (splash routes home)',
+    test('invalid + logged in → no navigation; popup owed after home lands',
         () async {
       final went = <String>[];
-      var popups = 0;
       final d = await ResetLinkService.handleColdToken(
         'tok4',
         loggedIn: true,
         validate: validateAs(TokenValidationResult.invalid),
         go: went.add,
         stashAutoOpen: (_) {},
-        showInvalidPopup: () async => popups++,
       );
       expect(d, ResetLinkDisposition.invalidLoggedIn);
       expect(went, isEmpty);
-      expect(popups, 1);
+      // The splash continues its normal routing (lands on /home) and
+      // shows the popup after home lands.
+      expect(ResetLinkService.needsInvalidPopup(d), isTrue);
     });
 
     test('network failure + logged out → go(reset location)', () async {
@@ -328,28 +328,48 @@ void main() {
         validate: validateAs(TokenValidationResult.networkError),
         go: went.add,
         stashAutoOpen: (_) {},
-        showInvalidPopup: () async {},
       );
       expect(d, ResetLinkDisposition.networkLoggedOut);
       expect(went, ['/auth/reset-password?token=tok5']);
+      expect(ResetLinkService.needsInvalidPopup(d), isFalse);
     });
 
     test('network failure + logged in → nothing', () async {
       final went = <String>[];
       final stashed = <String>[];
-      var popups = 0;
       final d = await ResetLinkService.handleColdToken(
         'tok6',
         loggedIn: true,
         validate: validateAs(TokenValidationResult.networkError),
         go: went.add,
         stashAutoOpen: stashed.add,
-        showInvalidPopup: () async => popups++,
       );
       expect(d, ResetLinkDisposition.networkLoggedIn);
       expect(went, isEmpty);
       expect(stashed, isEmpty);
-      expect(popups, 0);
+      expect(ResetLinkService.needsInvalidPopup(d), isFalse);
+    });
+
+    test('needsInvalidPopup only for the invalid/expired dispositions',
+        () async {
+      expect(
+          ResetLinkService.needsInvalidPopup(
+              ResetLinkDisposition.invalidLoggedOut),
+          isTrue);
+      expect(
+          ResetLinkService.needsInvalidPopup(
+              ResetLinkDisposition.invalidLoggedIn),
+          isTrue);
+      expect(ResetLinkService.needsInvalidPopup(ResetLinkDisposition.openReset),
+          isFalse);
+      expect(
+          ResetLinkService.needsInvalidPopup(
+              ResetLinkDisposition.networkLoggedOut),
+          isFalse);
+      expect(
+          ResetLinkService.needsInvalidPopup(
+              ResetLinkDisposition.networkLoggedIn),
+          isFalse);
     });
   });
 

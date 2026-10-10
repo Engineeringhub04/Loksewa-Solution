@@ -7,6 +7,7 @@ import '../../services/device_session_service.dart';
 import '../../services/firestore_rest.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/preloading.dart';
+import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Security Settings → Login Devices.
@@ -17,6 +18,10 @@ import '../../widgets/subpage_header.dart';
 /// a "This device" tag. Each row shows the device model (or "Unknown
 /// device"), the platform icon, the app version and the last-active time
 /// from `updatedAt`.
+///
+/// Premium treatment: the shared gradient subpage header, a device-count
+/// summary card, staggered row entrances, gradient platform icon tiles and
+/// soft shadows.
 class LoginDevicesScreen extends StatefulWidget {
   const LoginDevicesScreen({
     super.key,
@@ -111,43 +116,166 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
     return AppLanguage.tr('$days days ago', '${_nepaliDigits(days)} दिन अघि');
   }
 
+  /// Device-count summary card shown above the list.
+  Widget _countCard(BuildContext context, int count) {
+    final palette = ExpoPalette.of(context);
+    final countText = AppLanguage.isNepali ? _nepaliDigits('$count') : '$count';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: palette.border),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.devices_outlined,
+                size: 24, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  countText,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  AppLanguage.tr(
+                      'devices signed in', 'वटा डिभाइसमा साइन इन'),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF16A34A).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Color(0xFF16A34A),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  AppLanguage.tr('Active', 'सक्रिय'),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF16A34A),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _row(BuildContext context, _DeviceRow row) {
     final palette = ExpoPalette.of(context);
     final doc = row.doc;
     final platform = '${doc['platform'] ?? ''}'.toLowerCase();
     final model = '${doc['deviceModel'] ?? ''}'.trim();
     final appVersion = '${doc['appVersion'] ?? ''}'.trim();
-    final iconData =
-        platform == 'ios' ? Icons.phone_iphone : Icons.android;
+    final isIos = platform == 'ios';
+    final iconData = isIos ? Icons.phone_iphone : Icons.android;
     final subtitle = [
       if (appVersion.isNotEmpty) 'v$appVersion',
       _relativeTime(_updatedAt(doc)),
     ].join(' • ');
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: palette.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: row.isCurrent
               ? const Color(0xFF16A34A).withValues(alpha: 0.5)
               : palette.border,
           width: row.isCurrent ? 1.5 : 1,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: Row(
         children: [
           Container(
-            width: 46,
-            height: 46,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              color: palette.primary.withValues(alpha: 0.1),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: isIos
+                    ? const [Color(0xFF475569), Color(0xFF0F172A)]
+                    : const [Color(0xFF4ADE80), Color(0xFF16A34A)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (isIos
+                          ? const Color(0xFF0F172A)
+                          : const Color(0xFF16A34A))
+                      .withValues(alpha: 0.3),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: Icon(iconData, size: 24, color: palette.primary),
+            child: Icon(iconData, size: 24, color: Colors.white),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -162,7 +290,7 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
                             : model,
                         style: TextStyle(
                           fontSize: 15,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                           color: palette.textPrimary,
                         ),
                       ),
@@ -182,21 +310,30 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
                   ),
                 ),
                 if (row.isCurrent) ...[
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
+                        horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color:
-                          const Color(0xFF16A34A).withValues(alpha: 0.12),
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF22C55E), Color(0xFF16A34A)],
+                      ),
                       borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF16A34A)
+                              .withValues(alpha: 0.35),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
                     ),
                     child: Text(
                       AppLanguage.tr('This device', 'यो डिभाइस'),
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF16A34A),
+                        color: Colors.white,
                       ),
                     ),
                   ),
@@ -218,14 +355,21 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 72,
-              height: 72,
+              width: 84,
+              height: 84,
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                color: palette.primary.withValues(alpha: 0.1),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    palette.primary.withValues(alpha: 0.25),
+                    palette.primary.withValues(alpha: 0.08),
+                  ],
+                ),
               ),
               child: Icon(Icons.devices_outlined,
-                  size: 34, color: palette.primary),
+                  size: 38, color: palette.primary),
             ),
             const SizedBox(height: 16),
             Text(
@@ -310,11 +454,35 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
                     );
                   }
                   final rows = snap.data ?? [];
-                  if (rows.isEmpty) return _empty(context);
+                  if (rows.isEmpty) {
+                    return StaggerEntrance(
+                      delayMs: 0,
+                      child: _empty(context),
+                    );
+                  }
                   return ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: rows.length,
-                    itemBuilder: (context, i) => _row(context, rows[i]),
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                    itemCount: rows.length + 1,
+                    itemBuilder: (context, i) {
+                      if (i == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: StaggerEntrance(
+                            delayMs: 0,
+                            child: _countCard(context, rows.length),
+                          ),
+                        );
+                      }
+                      final row = rows[i - 1];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        // Capped stagger like the analytics lists.
+                        child: StaggerEntrance(
+                          delayMs: (i > 8 ? 8 : i) * 60,
+                          child: _row(context, row),
+                        ),
+                      );
+                    },
                   );
                 },
               ),

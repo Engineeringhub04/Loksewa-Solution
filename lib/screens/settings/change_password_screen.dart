@@ -10,6 +10,7 @@ import '../../widgets/app_modal_shell.dart';
 import '../../widgets/auth/auth_buttons.dart';
 import '../../widgets/auth/floating_label_field.dart';
 import '../../widgets/popup_action_button.dart';
+import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
 
 /// Security Settings → Change Password.
@@ -30,6 +31,9 @@ import '../../widgets/subpage_header.dart';
 /// ("Change your password?"); Confirm runs verify → update with a spinner
 /// on the confirm button. Success → success state. A "Forgot Password?"
 /// link under the button goes to `/forgot-password`.
+///
+/// Premium treatment: the shared gradient subpage header, a staggered
+/// entrance on the form card, and a password-tips card below the form.
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({
     super.key,
@@ -265,9 +269,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -276,25 +280,56 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.mail_outline,
-                  size: 18, color: Color(0xFF64748B)),
-              const SizedBox(width: 8),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(13),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF3B82F6), Color(0xFF1D4ED8)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _blue.withValues(alpha: 0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.lock_outline,
+                    size: 22, color: Colors.white),
+              ),
+              const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  _email.isEmpty
-                      ? AppLanguage.tr('Not signed in', 'साइन इन हुनुहुन्न')
-                      : _email,
-                  style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF334155)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppLanguage.tr(
+                          'Choose a new password', 'नयाँ पासवर्ड छान्नुहोस्'),
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _email.isEmpty
+                          ? AppLanguage.tr(
+                              'Not signed in', 'साइन इन हुनुहुन्न')
+                          : _email,
+                      style: const TextStyle(
+                          fontSize: 13, color: Color(0xFF6B7280)),
+                    ),
+                  ],
                 ),
               ),
-              const Icon(Icons.lock_outline,
-                  size: 16, color: Color(0xFF94A3B8)),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
           FloatingLabelField(
             label: AppLanguage.tr('Old Password', 'पुरानो पासवर्ड'),
             controller: _old,
@@ -362,60 +397,156 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   Widget _successCard() {
+    return StaggerEntrance(
+      delayMs: 0,
+      child: Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFE2E8F0)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Container(
+              width: 84,
+              height: 84,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF4ADE80), Color(0xFF16A34A)],
+                ),
+                borderRadius: BorderRadius.circular(42),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF16A34A).withValues(alpha: 0.35),
+                    blurRadius: 14,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: const Icon(Icons.check, size: 44, color: Colors.white),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              AppLanguage.tr('Password changed successfully',
+                  'पासवर्ड सफलतापूर्वक परिवर्तन भयो'),
+              style: const TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF1F2937),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              AppLanguage.tr(
+                'Use your new password the next time you sign in.',
+                'अर्को पटक साइन इन गर्दा आफ्नो नयाँ पासवर्ड प्रयोग गर्नुहोस्।',
+              ),
+              style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 20),
+            AuthPrimaryButton(
+              label: AppLanguage.tr(
+                  'Back to Security Settings', 'सुरक्षा सेटिङमा फर्कनुहोस्'),
+              color: _blue,
+              disabledColor: _blue,
+              onPressed: () {
+                if (context.canPop()) {
+                  context.pop();
+                } else {
+                  context.go('/settings/security');
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Password-tips card under the form — mirrors the inline validations so
+  /// users see the rules before they trip on them.
+  Widget _tipsCard() {
+    const tips = [
+      (Icons.straighten_outlined, 'At least 6 characters', 'कम्तीमा ६ अक्षर'),
+      (Icons.difference_outlined, 'Different from your old password',
+          'पुरानो पासवर्डभन्दा फरक'),
+      (Icons.visibility_off_outlined, 'Never share it with anyone',
+          'कसैसँग पनि साझा नगर्नुहोस्'),
+    ];
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              color: const Color(0xFFDCFCE7),
-              borderRadius: BorderRadius.circular(40),
+          Row(
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFFEFF6FF),
+                ),
+                child: const Icon(Icons.lightbulb_outline,
+                    size: 20, color: _blue),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                AppLanguage.tr('Password tips', 'पासवर्ड सुझावहरू'),
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF1F2937),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (final (icon, en, ne) in tips) ...[
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle_outline,
+                      size: 18, color: Color(0xFF16A34A)),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      AppLanguage.tr(en, ne),
+                      style: const TextStyle(
+                          fontSize: 14, color: Color(0xFF4B5563)),
+                    ),
+                  ),
+                  Icon(icon, size: 18, color: const Color(0xFF9CA3AF)),
+                ],
+              ),
             ),
-            child:
-                const Icon(Icons.check, size: 44, color: Color(0xFF16A34A)),
-          ),
-          const SizedBox(height: 16),
-          Text(
-            AppLanguage.tr('Password changed successfully',
-                'पासवर्ड सफलतापूर्वक परिवर्तन भयो'),
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF1F2937),
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            AppLanguage.tr(
-              'Use your new password the next time you sign in.',
-              'अर्को पटक साइन इन गर्दा आफ्नो नयाँ पासवर्ड प्रयोग गर्नुहोस्।',
-            ),
-            style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 20),
-          AuthPrimaryButton(
-            label: AppLanguage.tr(
-                'Back to Security Settings', 'सुरक्षा सेटिङमा फर्कनुहोस्'),
-            color: _blue,
-            disabledColor: _blue,
-            onPressed: () {
-              if (context.canPop()) {
-                context.pop();
-              } else {
-                context.go('/settings/security');
-              }
-            },
-          ),
+          ],
         ],
       ),
     );
@@ -438,10 +569,24 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 title: AppLanguage.tr('Change Password', 'पासवर्ड परिवर्तन')),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  child: _success ? _successCard() : _formCard(),
+                padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+                child: StaggerEntrance(
+                  delayMs: 0,
+                  child: Column(
+                    children: [
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 300),
+                        child: _success ? _successCard() : _formCard(),
+                      ),
+                      if (!_success) ...[
+                        const SizedBox(height: 12),
+                        StaggerEntrance(
+                          delayMs: 140,
+                          child: _tipsCard(),
+                        ),
+                      ],
+                    ],
+                  ),
                 ),
               ),
             ),

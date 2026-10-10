@@ -59,8 +59,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         setState(() {
           _bannerIsWarning = true;
           _banner = AppLanguage.tr(
-            "You've already requested a password reset link today. Please check your email inbox (and spam folder) — the link is valid for 1 hour. You can request a new link after 24 hours. Still having trouble? Contact Our Loksewa Solution Team.",
-            'तपाईंले आज पासवर्ड रिसेट लिङ्क मागिसक्नुभएको छ। इमेल (स्पामसहित) जाँच्नुहोस् — लिङ्क १ घण्टा मान्य हुन्छ। २४ घण्टापछि पुनः प्रयास गर्नुहोस्। सहयोग चाहिएमा Loksewa Solution टिमलाई सम्पर्क गर्नुहोस्।',
+            "You've already requested a password reset link today. Please check your email inbox (and spam folder) — the link is valid for 10 minutes. You can request a new link after 24 hours. Still having trouble? Contact Our Loksewa Solution Team.",
+            'तपाईंले आज पासवर्ड रिसेट लिङ्क मागिसक्नुभएको छ। इमेल (स्पामसहित) जाँच्नुहोस् — लिङ्क १० मिनेट मान्य हुन्छ। २४ घण्टापछि पुनः प्रयास गर्नुहोस्। सहयोग चाहिएमा Loksewa Solution टिमलाई सम्पर्क गर्नुहोस्।',
           );
         });
       case PasswordResetResult.noProvider:
@@ -194,8 +194,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         const SizedBox(height: 16),
         Text(
           AppLanguage.tr(
-            "We've sent a password reset link to ${_email.text.trim()}. The link is valid for 1 hour — tap it to open the app and set a new password.",
-            'हामीले ${_email.text.trim()} मा पासवर्ड रिसेट लिङ्क पठाएका छौं। लिङ्क १ घण्टा मान्य हुन्छ — त्यसमा ट्याप गरेर एप खोल्नुहोस् र नयाँ पासवर्ड सेट गर्नुहोस्।',
+            "We've sent a password reset link to ${_email.text.trim()}. The link is valid for 10 minutes — tap it to open the app and set a new password.",
+            'हामीले ${_email.text.trim()} मा पासवर्ड रिसेट लिङ्क पठाएका छौं। लिङ्क १० मिनेट मान्य हुन्छ — त्यसमा ट्याप गरेर एप खोल्नुहोस् र नयाँ पासवर्ड सेट गर्नुहोस्।',
           ),
           style: const TextStyle(
               fontSize: 15, color: Color(0xFF6B7280), height: 22 / 15),

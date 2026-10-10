@@ -106,8 +106,11 @@ void main() {
   });
 
   testWidgets(
-      'cold start with an INVALID link shows the popup, then goes to /login',
+      'cold start with an INVALID link: /login FIRST, popup only after it lands',
       (tester) async {
+    // v1.0.88: the v1.0.87 bug showed the invalid-link popup OVER THE
+    // SPLASH (before any navigation). Now the splash navigates to /login
+    // first and the popup appears only after /login has landed.
     PasswordResetService.setTestClient(
       MockClient((_) async =>
           http.Response('{"valid":false,"reason":"expired_token"}', 200)),
@@ -117,32 +120,40 @@ void main() {
     _mockPlatform(tester);
 
     await tester.pumpWidget(MaterialApp.router(routerConfig: _testRouter()));
-    // Wait for the silent validation + the invalid-link popup.
-    for (var i = 0;
-        i < 30 &&
-            find
-                .textContaining('already been used or has expired')
-                .evaluate()
-                .isEmpty;
-        i++) {
+
+    // Poll frame by frame: record whether /login is already on screen at
+    // the exact moment the popup first appears.
+    var popupSeen = false;
+    var loginAlreadyThere = false;
+    for (var i = 0; i < 40 && !popupSeen; i++) {
       await tester.pump(const Duration(milliseconds: 100));
+      popupSeen = find
+          .textContaining('already been used or has expired')
+          .evaluate()
+          .isNotEmpty;
+      if (popupSeen) {
+        loginAlreadyThere = find.text('login-stub').evaluate().isNotEmpty;
+      }
     }
 
+    expect(popupSeen, isTrue, reason: 'the invalid-link popup never appeared');
     expect(
-      find.textContaining('already been used or has expired'),
-      findsOneWidget,
+      loginAlreadyThere,
+      isTrue,
+      reason: 'POPUP-ON-SPLASH BUG: the popup appeared before /login landed',
     );
     expect(find.byType(AppModalShell), findsOneWidget);
     // The reset form is NOT opened for a dead link.
     expect(find.textContaining('reset-stub'), findsNothing);
 
-    // Dismiss the popup → the splash routes to /login.
+    // Dismiss the popup → still on /login, splash gone.
     await tester.tap(find.text('OK'));
     for (var i = 0;
-        i < 30 && find.text('login-stub').evaluate().isEmpty;
+        i < 20 && find.byType(AppModalShell).evaluate().isNotEmpty;
         i++) {
-      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 200));
     }
+    expect(find.byType(AppModalShell), findsNothing);
     expect(find.text('login-stub'), findsOneWidget);
     // Let go_router's page transition finish — the outgoing splash stays
     // mounted for a few frames in the test binding.

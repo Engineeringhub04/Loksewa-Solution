@@ -40,6 +40,33 @@ class _SplashScreenState extends State<SplashScreen> {
   Future<T> _withTimeout<T>(Future<T> future, T fallback) =>
       future.timeout(_callTimeout, onTimeout: () => fallback);
 
+  /// Shows the invalid/expired reset-link popup AFTER the destination
+  /// route has landed — never over the splash (the v1.0.87 bug).
+  ///
+  /// The ROOT navigator's context is captured while this widget is still
+  /// mounted: unlike the splash's own context it stays valid after the
+  /// splash is replaced by the destination route.
+  ///
+  /// Timing uses TWO nested post-frame callbacks: the outer one is already
+  /// too early (it fires at the end of the frame where `go()` was called,
+  /// before the router rebuilds), so the inner one — which runs after the
+  /// NEXT frame, i.e. after the router has built the destination route —
+  /// is the one that shows the popup. The popup therefore always appears
+  /// over the destination (/login or /home), not the splash.
+  Future<void> _showInvalidPopupAfterLanding() {
+    final navContext = Navigator.of(context, rootNavigator: true).context;
+    final done = Completer<void>();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (navContext.mounted) {
+          await ResetLinkService.showInvalidLinkPopup(navContext);
+        }
+        if (!done.isCompleted) done.complete();
+      });
+    });
+    return done.future;
+  }
+
   Future<void> _decide() async {
     if (splashHasRouted) return;
     final startedAt = DateTime.now();
@@ -68,6 +95,9 @@ class _SplashScreenState extends State<SplashScreen> {
     // markNeedsBuild during build).
     final resetToken = ResetLinkService.consumePendingToken();
     String? autoOpenAfterHome;
+    // Set for invalid/expired + logged in: the popup is shown AFTER the
+    // normal routing lands on the destination (never over the splash).
+    var pendingInvalidPopup = false;
     if (resetToken != null) {
       final disposition = await ResetLinkService.handleColdToken(
         resetToken,
@@ -81,16 +111,21 @@ class _SplashScreenState extends State<SplashScreen> {
           if (mounted) context.go(location);
         },
         stashAutoOpen: (location) => autoOpenAfterHome = location,
-        showInvalidPopup: () =>
-            ResetLinkService.showInvalidLinkPopup(context),
       );
       // Terminal dispositions navigated away above (splashHasRouted set in
       // [go]); the rest continue the normal routing below.
       if (disposition == ResetLinkDisposition.openReset && user == null) {
         return;
       }
-      if (disposition == ResetLinkDisposition.invalidLoggedOut) return;
+      if (disposition == ResetLinkDisposition.invalidLoggedOut) {
+        // go('/login') already ran inside handleColdToken — show the popup
+        // AFTER /login lands, never over the splash.
+        if (mounted) await _showInvalidPopupAfterLanding();
+        return;
+      }
       if (disposition == ResetLinkDisposition.networkLoggedOut) return;
+      pendingInvalidPopup =
+          ResetLinkService.needsInvalidPopup(disposition) && user != null;
       if (!mounted) return;
     }
 
@@ -145,11 +180,22 @@ class _SplashScreenState extends State<SplashScreen> {
       return;
     }
     final connectivity = await Connectivity().checkConnectivity();
+    if (!mounted) return;
     final offline = connectivity.contains(ConnectivityResult.none);
     if (offline && user == null) {
       context.go('/blocking/no-internet');
       return;
     }
+    // Runs a terminal navigation, then shows the deferred invalid-link
+    // popup once the destination has landed (never over the splash).
+    Future<void> land(FutureOr<void> Function() navigate) async {
+      await navigate();
+      if (pendingInvalidPopup && mounted) {
+        pendingInvalidPopup = false;
+        await _showInvalidPopupAfterLanding();
+      }
+    }
+
     if (user != null) {
       // Logged in: gate on course setup too (user-explicit requirement —
       // React's splash doesn't gate, but the user wants setup enforced here
@@ -171,30 +217,35 @@ class _SplashScreenState extends State<SplashScreen> {
       final pending = await PushNotificationService.consumePendingTap();
       final pendingId = pending.id;
       if (pendingId != null && setupDone != false) {
-        context.go('/');
-        context.push('/notifications', extra: {
-          'autoOpenId': pendingId,
-          if (pending.deepLink != null)
-            'fallbackDeepLink': pending.deepLink!,
+        await land(() {
+          context.go('/');
+          context.push('/notifications', extra: {
+            'autoOpenId': pendingId,
+            if (pending.deepLink != null)
+              'fallbackDeepLink': pending.deepLink!,
+          });
         });
         return;
       }
       // Push-only (no notificationId, e.g. Gorkhapatra): follow the deepLink.
       if (pending.deepLink != null) {
-        context.go('/');
-        context.push(pending.deepLink!);
+        await land(() {
+          context.go('/');
+          context.push(pending.deepLink!);
+        });
         return;
       }
-      context.go(setupDone == false ? '/course-setup' : '/');
-      // Cold-start reset link for a logged-in user: the token was validated
-      // above and stashed — push the reset form over home once it lands
-      // (no confirmation popup). Dropped when course setup is incomplete,
-      // matching the notification-tap behavior.
-      final autoOpen = autoOpenAfterHome;
-      if (autoOpen != null && setupDone != false) {
-        if (!mounted) return;
-        context.push(autoOpen);
-      }
+      await land(() {
+        context.go(setupDone == false ? '/course-setup' : '/');
+        // Cold-start reset link for a logged-in user: the token was validated
+        // above and stashed — push the reset form over home once it lands
+        // (no confirmation popup). Dropped when course setup is incomplete,
+        // matching the notification-tap behavior.
+        final autoOpen = autoOpenAfterHome;
+        if (autoOpen != null && setupDone != false) {
+          context.push(autoOpen);
+        }
+      });
       return;
     }
     // Not logged in: notification taps are meaningless (the inbox needs a
@@ -432,8 +483,7 @@ class _SplashPainter extends CustomPainter {
       [0.89, 0.47, 2.1],
       [0.76, 0.79, 1.5],
     ]) {
-      canvas.drawCircle(Offset(w * (d[0] as double), h * (d[1] as double)),
-          d[2] as double, dotPaint);
+      canvas.drawCircle(Offset(w * d[0], h * d[1]), d[2], dotPaint);
     }
   }
 
@@ -518,8 +568,7 @@ class _SplashPainter extends CustomPainter {
       [62, 35, 48],
     ]) {
       c.drawRect(
-        Rect.fromLTWH(o.dx + (b[0] as int) * u, o.dy + (b[1] as int) * u,
-            10 * u, (b[2] as int) * u),
+        Rect.fromLTWH(o.dx + b[0] * u, o.dy + b[1] * u, 10 * u, b[2] * u),
         p,
       );
     }

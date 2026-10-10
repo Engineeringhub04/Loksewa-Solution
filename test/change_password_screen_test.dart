@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:loksewa_solution/screens/settings/change_password_screen.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/change_password_service.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/stagger_entrance.dart';
 
 /// Widget tests for Security Settings → Change Password.
 ///
@@ -27,6 +30,16 @@ Widget _screen({
   );
 }
 
+
+/// Pumps the StaggerEntrance animations through (450ms + up to 140ms delay)
+/// in small increments, so buttons are back on screen before taps.
+/// Never pumpAndSettle — the entrance delays need the fake clock advanced.
+Future<void> _pumpEntered(WidgetTester tester) async {
+  for (var i = 0; i < 10; i++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+}
+
 Future<void> _fillValid(WidgetTester tester) async {
   final fields = find.byType(TextField);
   await tester.enterText(fields.at(0), 'oldpass1');
@@ -44,7 +57,7 @@ Future<void> _tapUpdate(WidgetTester tester) async {
 void main() {
   testWidgets('empty old password shows the inline prompt', (tester) async {
     await tester.pumpWidget(_screen());
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _tapUpdate(tester);
 
@@ -54,7 +67,7 @@ void main() {
 
   testWidgets('short new password shows the min-length error', (tester) async {
     await tester.pumpWidget(_screen());
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'oldpass1');
@@ -70,7 +83,7 @@ void main() {
 
   testWidgets('new == old shows the must-be-different error', (tester) async {
     await tester.pumpWidget(_screen());
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'samepass1');
@@ -86,7 +99,7 @@ void main() {
 
   testWidgets('mismatched confirm shows the mismatch error', (tester) async {
     await tester.pumpWidget(_screen());
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     final fields = find.byType(TextField);
     await tester.enterText(fields.at(0), 'oldpass1');
@@ -108,7 +121,7 @@ void main() {
       },
       update: (_, __) async => true,
     ));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _fillValid(tester);
     await _tapUpdate(tester);
@@ -129,7 +142,7 @@ void main() {
       },
       update: (_, __) async => true,
     ));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _fillValid(tester);
     await _tapUpdate(tester);
@@ -152,7 +165,7 @@ void main() {
       verify: (_, __) async => OldPasswordCheck.wrong,
       update: (_, __) async => true,
     ));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _fillValid(tester);
     await _tapUpdate(tester);
@@ -182,7 +195,7 @@ void main() {
         return true;
       },
     ));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _fillValid(tester);
     await _tapUpdate(tester);
@@ -201,7 +214,7 @@ void main() {
       verify: (_, __) async => const OldPasswordCheck.ok('fresh-token'),
       update: (_, __) async => false,
     ));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await _fillValid(tester);
     await _tapUpdate(tester);
@@ -212,6 +225,42 @@ void main() {
     expect(find.text('Password changed successfully'), findsNothing);
     expect(find.text('Something went wrong. Please try again.'),
         findsOneWidget);
+  });
+
+  testWidgets('premium treatment: staggered form + password tips card',
+      (tester) async {
+    await tester.pumpWidget(_screen());
+    await _pumpEntered(tester);
+
+    // Form card + tips card stagger in.
+    expect(find.byType(StaggerEntrance), findsNWidgets(2));
+    expect(find.text('Choose a new password'), findsOneWidget);
+    expect(find.text('Password tips'), findsOneWidget);
+    expect(find.text('At least 6 characters'), findsOneWidget);
+    expect(find.text('Different from your old password'), findsOneWidget);
+    expect(find.text('Never share it with anyone'), findsOneWidget);
+    // Core functionality unchanged.
+    expect(find.text('Update Password'), findsOneWidget);
+    expect(find.text('Forgot Password?'), findsOneWidget);
+  });
+
+  testWidgets('renders Devanagari strings in Nepali mode', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await AppLanguage.setLanguage('ne');
+    addTearDown(() => AppLanguage.setLanguage('en'));
+
+    await tester.pumpWidget(_screen());
+    await _pumpEntered(tester);
+
+    expect(find.text('पासवर्ड परिवर्तन'), findsOneWidget);
+    expect(find.text('नयाँ पासवर्ड छान्नुहोस्'), findsOneWidget);
+    expect(find.text('पासवर्ड अद्यावधिक गर्नुहोस्'), findsOneWidget);
+    expect(find.text('पासवर्ड बिर्सनुभयो?'), findsOneWidget);
+    expect(find.text('पासवर्ड सुझावहरू'), findsOneWidget);
+    expect(find.text('कम्तीमा ६ अक्षर'), findsOneWidget);
+    // No English leaking through.
+    expect(find.text('Update Password'), findsNothing);
+    expect(find.text('Password tips'), findsNothing);
   });
 
   testWidgets('Forgot Password? navigates to /forgot-password', (tester) async {
@@ -232,7 +281,7 @@ void main() {
       ],
     );
     await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-    await tester.pump(const Duration(milliseconds: 100));
+    await _pumpEntered(tester);
 
     await tester.tap(find.text('Forgot Password?'));
     await tester.pump(const Duration(milliseconds: 100));

@@ -40,6 +40,7 @@ void main() {
       'rate_limited': PasswordResetResult.rateLimited,
       'no_provider': PasswordResetResult.noProvider,
       'invalid_email': PasswordResetResult.invalidEmail,
+      'account_not_found': PasswordResetResult.accountNotFound,
       'something_else': PasswordResetResult.failed,
     };
     for (final entry in cases.entries) {
@@ -131,6 +132,61 @@ void main() {
       );
       expect(await PasswordResetService.completeReset('tok123', 'newpass1'),
           PasswordResetCompleteResult.failed);
+    });
+  });
+
+  group('validateToken', () {
+    test('POSTs {token} to /validate-reset-token as JSON', () async {
+      Uri? seenUrl;
+      Map<String, dynamic>? seenBody;
+      PasswordResetService.setTestClient(
+        MockClient((request) async {
+          seenUrl = request.url;
+          seenBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response('{"valid":true}', 200);
+        }),
+      );
+
+      final result = await PasswordResetService.validateToken('tok123');
+
+      expect(result, TokenValidationResult.valid);
+      expect(seenUrl.toString(), '$workerBase/validate-reset-token');
+      expect(seenBody, {'token': 'tok123'});
+    });
+
+    test('maps valid:false reasons to the matching result', () async {
+      final cases = {
+        'invalid_token': TokenValidationResult.invalid,
+        'expired_token': TokenValidationResult.expired,
+        // Unknown reasons fail closed: the link is treated as unusable.
+        'something_else': TokenValidationResult.invalid,
+      };
+      for (final entry in cases.entries) {
+        PasswordResetService.setTestClient(
+          MockClient((_) async => http.Response(
+              '{"valid":false,"reason":"${entry.key}"}', 200)),
+        );
+        expect(
+          await PasswordResetService.validateToken('tok123'),
+          entry.value,
+          reason: 'reason=${entry.key}',
+        );
+      }
+    });
+
+    test('maps transport failures and bad JSON to networkError (never throws)',
+        () async {
+      PasswordResetService.setTestClient(
+        MockClient((_) async => throw http.ClientException('offline')),
+      );
+      expect(await PasswordResetService.validateToken('tok123'),
+          TokenValidationResult.networkError);
+
+      PasswordResetService.setTestClient(
+        MockClient((_) async => http.Response('not json', 200)),
+      );
+      expect(await PasswordResetService.validateToken('tok123'),
+          TokenValidationResult.networkError);
     });
   });
 }

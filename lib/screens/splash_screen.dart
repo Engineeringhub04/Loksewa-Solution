@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
 import '../services/device_session_service.dart';
 import '../services/onboarding_cache.dart';
+import '../services/password_reset_service.dart';
 import '../services/prefs_service.dart';
 import '../services/push_notification_service.dart';
 import '../services/remote_config.dart';
@@ -52,18 +53,45 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // Password-reset App Link (cold start): the router boots every cold start
     // at /splash (overridePlatformDefaultLocation), so the tapped link's
-    // token was captured by ResetLinkService before runApp. Route straight
-    // to the reset form — ahead of every routing decision below — so the
-    // one-time token is never lost. Only the exact /auth/reset-password path
-    // with a token is intercepted; plain-domain links keep the normal
-    // flow. Placed after the first await so context.go() never runs during
-    // build (go() during initState would markNeedsBuild during build).
-    final resetLocation = ResetLinkService.consumePendingResetLocation();
-    if (resetLocation != null) {
-      splashHasRouted = true;
+    // token was captured by ResetLinkService before runApp. Validate it
+    // SILENTLY first, then route per the reset-link matrix (see
+    // reset_link_service.dart):
+    //   valid + logged out   → straight to the reset form (existing path)
+    //   valid + logged in    → home, then auto-open the reset form (no popup)
+    //   invalid/expired      → popup, then /login (logged out) or /home (logged in)
+    //   validation unreachable:
+    //     logged out → still open the form (submit surfaces the real error)
+    //     logged in  → normal routing, no auto-open, no popup
+    // Only the exact /auth/reset-password path with a token is intercepted;
+    // plain-domain links keep the normal flow. Placed after the first await
+    // so context.go() never runs during build (go() during initState would
+    // markNeedsBuild during build).
+    final resetToken = ResetLinkService.consumePendingToken();
+    String? autoOpenAfterHome;
+    if (resetToken != null) {
+      final disposition = await ResetLinkService.handleColdToken(
+        resetToken,
+        loggedIn: user != null,
+        validate: (t) => _withTimeout(
+          PasswordResetService.validateToken(t),
+          TokenValidationResult.networkError,
+        ),
+        go: (location) {
+          splashHasRouted = true;
+          if (mounted) context.go(location);
+        },
+        stashAutoOpen: (location) => autoOpenAfterHome = location,
+        showInvalidPopup: () =>
+            ResetLinkService.showInvalidLinkPopup(context),
+      );
+      // Terminal dispositions navigated away above (splashHasRouted set in
+      // [go]); the rest continue the normal routing below.
+      if (disposition == ResetLinkDisposition.openReset && user == null) {
+        return;
+      }
+      if (disposition == ResetLinkDisposition.invalidLoggedOut) return;
+      if (disposition == ResetLinkDisposition.networkLoggedOut) return;
       if (!mounted) return;
-      context.go(resetLocation);
-      return;
     }
 
     // One account = one device — NON-DESTRUCTIVE. If another device claimed
@@ -158,6 +186,15 @@ class _SplashScreenState extends State<SplashScreen> {
         return;
       }
       context.go(setupDone == false ? '/course-setup' : '/');
+      // Cold-start reset link for a logged-in user: the token was validated
+      // above and stashed — push the reset form over home once it lands
+      // (no confirmation popup). Dropped when course setup is incomplete,
+      // matching the notification-tap behavior.
+      final autoOpen = autoOpenAfterHome;
+      if (autoOpen != null && setupDone != false) {
+        if (!mounted) return;
+        context.push(autoOpen);
+      }
       return;
     }
     // Not logged in: notification taps are meaningless (the inbox needs a

@@ -2,19 +2,29 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:loksewa_solution/screens/splash_screen.dart';
+import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/reset_link_service.dart';
+import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 
 /// Cold-start routing for the password-reset App Link, through the REAL
 /// SplashScreen (which consumes ResetLinkService's stash in _decide).
 ///
-/// The production bug: GoRouter(overridePlatformDefaultLocation: true)
-/// forces every cold start to /splash, discarding the tapped link's token.
-/// These tests pin the fix: a reset link lands on the reset form, while a
-/// plain-domain link (or a reset path without a code) keeps the normal
-/// splash flow.
+/// v1.0.87: the tapped token is validated SILENTLY first
+/// ([PasswordResetService.validateToken], mocked here), then the splash
+/// routes per the reset-link matrix:
+///   valid + logged out   → the reset form (existing path)
+///   invalid/expired      → AppModalShell popup, then /login (logged out)
+///   validation unreachable (network) + logged out → the reset form anyway
+///     (the submit call surfaces the real error)
+///
+/// The production bug this pins: GoRouter(overridePlatformDefaultLocation:
+/// true) forces every cold start to /splash, discarding the tapped link's
+/// token.
 GoRouter _testRouter() {
   return GoRouter(
     // Mirror production: the platform's initial route is ignored.
@@ -28,6 +38,9 @@ GoRouter _testRouter() {
       GoRoute(
           path: '/onboarding',
           builder: (_, __) => const Scaffold(body: Text('onboarding-stub'))),
+      GoRoute(
+          path: '/login',
+          builder: (_, __) => const Scaffold(body: Text('login-stub'))),
       // No redirect here on purpose: we assert the splash navigated to the
       // exact location, token included.
       GoRoute(
@@ -62,8 +75,16 @@ void main() {
     splashHasRouted = false;
   });
 
-  testWidgets('cold start with a reset link routes to the reset form',
+  tearDown(() {
+    // Never leak a mock client into another test.
+    PasswordResetService.setTestClient(null);
+  });
+
+  testWidgets('cold start with a VALID reset link routes to the reset form',
       (tester) async {
+    PasswordResetService.setTestClient(
+      MockClient((_) async => http.Response('{"valid":true}', 200)),
+    );
     // Production path minus the platform channel: the plugin's URI is fed
     // through the same filter the real getInitialLink() result goes through.
     ResetLinkService.handleInitialUri(Uri.parse(
@@ -75,13 +96,85 @@ void main() {
     // outgoing splash page disposes a frame or two later in the test
     // binding (on a real device this is sub-frame).
     for (var i = 0;
-        i < 10 && find.byType(SplashScreen).evaluate().isNotEmpty;
+        i < 20 && find.byType(SplashScreen).evaluate().isNotEmpty;
         i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
 
     expect(find.text('reset-stub:abc123'), findsOneWidget);
     expect(find.byType(SplashScreen), findsNothing);
+  });
+
+  testWidgets(
+      'cold start with an INVALID link shows the popup, then goes to /login',
+      (tester) async {
+    PasswordResetService.setTestClient(
+      MockClient((_) async =>
+          http.Response('{"valid":false,"reason":"expired_token"}', 200)),
+    );
+    ResetLinkService.handleInitialUri(Uri.parse(
+        'https://kbr.com.np/auth/reset-password?token=deadbeef'));
+    _mockPlatform(tester);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: _testRouter()));
+    // Wait for the silent validation + the invalid-link popup.
+    for (var i = 0;
+        i < 30 &&
+            find
+                .textContaining('already been used or has expired')
+                .evaluate()
+                .isEmpty;
+        i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(
+      find.textContaining('already been used or has expired'),
+      findsOneWidget,
+    );
+    expect(find.byType(AppModalShell), findsOneWidget);
+    // The reset form is NOT opened for a dead link.
+    expect(find.textContaining('reset-stub'), findsNothing);
+
+    // Dismiss the popup → the splash routes to /login.
+    await tester.tap(find.text('OK'));
+    for (var i = 0;
+        i < 30 && find.text('login-stub').evaluate().isEmpty;
+        i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(find.text('login-stub'), findsOneWidget);
+    // Let go_router's page transition finish — the outgoing splash stays
+    // mounted for a few frames in the test binding.
+    for (var i = 0;
+        i < 20 && find.byType(SplashScreen).evaluate().isNotEmpty;
+        i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.byType(SplashScreen), findsNothing);
+  });
+
+  testWidgets(
+      'cold start with UNREACHABLE validation still opens the reset form',
+      (tester) async {
+    // Transport failure → networkError → logged out still goes to the
+    // form; the submit call surfaces the real error.
+    PasswordResetService.setTestClient(
+      MockClient((_) async => throw http.ClientException('offline')),
+    );
+    ResetLinkService.handleInitialUri(Uri.parse(
+        'https://kbr.com.np/auth/reset-password?token=abc123'));
+    _mockPlatform(tester);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: _testRouter()));
+    for (var i = 0;
+        i < 20 && find.byType(SplashScreen).evaluate().isNotEmpty;
+        i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    expect(find.text('reset-stub:abc123'), findsOneWidget);
+    expect(find.byType(AppModalShell), findsNothing);
   });
 
   testWidgets('plain-domain link keeps the normal splash flow (no reset nav)',

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
@@ -151,6 +152,10 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
   }
 
   Widget _success() {
+    // Logged-in users reach this screen via the reset-link auto-open over
+    // home — their post-success button goes back HOME, not to /login.
+    // Logged-out users keep the existing /login destination.
+    final loggedIn = AuthService.currentUser != null;
     return Column(
       key: const ValueKey('success'),
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -177,10 +182,12 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         ),
         const SizedBox(height: 24),
         AuthPrimaryButton(
-          label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+          label: loggedIn
+              ? AppLanguage.tr('Back to Home', 'होममा फर्कनुहोस्')
+              : AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
           color: _purple,
           disabledColor: _purple,
-          onPressed: () => context.go('/login'),
+          onPressed: () => context.go(loggedIn ? '/' : '/login'),
         ),
       ],
     );
@@ -255,7 +262,16 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               'Choose a strong new password for your account',
               'आफ्नो खाताको लागि बलियो नयाँ पासवर्ड छान्नुहोस्'),
           // The form shows instantly — no preloading shimmer (user asked for
-          // direct display on 2026-10-10).
+          // direct display on 2026-10-10). Back goes to /login for logged-out
+          // users (cold-start link path); logged-in users (auto-opened over
+          // home) pop back to home.
+          onBack: () {
+            if (AuthService.currentUser != null) {
+              context.pop();
+            } else {
+              context.go('/login');
+            }
+          },
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 300),
             transitionBuilder: (child, animation) => FadeTransition(

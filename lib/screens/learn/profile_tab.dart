@@ -787,6 +787,13 @@ class _ProfileTabState extends State<ProfileTab> {
       ProfileSectionCard(
         children: [
           ProfileMenuRow(
+            icon: const Icon(Icons.shield_outlined),
+            label: AppLanguage.tr('Security Settings', 'सुरक्षा सेटिङ'),
+            subtitle: AppLanguage.tr('Password & login devices',
+                'पासवर्ड र लगइन डिभाइसहरू'),
+            onPress: () => context.push('/settings/security'),
+          ),
+          ProfileMenuRow(
             icon: const Icon(Icons.school_outlined),
             label: AppLanguage.tr('Course Details', 'कोर्स विवरण'),
             subtitle: AppLanguage.tr('Your enrolled course & subjects',

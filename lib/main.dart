@@ -6,6 +6,7 @@ import 'theme/app_theme.dart';
 import 'services/auth_service.dart';
 import 'services/theme_service.dart';
 import 'services/app_language.dart';
+import 'services/password_reset_service.dart';
 import 'services/prefs_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/reset_link_service.dart';
@@ -60,13 +61,35 @@ Future<void> main() async {
     }
   };
   // Warm-start App Links: the app is already running (in recents) when a
-  // link is tapped. Only the exact password-reset path is intercepted (and
-  // routed to the reset form); every other link keeps today's behavior —
-  // the OS resumes the activity and Dart does nothing with it. Cold starts
-  // are owned by captureInitialLink() + the splash (splashHasRouted is still
-  // false there), so stream events are ignored until the splash has routed.
-  ResetLinkService.onWarmResetLink = (location) {
-    if (splashHasRouted) appRouter.go(location);
+  // link is tapped. Only the exact password-reset path is intercepted;
+  // every other link keeps today's behavior — the OS resumes the activity
+  // and Dart does nothing with it. Cold starts are owned by
+  // captureInitialLink() + the splash (splashHasRouted is still false
+  // there), so stream events are ignored until the splash has routed.
+  // The tapped token is validated SILENTLY before navigating, per the
+  // reset-link matrix: invalid/expired → /login + popup when logged out,
+  // popup in place when logged in; unreachable validation → the form
+  // anyway when logged out (submit surfaces the error), nothing when
+  // logged in.
+  ResetLinkService.onWarmResetLink = (location) async {
+    if (!splashHasRouted) return;
+    final token = Uri.tryParse(location)?.queryParameters['token'];
+    if (token == null || token.isEmpty) {
+      appRouter.go(location);
+      return;
+    }
+    await ResetLinkService.handleWarmToken(
+      token,
+      loggedIn: AuthService.currentUser != null,
+      validate: PasswordResetService.validateToken,
+      navigate: appRouter.go,
+      showInvalidPopup: () async {
+        final ctx = rootNavigatorKey.currentContext;
+        if (ctx != null) {
+          await ResetLinkService.showInvalidLinkPopup(ctx);
+        }
+      },
+    );
   };
   AppLinks().uriLinkStream.listen(
     ResetLinkService.handleIncomingUri,

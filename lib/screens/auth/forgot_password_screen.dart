@@ -6,13 +6,12 @@ import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
 import '../../services/app_language.dart';
-import '../../widgets/preloading.dart';
 
 /// Forgot password — worker-backed flow.
 /// POSTs the email to the loksewa-push-worker `/request-password-reset`
 /// endpoint, then shows the "Check Your Email" state.
-/// `rate_limited` / `no_provider` answers render as an IN-PAGE info banner
-/// above the form (never a popup).
+/// `rate_limited` / `no_provider` / `account_not_found` answers render as an
+/// IN-PAGE info banner above the form (never a popup).
 class ForgotPasswordScreen extends StatefulWidget {
   const ForgotPasswordScreen({super.key});
 
@@ -25,21 +24,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _email = TextEditingController();
   bool _loading = false;
   bool _sent = false;
-  bool _preloading = true;
 
   /// In-page info/warning banner text shown above the form; null = hidden.
   String? _banner;
   bool _bannerIsWarning = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // 1s premium preloading shimmer: this page has no database fetch, so the
-    // content would pop in instantly without it.
-    Future.delayed(const Duration(milliseconds: 1000), () {
-      if (mounted) setState(() => _preloading = false);
-    });
-  }
 
   @override
   void dispose() {
@@ -90,6 +78,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           _banner = AppLanguage.tr(
             'Something went wrong. Please check your connection and try again.',
             'केही गलत भयो। कृपया आफ्नो इन्टरनेट जाँचेर पुनः प्रयास गर्नुहोस्।',
+          );
+        });
+      case PasswordResetResult.accountNotFound:
+        setState(() {
+          _bannerIsWarning = true;
+          _banner = AppLanguage.tr(
+            'No account found with this email address.',
+            'यो इमेलबाट कुनै खाता फेला परेन।',
           );
         });
     }
@@ -216,17 +212,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
-  /// 1s preloading shimmer shown on first build before the page content.
-  Widget _preloadingBody() {
-    return Center(
-      child: PreloadingWidget(
-        // Theme-coloured page: theme-grey spokes, not white.
-        tinted: false,
-        label: AppLanguage.tr('Loading...', 'लोड हुँदैछ...'),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     // Transparent status bar with dark icons so the light background flows
@@ -246,22 +231,22 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               "Enter your email and we'll send you a secure reset link",
               'आफ्नो इमेल प्रविष्ट गर्नुहोस्, हामी सुरक्षित रिसेट लिङ्क पठाउनेछौं'),
           onBack: () => context.pop(),
-          child: _preloading
-              ? _preloadingBody()
-              : AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (child, animation) => FadeTransition(
-                    opacity: animation,
-                    child: SlideTransition(
-                      position: Tween<Offset>(
-                        begin: const Offset(0, 0.08),
-                        end: Offset.zero,
-                      ).animate(animation),
-                      child: child,
-                    ),
-                  ),
-                  child: _sent ? _buildSent() : _buildForm(),
-                ),
+          // The form shows instantly — no preloading shimmer (user asked
+          // for direct display on 2026-10-10).
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 300),
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.08),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            ),
+            child: _sent ? _buildSent() : _buildForm(),
+          ),
         ),
       ),
     );

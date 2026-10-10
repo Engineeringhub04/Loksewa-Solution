@@ -20,6 +20,7 @@ import 'package:http/http.dart' as http;
 /// - `{ok: false, reason: "no_provider"}` — the email provider is not
 ///   configured on the worker yet.
 /// - `{ok: false, reason: "invalid_email"}` — the email failed validation.
+/// - `{ok: false, reason: "account_not_found"}` — no account uses this email.
 ///
 /// Unlike [AdminNotifyService] the request call is NOT fire-and-forget:
 /// the forgot-password screen needs the result to decide what to show, so
@@ -58,6 +59,7 @@ class PasswordResetService {
         'rate_limited' => PasswordResetResult.rateLimited,
         'no_provider' => PasswordResetResult.noProvider,
         'invalid_email' => PasswordResetResult.invalidEmail,
+        'account_not_found' => PasswordResetResult.accountNotFound,
         _ => PasswordResetResult.failed,
       };
     } catch (_) {
@@ -95,6 +97,38 @@ class PasswordResetService {
       return PasswordResetCompleteResult.failed;
     }
   }
+
+  /// Validates a one-time reset-link [token] WITHOUT consuming it.
+  /// POSTs to the worker (`/validate-reset-token`); the worker answers
+  /// `{valid: true}` or `{valid: false, reason: "invalid_token" |
+  /// "expired_token"}`. Used by the deep-link routing matrix so a tapped
+  /// link is checked SILENTLY before the app decides where to go.
+  ///
+  /// Never throws — transport/parse failures map to
+  /// [TokenValidationResult.networkError].
+  static Future<TokenValidationResult> validateToken(String token) async {
+    final client = _testClient ?? http.Client();
+    try {
+      final res = await client
+          .post(
+            Uri.parse('$_workerBase/validate-reset-token'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'token': token}),
+          )
+          .timeout(_timeout);
+      final data = json.decode(res.body) as Map<String, dynamic>;
+      if (data['valid'] == true) return TokenValidationResult.valid;
+      return switch (data['reason']) {
+        'invalid_token' => TokenValidationResult.invalid,
+        'expired_token' => TokenValidationResult.expired,
+        // Unknown reason on a valid:false answer — fail closed: treat the
+        // link as unusable rather than opening the reset form.
+        _ => TokenValidationResult.invalid,
+      };
+    } catch (_) {
+      return TokenValidationResult.networkError;
+    }
+  }
 }
 
 /// Outcome of [PasswordResetService.requestReset].
@@ -113,8 +147,30 @@ enum PasswordResetResult {
   /// The email failed the worker's validation.
   invalidEmail,
 
+  /// The worker has no account for this email — show the in-page
+  /// "no account found" banner (NOT a popup).
+  accountNotFound,
+
   /// Transport error, non-JSON answer, or unknown reason.
   failed,
+}
+
+/// Outcome of [PasswordResetService.validateToken].
+enum TokenValidationResult {
+  /// The token is live — open the reset form.
+  valid,
+
+  /// The token is unknown or was already used — show the
+  /// invalid/expired-link popup.
+  invalid,
+
+  /// The token expired — show the invalid/expired-link popup.
+  expired,
+
+  /// The worker could not be reached (or answered garbage) — the routing
+  /// matrix decides per login state (logged out: still open the form, the
+  /// submit surfaces the error; logged in: stay, no auto-open).
+  networkError,
 }
 
 /// Outcome of [PasswordResetService.completeReset].

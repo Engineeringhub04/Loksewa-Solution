@@ -21,6 +21,9 @@ import '../screens/auth/delete_account_screen.dart';
 import '../screens/auth/feedback_screen.dart';
 import '../screens/auth/help_center_screen.dart';
 import '../screens/auth/report_problem_screen.dart';
+import '../screens/settings/security_settings_screen.dart';
+import '../screens/settings/change_password_screen.dart';
+import '../screens/settings/login_devices_screen.dart';
 import '../screens/auth/under_construction_screen.dart';
 
 // Learn
@@ -112,8 +115,14 @@ import '../screens/admin/admin_subscription_detail_screen.dart';
 
 String? _qp(GoRouterState s, String key) => s.uri.queryParameters[key];
 
+/// Root navigator key — lets non-widget code (the warm App Link handler in
+/// main.dart) present the invalid/expired-reset-link popup on whatever
+/// screen is currently showing.
+final rootNavigatorKey = GlobalKey<NavigatorState>();
+
 /// Full route table — mirrors the Expo app/ directory 1:1.
 final appRouter = GoRouter(
+  navigatorKey: rootNavigatorKey,
   initialLocation: '/splash',
   // App Links (https://www.kbr.com.np) carry no in-app routing: the shared
   // link just opens the app. Android hands the tapped link to the engine as
@@ -125,7 +134,10 @@ final appRouter = GoRouter(
   // (https://kbr.com.np/auth/reset-password?token=...). Its token would
   // be discarded by the forced /splash, so ResetLinkService captures the
   // initial URI via the app_links plugin before the router boots and the
-  // splash routes it to the reset form. See lib/services/reset_link_service.dart.
+  // splash SILENTLY validates the token, then routes per the reset-link
+  // matrix (see lib/services/reset_link_service.dart). Note the reset
+  // route below deliberately has NO login guard — logged-in users can
+  // open it too (auto-opened over home on a cold start).
   overridePlatformDefaultLocation: true,
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),
@@ -183,6 +195,16 @@ final appRouter = GoRouter(
     GoRoute(
         path: '/settings/report-problem',
         builder: (_, __) => const ReportProblemScreen()),
+    // Security settings (Profile → App Settings → Security Settings).
+    GoRoute(
+        path: '/settings/security',
+        builder: (_, __) => const SecuritySettingsScreen()),
+    GoRoute(
+        path: '/settings/change-password',
+        builder: (_, __) => const ChangePasswordScreen()),
+    GoRoute(
+        path: '/settings/login-devices',
+        builder: (_, __) => const LoginDevicesScreen()),
     GoRoute(
         path: '/under-construction',
         builder: (_, __) => const UnderConstructionScreen()),

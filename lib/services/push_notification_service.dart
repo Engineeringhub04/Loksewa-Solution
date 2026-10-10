@@ -227,6 +227,27 @@ class PushNotificationService {
     return id;
   }
 
+  /// Human-readable device model for the Login Devices screen, e.g.
+  /// "samsung SM-A546E" on Android or the utsname machine string
+  /// ("iPhone9,4") on iOS. Best-effort: null when unavailable — the
+  /// caller omits the field so schema-locked rules still pass.
+  static Future<String?> _getDeviceModel() async {
+    try {
+      final plugin = DeviceInfoPlugin();
+      if (Platform.isAndroid) {
+        final info = await plugin.androidInfo;
+        final model = '${info.manufacturer} ${info.model}'.trim();
+        return model.isEmpty ? null : model;
+      }
+      if (Platform.isIOS) {
+        final info = await plugin.iosInfo;
+        final machine = info.utsname.machine;
+        return machine.isEmpty ? null : machine;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   static Future<String?> _getLastUid() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -311,6 +332,13 @@ class PushNotificationService {
         'platform': Platform.operatingSystem,
         'updatedAt': DateTime.now().toIso8601String(),
       };
+      // Human-readable device model for the Login Devices screen
+      // (Security Settings). Best-effort: omitted when unavailable so the
+      // schema-locked push_tokens rules (hasOnly allowlist) still pass.
+      final deviceModel = await _getDeviceModel();
+      if (deviceModel != null && deviceModel.isNotEmpty) {
+        payload['deviceModel'] = deviceModel;
+      }
       if (uid != null && uid.isNotEmpty) {
         // Logged in: attach course info so the worker can filter directly.
         final courseInfo = await _getUserCourseInfo(uid, idToken);

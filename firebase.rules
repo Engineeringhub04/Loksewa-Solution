@@ -147,14 +147,16 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) &&
           request.resource.data.keys().hasOnly([
             'deviceId', 'token', 'platform', 'language', 'appVersion',
-            'createdAt', 'updatedAt', 'courseId', 'subcourseId', 'userName'
+            'createdAt', 'updatedAt', 'courseId', 'subcourseId', 'userName',
+            'deviceModel'
           ]) &&
           request.resource.data.deviceId == deviceId &&
           request.resource.data.token is string &&
           request.resource.data.token.size() > 0 &&
           request.resource.data.token.size() <= 300 &&
           request.resource.data.platform in ['android', 'ios'] &&
-          (!('language' in request.resource.data.keys()) || request.resource.data.language is string);
+          (!('language' in request.resource.data.keys()) || request.resource.data.language is string) &&
+          (!('deviceModel' in request.resource.data.keys()) || request.resource.data.deviceModel is string);
         allow delete: if isOwner(userId) || isAdmin();
       }
       // One account = one device (normal users). Exactly one document is allowed
@@ -715,7 +717,8 @@ service cloud.firestore {
       allow create, update: if
         request.resource.data.keys().hasOnly([
           'deviceId', 'token', 'platform', 'language', 'appVersion',
-          'createdAt', 'updatedAt', 'courseId', 'subcourseId', 'userName'
+          'createdAt', 'updatedAt', 'courseId', 'subcourseId', 'userName',
+          'deviceModel'
         ]) &&
         request.resource.data.deviceId == deviceId &&
         request.resource.data.token is string &&
@@ -723,7 +726,8 @@ service cloud.firestore {
         request.resource.data.token.size() <= 300 &&
         request.resource.data.platform in ['android', 'ios'] &&
         (!('language' in request.resource.data.keys()) || request.resource.data.language is string) &&
-        (!('appVersion' in request.resource.data.keys()) || request.resource.data.appVersion is string);
+        (!('appVersion' in request.resource.data.keys()) || request.resource.data.appVersion is string) &&
+        (!('deviceModel' in request.resource.data.keys()) || request.resource.data.deviceModel is string);
       // Any signed-in user may delete guest tokens (they're transient —
       // recreated on every app open). Needed so login can clean up the
       // guest doc; previously admin-only, which left stale guest docs

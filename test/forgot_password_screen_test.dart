@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:loksewa_solution/screens/auth/forgot_password_screen.dart';
 import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 
 GoRouter _router() {
   return GoRouter(
@@ -19,12 +20,12 @@ GoRouter _router() {
   );
 }
 
-/// The shimmer shows first (~1s), then the form reveals.
-/// NEVER pumpAndSettle — the preloading spinner is an infinite animation.
+/// The form shows instantly — the 1s preloading shimmer was removed
+/// (2026-10-10). NEVER pumpAndSettle — the success/error animations are
+/// finite but the AnimatedSwitcher is mid-flight after taps.
 Future<void> _pumpScreen(WidgetTester tester) async {
   await tester.pumpWidget(MaterialApp.router(routerConfig: _router()));
   await tester.pump(const Duration(milliseconds: 100));
-  await tester.pump(const Duration(milliseconds: 1100)); // shimmer done
   for (var i = 0; i < 3; i++) {
     await tester.pump(const Duration(milliseconds: 200));
   }
@@ -81,6 +82,37 @@ void main() {
     );
     expect(find.byType(AppModalShell), findsNothing);
     expect(find.text('Check Your Email'), findsNothing);
+  });
+
+  testWidgets('form shows instantly — no preloading shimmer', (tester) async {
+    await tester.pumpWidget(MaterialApp.router(routerConfig: _router()));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // The form is already there on the first frames: no PreloadingWidget,
+    // no 1s shimmer wait.
+    expect(find.byType(PreloadingWidget), findsNothing);
+    expect(find.text('Send Reset Link'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
+  testWidgets('account_not_found shows the no-account banner, not a popup',
+      (tester) async {
+    PasswordResetService.setTestClient(
+      MockClient((_) async =>
+          http.Response('{"ok":false,"reason":"account_not_found"}', 200)),
+    );
+    await _pumpScreen(tester);
+
+    await _submitEmail(tester, 'ghost@example.com');
+
+    expect(
+      find.text('No account found with this email address.'),
+      findsOneWidget,
+    );
+    expect(find.byType(AppModalShell), findsNothing);
+    expect(find.text('Check Your Email'), findsNothing);
+    // The form stays visible so the user can correct the email.
+    expect(find.text('Send Reset Link'), findsOneWidget);
   });
 
   testWidgets('ok:true shows the existing check-your-email UI', (tester) async {

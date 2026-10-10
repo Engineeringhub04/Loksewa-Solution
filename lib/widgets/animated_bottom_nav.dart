@@ -7,14 +7,25 @@ import 'package:lottie/lottie.dart';
 /// `curved_navigation_bar` package.
 ///
 /// Matches the user's spec:
-/// - bar background: app BLUE (light 0xFF1D4ED8 / dark 0xFF3B82F6),
+/// - bar background follows the app theme (very light in light mode,
+///   dark in dark mode) — NOT fixed blue,
+/// - the bar is slightly shorter than the package default (65 vs 75),
 /// - the concave notch is TRANSPARENT — the page behind shows through
 ///   (the Scaffold uses `extendBody: true`),
 /// - selected tab: a WHITE circle popping UP ABOVE the bar with the BLUE
-///   animated Lordicon icon inside it,
-/// - unselected tabs: small GRAY Lordicon icons, static first frame,
+///   animated Lordicon icon inside it, label below the circle,
+/// - unselected tabs: BOLD fully-visible Lordicon icons (dark in light
+///   mode, white in dark mode — never dim gray), static fully-revealed
+///   frame, label under each icon,
+/// - labels (Home/Exam/Discussion/Profile) are always visible on all tabs,
+///   theme-aware color,
 /// - tap: the tapped icon's animation plays from the beginning; the white
-///   circle + blue notch slide together (~350ms, easeInOut).
+///   circle + notch slide together (~350ms, easeInOut).
+///
+/// Label note: the package fades the selected item in the bar row to
+/// opacity 0 (it lives in the floating circle instead), so labels cannot be
+/// part of the items — they are overlaid in a Stack, pointer-transparent so
+/// taps still reach the bar.
 ///
 /// Implementation note: the official `lordicon` package was tried first, but
 /// its `IconViewer` caches `colorize` in `initState` (selected/unselected tint
@@ -50,6 +61,9 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
     'Discussion',
     'Profile',
   ];
+
+  /// Slightly shorter than the package default (75).
+  static const double _barHeight = 65;
 
   late final List<AnimationController> _controllers = List.generate(
     _assets.length,
@@ -100,11 +114,22 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
+    // Theme-aware bar: very light in light mode (a hair off-white so the
+    // white circle still reads against it), dark in dark mode.
+    final barColor =
+        isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+    // Unselected icons are BOLD, never dim: near-black in light mode,
+    // white in dark mode.
+    final unselectedTint =
+        isDark ? Colors.white : const Color(0xFF0F172A);
+    // Labels: readable on the bar in both themes.
+    final labelColor =
+        isDark ? const Color(0xFFE2E8F0) : const Color(0xFF334155);
     final bottomPad = MediaQuery.paddingOf(context).bottom;
 
-    Widget item(int i) {
+    Widget icon(int i) {
       final selected = i == widget.currentIndex;
-      final tint = selected ? blue : Colors.grey;
+      final tint = selected ? blue : unselectedTint;
       return Semantics(
         button: true,
         selected: selected,
@@ -115,8 +140,8 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
           onLoaded: (composition) {
             _controllers[i].duration = composition.duration;
           },
-          width: selected ? 30 : 26,
-          height: selected ? 30 : 26,
+          width: selected ? 28 : 26,
+          height: selected ? 28 : 26,
           delegates: LottieDelegates(
             values: [
               ValueDelegate.color(const ['**'], value: tint),
@@ -127,23 +152,63 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
       );
     }
 
+    final labelStyle = TextStyle(
+      fontSize: 10,
+      height: 1.2,
+      fontWeight: FontWeight.w600,
+      color: labelColor,
+    );
+
     // No opaque wrapper: the notch stays transparent so the page body
     // (extendBody: true) shows through. Only bottom safe-area padding.
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPad),
-      child: CurvedNavigationBar(
-        index: widget.currentIndex,
-        onTap: _handleTap,
-        // Bar background: app blue.
-        color: blue,
-        // Transparent notch: page content shows through.
-        backgroundColor: Colors.transparent,
-        // The raised circle.
-        buttonBackgroundColor: Colors.white,
-        animationDuration: const Duration(milliseconds: 350),
-        animationCurve: Curves.easeInOut,
-        height: 75,
-        items: [item(0), item(1), item(2), item(3)],
+      child: SizedBox(
+        height: _barHeight,
+        child: Stack(
+          children: [
+            CurvedNavigationBar(
+              index: widget.currentIndex,
+              onTap: _handleTap,
+              // Bar background follows the app theme.
+              color: barColor,
+              // Transparent notch: page content shows through.
+              backgroundColor: Colors.transparent,
+              // The raised circle stays white in both themes for contrast
+              // with the blue selected icon.
+              buttonBackgroundColor: Colors.white,
+              animationDuration: const Duration(milliseconds: 350),
+              animationCurve: Curves.easeInOut,
+              height: _barHeight,
+              items: [icon(0), icon(1), icon(2), icon(3)],
+            ),
+            // Labels for all 4 tabs, on one baseline below the icons (and
+            // below the selected circle). The package fades the selected
+            // row item out, so labels live here instead of in the items.
+            // Pointer-transparent: taps must reach the bar's buttons.
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 8,
+              child: IgnorePointer(
+                child: Row(
+                  children: [
+                    for (int i = 0; i < _labels.length; i++)
+                      Expanded(
+                        child: Text(
+                          _labels[i],
+                          textAlign: TextAlign.center,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: labelStyle,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

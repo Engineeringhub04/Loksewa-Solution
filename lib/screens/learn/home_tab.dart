@@ -409,9 +409,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                 children: [
                   RefreshIndicator.adaptive(
                     // The header overlays the top of the list (Stack), so the
-                    // spinner would hide behind it — settle it below the
-                    // header instead, like the other pages show it.
-                    displacement: expandedH + 40,
+                    // spinner would hide behind it — shift the trigger edge
+                    // below the header like the profile page does. (A large
+                    // `displacement` was used before; it forced a much longer
+                    // drag before the spinner appeared.)
+                    edgeOffset: expandedH,
                     onRefresh: () async {
                       setState(() => _future = _load());
                       // Keep the shared store fresh too, so the header (and

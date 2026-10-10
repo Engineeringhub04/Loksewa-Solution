@@ -375,12 +375,18 @@ class _DiscussionTabState extends State<DiscussionTab> {
         ],
       ),
       floatingActionButton: _signedIn
-          ? FloatingActionButton(
-              onPressed: () => context.push('/discussion/create'),
-              tooltip: AppLanguage.tr('Create Post', 'पोस्ट बनाउनुहोस्'),
-              backgroundColor: Theme.of(context).colorScheme.primary,
-              foregroundColor: Colors.white,
-              child: const Icon(Icons.add, size: 26),
+          // Lifted above the overlaying bottom nav (tabs scaffold uses
+          // extendBody): 65px bar + margin, plus device bottom safe area.
+          ? Padding(
+              padding: EdgeInsets.only(
+                  bottom: MediaQuery.paddingOf(context).bottom + 72),
+              child: FloatingActionButton(
+                onPressed: () => context.push('/discussion/create'),
+                tooltip: AppLanguage.tr('Create Post', 'पोस्ट बनाउनुहोस्'),
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Colors.white,
+                child: const Icon(Icons.add, size: 26),
+              ),
             )
           : null,
     );
@@ -643,12 +649,15 @@ class _DiscussionTabState extends State<DiscussionTab> {
         searching: _query.trim().isNotEmpty,
       );
     }
+    // Clearance for the overlaying bottom nav (the tabs scaffold uses
+    // extendBody): 65px bar + margin, plus the device bottom safe area.
+    final navClearance = MediaQuery.paddingOf(context).bottom + 88;
     return RefreshIndicator.adaptive(
       onRefresh: () => _load(silent: true),
       // React parity: no list entrance animations on the feed — plain list
       // with 16px gaps, 16px horizontal padding.
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, navClearance),
         itemCount: posts.length,
         itemBuilder: (context, i) {
           final post = posts[i];

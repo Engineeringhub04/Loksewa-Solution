@@ -644,6 +644,10 @@ class _ExamTabState extends State<ExamTab> {
   Widget _buildBody() {
     final palette = ExpoPalette.of(context);
     final subcourseId = _subcourseId;
+    // Clearance for the overlaying bottom nav (the tabs scaffold uses
+    // extendBody): 65px bar + margin, plus the device bottom safe area —
+    // mirrors the home tab's bottomPad + 96.
+    final navClearance = MediaQuery.paddingOf(context).bottom + 88;
     if (_loading) {
       return PreloadingWidget(
         tinted: false,
@@ -709,7 +713,7 @@ class _ExamTabState extends State<ExamTab> {
       onRefresh: _load,
       child: ListView(
         controller: _scrollController,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        padding: EdgeInsets.fromLTRB(16, 16, 16, navClearance),
         children: [
           if (_activeSection != null) _sectionBanner(_activeSection!),
           if (_activeSection != null) const SizedBox(height: 12),

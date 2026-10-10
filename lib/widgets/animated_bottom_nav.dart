@@ -118,9 +118,10 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final blue = isDark ? const Color(0xFF3B82F6) : const Color(0xFF1D4ED8);
     // Theme-aware bar: very light in light mode (a hair off-white so the
-    // white circle still reads against it), dark in dark mode.
+    // white circle still reads against it); in dark mode a step lighter
+    // than the page bg (#1E293B) so the bar reads as a distinct surface.
     final barColor =
-        isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC);
+        isDark ? const Color(0xFF1E293B) : const Color(0xFFF8FAFC);
     // Unselected icons are BOLD, never dim: near-black in light mode,
     // white in dark mode.
     final unselectedTint =
@@ -179,7 +180,7 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
           boxShadow: [
             BoxShadow(
               color: isDark
-                  ? Colors.white.withValues(alpha: 0.04)
+                  ? Colors.white.withValues(alpha: 0.06)
                   : Colors.black.withValues(alpha: 0.08),
               blurRadius: 12,
               spreadRadius: 0,

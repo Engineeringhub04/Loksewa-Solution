@@ -1,7 +1,7 @@
 name: loksewa_solution
 description: Loksewa Solution — Flutter rewrite. Same Firebase backend as the Expo app (REST-based, no backend changes).
 publish_to: 'none'
-version: 1.0.88+89
+version: 1.0.89+90
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -42,6 +42,10 @@ flutter:
     - assets/images/ws-leaderboard_analytics.png
     - assets/images/ws-dailytest.png
     - assets/images/ws-discussion.png
+    - assets/images/auth_himalayas_bg.png
+    - assets/images/auth_illust_login.png
+    - assets/images/auth_illust_signup.png
+    - assets/images/auth_illust_reset.png
     - assets/icons/nav_home.json
     - assets/icons/nav_exam.json
     - assets/icons/nav_discussion.json

@@ -231,6 +231,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
               "Enter your email and we'll send you a secure reset link",
               'आफ्नो इमेल प्रविष्ट गर्नुहोस्, हामी सुरक्षित रिसेट लिङ्क पठाउनेछौं'),
           onBack: () => context.pop(),
+          // Flat reset illustration fills the space between header and card
+          // (user mockup, 2026-10-10) — compact since the form is tall.
+          illustrationAsset: 'assets/images/auth_illust_reset.png',
+          illustrationHeight: 150,
           // The form shows instantly — no preloading shimmer (user asked
           // for direct display on 2026-10-10).
           child: AnimatedSwitcher(

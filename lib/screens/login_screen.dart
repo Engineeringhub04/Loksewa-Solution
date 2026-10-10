@@ -277,6 +277,14 @@ class _LoginScreenState extends State<LoginScreen>
       key: const ValueKey('collapsed'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 4, bottom: 20),
+          child: Image.asset(
+            'assets/images/auth_illust_login.png',
+            height: 200,
+            fit: BoxFit.contain,
+          ),
+        ),
         _googleButton(),
         const AuthDivider(),
         AuthEmailButton(

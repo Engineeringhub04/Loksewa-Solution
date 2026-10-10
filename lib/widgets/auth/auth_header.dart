@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 /// Curved gradient header shared by all auth screens — mirrors AuthHeader.tsx.
-/// Gradient #2563EB -> #1D4ED8 -> #0B1F5B top-to-bottom, 32px bottom corner
-/// radius, 82x82 logo squircle tile (radius 18), title 26 bold white,
-/// subtitle 14 rgba(255,255,255,0.88). Always light — never themed.
+/// Himalayan panorama background (auth_himalayas_bg.png) under an app-blue
+/// gradient overlay (#2563EB -> #1D4ED8 -> #0B1F5B top-to-bottom, translucent
+/// so the mountains show through faintly), 32px bottom corner radius,
+/// 82x82 logo squircle tile (radius 18), title 26 bold white, subtitle 14
+/// rgba(255,255,255,0.88). Always light — never themed.
 class AuthHeader extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -21,27 +23,36 @@ class AuthHeader extends StatelessWidget {
     final topPad = MediaQuery.of(context).padding.top;
     return Container(
       decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [
-            Color(0xFF2563EB),
-            Color(0xFF1D4ED8),
-            Color(0xFF0B1F5B),
-          ],
-        ),
         borderRadius: BorderRadius.only(
           bottomLeft: Radius.circular(32),
           bottomRight: Radius.circular(32),
         ),
+        image: DecorationImage(
+          image: AssetImage('assets/images/auth_himalayas_bg.png'),
+          fit: BoxFit.cover,
+          alignment: Alignment.bottomCenter,
+        ),
       ),
-      padding: EdgeInsets.only(
-        top: topPad + 16,
-        bottom: 24,
-        left: 32,
-        right: 32,
-      ),
-      child: Stack(
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              const Color(0xFF2563EB).withValues(alpha: 0.88),
+              const Color(0xFF1D4ED8).withValues(alpha: 0.78),
+              const Color(0xFF0B1F5B).withValues(alpha: 0.92),
+            ],
+          ),
+        ),
+        padding: EdgeInsets.only(
+          top: topPad + 16,
+          bottom: 24,
+          left: 32,
+          right: 32,
+        ),
+        child: Stack(
         children: [
           if (onBack != null)
             Positioned(
@@ -107,6 +118,7 @@ class AuthHeader extends StatelessWidget {
             ),
           ),
         ],
+        ),
       ),
     );
   }

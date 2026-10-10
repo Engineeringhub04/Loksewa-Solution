@@ -26,7 +26,6 @@ class ResetPasswordScreen extends StatefulWidget {
 enum _ResetStatus { form, success, error }
 
 class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
-  static const _purple = Color(0xFF7C3AED);
   final _password = TextEditingController();
   final _confirm = TextEditingController();
   final _confirmFocus = FocusNode();
@@ -143,8 +142,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           label:
               AppLanguage.tr('Change Password', 'पासवर्ड परिवर्तन गर्नुहोस्'),
           loading: _loading,
-          color: _purple,
-          disabledColor: _purple,
           onPressed: _reset,
         ),
       ],
@@ -172,11 +169,13 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         const SizedBox(height: 16),
         Text(
           AppLanguage.tr(
-              'Password reset successful', 'पासवर्ड सफलतापूर्वक रिसेट भयो'),
+              'Your password has been changed successfully. You can now log in with your new password.',
+              'तपाईंको पासवर्ड सफलतापूर्वक परिवर्तन भयो। अब तपाईं नयाँ पासवर्ड प्रयोग गरेर लगइन गर्न सक्नुहुन्छ।'),
           style: const TextStyle(
-            fontSize: 22,
+            fontSize: 18,
             fontWeight: FontWeight.bold,
             color: Color(0xFF1F2937),
+            height: 26 / 18,
           ),
           textAlign: TextAlign.center,
         ),
@@ -185,8 +184,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           label: loggedIn
               ? AppLanguage.tr('Back to Home', 'होममा फर्कनुहोस्')
               : AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
-          color: _purple,
-          disabledColor: _purple,
           onPressed: () => context.go(loggedIn ? '/' : '/login'),
         ),
       ],
@@ -235,8 +232,6 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
         const SizedBox(height: 24),
         AuthPrimaryButton(
           label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
-          color: _purple,
-          disabledColor: _purple,
           onPressed: () => context.go('/login'),
         ),
       ],
@@ -267,7 +262,7 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
           illustrationAsset: _status == _ResetStatus.success
               ? null
               : 'assets/images/auth_illust_reset.png',
-          illustrationHeight: 150,
+          illustrationHeight: 120,
           // The form shows instantly — no preloading shimmer (user asked for
           // direct display on 2026-10-10). Back goes to /login for logged-out
           // users (cold-start link path); logged-in users (auto-opened over

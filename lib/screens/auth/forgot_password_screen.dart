@@ -20,7 +20,6 @@ class ForgotPasswordScreen extends StatefulWidget {
 }
 
 class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
-  static const _purple = Color(0xFF7C3AED);
   final _email = TextEditingController();
   bool _loading = false;
   bool _sent = false;
@@ -149,8 +148,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         AuthPrimaryButton(
           label: AppLanguage.tr('Send Reset Link', 'रिसेट लिङ्क पठाउनुहोस्'),
           loading: _loading,
-          color: _purple,
-          disabledColor: _purple,
           onPressed: _submit,
         ),
         const SizedBox(height: 16),
@@ -160,7 +157,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             child: Text(
               AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
               style: const TextStyle(
-                  fontSize: 15, fontWeight: FontWeight.w600, color: _purple),
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: Color(0xFF1D4ED8)),
             ),
           ),
         ),
@@ -180,7 +179,8 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             color: const Color(0xFFF3E8FF),
             borderRadius: BorderRadius.circular(40),
           ),
-          child: const Icon(Icons.mail_outline, size: 44, color: _purple),
+          child:
+              const Icon(Icons.mail_outline, size: 44, color: Color(0xFF1D4ED8)),
         ),
         const SizedBox(height: 16),
         Text(
@@ -204,8 +204,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         const SizedBox(height: 8),
         AuthPrimaryButton(
           label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
-          color: _purple,
-          disabledColor: _purple,
           onPressed: () => context.go('/login'),
         ),
       ],

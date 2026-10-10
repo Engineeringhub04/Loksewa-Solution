@@ -278,10 +278,10 @@ class _LoginScreenState extends State<LoginScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.only(top: 4, bottom: 20),
+          padding: const EdgeInsets.only(bottom: 12),
           child: Image.asset(
             'assets/images/auth_illust_login.png',
-            height: 160,
+            height: 130,
             fit: BoxFit.contain,
           ),
         ),

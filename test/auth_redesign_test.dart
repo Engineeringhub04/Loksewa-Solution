@@ -253,7 +253,10 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.text('Password reset successful'), findsOneWidget);
+      expect(
+          find.text(
+              'Your password has been changed successfully. You can now log in with your new password.'),
+          findsOneWidget);
       expect(
         _findAssetImage('assets/images/auth_illust_reset.png'),
         findsNothing,
@@ -280,6 +283,100 @@ void main() {
       expect(
         _findAssetImage('assets/images/auth_illust_reset.png'),
         findsOneWidget,
+      );
+    });
+  });
+
+  group('v1.0.91 polish (user asked 2026-10-10)', () {
+    testWidgets('auth header logo tile is a 96px squircle (radius 28)',
+        (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: AuthHeader(
+              title: 'Welcome Back',
+              subtitle: 'Sign in to continue',
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final tile = find.byWidgetPredicate(
+        (w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration as BoxDecoration).borderRadius ==
+                BorderRadius.circular(28),
+      );
+      expect(tile, findsOneWidget);
+      // Logo image fills the 96x96 tile.
+      final logoImg = tester.widget<Image>(
+        find.byWidgetPredicate(
+          (w) =>
+              w is Image &&
+              w.image is AssetImage &&
+              (w.image as AssetImage).assetName == 'assets/images/app_logo.png',
+        ),
+      );
+      expect(logoImg.width, 96);
+      expect(logoImg.height, 96);
+    });
+
+    testWidgets('login illustration is 130px', (tester) async {
+      await _pumpApp(tester, '/login');
+      final img = tester.widget<Image>(
+        _findAssetImage('assets/images/auth_illust_login.png'),
+      );
+      expect(img.height, 130);
+    });
+
+    testWidgets('signup illustration is 130px', (tester) async {
+      await _pumpApp(tester, '/signup');
+      final img = tester.widget<Image>(
+        _findAssetImage('assets/images/auth_illust_signup.png'),
+      );
+      expect(img.height, 130);
+    });
+
+    testWidgets('reset-password illustration is 120px and centered',
+        (tester) async {
+      await _pumpApp(tester, '/auth/reset-password?token=tok123');
+      final img = tester.widget<Image>(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+      );
+      expect(img.height, 120);
+      // Explicitly wrapped in a Center (user: illustration must be centered).
+      expect(
+        find.ancestor(
+          of: _findAssetImage('assets/images/auth_illust_reset.png'),
+          matching: find.byType(Center),
+        ),
+        findsWidgets,
+      );
+    });
+
+    testWidgets('reset-password buttons are app blue, not purple',
+        (tester) async {
+      await _pumpApp(tester, '/auth/reset-password?token=tok123');
+      final btn = tester.widget<ElevatedButton>(
+        find.byType(ElevatedButton).first,
+      );
+      expect(
+        btn.style?.backgroundColor?.resolve({}),
+        const Color(0xFF1D4ED8),
+      );
+    });
+
+    testWidgets('forgot-password send button is app blue, not purple',
+        (tester) async {
+      await _pumpApp(tester, '/forgot-password');
+      final btn = tester.widget<ElevatedButton>(
+        find.byType(ElevatedButton).first,
+      );
+      expect(
+        btn.style?.backgroundColor?.resolve({}),
+        const Color(0xFF1D4ED8),
       );
     });
   });

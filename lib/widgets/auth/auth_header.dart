@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 /// Himalayan panorama background (auth_himalayas_bg.png) under an app-blue
 /// gradient overlay (#2563EB -> #1D4ED8 -> #0B1F5B top-to-bottom, translucent
 /// so the mountains show through faintly), 32px bottom corner radius,
-/// 82x82 logo squircle tile (radius 18), title 26 bold white, subtitle 14
-/// rgba(255,255,255,0.88). Always light — never themed.
+/// 96x96 logo squircle tile (radius 28 — modern app-icon curve like
+/// Play Store / iPhone icons, user asked 2026-10-10), title 26 bold white,
+/// subtitle 14 rgba(255,255,255,0.88). Always light — never themed.
 class AuthHeader extends StatelessWidget {
   final String title;
   final String subtitle;
@@ -70,11 +71,11 @@ class AuthHeader extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  width: 82,
-                  height: 82,
+                  width: 96,
+                  height: 96,
                   margin: const EdgeInsets.only(bottom: 12),
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(18),
+                    borderRadius: BorderRadius.circular(28),
                     color: const Color(0xFF000030),
                     border: Border.all(
                       color: Colors.white.withValues(alpha: 0.35),
@@ -90,8 +91,8 @@ class AuthHeader extends StatelessWidget {
                   clipBehavior: Clip.antiAlias,
                   child: Image.asset(
                     'assets/images/app_logo.png',
-                    width: 82,
-                    height: 82,
+                    width: 96,
+                    height: 96,
                     fit: BoxFit.cover,
                   ),
                 ),

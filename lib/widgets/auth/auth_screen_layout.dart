@@ -95,12 +95,16 @@ class _AuthScreenLayoutState extends State<AuthScreenLayout> {
                             child: widget.illustrationAsset != null
                                 ? Padding(
                                     key: ValueKey(widget.illustrationAsset),
-                                    padding: const EdgeInsets.only(
-                                        top: 8, bottom: 20),
-                                    child: Image.asset(
-                                      widget.illustrationAsset!,
-                                      height: widget.illustrationHeight,
-                                      fit: BoxFit.contain,
+                                    // Tight under the header (user asked
+                                    // 2026-10-10: no big gap), explicitly
+                                    // centered.
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: Center(
+                                      child: Image.asset(
+                                        widget.illustrationAsset!,
+                                        height: widget.illustrationHeight,
+                                        fit: BoxFit.contain,
+                                      ),
                                     ),
                                   )
                                 : const SizedBox.shrink(

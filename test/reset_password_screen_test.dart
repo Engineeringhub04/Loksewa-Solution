@@ -95,7 +95,7 @@ void main() {
     expect(seenUrl.toString(),
         'https://loksewa-push-worker.loksewasolutionapi.workers.dev/complete-password-reset');
     expect(seenBody, {'token': 'tok123', 'newPassword': 'newpass1'});
-    expect(find.text('Password reset successful'), findsOneWidget);
+    expect(find.text('Your password has been changed successfully. You can now log in with your new password.'), findsOneWidget);
   });
 
   testWidgets('worker ok:true shows the success state', (tester) async {
@@ -106,7 +106,7 @@ void main() {
     await _pumpScreen(tester, '/auth/reset-password?token=tok123');
     await _fillAndSubmit(tester, 'newpass1', 'newpass1');
 
-    expect(find.text('Password reset successful'), findsOneWidget);
+    expect(find.text('Your password has been changed successfully. You can now log in with your new password.'), findsOneWidget);
     expect(find.text('Back to Login'), findsOneWidget);
   });
 
@@ -122,7 +122,7 @@ void main() {
 
     expect(find.text('This link is invalid or has expired.'), findsOneWidget);
     expect(find.textContaining('new reset link'), findsOneWidget);
-    expect(find.text('Password reset successful'), findsNothing);
+    expect(find.text('Your password has been changed successfully. You can now log in with your new password.'), findsNothing);
   });
 
   testWidgets('expired_token shows the invalid/expired link state',
@@ -176,7 +176,7 @@ void main() {
     // Inline validation via toast — still on the form, no state change.
     expect(find.text('This password is too weak. Please choose a stronger password.'),
         findsOneWidget);
-    expect(find.text('Password reset successful'), findsNothing);
+    expect(find.text('Your password has been changed successfully. You can now log in with your new password.'), findsNothing);
     expect(find.text('Something went wrong.'), findsNothing);
   });
 

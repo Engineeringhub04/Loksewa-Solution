@@ -262,8 +262,11 @@ class _ResetPasswordScreenState extends State<ResetPasswordScreen> {
               'Choose a strong new password for your account',
               'आफ्नो खाताको लागि बलियो नयाँ पासवर्ड छान्नुहोस्'),
           // Flat reset illustration between header and card (user mockup,
-          // 2026-10-10) — compact since the form is tall.
-          illustrationAsset: 'assets/images/auth_illust_reset.png',
+          // 2026-10-10) — compact since the form is tall. Hidden on the
+          // success state (user asked 2026-10-10); kept on form + error.
+          illustrationAsset: _status == _ResetStatus.success
+              ? null
+              : 'assets/images/auth_illust_reset.png',
           illustrationHeight: 150,
           // The form shows instantly — no preloading shimmer (user asked for
           // direct display on 2026-10-10). Back goes to /login for logged-out

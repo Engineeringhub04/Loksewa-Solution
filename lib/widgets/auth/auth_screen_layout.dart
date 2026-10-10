@@ -78,16 +78,34 @@ class _AuthScreenLayoutState extends State<AuthScreenLayout> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          if (widget.illustrationAsset != null)
-                            Padding(
-                              padding:
-                                  const EdgeInsets.only(top: 8, bottom: 20),
-                              child: Image.asset(
-                                widget.illustrationAsset!,
-                                height: widget.illustrationHeight,
-                                fit: BoxFit.contain,
+                          // Animated in/out (e.g. hidden on success states) —
+                          // same AnimatedSwitcher pattern as the login
+                          // email-form toggle (2026-10-10).
+                          AnimatedSwitcher(
+                            duration: const Duration(milliseconds: 300),
+                            transitionBuilder: (child, animation) =>
+                                FadeTransition(
+                              opacity: animation,
+                              child: SizeTransition(
+                                sizeFactor: animation,
+                                axisAlignment: -1,
+                                child: child,
                               ),
                             ),
+                            child: widget.illustrationAsset != null
+                                ? Padding(
+                                    key: ValueKey(widget.illustrationAsset),
+                                    padding: const EdgeInsets.only(
+                                        top: 8, bottom: 20),
+                                    child: Image.asset(
+                                      widget.illustrationAsset!,
+                                      height: widget.illustrationHeight,
+                                      fit: BoxFit.contain,
+                                    ),
+                                  )
+                                : const SizedBox.shrink(
+                                    key: ValueKey('no-illustration')),
+                          ),
                           widget.child,
                         ],
                       ),

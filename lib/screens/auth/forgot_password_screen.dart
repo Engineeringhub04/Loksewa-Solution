@@ -233,7 +233,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           onBack: () => context.pop(),
           // Flat reset illustration fills the space between header and card
           // (user mockup, 2026-10-10) — compact since the form is tall.
-          illustrationAsset: 'assets/images/auth_illust_reset.png',
+          // Hidden once the "Check Your Email" success state shows
+          // (user asked 2026-10-10); kept on error/banner states.
+          illustrationAsset: _sent ? null : 'assets/images/auth_illust_reset.png',
           illustrationHeight: 150,
           // The form shows instantly — no preloading shimmer (user asked
           // for direct display on 2026-10-10).

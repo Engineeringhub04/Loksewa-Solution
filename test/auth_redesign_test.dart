@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:loksewa_solution/screens/auth/forgot_password_screen.dart';
 import 'package:loksewa_solution/screens/auth/reset_password_screen.dart';
 import 'package:loksewa_solution/screens/auth/signup_screen.dart';
 import 'package:loksewa_solution/screens/login_screen.dart';
+import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_header.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -191,6 +194,93 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('New Password'), findsOneWidget);
+    });
+  });
+
+  group('Success states — illustration hides (user asked 2026-10-10)', () {
+    tearDown(() {
+      // Never leak a mock client into another test.
+      PasswordResetService.setTestClient(null);
+    });
+
+    testWidgets('forgot-password success hides the illustration',
+        (tester) async {
+      PasswordResetService.setTestClient(
+        MockClient((request) async => http.Response('{"ok":true}', 200)),
+      );
+      await _pumpApp(tester, '/forgot-password');
+
+      // Illustration visible on the form state.
+      expect(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+        findsOneWidget,
+      );
+
+      final fields = find.byType(TextField);
+      expect(fields, findsOneWidget);
+      await tester.enterText(fields, 'user@example.com');
+      await tester.tap(find.text('Send Reset Link'));
+      // Let the mocked worker future resolve, then the switchers animate.
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Check Your Email'), findsOneWidget);
+      expect(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('reset-password success hides the illustration',
+        (tester) async {
+      PasswordResetService.setTestClient(
+        MockClient((request) async => http.Response('{"ok":true}', 200)),
+      );
+      await _pumpApp(tester, '/auth/reset-password?token=tok123');
+
+      expect(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+        findsOneWidget,
+      );
+
+      final fields = find.byType(TextField);
+      expect(fields, findsNWidgets(2));
+      await tester.enterText(fields.at(0), 'newpass1');
+      await tester.enterText(fields.at(1), 'newpass1');
+      await tester.tap(find.text('Change Password'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(find.text('Password reset successful'), findsOneWidget);
+      expect(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('reset-password error keeps the illustration', (tester) async {
+      PasswordResetService.setTestClient(
+        MockClient((request) async =>
+            http.Response('{"ok":false,"reason":"invalid_token"}', 200)),
+      );
+      await _pumpApp(tester, '/auth/reset-password?token=tok123');
+
+      final fields = find.byType(TextField);
+      expect(fields, findsNWidgets(2));
+      await tester.enterText(fields.at(0), 'newpass1');
+      await tester.enterText(fields.at(1), 'newpass1');
+      await tester.tap(find.text('Change Password'));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      // Error state keeps the illustration for context (user asked).
+      expect(
+        _findAssetImage('assets/images/auth_illust_reset.png'),
+        findsOneWidget,
+      );
     });
   });
 }

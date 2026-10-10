@@ -281,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen>
           padding: const EdgeInsets.only(top: 4, bottom: 20),
           child: Image.asset(
             'assets/images/auth_illust_login.png',
-            height: 200,
+            height: 160,
             fit: BoxFit.contain,
           ),
         ),

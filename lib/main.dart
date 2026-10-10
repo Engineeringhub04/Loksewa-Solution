@@ -1,3 +1,4 @@
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'router/app_router.dart';
@@ -7,11 +8,17 @@ import 'services/theme_service.dart';
 import 'services/app_language.dart';
 import 'services/prefs_service.dart';
 import 'services/push_notification_service.dart';
+import 'services/reset_link_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   await AppLanguage.init();
+  // Password-reset App Link cold start: the router forces every cold start
+  // to /splash (overridePlatformDefaultLocation), which would discard the
+  // tapped link's oobCode. Capture it first — the splash consumes the stash
+  // and routes to the reset form. Best-effort, never blocks startup.
+  await ResetLinkService.captureInitialLink();
   // FCM push: token registration (best-effort, never blocks startup).
   PushNotificationService.init().catchError((_) {});
   // Notification tap → stash the payload for the splash on cold start;
@@ -52,14 +59,31 @@ Future<void> main() async {
       }
     }
   };
+  // Warm-start App Links: the app is already running (in recents) when a
+  // link is tapped. Only the exact password-reset path is intercepted (and
+  // routed to the reset form); every other link keeps today's behavior —
+  // the OS resumes the activity and Dart does nothing with it. Cold starts
+  // are owned by captureInitialLink() + the splash (splashHasRouted is still
+  // false there), so stream events are ignored until the splash has routed.
+  ResetLinkService.onWarmResetLink = (location) {
+    if (splashHasRouted) appRouter.go(location);
+  };
+  AppLinks().uriLinkStream.listen(
+    ResetLinkService.handleIncomingUri,
+    onError: (_) {},
+  );
   runApp(const LoksewaSolutionApp());
 }
 
-/// App Links (https://www.kbr.com.np) carry no in-app routing: tapping the
-/// link just opens / resumes the app. Cold start goes through the normal
-/// splash routing below; a warm start (app in recents) simply resumes where
-/// the user was — the OS delivers the intent to the existing activity and
-/// Dart deliberately does nothing with it.
+/// App Links (https://www.kbr.com.np) carry no in-app routing except the
+/// password-reset path: tapping a plain-domain link just opens / resumes the
+/// app. Cold start goes through the normal splash routing below; a warm
+/// start (app in recents) simply resumes where the user was — the OS
+/// delivers the intent to the existing activity and Dart deliberately does
+/// nothing with it. The one exception is
+/// https://kbr.com.np/auth/reset-password?oobCode=..., which the
+/// ResetLinkService routes to the reset form (cold start via the splash,
+/// warm start via the link stream).
 
 class LoksewaSolutionApp extends StatelessWidget {
   const LoksewaSolutionApp({super.key});

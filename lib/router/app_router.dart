@@ -121,6 +121,11 @@ final appRouter = GoRouter(
   // straight to '/' (or '/signup'), bypassing the splash — no session
   // check, no user loaded. Forcing the initial location keeps EVERY cold
   // start (link or manual) on the splash's normal session check.
+  // One exception: the password-reset link
+  // (https://kbr.com.np/auth/reset-password?oobCode=...). Its oobCode would
+  // be discarded by the forced /splash, so ResetLinkService captures the
+  // initial URI via the app_links plugin before the router boots and the
+  // splash routes it to the reset form. See lib/services/reset_link_service.dart.
   overridePlatformDefaultLocation: true,
   routes: [
     GoRoute(path: '/splash', builder: (_, __) => const SplashScreen()),

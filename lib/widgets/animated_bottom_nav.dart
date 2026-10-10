@@ -9,16 +9,19 @@ import 'package:lottie/lottie.dart';
 /// Matches the user's spec:
 /// - bar background follows the app theme (very light in light mode,
 ///   dark in dark mode) — NOT fixed blue,
+/// - a SOFT UPWARD SHADOW (Tarika 2) separates the bar from the page
+///   above — subtle floating feel like the reference app; isolated in one
+///   Container so it is trivial to remove if the user dislikes it,
 /// - the bar is slightly shorter than the package default (65 vs 75),
 /// - the concave notch is TRANSPARENT — the page behind shows through
 ///   (the Scaffold uses `extendBody: true`),
-/// - selected tab: a WHITE circle popping UP ABOVE the bar with the BLUE
-///   animated Lordicon icon inside it, label below the circle,
+/// - selected tab: a THEME-AWARE circle popping UP ABOVE the bar — dark
+///   navy in light mode, white in dark mode — with the BLUE animated
+///   Lordicon icon inside it, BOLD label below the circle in app blue,
 /// - unselected tabs: BOLD fully-visible Lordicon icons (dark in light
 ///   mode, white in dark mode — never dim gray), static fully-revealed
-///   frame, label under each icon,
+///   frame, BOLD label under each icon in a theme-aware color,
 /// - labels (Home/Exam/Discussion/Profile) are always visible on all tabs,
-///   theme-aware color,
 /// - tap: the tapped icon's animation plays from the beginning; the white
 ///   circle + notch slide together (~350ms, easeInOut).
 ///
@@ -155,59 +158,85 @@ class _AnimatedBottomNavState extends State<AnimatedBottomNav>
     final labelStyle = TextStyle(
       fontSize: 10,
       height: 1.2,
-      fontWeight: FontWeight.w600,
+      fontWeight: FontWeight.w700,
       color: labelColor,
     );
+    // Selected circle: dark navy in light mode (user: "white circle lai
+    // dark mode ko color ko circle"), white in dark mode.
+    final circleColor =
+        isDark ? Colors.white : const Color(0xFF0F172A);
 
     // No opaque wrapper: the notch stays transparent so the page body
     // (extendBody: true) shows through. Only bottom safe-area padding.
+    // Tarika 2 shadow: a soft upward shadow for subtle separation between
+    // the bar and the white page above (reference-app feel). Isolated in
+    // this one Container — delete it to revert. Light mode: faint black;
+    // dark mode: faint white glow (black would be invisible on dark).
     return Padding(
       padding: EdgeInsets.only(bottom: bottomPad),
-      child: SizedBox(
-        height: _barHeight,
-        child: Stack(
-          children: [
-            CurvedNavigationBar(
-              index: widget.currentIndex,
-              onTap: _handleTap,
-              // Bar background follows the app theme.
-              color: barColor,
-              // Transparent notch: page content shows through.
-              backgroundColor: Colors.transparent,
-              // The raised circle stays white in both themes for contrast
-              // with the blue selected icon.
-              buttonBackgroundColor: Colors.white,
-              animationDuration: const Duration(milliseconds: 350),
-              animationCurve: Curves.easeInOut,
-              height: _barHeight,
-              items: [icon(0), icon(1), icon(2), icon(3)],
-            ),
-            // Labels for all 4 tabs, on one baseline below the icons (and
-            // below the selected circle). The package fades the selected
-            // row item out, so labels live here instead of in the items.
-            // Pointer-transparent: taps must reach the bar's buttons.
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 8,
-              child: IgnorePointer(
-                child: Row(
-                  children: [
-                    for (int i = 0; i < _labels.length; i++)
-                      Expanded(
-                        child: Text(
-                          _labels[i],
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: labelStyle,
-                        ),
-                      ),
-                  ],
-                ),
-              ),
+      child: Container(
+        decoration: BoxDecoration(
+          boxShadow: [
+            BoxShadow(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : Colors.black.withValues(alpha: 0.08),
+              blurRadius: 12,
+              spreadRadius: 0,
+              offset: const Offset(0, -3),
             ),
           ],
+        ),
+        child: SizedBox(
+          height: _barHeight,
+          child: Stack(
+            children: [
+              CurvedNavigationBar(
+                index: widget.currentIndex,
+                onTap: _handleTap,
+                // Bar background follows the app theme.
+                color: barColor,
+                // Transparent notch: page content shows through.
+                backgroundColor: Colors.transparent,
+                // The raised circle: dark navy in light mode, white in
+                // dark mode — contrast with the blue selected icon.
+                buttonBackgroundColor: circleColor,
+                animationDuration: const Duration(milliseconds: 350),
+                animationCurve: Curves.easeInOut,
+                height: _barHeight,
+                items: [icon(0), icon(1), icon(2), icon(3)],
+              ),
+              // Labels for all 4 tabs, on one baseline below the icons (and
+              // below the selected circle). The package fades the selected
+              // row item out, so labels live here instead of in the items.
+              // Pointer-transparent: taps must reach the bar's buttons.
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 8,
+                child: IgnorePointer(
+                  child: Row(
+                    children: [
+                      for (int i = 0; i < _labels.length; i++)
+                        Expanded(
+                          child: Text(
+                            _labels[i],
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: labelStyle.copyWith(
+                              color: i == widget.currentIndex
+                                  ? blue
+                                  : labelColor,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

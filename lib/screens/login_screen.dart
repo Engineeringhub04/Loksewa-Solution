@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../services/account_protection.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
 import '../services/device_session_service.dart';
@@ -114,7 +115,28 @@ class _LoginScreenState extends State<LoginScreen>
 
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
+  /// NOTE 1 — blacklist: after a successful sign-in, a blacklisted email is
+  /// signed straight back out and blocked. Returns true when blocked.
+  Future<bool> _rejectIfBlacklisted(String? email) async {
+    final e = (email ?? '').trim();
+    if (e.isEmpty) return false;
+    if (await AccountProtection.isEmailBlacklisted(e)) {
+      await GoogleSignIn.instance.signOut().catchError((_) {});
+      await AuthService.logout().catchError((_) {});
+      if (!mounted) return true;
+      _triggerShake();
+      showAuthToast(
+          context, AccountProtection.blacklistedMessage(),
+          isError: true);
+      return true;
+    }
+    return false;
+  }
+
   Future<void> _afterSignIn(String uid) async {
+    // NOTE 3 backfill: older accounts may lack the platform field —
+    // fill it in on login (best-effort, never blocks).
+    await AccountProtection.backfillPlatformIfMissing(uid);
     // One account = one device. Check AFTER auth (rules only let the owner
     // read their own session doc). Conflict → takeover dialog; the guard is
     // held off while the dialog is on screen.
@@ -171,6 +193,8 @@ class _LoginScreenState extends State<LoginScreen>
         _email.text.trim(),
         _password.text,
       );
+      // NOTE 1 — blacklisted emails cannot log back in.
+      if (await _rejectIfBlacklisted(user.email)) return;
       await _afterSignIn(user.uid);
     } on AuthError catch (e) {
       if (!mounted) return;
@@ -223,6 +247,12 @@ class _LoginScreenState extends State<LoginScreen>
         idToken,
         allowCreate: false,
       );
+      if (!mounted) return;
+      // NOTE 1 — blacklisted emails cannot log back in.
+      if (await _rejectIfBlacklisted(
+          result.user.email ?? account.email)) {
+        return;
+      }
       if (!mounted) return;
       showAuthToast(context, 'Login successful');
       await _afterSignIn(result.user.uid);

@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
@@ -96,6 +97,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
     var courseId = 'civil-engineering';
     var subcourseId = 'civil-assistant-sub-engineer';
     bool isPremium = false;
+    Set<String> approvedContentIds = const {};
     if (user != null) {
       try {
         final doc = await FirestoreRest.getDocument('users/${user.uid}',
@@ -107,6 +109,9 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
         // subscriptionStatus, not the local `pro` field heuristic.
         isPremium =
             UserProfile.fromMap(user.uid, doc ?? {}).hasActivePremium;
+        // D2: approved content purchases unlock without a subscription.
+        approvedContentIds =
+            (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
       } catch (_) {}
     }
     String subjectName = widget.subjectId;
@@ -169,6 +174,7 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
       subcourseId: subcourseId,
       tracks: tracks,
       isPremium: isPremium,
+      approvedContentIds: approvedContentIds,
     );
   }
 
@@ -183,8 +189,21 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
   static int _pct(Map<String, dynamic> c) =>
       (((c['progress'] as Map?)?['percentage']) as num?)?.toInt() ?? 0;
 
+  /// D2: true when the chapter is unlocked without a subscription — the
+  /// chapter itself, its unit, or the whole subject has an approved
+  /// content purchase.
+  bool _contentUnlocked(Map<String, dynamic> c, _UnitPage d) {
+    final ids = d.approvedContentIds;
+    if (ids.isEmpty) return false;
+    return ids.contains('${c['id']}') ||
+        ids.contains(widget.subjectId) ||
+        ('${c['unitId'] ?? ''}'.isNotEmpty &&
+            ids.contains('${c['unitId']}'));
+  }
+
   void _onChapterTap(Map<String, dynamic> c, _UnitPage d) {
-    final locked = c['pro'] == true && !d.isPremium;
+    final locked =
+        c['pro'] == true && !d.isPremium && !_contentUnlocked(c, d);
     if (locked) {
       setState(() => _premiumChapter = c);
       return;
@@ -770,7 +789,12 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
     final isExpanded = _expandedUnit == t.id;
     final palette = ExpoPalette.of(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final isUnitPurchased = t.unit?['pro'] == true && d.isPremium;
+    // D2: a purchased unit (or its subject) shows the purchased state too.
+    final unitUnlocked = t.unit != null &&
+        (d.approvedContentIds.contains('${t.unit!['id']}') ||
+            d.approvedContentIds.contains(widget.subjectId));
+    final isUnitPurchased =
+        t.unit?['pro'] == true && (d.isPremium || unitUnlocked);
     final total = t.chapters.length;
     final avg = total == 0
         ? 0
@@ -965,8 +989,9 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
   Widget _chapterCard(
       BuildContext context, Map<String, dynamic> c, _UnitPage d) {
     final progress = _pct(c);
-    final isLocked = c['pro'] == true && !d.isPremium;
-    final isPurchased = c['pro'] == true && d.isPremium;
+    final unlocked = _contentUnlocked(c, d);
+    final isLocked = c['pro'] == true && !d.isPremium && !unlocked;
+    final isPurchased = c['pro'] == true && (d.isPremium || unlocked);
     final palette = ExpoPalette.of(context);
     final dark = Theme.of(context).brightness == Brightness.dark;
     final softPrimary = dark
@@ -1152,8 +1177,25 @@ class _SubjectUnitsScreenState extends State<SubjectUnitsScreen>
       itemName: _chapterTitle(c),
       title: AppLanguage.tr('Premium Chapter', 'प्रिमियम अध्याय'),
       message: AppLanguage.tr(
-          'An active subscription is required to access this chapter.',
-          'यो अध्याय खोल्न सक्रिय सदस्यता आवश्यक छ।'),
+          'Subscribe for unlimited access, or purchase this chapter separately.',
+          'असीमित पहुँचका लागि सदस्यता लिनुहोस्, वा यो अध्याय छुट्टै किन्नुहोस्।'),
+      buyLabel:
+          AppLanguage.tr('Buy This Chapter', 'यो अध्याय किन्नुहोस्'),
+      onBuy: () {
+        final chapterId = '${c['id']}';
+        final unitId = '${c['unitId'] ?? ''}';
+        setState(() => _premiumChapter = null);
+        final params = <String, String>{
+          'contentId': chapterId,
+          'contentType': 'chapter',
+          'contentSubjectId': widget.subjectId,
+          if (unitId.isNotEmpty) 'contentUnitId': unitId,
+        };
+        final qs = params.entries
+            .map((e) => '${e.key}=${Uri.encodeComponent(e.value)}')
+            .join('&');
+        context.push('/checkout?$qs');
+      },
       confirmLabel: AppLanguage.tr(
           'Go To Subscription Plan', 'सदस्यता योजना खोल्नुहोस्'),
       cancelLabel: AppLanguage.tr('Close', 'बन्द गर्नुहोस्'),
@@ -1555,6 +1597,10 @@ class _UnitPage {
   final List<_Track> tracks;
   final bool isPremium;
 
+  /// Content ids with an APPROVED content purchase — unlock without a
+  /// subscription. A purchased SUBJECT id unlocks everything inside it.
+  final Set<String> approvedContentIds;
+
   const _UnitPage({
     required this.subjectName,
     required this.subjectPro,
@@ -1562,5 +1608,6 @@ class _UnitPage {
     required this.subcourseId,
     required this.tracks,
     required this.isPremium,
+    this.approvedContentIds = const {},
   });
 }

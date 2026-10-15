@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:loksewa_solution/services/account_protection.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/google_auth.dart';
 import 'package:loksewa_solution/services/course_setup_gate.dart';
@@ -160,8 +161,19 @@ class _SignupScreenState extends State<SignupScreen>
     }
     setState(() => _loading = true);
     try {
+      final email = _email.text.trim();
+      // NOTE 1 — blacklist: check BEFORE creating the Auth account (the
+      // typed email is all we need). A hit blocks signup entirely.
+      if (await AccountProtection.isEmailBlacklisted(email)) {
+        if (!mounted) return;
+        _triggerShake();
+        showAuthToast(
+            context, AccountProtection.blacklistedMessage(),
+            isError: true);
+        return;
+      }
       final user = await AuthService.signUpWithEmail(
-        _email.text.trim(),
+        email,
         _password.text,
       );
       // Mirror registerWithEmail: store the display name on the user document.
@@ -174,7 +186,11 @@ class _SignupScreenState extends State<SignupScreen>
             // profile name blank after signup (user had to edit manually).
             'name': _name.text.trim(),
             'displayName': _name.text.trim(),
-            'email': user.email ?? _email.text.trim(),
+            'email': user.email ?? email,
+            // NOTE 2 — every new account is a plain user.
+            'role': 'user',
+            // NOTE 3 — marks the account as created from the app.
+            'platform': 'App',
           },
           idToken: idToken,
           merge: true,
@@ -230,10 +246,41 @@ class _SignupScreenState extends State<SignupScreen>
             isError: true);
         return;
       }
+      // NOTE 1 — blacklist: the Google email is known after authenticate(),
+      // so the check runs BEFORE the Firebase session is created. A hit
+      // blocks signup; the Google session is released so nothing remains.
+      if (await AccountProtection.isEmailBlacklisted(account.email)) {
+        await GoogleSignIn.instance.signOut().catchError((_) {});
+        if (!mounted) return;
+        showAuthToast(
+            context, AccountProtection.blacklistedMessage(),
+            isError: true);
+        return;
+      }
       final result = await AuthService.signInWithGoogleIdToken(
         idToken,
         allowCreate: true,
       );
+      if (!mounted) return;
+      // Mirror the email-signup user document (merge — never clobbers).
+      // NOTE 2: role 'user'. NOTE 3: platform 'App'.
+      try {
+        final token = await AuthService.getValidIdToken();
+        final displayName =
+            (account.displayName ?? result.user.displayName ?? '').trim();
+        await FirestoreRest.setDocument(
+          'users/${result.user.uid}',
+          {
+            if (displayName.isNotEmpty) 'name': displayName,
+            if (displayName.isNotEmpty) 'displayName': displayName,
+            'email': result.user.email ?? account.email,
+            'role': 'user',
+            'platform': 'App',
+          },
+          idToken: token,
+          merge: true,
+        );
+      } catch (_) {}
       if (!mounted) return;
       showAuthToast(context, 'Google account signed in successfully');
       // Google on the signup screen can be a new OR an existing account:

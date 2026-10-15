@@ -88,4 +88,45 @@ void main() {
 
     expect(confirmed, isTrue);
   });
+
+  testWidgets('buy action renders the Buy button and fires onBuy',
+      (tester) async {
+    _tallScreen(tester);
+    var bought = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: PremiumGateDialog(
+          title: 'Premium Chapter',
+          message: 'Subscribe or buy.',
+          itemName: 'Algebra',
+          buyLabel: 'Buy This Chapter',
+          onBuy: () => bought = true,
+          confirmLabel: 'Go To Subscription Plan',
+          cancelLabel: 'Close',
+          onConfirm: () {},
+          onCancel: () {},
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Buy This Chapter'), findsOneWidget);
+    // The locked item is shown as a pill.
+    expect(find.text('Algebra'), findsOneWidget);
+    expect(find.text('Go To Subscription Plan'), findsOneWidget);
+    expect(find.text('Close'), findsOneWidget);
+
+    await tester.tap(find.text('Buy This Chapter'));
+    await tester.pumpAndSettle();
+    expect(bought, isTrue);
+  });
+
+  testWidgets('no buy button when buyLabel/onBuy are absent', (tester) async {
+    _tallScreen(tester);
+    await tester.pumpWidget(const _GateHarness());
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Buy'), findsNothing);
+    expect(find.text('Go To Subscription Plan'), findsOneWidget);
+  });
 }

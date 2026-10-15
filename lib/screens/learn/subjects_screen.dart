@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/premium_gate_dialog.dart';
@@ -48,6 +49,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     var courseName = 'Civil Engineering';
     var subcourseName = 'Civil Assistant Sub Engineer';
     bool isPremium = false;
+    Set<String> approvedContentIds = const {};
     if (user != null) {
       try {
         final doc = await FirestoreRest.getDocument('users/${user.uid}',
@@ -55,6 +57,9 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         courseId = (doc?['courseId'] as String?) ?? courseId;
         subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
         isPremium = _hasActivePremium(doc);
+        // D2: approved content purchases unlock without a subscription.
+        approvedContentIds =
+            (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
       } catch (_) {}
     }
     // The two name lookups and the subject catalogue are independent — fetch
@@ -98,6 +103,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
       complete: stats.complete,
       inProgress: stats.inProgress,
       isPremium: isPremium,
+      approvedContentIds: approvedContentIds,
     );
   }
 
@@ -123,7 +129,10 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     final hasUnits =
         key.contains('technical') || key.contains('प्राविधिक');
     final pro = s['pro'] == true;
-    if (pro && !d.isPremium && !hasUnits) {
+    // D2: an approved content purchase unlocks the subject without a
+    // subscription.
+    final purchased = d.approvedContentIds.contains(id);
+    if (pro && !d.isPremium && !purchased && !hasUnits) {
       setState(() => _premiumSubject = s);
       return;
     }
@@ -207,9 +216,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                                         premium:
                                             d.subjects[i]['pro'] == true,
                                         premiumLabel: 'Premium',
-                                        purchased:
-                                            d.subjects[i]['pro'] == true &&
-                                                d.isPremium,
+                                        purchased: d.subjects[i]
+                                                    ['pro'] ==
+                                                true &&
+                                            (d.isPremium ||
+                                                d.approvedContentIds.contains(
+                                                    '${d.subjects[i]['id']}')),
                                         purchasedLabel:
                                             'Purchased (Active)',
                                         footerLabel: 'View Chapter',
@@ -237,8 +249,17 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                         title: AppLanguage.tr(
                             'Premium Subject', 'प्रिमियम विषय'),
                         message: AppLanguage.tr(
-                            'A subscription is required to access this premium subject.',
-                            'यो प्रिमियम विषय खोल्न सदस्यता आवश्यक छ।'),
+                            'Subscribe for unlimited access, or purchase this subject separately.',
+                            'असीमित पहुँचका लागि सदस्यता लिनुहोस्, वा यो विषय छुट्टै किन्नुहोस्।'),
+                        buyLabel: AppLanguage.tr(
+                            'Buy This Subject', 'यो विषय किन्नुहोस्'),
+                        onBuy: () {
+                          final sid = '${_premiumSubject!['id']}';
+                          setState(() => _premiumSubject = null);
+                          final qs =
+                              'contentId=${Uri.encodeComponent(sid)}&contentType=subject&contentSubjectId=${Uri.encodeComponent(sid)}';
+                          context.push('/checkout?$qs');
+                        },
                         confirmLabel: AppLanguage.tr(
                             'Go To Subscription Plan',
                             'सदस्यता योजना खोल्नुहोस्'),
@@ -461,6 +482,10 @@ class _SubjectPage {
   final int inProgress;
   final bool isPremium;
 
+  /// Content ids (subject ids) with an APPROVED content purchase — unlock
+  /// without a subscription.
+  final Set<String> approvedContentIds;
+
   const _SubjectPage({
     required this.courseId,
     required this.subcourseId,
@@ -470,5 +495,6 @@ class _SubjectPage {
     required this.complete,
     required this.inProgress,
     required this.isPremium,
+    this.approvedContentIds = const {},
   });
 }

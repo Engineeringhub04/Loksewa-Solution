@@ -152,11 +152,36 @@ Future<List<ContentPurchaseRecord>> fetchMyContentPurchases(
 
 /// Mirrors fetchMyApprovedContentIds.
 Future<List<String>> fetchMyApprovedContentIds(String uid) async {
-  final records = await fetchMyContentPurchases(uid);
-  return records
-      .where((r) => r.status == 'active')
-      .map((r) => r.contentId)
-      .toList();
+  final token = await AuthService.getValidIdToken();
+  final userDoc =
+      await FirestoreRest.getDocument('users/$uid', idToken: token)
+          .catchError((_) => null);
+  return fetchMyApprovedContentIdsFromDoc(userDoc, token);
+}
+
+/// Variant of [fetchMyApprovedContentIds] that reuses an already-fetched
+/// users/{uid} document (saves 1 read on screens that loaded it anyway).
+Future<List<String>> fetchMyApprovedContentIdsFromDoc(
+    Map<String, dynamic>? userDoc, String idToken) async {
+  final ids = <String>[
+    for (final e in (userDoc?['contentPurchaseIds'] as List? ?? []))
+      e.toString(),
+  ];
+  final out = <String>[];
+  for (final pid in ids) {
+    try {
+      final doc = await FirestoreRest.getDocument('app_content_purchases/$pid',
+          idToken: idToken);
+      if (doc != null &&
+          ContentPurchaseRecord.fromMap(doc).status == 'active') {
+        final cid = doc['contentId']?.toString() ?? '';
+        if (cid.isNotEmpty) out.add(cid);
+      }
+    } catch (_) {
+      // Skip docs that fail to load; never crash the whole list.
+    }
+  }
+  return out;
 }
 
 /// Mirrors fetchPendingContentPurchase.

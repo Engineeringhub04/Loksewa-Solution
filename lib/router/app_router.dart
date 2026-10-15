@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../services/auth_service.dart';
+import '../services/firestore_rest.dart';
 import '../screens/splash_screen.dart';
 import '../screens/onboarding_screen.dart';
 import '../screens/tabs_screen.dart';
@@ -495,6 +496,30 @@ final appRouter = GoRouter(
         id: s.pathParameters['id']!,
         source: s.uri.queryParameters['source'],
       ),
+    ),
+    // Admin approve/reject pushes land here (deepLink '/purchase/{id}' —
+    // the shared purchase review page covers exam AND content purchases,
+    // so the id alone doesn't say which kind it is). Resolve by probing
+    // the owner's readable docs, then land on the right detail screen.
+    GoRoute(
+      path: '/purchase/:id',
+      redirect: (_, s) async {
+        final id = s.pathParameters['id']!;
+        try {
+          final token = await AuthService.getValidIdToken();
+          final contentDoc = await FirestoreRest.getDocument(
+                  'app_content_purchases/$id',
+                  idToken: token)
+              .catchError((_) => null);
+          if (contentDoc != null) return '/purchase-details/content/$id';
+          final examDoc = await FirestoreRest.getDocument(
+                  'app_exam_purchases/$id',
+                  idToken: token)
+              .catchError((_) => null);
+          if (examDoc != null) return '/subscription/exam-purchase/$id';
+        } catch (_) {}
+        return '/purchase-details';
+      },
     ),
     GoRoute(
         path: '/achievements', builder: (_, __) => const AchievementsScreen()),

@@ -173,4 +173,19 @@ void main() {
       expect(r.rejectionReason, 'blurry');
     });
   });
+
+  group('fetchMyApprovedContentIdsFromDoc', () {
+    test('no purchase ids → empty', () async {
+      expect(await fetchMyApprovedContentIdsFromDoc({}, ''), isEmpty);
+      expect(await fetchMyApprovedContentIdsFromDoc(null, ''), isEmpty);
+    });
+
+    test('unreachable purchase docs are skipped (never throws)', () async {
+      // The sandbox HTTP client fails fast → getDocument throws → the id
+      // is skipped and the result is empty.
+      final ids = await fetchMyApprovedContentIdsFromDoc(
+          {'contentPurchaseIds': ['u_chapter_c1_123']}, '');
+      expect(ids, isEmpty);
+    });
+  });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
+import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
@@ -150,14 +151,14 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       );
       final stored = await fetchLearningProgress(
           user.uid, widget.subjectId, widget.chapterId);
-      final purchases = await fetchMyContentPurchases(user.uid)
-          .catchError((_) => <Map<String, dynamic>>[]);
-      final specificAccess = purchases.any((p) =>
-          p['status'] == 'active' &&
-          ((p['contentType'] == 'chapter' &&
-                  p['contentId'] == widget.chapterId) ||
-              (p['contentType'] == 'subject' &&
-                  p['contentId'] == widget.subjectId)));
+      // Approved content purchases unlock without a subscription. Uses the
+      // per-user index (getDocument per id) — the old map-based query was
+      // denied by the rules for non-admins and always failed open.
+      final approvedIds = await fetchMyApprovedContentIds(user.uid)
+          .catchError((_) => <String>[]);
+      final specificAccess = approvedIds.contains(widget.chapterId) ||
+          approvedIds.contains(widget.subjectId) ||
+          (_unitId.isNotEmpty && approvedIds.contains(_unitId));
       final premiumForLoad = _profilePremium || specificAccess;
       _hasSpecificAccess = specificAccess;
       final questions = shuffleList(

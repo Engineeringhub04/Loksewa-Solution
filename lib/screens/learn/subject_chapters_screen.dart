@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/premium_gate_dialog.dart';
@@ -85,6 +86,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     var courseId = 'civil-engineering';
     var subcourseId = 'civil-assistant-sub-engineer';
     bool isPremium = false;
+    Set<String> approvedContentIds = const {};
     if (user != null) {
       try {
         final doc = await FirestoreRest.getDocument('users/${user.uid}',
@@ -92,6 +94,9 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
         courseId = (doc?['courseId'] as String?) ?? courseId;
         subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
         isPremium = _hasActivePremium(doc);
+        // D2: approved content purchases unlock without a subscription.
+        approvedContentIds =
+            (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
       } catch (_) {}
     }
     String subjectName = 'Subject';
@@ -122,6 +127,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
       subcourseId: subcourseId,
       chapters: chapters,
       isPremium: isPremium,
+      approvedContentIds: approvedContentIds,
     );
   }
 
@@ -146,8 +152,17 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
   String _chapterNameAlt(Map<String, dynamic> c) =>
       _ne ? '${c['name']}' : '${c['nameNe'] ?? c['name']}';
 
+  /// D2: true when the chapter is unlocked without a subscription — the
+  /// chapter itself or the whole subject has an approved content purchase.
+  bool _contentUnlocked(Map<String, dynamic> c, _ChapterPage d) {
+    final ids = d.approvedContentIds;
+    if (ids.isEmpty) return false;
+    return ids.contains('${c['id']}') || ids.contains(widget.subjectId);
+  }
+
   void _onChapterTap(Map<String, dynamic> c, _ChapterPage d) {
-    final locked = c['pro'] == true && !d.isPremium;
+    final locked =
+        c['pro'] == true && !d.isPremium && !_contentUnlocked(c, d);
     if (locked) {
       setState(() => _premiumChapter = c);
       return;
@@ -343,8 +358,9 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
   Widget _chapterCard(
       BuildContext context, Map<String, dynamic> c, _ChapterPage d) {
     final progress = _pct(c);
-    final isLocked = c['pro'] == true && !d.isPremium;
-    final isPurchased = c['pro'] == true && d.isPremium;
+    final unlocked = _contentUnlocked(c, d);
+    final isLocked = c['pro'] == true && !d.isPremium && !unlocked;
+    final isPurchased = c['pro'] == true && (d.isPremium || unlocked);
     final order = '${c['order']}'.padLeft(2, '0');
     final cardColor = Theme.of(context).cardColor;
     return Padding(
@@ -539,8 +555,17 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
       itemName: _chapterName(c),
       title: AppLanguage.tr('Premium Chapter', 'प्रिमियम अध्याय'),
       message: AppLanguage.tr(
-          'An active subscription is required to access this chapter.',
-          'यो अध्याय खोल्न सक्रिय सदस्यता आवश्यक छ।'),
+          'Subscribe for unlimited access, or purchase this chapter separately.',
+          'असीमित पहुँचका लागि सदस्यता लिनुहोस्, वा यो अध्याय छुट्टै किन्नुहोस्।'),
+      buyLabel:
+          AppLanguage.tr('Buy This Chapter', 'यो अध्याय किन्नुहोस्'),
+      onBuy: () {
+        final chapterId = '${c['id']}';
+        setState(() => _premiumChapter = null);
+        final qs =
+            'contentId=${Uri.encodeComponent(chapterId)}&contentType=chapter&contentSubjectId=${Uri.encodeComponent(widget.subjectId)}';
+        context.push('/checkout?$qs');
+      },
       confirmLabel: AppLanguage.tr(
           'Go To Subscription Plan', 'सदस्यता योजना खोल्नुहोस्'),
       cancelLabel: AppLanguage.tr('Close', 'बन्द गर्नुहोस्'),
@@ -1050,6 +1075,10 @@ class _ChapterPage {
   final List<Map<String, dynamic>> chapters;
   final bool isPremium;
 
+  /// Content ids with an APPROVED content purchase — unlock without a
+  /// subscription. A purchased SUBJECT id unlocks everything inside it.
+  final Set<String> approvedContentIds;
+
   const _ChapterPage({
     required this.subjectName,
     required this.subjectPro,
@@ -1057,5 +1086,6 @@ class _ChapterPage {
     required this.subcourseId,
     required this.chapters,
     required this.isPremium,
+    this.approvedContentIds = const {},
   });
 }

@@ -200,8 +200,11 @@ Future<ContentPurchaseRecord?> fetchPendingContentPurchase(
 
 /// Mirrors fetchContentPurchaseById.
 Future<ContentPurchaseRecord?> fetchContentPurchaseById(String id) async {
-  final doc =
-      await FirestoreRest.getDocument('app_content_purchases/$id');
+  // The read rule is owner-only — the request MUST carry the ID token,
+  // otherwise Firestore answers 403 ("Could not load this purchase").
+  final token = await AuthService.getValidIdToken();
+  final doc = await FirestoreRest.getDocument('app_content_purchases/$id',
+      idToken: token);
   return doc == null ? null : ContentPurchaseRecord.fromMap(doc);
 }
 

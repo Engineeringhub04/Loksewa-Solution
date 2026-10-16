@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
@@ -22,6 +25,48 @@ class AccountProtection {
         'This account has been removed and cannot be used again. Please contact support if you believe this is a mistake.',
         'यो खाता हटाइएको छ र फेरि प्रयोग गर्न सकिँदैन। गल्ती भएको लागेमा कृपया सहयोगसँग सम्पर्क गर्नुहोस्।',
       );
+
+  /// Base URL of the loksewa-push-worker (same worker as the password-reset
+  /// and admin-notify endpoints).
+  static const _workerBase =
+      'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+
+  /// Overrides the HTTP client (tests only).
+  static void setTestClient(http.Client? client) => _testClient = client;
+  static http.Client? _testClient;
+
+  /// Worker-backed pre-signup blacklist check (authoritative).
+  ///
+  /// POSTs {_workerBase}/check-blacklist {"email": email} and expects
+  /// {"blocked": bool} (always HTTP 200 from the worker). Unlike
+  /// [isEmailBlacklisted] this works BEFORE any Firebase session exists —
+  /// the worker queries with the Admin SDK, so Firestore rules can't deny
+  /// it and the verdict is trustworthy pre-auth.
+  ///
+  /// Never throws and never caches a verdict: any error / non-200 / bad
+  /// JSON → false (fail-open) so a worker outage can never lock out real
+  /// users. Call on every signup attempt, in every flow.
+  static Future<bool> isEmailBlacklistedViaWorker(String email) async {
+    final probe = email.trim();
+    if (probe.isEmpty) return false;
+    final client = _testClient ?? http.Client();
+    try {
+      final res = await client
+          .post(
+            Uri.parse('$_workerBase/check-blacklist'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'email': probe}),
+          )
+          .timeout(const Duration(seconds: 8));
+      if (res.statusCode != 200) return false;
+      final data = json.decode(res.body);
+      if (data is Map<String, dynamic>) return data['blocked'] == true;
+      return false;
+    } catch (e) {
+      debugPrint('worker blacklist check failed (fail-open): $e');
+      return false;
+    }
+  }
 
   /// True when [email] has a row in app_deleted_users. Never throws —
   /// any failure (rules deny, network) is treated as "not blacklisted"

@@ -92,9 +92,13 @@ service cloud.firestore {
       allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId) &&
         !request.resource.data.keys().hasAny([
-          'role', 'isAdmin', 'isPremium', 'premiumPlanName',
+          'isAdmin', 'isPremium', 'premiumPlanName',
           'premiumBillingCycle', 'premiumExpiryDate'
         ]) &&
+        // The app's own signup writes role:'user' — allow exactly that
+        // value, nothing else (no privilege escalation path).
+        (!('role' in request.resource.data.keys()) ||
+          request.resource.data.role == 'user') &&
         validPhotoURLSource(request.resource.data);
       allow update: if isAdmin() ||
         (isOwner(userId) && changedOnly([

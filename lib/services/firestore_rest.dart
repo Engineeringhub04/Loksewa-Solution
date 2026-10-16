@@ -19,6 +19,11 @@ class FirestoreWrite {
 class FirestoreRest {  static String get _base =>
       'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
 
+  /// Overrides the HTTP client (tests only).
+  static void setTestClient(http.Client? client) => _testClient = client;
+  static http.Client? _testClient;
+  static http.Client get _client => _testClient ?? http.Client();
+
   static Map<String, String> _headers(String idToken) => {
         'Content-Type': 'application/json',
         if (idToken.isNotEmpty) 'Authorization': 'Bearer $idToken',
@@ -98,7 +103,7 @@ class FirestoreRest {  static String get _base =>
     String path, {
     String idToken = '',
   }) async {
-    final res = await http.get(Uri.parse('$_base/$path'), headers: _headers(idToken));
+    final res = await _client.get(Uri.parse('$_base/$path'), headers: _headers(idToken));
     ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode == 404) return null;
     if (res.statusCode != 200) throw Exception('getDocument $path: ${res.statusCode}');
@@ -110,7 +115,7 @@ class FirestoreRest {  static String get _base =>
     String idToken = '',
     int pageSize = 100,
   }) async {
-    final res = await http.get(
+    final res = await _client.get(
       Uri.parse('$_base/$collectionPath?pageSize=$pageSize'),
       headers: _headers(idToken),
     );
@@ -147,13 +152,13 @@ class FirestoreRest {  static String get _base =>
     } else {
       uri = Uri.parse('$_base/$path');
     }
-    final res = await http.patch(uri, headers: _headers(idToken), body: json.encode(fields));
+    final res = await _client.patch(uri, headers: _headers(idToken), body: json.encode(fields));
     ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode != 200) throw Exception('setDocument $path: ${res.statusCode} ${res.body}');
   }
 
   static Future<void> deleteDocument(String path, {String idToken = ''}) async {
-    final res = await http.delete(Uri.parse('$_base/$path'), headers: _headers(idToken));
+    final res = await _client.delete(Uri.parse('$_base/$path'), headers: _headers(idToken));
     ServerClock.updateFromHttpDate(res.headers['date']);
     if (res.statusCode != 200 && res.statusCode != 404) {
       throw Exception('deleteDocument $path: ${res.statusCode}');
@@ -188,7 +193,7 @@ class FirestoreRest {  static String get _base =>
           return write;
         }).toList(),
       };
-      final res = await http.post(Uri.parse('$_base:commit'),
+      final res = await _client.post(Uri.parse('$_base:commit'),
           headers: _headers(idToken), body: json.encode(body));
       ServerClock.updateFromHttpDate(res.headers['date']);
       if (res.statusCode != 200) {

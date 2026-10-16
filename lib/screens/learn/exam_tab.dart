@@ -85,6 +85,20 @@ class _ExamTabState extends State<ExamTab> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Safety net for _purchaseNavigating: when this tab becomes the current
+    // route again — via pop() OR via context.go() (which destroys the pushed
+    // route WITHOUT completing its Future, so the .then() reset never fires,
+    // e.g. Exam Details back button doing go('/exam')) — clear the overlay.
+    // While a purchase page is pushed, the tab is not current, so this only
+    // fires on genuine return.
+    if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseNavigating) {
+      _purchaseNavigating = false;
+    }
+  }
+
+  @override
   void dispose() {
     _ticker?.cancel();
     _scrollController.dispose();

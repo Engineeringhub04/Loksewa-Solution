@@ -161,8 +161,11 @@ Future<ExamPurchaseRecord?> fetchPendingExamPurchase(
 
 /// Mirrors fetchExamPurchaseById.
 Future<ExamPurchaseRecord?> fetchExamPurchaseById(String id) async {
+  // The read rule is owner-only — the request MUST carry the ID token,
+  // otherwise Firestore answers 403 ("Could not load this purchase").
+  final token = await AuthService.getValidIdToken();
   final doc =
-      await FirestoreRest.getDocument('app_exam_purchases/$id');
+      await FirestoreRest.getDocument('app_exam_purchases/$id', idToken: token);
   return doc == null ? null : ExamPurchaseRecord.fromMap(doc);
 }
 

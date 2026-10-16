@@ -108,6 +108,24 @@ class _SignupScreenState extends State<SignupScreen>
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
   Future<void> _afterSignIn(String uid) async {
+    // Post-signup safety net (defense in depth behind the pre-signup
+    // worker check): the user IS authenticated now, so the local blacklist
+    // query can read their own blacklist row. A hit means the pre-check was
+    // bypassed — destroy the just-created Auth identity so no usable
+    // account survives, and never navigate into the app.
+    final signedUpEmail =
+        (AuthService.currentUser?.email ?? _email.text.trim()).trim();
+    if (signedUpEmail.isNotEmpty &&
+        await AccountProtection.isEmailBlacklisted(signedUpEmail)) {
+      await AuthService.deleteCurrentAccount().catchError((_) {});
+      await AuthService.logout().catchError((_) {});
+      if (!mounted) return;
+      _triggerShake();
+      showAuthToast(
+          context, AccountProtection.blacklistedMessage(),
+          isError: true);
+      return;
+    }
     // One account = one device (same flow as login screen).
     final check = await DeviceSessionService.checkDeviceSessionForLogin(uid);
     if (!mounted) return;
@@ -163,8 +181,12 @@ class _SignupScreenState extends State<SignupScreen>
     try {
       final email = _email.text.trim();
       // NOTE 1 — blacklist: check BEFORE creating the Auth account (the
-      // typed email is all we need). A hit blocks signup entirely.
-      if (await AccountProtection.isEmailBlacklisted(email)) {
+      // typed email is all we need). Local fast-path first, then the
+      // authoritative worker check (works pre-auth where Firestore rules
+      // would deny the direct query). A hit blocks signup entirely — the
+      // account is never created.
+      if (await AccountProtection.isEmailBlacklisted(email) ||
+          await AccountProtection.isEmailBlacklistedViaWorker(email)) {
         if (!mounted) return;
         _triggerShake();
         showAuthToast(
@@ -247,9 +269,12 @@ class _SignupScreenState extends State<SignupScreen>
         return;
       }
       // NOTE 1 — blacklist: the Google email is known after authenticate(),
-      // so the check runs BEFORE the Firebase session is created. A hit
-      // blocks signup; the Google session is released so nothing remains.
-      if (await AccountProtection.isEmailBlacklisted(account.email)) {
+      // so the check runs BEFORE the Firebase session is created. Local
+      // fast-path first, then the authoritative worker check (pre-auth
+      // safe). A hit blocks signup; the Google session is released so
+      // nothing remains.
+      if (await AccountProtection.isEmailBlacklisted(account.email) ||
+          await AccountProtection.isEmailBlacklistedViaWorker(account.email)) {
         await GoogleSignIn.instance.signOut().catchError((_) {});
         if (!mounted) return;
         showAuthToast(

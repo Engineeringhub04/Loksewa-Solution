@@ -299,21 +299,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String contentId,
     String? unitId,
     String token,
-  ) {
+  ) async {
     // Real collections (mirrors the list sources in exam_service.dart):
     // subjects -> app_subjects_details/<course>__<subcourse>__<slug>
     // units    -> app_subjects_units_details/<unitId>
     // chapters -> app_subjects_chapter_details/<chapterId>
-    if (type == 'subject') {
-      return FirestoreRest.getDocument('app_subjects_details/$contentId',
-          idToken: token);
+    debugPrint('checkout _fetchContent type=$type contentId=$contentId '
+        'subjectId=$subjectId unitId=$unitId');
+    final path = type == 'subject'
+        ? 'app_subjects_details/$contentId'
+        : type == 'unit'
+            ? 'app_subjects_units_details/$contentId'
+            : 'app_subjects_chapter_details/$contentId';
+    try {
+      return await FirestoreRest.getDocument(path, idToken: token);
+    } catch (e) {
+      // Logged for diagnosis — the caller treats null/error as
+      // "Checkout not available".
+      debugPrint('checkout _fetchContent FAILED path=$path error=$e');
+      rethrow;
     }
-    if (type == 'unit') {
-      return FirestoreRest.getDocument('app_subjects_units_details/$contentId',
-          idToken: token);
-    }
-    return FirestoreRest.getDocument('app_subjects_chapter_details/$contentId',
-        idToken: token);
   }
 
   int _asInt(dynamic v) {
@@ -930,6 +935,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   );
                 }
                 if (snap.hasError || _purchasable(snap.data!) == null) {
+                  if (snap.hasError) {
+                    debugPrint('checkout _load FAILED error=${snap.error}');
+                  } else {
+                    final d = snap.data!;
+                    debugPrint('checkout _load purchasable null: flow=${d.flow} '
+                        'contentType=${d.contentType} contentId=${d.contentId} '
+                        'examId=${d.examId} planId=${d.plan?['id']}');
+                  }
                   return _notFound();
                 }
                 final d = snap.data!;

@@ -43,7 +43,7 @@ void main() {
 
   test('direct 404 falls back to slug query and returns the match', () async {
     String? queriedCollection;
-    Map<String, dynamic>? queriedWhere;
+    bool whereWasNull = false;
     final docs = [
       subjectDoc(
           'civil-engineering__civil-engineering-7th__public-management',
@@ -61,12 +61,13 @@ void main() {
       getDoc: (path, t) async => null,
       queryDocs: (collection, where) async {
         queriedCollection = collection;
-        queriedWhere = where;
+        whereWasNull = where == null;
         return docs;
       },
     );
     expect(queriedCollection, 'app_subjects_details');
-    expect(queriedWhere?['fieldFilter']?['field']?['fieldPath'], 'course');
+    expect(whereWasNull, isTrue,
+        reason: 'fallback must not depend on any field filter');
     expect(got?['id'],
         'civil-engineering__civil-engineering-7th__general-awareness');
   });

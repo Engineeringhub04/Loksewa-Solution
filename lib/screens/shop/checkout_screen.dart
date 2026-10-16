@@ -126,7 +126,7 @@ Future<Map<String, dynamic>?> fetchCheckoutContent(
   required Future<Map<String, dynamic>?> Function(String path, String token)
       getDoc,
   required Future<List<Map<String, dynamic>>> Function(
-          String collection, Map<String, dynamic> where)
+          String collection, Map<String, dynamic>? where)
       queryDocs,
 }) async {
   // Real collections (mirrors the list sources in exam_service.dart):
@@ -150,16 +150,14 @@ Future<Map<String, dynamic>?> fetchCheckoutContent(
   }
   try {
     if (type == 'subject') {
-      // The contentId is {course}__{subcourse}__{slug}; query by course and
-      // match the slug suffix client-side.
-      final parts = contentId.split('__');
-      if (parts.length >= 3) {
-        final course = parts[0];
-        final slug = parts.sublist(2).join('__');
-        final docs = await queryDocs(
-          'app_subjects_details',
-          ExamRest.fieldFilter('course', 'EQUAL', course),
-        );
+      // Slug = last non-empty __-segment. Query the whole (small) collection
+      // and match the ID suffix — depends on nothing but the slug, so any
+      // course/subcourse/id-format drift still resolves.
+      final slug = contentId
+          .split('__')
+          .lastWhere((p) => p.isNotEmpty, orElse: () => '');
+      if (slug.isNotEmpty) {
+        final docs = await queryDocs('app_subjects_details', null);
         for (final d in docs) {
           if ('${d['id']}'.endsWith('__$slug')) return d;
         }

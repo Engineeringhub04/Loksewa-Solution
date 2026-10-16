@@ -31,6 +31,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
 import 'package:loksewa_solution/services/coupon_service.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
+import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -110,6 +111,68 @@ class CheckoutScreen extends StatefulWidget {
 
   @override
   State<CheckoutScreen> createState() => _CheckoutScreenState();
+}
+
+/// Resilient content-document fetch for the checkout (Method B).
+///
+/// Tries a direct getDocument on the constructed ID first; when that misses
+/// (404) or fails, falls back to a collection query for subjects so new
+/// courses/subjects and any id-format drift keep resolving automatically.
+/// [getDoc] and [queryDocs] are injectable for tests.
+Future<Map<String, dynamic>?> fetchCheckoutContent(
+  String type,
+  String contentId, {
+  required String token,
+  required Future<Map<String, dynamic>?> Function(String path, String token)
+      getDoc,
+  required Future<List<Map<String, dynamic>>> Function(
+          String collection, Map<String, dynamic> where)
+      queryDocs,
+}) async {
+  // Real collections (mirrors the list sources in exam_service.dart):
+  // subjects -> app_subjects_details/<course>__<subcourse>__<slug>
+  // units    -> app_subjects_units_details/<unitId>
+  // chapters -> app_subjects_chapter_details/<chapterId>
+  final path = type == 'subject'
+      ? 'app_subjects_details/$contentId'
+      : type == 'unit'
+          ? 'app_subjects_units_details/$contentId'
+          : 'app_subjects_chapter_details/$contentId';
+  try {
+    final direct = await getDoc(path, token);
+    if (direct != null) return direct;
+    debugPrint('checkout _fetchContent direct miss (404) path=$path');
+  } catch (e) {
+    // Don't rethrow: fall through to the query fallback so a transient
+    // direct-read failure still gets a chance. The caller treats a null
+    // result as "Checkout not available".
+    debugPrint('checkout _fetchContent direct FAILED path=$path error=$e');
+  }
+  try {
+    if (type == 'subject') {
+      // The contentId is {course}__{subcourse}__{slug}; query by course and
+      // match the slug suffix client-side.
+      final parts = contentId.split('__');
+      if (parts.length >= 3) {
+        final course = parts[0];
+        final slug = parts.sublist(2).join('__');
+        final docs = await queryDocs(
+          'app_subjects_details',
+          ExamRest.fieldFilter('course', 'EQUAL', course),
+        );
+        for (final d in docs) {
+          if ('${d['id']}'.endsWith('__$slug')) return d;
+        }
+        debugPrint('checkout _fetchContent fallback no slug match '
+            'slug=$slug tried=${docs.length}');
+      }
+    }
+    // Units/chapters use opaque doc IDs minted by live queries — no
+    // reliable fallback; returning null shows "not available".
+  } catch (e) {
+    debugPrint('checkout _fetchContent fallback FAILED type=$type error=$e');
+  }
+  return null;
 }
 
 class _CheckoutScreenState extends State<CheckoutScreen> {
@@ -299,26 +362,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String contentId,
     String? unitId,
     String token,
-  ) async {
-    // Real collections (mirrors the list sources in exam_service.dart):
-    // subjects -> app_subjects_details/<course>__<subcourse>__<slug>
-    // units    -> app_subjects_units_details/<unitId>
-    // chapters -> app_subjects_chapter_details/<chapterId>
+  ) {
     debugPrint('checkout _fetchContent type=$type contentId=$contentId '
         'subjectId=$subjectId unitId=$unitId');
-    final path = type == 'subject'
-        ? 'app_subjects_details/$contentId'
-        : type == 'unit'
-            ? 'app_subjects_units_details/$contentId'
-            : 'app_subjects_chapter_details/$contentId';
-    try {
-      return await FirestoreRest.getDocument(path, idToken: token);
-    } catch (e) {
-      // Logged for diagnosis — the caller treats null/error as
-      // "Checkout not available".
-      debugPrint('checkout _fetchContent FAILED path=$path error=$e');
-      rethrow;
-    }
+    return fetchCheckoutContent(
+      type,
+      contentId,
+      token: token,
+      getDoc: (path, t) => FirestoreRest.getDocument(path, idToken: t),
+      queryDocs: (collection, where) =>
+          ExamRest.runQuery(collection, where: where, limit: 100),
+    );
   }
 
   int _asInt(dynamic v) {

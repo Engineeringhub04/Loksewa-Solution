@@ -259,6 +259,9 @@ Future<String> submitContentPurchase(
       input.uid, input.contentType, input.contentId);
   if (existing != null) return existing.id;
 
+  // The create rule requires a signed-in owner — the write MUST carry the
+  // user's ID token, otherwise Firestore answers 403.
+  final submitToken = await AuthService.getValidIdToken();
   final id =
       '${input.uid}_${input.contentType}_${input.contentId}_${DateTime.now().millisecondsSinceEpoch}';
   await FirestoreRest.setDocument('app_content_purchases/$id', {
@@ -288,7 +291,7 @@ Future<String> submitContentPurchase(
     'rejectionReason': null,
     'createdAt': FirestoreRest.serverTimestamp(),
     'updatedAt': FirestoreRest.serverTimestamp(),
-  });
+  }, idToken: submitToken);
   // Index the purchase ID on the user's doc for per-user history.
   // Rules deny LIST queries on app_content_purchases for non-admins, so the
   // app resolves the user's IDs from their own doc and getDocuments each.
@@ -330,12 +333,13 @@ Future<void> updateMyContentPurchaseDetails(
   required String screenshotUrl,
   String? customerMessage,
 }) async {
+  final token = await AuthService.getValidIdToken();
   await FirestoreRest.updateDocument('app_content_purchases/$id', {
     'transactionRef': transactionRef.trim(),
     'screenshotUrl': screenshotUrl,
     'customerMessage': customerMessage,
     'updatedAt': FirestoreRest.serverTimestamp(),
-  });
+  }, idToken: token);
 }
 
 /// Mirrors isContentPurchaseEditable.

@@ -56,6 +56,22 @@ class _AppliedCoupon {
   });
 }
 
+/// Outcome of the payment submit work. The confirm popup stays open with an
+/// inline error on failure and only closes on success or user cancel.
+class _SubmitOutcome {
+  final bool ok;
+  final String? error;
+  final String? examPurchaseId;
+  final String? contentPurchaseId;
+  const _SubmitOutcome({
+    required this.ok,
+    this.error,
+    this.examPurchaseId,
+    this.contentPurchaseId,
+  }) : assert(ok || error != null,
+            'a failed outcome must carry an error message');
+}
+
 class _CheckoutData {
   final String flow; // 'plan' | 'exam' | 'content'
   final String? examId;
@@ -109,7 +125,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   _AppliedCoupon? _couponApplied;
   String? _couponError;
   bool _validatingCoupon = false;
-  bool _submitting = false;
   bool _downloadingQr = false;
 
   @override
@@ -285,19 +300,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String? unitId,
     String token,
   ) {
+    // Real collections (mirrors the list sources in exam_service.dart):
+    // subjects -> app_subjects_details/<course>__<subcourse>__<slug>
+    // units    -> app_subjects_units_details/<unitId>
+    // chapters -> app_subjects_chapter_details/<chapterId>
     if (type == 'subject') {
-      return FirestoreRest.getDocument('app_learning_subjects/$subjectId',
+      return FirestoreRest.getDocument('app_subjects_details/$contentId',
           idToken: token);
     }
     if (type == 'unit') {
-      return FirestoreRest.getDocument(
-          'app_learning_subjects/$subjectId/units/$contentId',
+      return FirestoreRest.getDocument('app_subjects_units_details/$contentId',
           idToken: token);
     }
-    final path = (unitId != null && unitId.isNotEmpty)
-        ? 'app_learning_subjects/$subjectId/units/$unitId/chapters/$contentId'
-        : 'app_learning_subjects/$subjectId/chapters/$contentId';
-    return FirestoreRest.getDocument(path, idToken: token);
+    return FirestoreRest.getDocument('app_subjects_chapter_details/$contentId',
+        idToken: token);
   }
 
   int _asInt(dynamic v) {
@@ -493,152 +509,204 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
   }
 
-  Future<bool> _confirmSubmit() async {
-    final ok = await AppModalShell.show<bool>(
+  /// Result of the payment submit work: the popup stays open on failure
+  /// (inline error + retry) and only closes on success or user cancel.
+
+  Future<_SubmitOutcome?> _showSubmitPopup(_CheckoutData d) {
+    bool busy = false;
+    String? error;
+    return AppModalShell.show<_SubmitOutcome>(
       context: context,
       builder: (ctx) {
         final pal = ExpoPalette.of(ctx);
-        return AppModalShell(
-          maxWidth: 340,
-          tagLabel: AppLanguage.tr('Payment', 'भुक्तानी'),
-          accent: pal.primary,
-          accentMid: pal.info,
-          accentLight: pal.info.withValues(alpha: 0x33 / 0xFF),
-          tagColor: pal.primary,
-          onClose: () => Navigator.of(ctx).pop(false),
-          icon: Container(
-            width: 56,
-            height: 56,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              color: pal.primary,
-            ),
-            child: const Icon(Icons.payments_outlined,
-                size: 28, color: Colors.white),
-          ),
-          title: Text(
-            AppLanguage.tr('Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Color(0xFF0F172A),
-              height: 1.3,
-              decoration: TextDecoration.none,
-            ),
-          ),
-          body: Text(
-            AppLanguage.tr(
-                'Submit your payment details for review? An admin will verify and activate your subscription shortly.',
-                'समीक्षाको लागि आफ्नो भुक्तानी विवरण पेश गर्ने हो? एड्मिनले प्रमाणित गरेपछि तपाईंको सदस्यता सक्रिय हुनेछ।'),
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontSize: 14,
-              color: Color(0xFF475569),
-              height: 1.5,
-              decoration: TextDecoration.none,
-            ),
-          ),
-          footer: Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => Navigator.of(ctx).pop(false),
-                  style: OutlinedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+        return StatefulBuilder(
+          builder: (ctx, setPopupState) {
+            return AppModalShell(
+              maxWidth: 340,
+              tagLabel: AppLanguage.tr('Payment', 'भुक्तानी'),
+              accent: pal.primary,
+              accentMid: pal.info,
+              accentLight: pal.info.withValues(alpha: 0x33 / 0xFF),
+              tagColor: pal.primary,
+              onClose: busy
+                  ? () {}
+                  : () => Navigator.of(ctx).pop(null),
+              icon: Container(
+                width: 56,
+                height: 56,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(18),
+                  color: pal.primary,
+                ),
+                child: const Icon(Icons.payments_outlined,
+                    size: 28, color: Colors.white),
+              ),
+              title: Text(
+                AppLanguage.tr('Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF0F172A),
+                  height: 1.3,
+                  decoration: TextDecoration.none,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton(
-                  onPressed: () => Navigator.of(ctx).pop(true),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: pal.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+              body: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    AppLanguage.tr(
+                        'Submit your payment details for review? An admin will verify and activate your subscription shortly.',
+                        'समीक्षाको लागि आफ्नो भुक्तानी विवरण पेश गर्ने हो? एड्मिनले प्रमाणित गरेपछि तपाईंको सदस्यता सक्रिय हुनेछ।'),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Color(0xFF475569),
+                      height: 1.5,
+                      decoration: TextDecoration.none,
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  child: Text(AppLanguage.tr(
-                      'Submit Payment', 'भुक्तानी पेश गर्नुहोस्')),
-                ),
+                  if (error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFFDC2626),
+                        height: 1.4,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
+              footer: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: busy
+                          ? null
+                          : () => Navigator.of(ctx).pop(null),
+                      style: OutlinedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: busy
+                          ? null
+                          : () async {
+                              setPopupState(() {
+                                busy = true;
+                                error = null;
+                              });
+                              final outcome = await _performSubmit(d);
+                              if (!ctx.mounted) return;
+                              if (outcome.ok) {
+                                Navigator.of(ctx).pop(outcome);
+                              } else {
+                                setPopupState(() {
+                                  busy = false;
+                                  error = outcome.error;
+                                });
+                              }
+                            },
+                      style: FilledButton.styleFrom(
+                        backgroundColor: pal.primary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      child: busy
+                          ? const SizedBox(
+                              height: 20,
+                              width: 20,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2, color: Colors.white),
+                            )
+                          : Text(AppLanguage.tr(
+                              'Submit Payment', 'भुक्तानी पेश गर्नुहोस्')),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
         );
       },
     );
-    return ok == true;
   }
 
-  Future<void> _handleSubmitManual(_CheckoutData d) async {
-    final uid = AuthService.currentUser?.uid ?? '';
-    final purchasable = _purchasable(d);
-    final method = _method;
-    if (uid.isEmpty || purchasable == null || method == null) return;
-    if (_refCtrl.text.trim().isEmpty) {
-      showToast(
-          context,
-          AppLanguage.tr('Transaction ID / Reference is required.',
-              'ट्रान्जेक्सन आईडी / सन्दर्भ आवश्यक छ।'),
-          ToastVariant.error);
-      return;
+  /// Owns the whole submit UX: popup (with in-popup loading + inline error)
+  /// then the success toast + navigation on confirmation.
+  Future<void> _confirmAndSubmit(_CheckoutData d) async {
+    final outcome = await _showSubmitPopup(d);
+    if (outcome == null || !mounted) return; // user cancelled / dismissed
+    if (!outcome.ok) return; // unreachable: popup stays open on error
+    showToast(
+        context,
+        AppLanguage.tr(
+            'Payment details submitted! Your subscription is now pending approval.',
+            'भुक्तानी विवरण पेश गरियो! तपाईंको सदस्यता अब स्वीकृतिको प्रतीक्षामा छ।'),
+        ToastVariant.success);
+    if (outcome.examPurchaseId != null) {
+      context.pushReplacement(
+          '/subscription/exam-purchase/${outcome.examPurchaseId}?source=exam');
+    } else if (outcome.contentPurchaseId != null) {
+      context.pushReplacement(
+          '/purchase-details/content/${outcome.contentPurchaseId}?source=content');
+    } else {
+      context.pushReplacement('/subscription');
     }
-    if (_screenshotBytes == null) {
-      showToast(
-          context,
-          AppLanguage.tr('Payment screenshot is required.',
-              'भुक्तानीको स्क्रिनसट आवश्यक छ।'),
-          ToastVariant.error);
-      return;
-    }
-    setState(() => _submitting = true);
+  }
+
+  /// The actual submit work (no UI side effects): returns the outcome so the
+  /// popup can stay open with an inline error on failure.
+  Future<_SubmitOutcome> _performSubmit(_CheckoutData d) async {
+    String fail(String en, String ne) => AppLanguage.tr(en, ne);
     try {
+      final uid = AuthService.currentUser?.uid ?? '';
+      final purchasable = _purchasable(d);
+      final method = _method;
+      if (uid.isEmpty || purchasable == null || method == null) {
+        return _SubmitOutcome(
+            ok: false,
+            error: fail('Could not submit your payment. Please try again.',
+                'तपाईंको भुक्तानी पेश गर्न सकिएन। फेरि प्रयास गर्नुहोस्।'));
+      }
       // One active review request per user/exam (or content) — reuse the
       // pending one instead of uploading another receipt.
       if (d.flow == 'exam' && d.exam != null) {
         final existing =
             await fetchPendingExamPurchase(uid, '${d.exam!['id'] ?? ''}');
         if (existing != null) {
-          if (!mounted) return;
-          showToast(context,
-              AppLanguage.tr('Purchase Pending', 'खरिद समीक्षा हुँदैछ'),
-              ToastVariant.info);
-          context.pushReplacement(
-              '/subscription/exam-purchase/${existing.id}?source=exam');
-          return;
+          return _SubmitOutcome(ok: true, examPurchaseId: existing.id);
         }
       }
       if (d.flow == 'content' && d.content != null) {
         final existing = await fetchPendingContentPurchase(
             uid, d.contentType ?? '', d.contentId ?? '');
         if (existing != null) {
-          if (!mounted) return;
-          showToast(context,
-              AppLanguage.tr('Purchase Pending', 'खरिद समीक्षा हुँदैछ'),
-              ToastVariant.info);
-          context.pushReplacement(
-              '/purchase-details/content/${existing.id}?source=content');
-          return;
+          return _SubmitOutcome(ok: true, contentPurchaseId: existing.id);
         }
       }
 
       final screenshotUrl = await _uploadScreenshot();
       if (screenshotUrl == null) {
-        if (mounted) {
-          showToast(
-              context,
-              AppLanguage.tr('Payment screenshot is required.',
-                  'भुक्तानीको स्क्रिनसट आवश्यक छ।'),
-              ToastVariant.error);
-        }
-        return;
+        return _SubmitOutcome(
+            ok: false,
+            error: fail('Payment screenshot is required.',
+                'भुक्तानीको स्क्रिनसट आवश्यक छ।'));
       }
 
       final user = AuthService.currentUser;
@@ -732,32 +800,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           method: method,
         );
       }
-      if (!mounted) return;
-      showToast(
-          context,
-          AppLanguage.tr(
-              'Payment details submitted! Your subscription is now pending approval.',
-              'भुक्तानी विवरण पेश गरियो! तपाईंको सदस्यता अब स्वीकृतिको प्रतीक्षामा छ।'),
-          ToastVariant.success);
-      if (submittedExamPurchaseId != null) {
-        context.pushReplacement(
-            '/subscription/exam-purchase/$submittedExamPurchaseId?source=exam');
-      } else if (submittedContentPurchaseId != null) {
-        context.pushReplacement(
-            '/purchase-details/content/$submittedContentPurchaseId?source=content');
-      } else {
-        context.pushReplacement('/subscription');
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Could not submit your payment. Please try again.',
-                'तपाईंको भुक्तानी पेश गर्न सकिएन। फेरि प्रयास गर्नुहोस्।'),
-            ToastVariant.error);
-      }
-    } finally {
-      if (mounted) setState(() => _submitting = false);
+      return _SubmitOutcome(
+        ok: true,
+        examPurchaseId: submittedExamPurchaseId,
+        contentPurchaseId: submittedContentPurchaseId,
+      );
+    } catch (e) {
+      // Log the real error for diagnosis; the user sees the friendly text.
+      debugPrint('checkout submit failed: $e');
+      return _SubmitOutcome(
+          ok: false,
+          error: fail('Could not submit your payment. Please try again.',
+              'तपाईंको भुक्तानी पेश गर्न सकिएन। फेरि प्रयास गर्नुहोस्।'));
     }
   }
 
@@ -1036,10 +1090,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     });
                   }
                 },
-                decoration: InputDecoration(
+                decoration: _premiumInputDecoration(
+                  pal,
                   hintText: AppLanguage.tr(
                       'Enter coupon code', 'कुपन कोड प्रविष्ट गर्नुहोस्'),
-                  border: const OutlineInputBorder(),
                   isDense: true,
                 ),
               ),
@@ -1596,6 +1650,39 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  /// Premium curved input decoration for the payment form: rounded 16px
+  /// corners, subtle filled background, clear focused border. Labels, hints
+  /// and validation stay exactly as before — only the decoration changes.
+  InputDecoration _premiumInputDecoration(
+    ExpoPalette pal, {
+    String? labelText,
+    String? hintText,
+    String? helperText,
+    bool isDense = false,
+  }) {
+    const radius = BorderRadius.all(Radius.circular(16));
+    final idleBorder = OutlineInputBorder(
+      borderRadius: radius,
+      borderSide: BorderSide(color: pal.border),
+    );
+    return InputDecoration(
+      labelText: labelText,
+      hintText: hintText,
+      helperText: helperText,
+      isDense: isDense,
+      filled: true,
+      fillColor: pal.surfaceAlt.withValues(alpha: 0.55),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      border: idleBorder,
+      enabledBorder: idleBorder,
+      focusedBorder: OutlineInputBorder(
+        borderRadius: radius,
+        borderSide: BorderSide(color: pal.primary, width: 1.6),
+      ),
+    );
+  }
+
   Widget _receiptForm() {
     final pal = ExpoPalette.of(context);
     final canSubmit =
@@ -1607,7 +1694,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           controller: _refCtrl,
           textCapitalization: TextCapitalization.characters,
           onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
+          decoration: _premiumInputDecoration(
+            pal,
             labelText:
                 '${AppLanguage.tr('Transaction ID / Reference', 'ट्रान्जेक्सन आईडी / सन्दर्भ')} *',
             helperText: AppLanguage.tr(
@@ -1615,7 +1703,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 'तपाईंको भुक्तानी पछि देखिएको ट्रान्जेक्सन आईडी वा रिमार्क्स प्रविष्ट गर्नुहोस्।'),
             hintText: AppLanguage.tr(
                 'e.g. TXN123456789', 'जस्तै TXN123456789'),
-            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
@@ -1701,13 +1788,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         TextField(
           controller: _msgCtrl,
           maxLines: 3,
-          decoration: InputDecoration(
+          decoration: _premiumInputDecoration(
+            pal,
             labelText: AppLanguage.tr(
                 'Message (optional)', 'सन्देश (वैकल्पिक)'),
             hintText: AppLanguage.tr(
                 "Add a note for the admin, e.g. paid from a family member's account",
                 'एड्मिनको लागि नोट थप्नुहोस्, जस्तै परिवारको सदस्यको खाताबाट तिरेको'),
-            border: const OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
@@ -1717,25 +1804,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             foregroundColor: Colors.white,
             padding: const EdgeInsets.symmetric(vertical: 16),
           ),
-          onPressed: (_submitting || _uploadingScreenshot || !canSubmit)
+          onPressed: (_uploadingScreenshot || !canSubmit)
               ? null
               : () async {
-                  if (await _confirmSubmit()) {
-                    final d = await _future;
-                    if (mounted) _handleSubmitManual(d);
+                  if (_refCtrl.text.trim().isEmpty) {
+                    showToast(
+                        context,
+                        AppLanguage.tr(
+                            'Transaction ID / Reference is required.',
+                            'ट्रान्जेक्सन आईडी / सन्दर्भ आवश्यक छ।'),
+                        ToastVariant.error);
+                    return;
                   }
+                  if (_screenshotBytes == null) {
+                    showToast(
+                        context,
+                        AppLanguage.tr('Payment screenshot is required.',
+                            'भुक्तानीको स्क्रिनसट आवश्यक छ।'),
+                        ToastVariant.error);
+                    return;
+                  }
+                  final d = await _future;
+                  if (mounted) await _confirmAndSubmit(d);
                 },
-          child: _submitting
-              ? const SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white))
-              : Text(
-                  AppLanguage.tr(
-                      'Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
-                  style: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold)),
+          child: Text(
+              AppLanguage.tr('Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         ),
       ],
     );

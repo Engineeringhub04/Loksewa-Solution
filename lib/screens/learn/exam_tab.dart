@@ -328,14 +328,20 @@ class _ExamTabState extends State<ExamTab> {
     final set = entry.set;
     if (entry.state == ExamCardState.locked) {
       setState(() => _purchaseNavigating = true);
-      context.push('/exam-purchase/${set.id}');
+      context.push('/exam-purchase/${set.id}').then((_) {
+        if (mounted) setState(() => _purchaseNavigating = false);
+      });
       return;
     }
     if (entry.state == ExamCardState.pending) {
       final purchase = entry.pendingPurchase;
       if (purchase != null) {
         setState(() => _purchaseNavigating = true);
-        context.push('/subscription/exam-purchase/${purchase.id}');
+        context
+            .push('/subscription/exam-purchase/${purchase.id}')
+            .then((_) {
+          if (mounted) setState(() => _purchaseNavigating = false);
+        });
       } else {
         setState(() => _purchaseNavigating = false);
       }

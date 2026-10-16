@@ -215,6 +215,10 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
   final existing = await fetchPendingExamPurchase(input.uid, input.examSetId);
   if (existing != null) return existing.id;
 
+  // The create rule requires a signed-in owner (isSignedIn() && uid match),
+  // so the write MUST carry the user's ID token — without it Firestore
+  // answers 403 and the checkout shows "Could not submit your payment".
+  final token = await AuthService.getValidIdToken();
   final id = '${input.uid}_${input.examSetId}_${DateTime.now().millisecondsSinceEpoch}';
   await FirestoreRest.setDocument('app_exam_purchases/$id', {
     'uid': input.uid,
@@ -242,7 +246,7 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
     'rejectionReason': null,
     'createdAt': FirestoreRest.serverTimestamp(),
     'updatedAt': FirestoreRest.serverTimestamp(),
-  });
+  }, idToken: token);
   // Index the purchase ID on the user's doc for per-user history.
   // Rules deny LIST queries on app_exam_purchases for non-admins, so the
   // app resolves the user's IDs from their own doc and getDocuments each.
@@ -283,12 +287,13 @@ Future<void> updateMyExamPurchaseDetails(
   required String screenshotUrl,
   String? customerMessage,
 }) async {
+  final token = await AuthService.getValidIdToken();
   await FirestoreRest.updateDocument('app_exam_purchases/$id', {
     'transactionRef': transactionRef.trim(),
     'screenshotUrl': screenshotUrl,
     'customerMessage': customerMessage,
     'updatedAt': FirestoreRest.serverTimestamp(),
-  });
+  }, idToken: token);
 }
 
 /// Mirrors isExamPurchaseEditable.

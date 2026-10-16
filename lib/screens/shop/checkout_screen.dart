@@ -122,6 +122,7 @@ class CheckoutScreen extends StatefulWidget {
 Future<Map<String, dynamic>?> fetchCheckoutContent(
   String type,
   String contentId, {
+  String? unitId,
   required String token,
   required Future<Map<String, dynamic>?> Function(String path, String token)
       getDoc,
@@ -132,12 +133,17 @@ Future<Map<String, dynamic>?> fetchCheckoutContent(
   // Real collections (mirrors the list sources in exam_service.dart):
   // subjects -> app_subjects_details/<course>__<subcourse>__<slug>
   // units    -> app_subjects_units_details/<unitId>
-  // chapters -> app_subjects_chapter_details/<chapterId>
+  // chapters -> app_subjects_chapter_details/<chapterId> (no unit)
+  //             app_subjects_unit-chapters_details/<chapterId> (has unit)
+  // The unitId signal picks the correct chapter collection upfront —
+  // no cross-collection double-checking.
   final path = type == 'subject'
       ? 'app_subjects_details/$contentId'
       : type == 'unit'
           ? 'app_subjects_units_details/$contentId'
-          : 'app_subjects_chapter_details/$contentId';
+          : (unitId != null && unitId.isNotEmpty)
+              ? 'app_subjects_unit-chapters_details/$contentId'
+              : 'app_subjects_chapter_details/$contentId';
   try {
     final direct = await getDoc(path, token);
     if (direct != null) return direct;
@@ -366,6 +372,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return fetchCheckoutContent(
       type,
       contentId,
+      unitId: unitId,
       token: token,
       getDoc: (path, t) => FirestoreRest.getDocument(path, idToken: t),
       queryDocs: (collection, where) =>

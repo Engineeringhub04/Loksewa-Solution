@@ -101,7 +101,7 @@ void main() {
     expect(got, isNull);
   });
 
-  test('chapter type has no fallback: direct miss returns null', () async {
+  test('chapter without unitId uses app_subjects_chapter_details', () async {
     var queried = false;
     final got = await fetchCheckoutContent(
       'chapter',
@@ -118,6 +118,24 @@ void main() {
     );
     expect(got, isNull);
     expect(queried, isFalse);
+  });
+
+  test('chapter with unitId uses app_subjects_unit-chapters_details', () async {
+    String? seenPath;
+    final doc = {'id': 'ch-1', 'name': 'Chapter 1'};
+    final got = await fetchCheckoutContent(
+      'chapter',
+      'ch-1',
+      unitId: 'unit-5',
+      token: 'tok',
+      getDoc: (path, t) async {
+        seenPath = path;
+        return doc;
+      },
+      queryDocs: (collection, where) async => [],
+    );
+    expect(seenPath, 'app_subjects_unit-chapters_details/ch-1');
+    expect(got, doc);
   });
 
   test('unit type resolves the units collection on direct hit', () async {

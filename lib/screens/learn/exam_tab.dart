@@ -1008,7 +1008,8 @@ class _ExamCard extends StatelessWidget {
           primaryDisabled = false;
           break;
         case ExamCardState.pending:
-          primaryLabel = AppLanguage.tr('Pending', 'पेन्डिङ');
+          primaryLabel = AppLanguage.tr(
+              'Pending-View Detail', 'पेन्डिङ-विवरण हेर्नुहोस्');
           primaryIcon = Icons.access_time;
           primaryDisabled = false;
           break;

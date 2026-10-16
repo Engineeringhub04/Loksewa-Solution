@@ -4,7 +4,7 @@ import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
-import '../../services/exam_service.dart';
+import '../../services/exam_service.dart' hide fetchMyContentPurchases;
 import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -87,6 +87,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     var subcourseId = 'civil-assistant-sub-engineer';
     bool isPremium = false;
     Set<String> approvedContentIds = const {};
+    Map<String, String> pendingPurchaseIdByContentId = const {};
     if (user != null) {
       try {
         final doc = await FirestoreRest.getDocument('users/${user.uid}',
@@ -97,6 +98,15 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
         // D2: approved content purchases unlock without a subscription.
         approvedContentIds =
             (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
+        // Pending content purchase requests: contentId -> purchase doc id.
+        try {
+          final purchases = await fetchMyContentPurchases(user.uid);
+          pendingPurchaseIdByContentId = {
+            for (final p in purchases)
+              if (p.status == 'pending' && p.contentId.isNotEmpty)
+                p.contentId: p.id,
+          };
+        } catch (_) {}
       } catch (_) {}
     }
     String subjectName = 'Subject';
@@ -128,6 +138,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
       chapters: chapters,
       isPremium: isPremium,
       approvedContentIds: approvedContentIds,
+      pendingPurchaseIdByContentId: pendingPurchaseIdByContentId,
     );
   }
 
@@ -161,6 +172,12 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
   }
 
   void _onChapterTap(Map<String, dynamic> c, _ChapterPage d) {
+    // Pending purchase request: go straight to its detail, no Buy popup.
+    final pendingId = d.pendingPurchaseIdByContentId['${c['id']}'];
+    if (pendingId != null && pendingId.isNotEmpty) {
+      context.push('/purchase-details/content/$pendingId');
+      return;
+    }
     final locked =
         c['pro'] == true && !d.isPremium && !_contentUnlocked(c, d);
     if (locked) {
@@ -361,6 +378,8 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     final unlocked = _contentUnlocked(c, d);
     final isLocked = c['pro'] == true && !d.isPremium && !unlocked;
     final isPurchased = c['pro'] == true && (d.isPremium || unlocked);
+    final isPending =
+        d.pendingPurchaseIdByContentId.containsKey('${c['id']}');
     final order = '${c['order']}'.padLeft(2, '0');
     final cardColor = Theme.of(context).cardColor;
     return Padding(
@@ -451,7 +470,9 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                             Icon(
                                 isPurchased
                                     ? Icons.check_circle
-                                    : Icons.lock,
+                                    : isPending
+                                        ? Icons.access_time
+                                        : Icons.lock,
                                 size: 11,
                                 color: isPurchased
                                     ? const Color(0xFF047857)
@@ -460,7 +481,10 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
                             Text(
                                 isPurchased
                                     ? 'Purchased (Active)'
-                                    : 'Premium',
+                                    : isPending
+                                        ? AppLanguage.tr(
+                                            'Pending', 'पेन्डिङ')
+                                        : 'Premium',
                                 style: TextStyle(
                                     fontSize: 9,
                                     fontWeight: FontWeight.bold,
@@ -564,7 +588,10 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
         setState(() => _premiumChapter = null);
         final qs =
             'contentId=${Uri.encodeComponent(chapterId)}&contentType=chapter&contentSubjectId=${Uri.encodeComponent(widget.subjectId)}';
-        context.push('/checkout?$qs');
+        // Refresh on return so a just-submitted request shows Pending.
+        context.push('/checkout?$qs').then((_) {
+          if (mounted) _reload();
+        });
       },
       confirmLabel: AppLanguage.tr(
           'Go To Subscription Plan', 'सदस्यता योजना खोल्नुहोस्'),
@@ -1079,6 +1106,10 @@ class _ChapterPage {
   /// subscription. A purchased SUBJECT id unlocks everything inside it.
   final Set<String> approvedContentIds;
 
+  /// Content ids with a PENDING purchase request — contentId -> purchase
+  /// doc id. Tapping goes straight to the detail, no Buy popup.
+  final Map<String, String> pendingPurchaseIdByContentId;
+
   const _ChapterPage({
     required this.subjectName,
     required this.subjectPro,
@@ -1087,5 +1118,6 @@ class _ChapterPage {
     required this.chapters,
     required this.isPremium,
     this.approvedContentIds = const {},
+    this.pendingPurchaseIdByContentId = const {},
   });
 }

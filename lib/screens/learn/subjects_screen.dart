@@ -4,7 +4,7 @@ import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/content_purchases.dart';
 import '../../services/firestore_rest.dart';
-import '../../services/exam_service.dart';
+import '../../services/exam_service.dart' hide fetchMyContentPurchases;
 import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/home/subject_card_colored.dart';
@@ -50,6 +50,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     var subcourseName = 'Civil Assistant Sub Engineer';
     bool isPremium = false;
     Set<String> approvedContentIds = const {};
+    Map<String, String> pendingPurchaseIdByContentId = const {};
     if (user != null) {
       try {
         final doc = await FirestoreRest.getDocument('users/${user.uid}',
@@ -60,6 +61,16 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
         // D2: approved content purchases unlock without a subscription.
         approvedContentIds =
             (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
+        // Pending content purchase requests: contentId -> purchase doc id.
+        // Tapping a pending item goes straight to its detail (no Buy popup).
+        try {
+          final purchases = await fetchMyContentPurchases(user.uid);
+          pendingPurchaseIdByContentId = {
+            for (final p in purchases)
+              if (p.status == 'pending' && p.contentId.isNotEmpty)
+                p.contentId: p.id,
+          };
+        } catch (_) {}
       } catch (_) {}
     }
     // The two name lookups and the subject catalogue are independent — fetch
@@ -104,6 +115,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
       inProgress: stats.inProgress,
       isPremium: isPremium,
       approvedContentIds: approvedContentIds,
+      pendingPurchaseIdByContentId: pendingPurchaseIdByContentId,
     );
   }
 
@@ -125,6 +137,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   void _handleSubjectAction(Map<String, dynamic> s, _SubjectPage d) {
     final id = '${s['id']}';
     final name = '${s['name'] ?? 'Subject'}';
+    // Pending purchase request: go straight to its detail, no Buy popup.
+    final pendingId = d.pendingPurchaseIdByContentId[id];
+    if (pendingId != null && pendingId.isNotEmpty) {
+      context.push('/purchase-details/content/$pendingId');
+      return;
+    }
     final key = '$id $name'.toLowerCase();
     final hasUnits =
         key.contains('technical') || key.contains('प्राविधिक');
@@ -207,32 +225,45 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                                     for (var i = 0;
                                         i < d.subjects.length;
                                         i++)
-                                      SubjectCardColored(
-                                        name:
-                                            '${d.subjects[i]['name'] ?? 'Subject'}',
-                                        icon: _icons[i % _icons.length],
-                                        backgroundColor:
-                                            _colors[i % _colors.length],
-                                        premium:
-                                            d.subjects[i]['pro'] == true,
-                                        premiumLabel: 'Premium',
-                                        purchased: d.subjects[i]
-                                                    ['pro'] ==
-                                                true &&
-                                            (d.isPremium ||
-                                                d.approvedContentIds.contains(
-                                                    '${d.subjects[i]['id']}')),
-                                        purchasedLabel:
-                                            'Purchased (Active)',
-                                        footerLabel: 'View Chapter',
-                                        width: cardWidth,
-                                        height: 150,
-                                        onPress: () =>
-                                            _handleSubjectAction(
-                                                d.subjects[i], d),
-                                        onFooterPress: () =>
-                                            _handleSubjectAction(
-                                                d.subjects[i], d),
+                                      Builder(
+                                        builder: (context) {
+                                          final sid =
+                                              '${d.subjects[i]['id']}';
+                                          final isPending = d
+                                              .pendingPurchaseIdByContentId
+                                              .containsKey(sid);
+                                          final isPurchased = d.subjects[i]
+                                                          ['pro'] ==
+                                                      true &&
+                                                  (d.isPremium ||
+                                                      d.approvedContentIds
+                                                          .contains(sid));
+                                          return SubjectCardColored(
+                                            name:
+                                                '${d.subjects[i]['name'] ?? 'Subject'}',
+                                            icon: _icons[i % _icons.length],
+                                            backgroundColor:
+                                                _colors[i % _colors.length],
+                                            premium:
+                                                d.subjects[i]['pro'] == true,
+                                            premiumLabel: isPending
+                                                ? AppLanguage.tr(
+                                                    'Pending', 'पेन्डिङ')
+                                                : 'Premium',
+                                            purchased: isPurchased,
+                                            purchasedLabel:
+                                                'Purchased (Active)',
+                                            footerLabel: 'View Chapter',
+                                            width: cardWidth,
+                                            height: 150,
+                                            onPress: () =>
+                                                _handleSubjectAction(
+                                                    d.subjects[i], d),
+                                            onFooterPress: () =>
+                                                _handleSubjectAction(
+                                                    d.subjects[i], d),
+                                          );
+                                        },
                                       ),
                                   ],
                                 );
@@ -258,7 +289,13 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           setState(() => _premiumSubject = null);
                           final qs =
                               'contentId=${Uri.encodeComponent(sid)}&contentType=subject&contentSubjectId=${Uri.encodeComponent(sid)}';
-                          context.push('/checkout?$qs');
+                          // Refresh on return so a just-submitted request
+                          // shows its Pending state immediately.
+                          context.push('/checkout?$qs').then((_) {
+                            if (mounted) {
+                              setState(() => _future = _load());
+                            }
+                          });
                         },
                         confirmLabel: AppLanguage.tr(
                             'Go To Subscription Plan',
@@ -486,6 +523,10 @@ class _SubjectPage {
   /// without a subscription.
   final Set<String> approvedContentIds;
 
+  /// Content ids (subject ids) with a PENDING content purchase request —
+  /// contentId -> purchase doc id. Tapping goes straight to the detail.
+  final Map<String, String> pendingPurchaseIdByContentId;
+
   const _SubjectPage({
     required this.courseId,
     required this.subcourseId,
@@ -496,5 +537,6 @@ class _SubjectPage {
     required this.inProgress,
     required this.isPremium,
     this.approvedContentIds = const {},
+    this.pendingPurchaseIdByContentId = const {},
   });
 }

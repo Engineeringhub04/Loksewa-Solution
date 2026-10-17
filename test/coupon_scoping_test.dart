@@ -439,4 +439,185 @@ void main() {
       expect(r.valid, isTrue);
     });
   });
+
+  group('courseIds / subcourseIds multi-select', () {
+    test('courseIds allows a listed course, blocks an unlisted one', () {
+      final allow = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseIds': ['a', 'b'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'b',
+      );
+      expect(allow.valid, isTrue);
+
+      final block = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseIds': ['a', 'b'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c',
+      );
+      expect(block.valid, isFalse);
+      expect(block.reason, contains('this course'));
+    });
+
+    test('empty courseIds allows all courses', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseIds': [],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'anything',
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('legacy courseId string still works as single-item list', () {
+      final allow = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseId': 'a',
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'a',
+      );
+      expect(allow.valid, isTrue);
+
+      final block = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseId': 'a',
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'z',
+      );
+      expect(block.valid, isFalse);
+      expect(block.reason, contains('this course'));
+    });
+
+    test('courseIds array wins over legacy courseId string', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'courseIds': ['b'],
+          'courseId': 'a',
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'b',
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('subcourseIds allows a listed sub-course, blocks an unlisted one',
+        () {
+      final allow = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'subcourseIds': ['x', 'y'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c1',
+        subcourseId: 'y',
+      );
+      expect(allow.valid, isTrue);
+
+      final block = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'subcourseIds': ['x', 'y'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c1',
+        subcourseId: 'z',
+      );
+      expect(block.valid, isFalse);
+      expect(block.reason, contains('sub-course'));
+    });
+
+    test('empty subcourseIds allows all sub-courses', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'subcourseIds': [],
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c1',
+        subcourseId: 'anything',
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('legacy subcourseId string still works as single-item list', () {
+      final allow = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'subcourseId': 'x',
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c1',
+        subcourseId: 'x',
+      );
+      expect(allow.valid, isTrue);
+
+      final block = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['subject'],
+          'subcourseId': 'x',
+        },
+        'exam',
+        1000,
+        purchaseType: 'subject',
+        contentId: 's1',
+        courseId: 'c1',
+        subcourseId: 'w',
+      );
+      expect(block.valid, isFalse);
+      expect(block.reason, contains('sub-course'));
+    });
+  });
 }

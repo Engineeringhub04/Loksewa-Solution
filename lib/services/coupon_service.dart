@@ -8,7 +8,8 @@
 //   validFrom, validUntil (ISO datetime, may include time), isActive,
 //   appliesToBillingCycle: 'monthly'|'yearly'|'all' (legacy),
 //   applicableTo: string[] ('subscription'|'subject'|'chapter'|'exam'),
-//   courseId, subcourseId ('' = all),
+//   courseIds, subcourseIds: string[] ([] = all; legacy courseId/subcourseId
+//   string still honored when the arrays are absent),
 //   subjectIds, chapterIds, examModelIds: string[] ([] = all),
 //   userIds: string[] ([] = all users),
 //   minPurchaseAmount: number (0/absent = no minimum),
@@ -35,7 +36,9 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 /// - `applicableTo`: string[] — purchase types this coupon covers
 ///   ('subscription' | 'subject' | 'chapter' | 'exam'). When missing/empty,
 ///   the legacy `appliesToBillingCycle` check is used instead.
-/// - `courseId`/`subcourseId`: string ('' = all courses/sub-courses).
+/// - `courseIds`/`subcourseIds`: string[] ([] = all courses/sub-courses);
+///   the legacy `courseId`/`subcourseId` string is honored as a single-item
+///   list when the array is absent.
 /// - `subjectIds`/`chapterIds`/`examModelIds`: string[] ([] = all).
 /// - `userIds`: string[] ([] = all users).
 /// - `validFrom`/`validUntil`: ISO datetime strings (may include time).
@@ -192,13 +195,16 @@ class CouponService {
             valid: false,
             reason: 'This coupon does not apply to this subject');
       }
-      final cCourse = '${coupon['courseId'] ?? ''}';
-      if (cCourse.isNotEmpty && cCourse != (courseId ?? '')) {
+      final allowedCourses = _scopedIds(coupon, 'courseIds', 'courseId');
+      if (allowedCourses.isNotEmpty &&
+          !allowedCourses.contains(courseId ?? '')) {
         return const CouponValidationResult(
             valid: false, reason: 'This coupon does not apply to this course');
       }
-      final cSub = '${coupon['subcourseId'] ?? ''}';
-      if (cSub.isNotEmpty && cSub != (subcourseId ?? '')) {
+      final allowedSubcourses =
+          _scopedIds(coupon, 'subcourseIds', 'subcourseId');
+      if (allowedSubcourses.isNotEmpty &&
+          !allowedSubcourses.contains(subcourseId ?? '')) {
         return const CouponValidationResult(
             valid: false,
             reason: 'This coupon does not apply to this sub-course');
@@ -367,6 +373,16 @@ class CouponService {
       return v.map((e) => '$e').where((s) => s.isNotEmpty).toList();
     }
     return const [];
+  }
+
+  /// New array field (e.g. `courseIds`) wins; falls back to the legacy
+  /// single string field (e.g. `courseId`). Empty/absent = all.
+  static List<String> _scopedIds(
+      Map<String, dynamic> coupon, String listKey, String legacyKey) {
+    final list = _asStringList(coupon[listKey]);
+    if (list.isNotEmpty) return list;
+    final legacy = '${coupon[legacyKey] ?? ''}';
+    return legacy.isNotEmpty ? [legacy] : const [];
   }
 
   static int _asInt(dynamic v) {

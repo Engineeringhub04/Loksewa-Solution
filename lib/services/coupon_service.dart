@@ -5,7 +5,12 @@
 //
 // app_coupon_codes/{code}
 //   code, discountType: 'percent' | 'flat', discountValue, maxUses, usedCount,
-//   validFrom, validUntil, isActive, appliesToBillingCycle: 'monthly'|'yearly'|'all'
+//   validFrom, validUntil (ISO datetime, may include time), isActive,
+//   appliesToBillingCycle: 'monthly'|'yearly'|'all' (legacy),
+//   applicableTo: string[] ('subscription'|'subject'|'chapter'|'exam'),
+//   courseId, subcourseId ('' = all),
+//   subjectIds, chapterIds, examModelIds: string[] ([] = all),
+//   userIds: string[] ([] = all users)
 //
 // The usage increment uses a Firestore `:commit` field transform
 // (`increment`), the same atomic operation the React `increment(1)` performs —
@@ -19,15 +24,31 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 
 /// Billing-cycle categories `validateCoupon` understands. 'exam' is the
 /// checkout-only category used for exam-set and content purchases.
+///
+/// New scoping fields (written by the admin panel to `app_coupon_codes/{code}`):
+/// - `applicableTo`: string[] — purchase types this coupon covers
+///   ('subscription' | 'subject' | 'chapter' | 'exam'). When missing/empty,
+///   the legacy `appliesToBillingCycle` check is used instead.
+/// - `courseId`/`subcourseId`: string ('' = all courses/sub-courses).
+/// - `subjectIds`/`chapterIds`/`examModelIds`: string[] ([] = all).
+/// - `userIds`: string[] ([] = all users).
+/// - `validFrom`/`validUntil`: ISO datetime strings (may include time).
 class CouponService {
   /// Validates [rawCode] against `app_coupon_codes` for [billingCycle] and
-  /// [originalAmount]. Returns (valid, discountedAmount, discountLabel,
-  /// reason) — mirrors `CouponValidationResult`.
+  /// [originalAmount]. The optional named params describe the purchase being
+  /// made so the new scope fields can be enforced; omit them (or pass null)
+  /// and only the legacy checks run. Returns (valid, discountedAmount,
+  /// discountLabel, reason) — mirrors `CouponValidationResult`.
   static Future<CouponValidationResult> validateCoupon(
     String rawCode,
     String billingCycle,
-    num originalAmount,
-  ) async {
+    num originalAmount, {
+    String? purchaseType, // 'subscription' | 'subject' | 'chapter' | 'exam'
+    String? contentId, // subject/chapter/exam ID being purchased
+    String? courseId,
+    String? subcourseId,
+    String? uid,
+  }) async {
     final code = rawCode.trim().toUpperCase();
     final token = await AuthService.getValidIdToken();
     final coupon = await FirestoreRest.getDocument('app_coupon_codes/$code',
@@ -36,15 +57,62 @@ class CouponService {
       return const CouponValidationResult(
           valid: false, reason: 'Coupon code not found');
     }
+    return validateCouponData(
+      coupon,
+      billingCycle,
+      originalAmount,
+      purchaseType: purchaseType,
+      contentId: contentId,
+      courseId: courseId,
+      subcourseId: subcourseId,
+      uid: uid,
+    );
+  }
+
+  /// Pure (sync, testable) validation of an already-fetched coupon doc.
+  /// See [validateCoupon] for the field contract.
+  static CouponValidationResult validateCouponData(
+    Map<String, dynamic> coupon,
+    String billingCycle,
+    num originalAmount, {
+    String? purchaseType, // 'subscription' | 'subject' | 'chapter' | 'exam'
+    String? contentId, // subject/chapter/exam ID being purchased
+    String? courseId,
+    String? subcourseId,
+    String? uid,
+  }) {
     if (coupon['isActive'] != true) {
       return const CouponValidationResult(
           valid: false, reason: 'This coupon is no longer active');
     }
-    final appliesTo = '${coupon['appliesToBillingCycle'] ?? 'all'}';
-    final appliesToExam = billingCycle == 'exam' && appliesTo == 'all';
-    if (!appliesToExam && appliesTo != 'all' && appliesTo != billingCycle) {
+    // 1. User scope — a non-empty userIds list restricts the coupon to
+    // those users only.
+    final userIds = _asStringList(coupon['userIds']);
+    if (userIds.isNotEmpty &&
+        (uid == null || uid.isEmpty || !userIds.contains(uid))) {
       return const CouponValidationResult(
-          valid: false, reason: 'This coupon does not apply to the selected plan');
+          valid: false,
+          reason: 'This coupon is not available for your account');
+    }
+    // 2. Applicability — new `applicableTo` wins; otherwise the legacy
+    // `appliesToBillingCycle` check keeps old coupons working.
+    final applicableTo = _asStringList(coupon['applicableTo']);
+    if (applicableTo.isNotEmpty) {
+      if (purchaseType != null &&
+          purchaseType.isNotEmpty &&
+          !applicableTo.contains(purchaseType)) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon cannot be used for this purchase');
+      }
+    } else {
+      final appliesTo = '${coupon['appliesToBillingCycle'] ?? 'all'}';
+      final appliesToExam = billingCycle == 'exam' && appliesTo == 'all';
+      if (!appliesToExam && appliesTo != 'all' && appliesTo != billingCycle) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon does not apply to the selected plan');
+      }
     }
     final maxUses = _asInt(coupon['maxUses']);
     final usedCount = _asInt(coupon['usedCount']);
@@ -62,6 +130,42 @@ class CouponService {
     if (validUntil != null && now > validUntil) {
       return const CouponValidationResult(
           valid: false, reason: 'This coupon has expired');
+    }
+    // 3. Content scope — only enforced when the caller passed purchaseType.
+    if (purchaseType == 'subject') {
+      final subjectIds = _asStringList(coupon['subjectIds']);
+      if (subjectIds.isNotEmpty &&
+          (contentId == null || !subjectIds.contains(contentId))) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon does not apply to this subject');
+      }
+      final cCourse = '${coupon['courseId'] ?? ''}';
+      if (cCourse.isNotEmpty && cCourse != (courseId ?? '')) {
+        return const CouponValidationResult(
+            valid: false, reason: 'This coupon does not apply to this course');
+      }
+      final cSub = '${coupon['subcourseId'] ?? ''}';
+      if (cSub.isNotEmpty && cSub != (subcourseId ?? '')) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon does not apply to this sub-course');
+      }
+    } else if (purchaseType == 'chapter') {
+      final chapterIds = _asStringList(coupon['chapterIds']);
+      if (chapterIds.isNotEmpty &&
+          (contentId == null || !chapterIds.contains(contentId))) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon does not apply to this chapter');
+      }
+    } else if (purchaseType == 'exam') {
+      final examIds = _asStringList(coupon['examModelIds']);
+      if (examIds.isNotEmpty &&
+          (contentId == null || !examIds.contains(contentId))) {
+        return const CouponValidationResult(
+            valid: false, reason: 'This coupon does not apply to this exam');
+      }
     }
 
     final discountType = '${coupon['discountType'] ?? ''}';
@@ -116,6 +220,13 @@ class CouponService {
     } catch (_) {
       // Coupon may not exist / no-code path — nothing to increment.
     }
+  }
+
+  static List<String> _asStringList(dynamic v) {
+    if (v is List) {
+      return v.map((e) => '$e').where((s) => s.isNotEmpty).toList();
+    }
+    return const [];
   }
 
   static int _asInt(dynamic v) {

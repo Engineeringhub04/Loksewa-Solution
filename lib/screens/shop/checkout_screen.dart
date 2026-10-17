@@ -427,8 +427,43 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final category = (d.flow == 'content' || d.flow == 'exam')
           ? 'exam'
           : '${d.plan?['billingCycle'] ?? 'free'}';
+      // Purchase context for the new coupon scope fields.
+      String? purchaseType;
+      String? scopeContentId;
+      if (d.flow == 'plan') {
+        purchaseType = 'subscription';
+      } else if (d.flow == 'exam') {
+        purchaseType = 'exam';
+        scopeContentId = d.examId;
+      } else if (d.flow == 'content') {
+        final ct = d.contentType ?? '';
+        if (ct == 'subject') {
+          purchaseType = 'subject';
+          scopeContentId = d.contentId;
+        } else if (ct == 'chapter') {
+          purchaseType = 'chapter';
+          scopeContentId = d.contentId;
+        } else if (ct == 'unit') {
+          // Units are purchased from the chapter-level pages — 'chapter'
+          // coupons apply (checked against the unit's own ID).
+          purchaseType = 'chapter';
+          scopeContentId = d.contentId;
+        }
+      }
+      final couponCourseId =
+          '${d.content?['courseId'] ?? d.userDoc?['courseId'] ?? ''}';
+      final couponSubcourseId =
+          '${d.content?['subcourseId'] ?? d.userDoc?['subcourseId'] ?? ''}';
       final result = await CouponService.validateCoupon(
-          _couponCtrl.text.trim(), category, _originalAmount(d));
+        _couponCtrl.text.trim(),
+        category,
+        _originalAmount(d),
+        purchaseType: purchaseType,
+        contentId: scopeContentId,
+        courseId: couponCourseId.isEmpty ? null : couponCourseId,
+        subcourseId: couponSubcourseId.isEmpty ? null : couponSubcourseId,
+        uid: AuthService.currentUser?.uid,
+      );
       if (!mounted) return;
       if (!result.valid) {
         setState(() => _couponError =

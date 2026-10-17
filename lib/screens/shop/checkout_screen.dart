@@ -454,6 +454,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           '${d.content?['courseId'] ?? d.userDoc?['courseId'] ?? ''}';
       final couponSubcourseId =
           '${d.content?['subcourseId'] ?? d.userDoc?['subcourseId'] ?? ''}';
+      // Exam tier for the new examTiers coupon check — fail-open when the
+      // exam doc does not carry an isPro field.
+      String? examTier;
+      if (d.flow == 'exam' && d.exam != null && d.exam!.containsKey('isPro')) {
+        examTier = d.exam!['isPro'] == true ? 'pro' : 'free';
+      }
       final result = await CouponService.validateCoupon(
         _couponCtrl.text.trim(),
         category,
@@ -463,6 +469,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         courseId: couponCourseId.isEmpty ? null : couponCourseId,
         subcourseId: couponSubcourseId.isEmpty ? null : couponSubcourseId,
         uid: AuthService.currentUser?.uid,
+        examTier: examTier,
       );
       if (!mounted) return;
       if (!result.valid) {
@@ -984,6 +991,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     ));
     if (_couponApplied != null) {
       await CouponService.incrementCouponUsage(_couponApplied!.code);
+      if (uid.isNotEmpty) {
+        await CouponService.incrementCouponUsageForUser(
+            _couponApplied!.code, uid);
+      }
     }
   }
 

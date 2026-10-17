@@ -10,7 +10,13 @@
 //   applicableTo: string[] ('subscription'|'subject'|'chapter'|'exam'),
 //   courseId, subcourseId ('' = all),
 //   subjectIds, chapterIds, examModelIds: string[] ([] = all),
-//   userIds: string[] ([] = all users)
+//   userIds: string[] ([] = all users),
+//   minPurchaseAmount: number (0/absent = no minimum),
+//   maxUsesPerUser: number (0/absent = unlimited per user),
+//   firstTimeOnly: boolean,
+//   examTiers: string[] (e.g. ['pro'] or ['pro','free'])
+//
+// Per-user usage is tracked in app_coupon_usages/{CODE}_{uid} {count}.
 //
 // The usage increment uses a Firestore `:commit` field transform
 // (`increment`), the same atomic operation the React `increment(1)` performs —
@@ -33,6 +39,14 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 /// - `subjectIds`/`chapterIds`/`examModelIds`: string[] ([] = all).
 /// - `userIds`: string[] ([] = all users).
 /// - `validFrom`/`validUntil`: ISO datetime strings (may include time).
+/// - `minPurchaseAmount`: number (0/absent = no minimum).
+/// - `maxUsesPerUser`: number (0/absent = unlimited per user); usage tracked
+///   in `app_coupon_usages/{CODE}_{uid}` (read fail-open).
+/// - `firstTimeOnly`: boolean — coupon requires no prior purchase history
+///   (checked via users/{uid} subscriptionIds/contentPurchaseIds/
+///   examPurchaseIds; read fail-open treats the user as first-time).
+/// - `examTiers`: string[] — exam purchase tiers this coupon covers
+///   ('pro' | 'free'); enforced only when the caller passes `examTier`.
 class CouponService {
   /// Validates [rawCode] against `app_coupon_codes` for [billingCycle] and
   /// [originalAmount]. The optional named params describe the purchase being
@@ -48,6 +62,7 @@ class CouponService {
     String? courseId,
     String? subcourseId,
     String? uid,
+    String? examTier, // 'pro' | 'free' — the exam set's tier, if known
   }) async {
     final code = rawCode.trim().toUpperCase();
     final token = await AuthService.getValidIdToken();
@@ -56,6 +71,35 @@ class CouponService {
     if (coupon == null) {
       return const CouponValidationResult(
           valid: false, reason: 'Coupon code not found');
+    }
+    // Async per-user checks — fail-open so a read hiccup never blocks a
+    // legit coupon.
+    int? perUserUsedCount;
+    final maxPerUser = _asInt(coupon['maxUsesPerUser']);
+    if (maxPerUser > 0 && uid != null && uid.isNotEmpty) {
+      try {
+        final usage = await FirestoreRest.getDocument(
+            'app_coupon_usages/${code}_$uid',
+            idToken: token);
+        perUserUsedCount = _asInt(usage?['count']);
+      } catch (_) {
+        perUserUsedCount = 0;
+      }
+    }
+    bool? isFirstTimeBuyer;
+    if (coupon['firstTimeOnly'] == true && uid != null && uid.isNotEmpty) {
+      try {
+        final userDoc =
+            await FirestoreRest.getDocument('users/$uid', idToken: token);
+        final hasHistory = [
+          'subscriptionIds',
+          'contentPurchaseIds',
+          'examPurchaseIds'
+        ].any((k) => (userDoc?[k] as List?)?.isNotEmpty == true);
+        isFirstTimeBuyer = !hasHistory;
+      } catch (_) {
+        isFirstTimeBuyer = true;
+      }
     }
     return validateCouponData(
       coupon,
@@ -66,11 +110,16 @@ class CouponService {
       courseId: courseId,
       subcourseId: subcourseId,
       uid: uid,
+      perUserUsedCount: perUserUsedCount,
+      isFirstTimeBuyer: isFirstTimeBuyer,
+      examTier: examTier,
     );
   }
 
   /// Pure (sync, testable) validation of an already-fetched coupon doc.
-  /// See [validateCoupon] for the field contract.
+  /// See [validateCoupon] for the field contract. [perUserUsedCount] and
+  /// [isFirstTimeBuyer] carry the async per-user lookups done by
+  /// [validateCoupon]; pass null to skip those checks.
   static CouponValidationResult validateCouponData(
     Map<String, dynamic> coupon,
     String billingCycle,
@@ -80,6 +129,9 @@ class CouponService {
     String? courseId,
     String? subcourseId,
     String? uid,
+    int? perUserUsedCount,
+    bool? isFirstTimeBuyer,
+    String? examTier, // 'pro' | 'free'
   }) {
     if (coupon['isActive'] != true) {
       return const CouponValidationResult(
@@ -167,6 +219,41 @@ class CouponService {
             valid: false, reason: 'This coupon does not apply to this exam');
       }
     }
+    // 4. Minimum purchase amount.
+    final minAmt = _asNum(coupon['minPurchaseAmount']);
+    if (minAmt > 0 && originalAmount < minAmt) {
+      return CouponValidationResult(
+          valid: false,
+          reason:
+              'This coupon requires a minimum purchase of Rs. ${_numLabel(minAmt)}');
+    }
+    // 5. Per-user usage limit.
+    final maxPerUser = _asInt(coupon['maxUsesPerUser']);
+    if (maxPerUser > 0 &&
+        perUserUsedCount != null &&
+        perUserUsedCount >= maxPerUser) {
+      return const CouponValidationResult(
+          valid: false,
+          reason:
+              'You have already used this coupon the maximum number of times');
+    }
+    // 6. First-time buyers only.
+    if (coupon['firstTimeOnly'] == true && isFirstTimeBuyer == false) {
+      return const CouponValidationResult(
+          valid: false, reason: 'This coupon is for first-time buyers only');
+    }
+    // 7. Exam tier — enforced only when the caller knows the exam's tier.
+    if (purchaseType == 'exam') {
+      final tiers = _asStringList(coupon['examTiers']);
+      if (tiers.isNotEmpty &&
+          examTier != null &&
+          examTier.isNotEmpty &&
+          !tiers.contains(examTier)) {
+        return const CouponValidationResult(
+            valid: false,
+            reason: 'This coupon does not apply to this exam type');
+      }
+    }
 
     final discountType = '${coupon['discountType'] ?? ''}';
     final discountValue = _asNum(coupon['discountValue']);
@@ -219,6 +306,59 @@ class CouponService {
       if (res.statusCode != 200) throw Exception('increment failed');
     } catch (_) {
       // Coupon may not exist / no-code path — nothing to increment.
+    }
+  }
+
+  /// Atomically increments the per-user usage counter at
+  /// `app_coupon_usages/{CODE}_{uid}`. Creates the doc with count=1 when it
+  /// does not exist yet. Best-effort (swallows failures).
+  static Future<void> incrementCouponUsageForUser(
+      String code, String uid) async {
+    try {
+      final token = await AuthService.getValidIdToken();
+      const base =
+          'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
+      final docId = '${code.toUpperCase()}_$uid';
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+      // Fast path: create with count=1 (succeeds on first use).
+      final createRes = await http.post(
+        Uri.parse('$base/app_coupon_usages?documentId=$docId'),
+        headers: headers,
+        body: jsonEncode({
+          'fields': {
+            'count': {'integerValue': '1'},
+            'code': {'stringValue': code.toUpperCase()},
+            'uid': {'stringValue': uid},
+          },
+        }),
+      );
+      if (createRes.statusCode == 200) return;
+      // Already exists (or create failed) — atomic increment instead.
+      final res = await http.post(
+        Uri.parse('$base:commit'),
+        headers: headers,
+        body: jsonEncode({
+          'writes': [
+            {
+              'update': {
+                'name': '$base/app_coupon_usages/$docId',
+              },
+              'updateTransforms': [
+                {
+                  'fieldPath': 'count',
+                  'increment': {'integerValue': '1'},
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      if (res.statusCode != 200) throw Exception('increment failed');
+    } catch (_) {
+      // Best-effort only.
     }
   }
 

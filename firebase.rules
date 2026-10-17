@@ -883,6 +883,16 @@ service cloud.firestore {
          changedOnly(['usedCount']) &&
          request.resource.data.usedCount == resource.data.usedCount + 1);
     }
+    match /app_coupon_usages/{usageId} {
+      // Doc ID is {CODE}_{uid}. Users may read/create/update only their own usage docs.
+      allow read: if isSignedIn() && usageId.endsWith('_' + request.auth.uid);
+      allow create: if isSignedIn() && usageId.endsWith('_' + request.auth.uid) &&
+        request.resource.data.uid == request.auth.uid &&
+        request.resource.data.count == 1;
+      allow update: if isSignedIn() && usageId.endsWith('_' + request.auth.uid) &&
+        changedOnly(['count']) &&
+        request.resource.data.count == resource.data.count + 1;
+    }
         match /app_subscriptions/{docId} {
       allow read: if isAdmin() ||
         (isSignedIn() && resource.data.uid == request.auth.uid);

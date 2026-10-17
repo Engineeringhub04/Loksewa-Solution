@@ -272,4 +272,171 @@ void main() {
       expect(r.reason, contains('not active yet'));
     });
   });
+
+  group('minPurchaseAmount', () {
+    test('blocks when originalAmount below minimum', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'minPurchaseAmount': 500},
+        'monthly',
+        300,
+      );
+      expect(r.valid, isFalse);
+      expect(r.reason, contains('minimum purchase'));
+    });
+
+    test('allows when originalAmount meets minimum', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'minPurchaseAmount': 500},
+        'monthly',
+        500,
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('absent minPurchaseAmount skips the check', () {
+      final r = CouponService.validateCouponData(
+        _baseCoupon(),
+        'monthly',
+        100,
+      );
+      expect(r.valid, isTrue);
+    });
+  });
+
+  group('maxUsesPerUser', () {
+    test('blocks when per-user count reached the limit', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'maxUsesPerUser': 1},
+        'monthly',
+        1000,
+        uid: 'u1',
+        perUserUsedCount: 1,
+      );
+      expect(r.valid, isFalse);
+      expect(r.reason, contains('maximum number of times'));
+    });
+
+    test('allows when per-user count below the limit', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'maxUsesPerUser': 2},
+        'monthly',
+        1000,
+        uid: 'u1',
+        perUserUsedCount: 1,
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('absent maxUsesPerUser skips the check', () {
+      final r = CouponService.validateCouponData(
+        _baseCoupon(),
+        'monthly',
+        1000,
+        uid: 'u1',
+        perUserUsedCount: 99,
+      );
+      expect(r.valid, isTrue);
+    });
+  });
+
+  group('firstTimeOnly', () {
+    test('blocks a returning buyer', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'firstTimeOnly': true},
+        'monthly',
+        1000,
+        uid: 'u1',
+        isFirstTimeBuyer: false,
+      );
+      expect(r.valid, isFalse);
+      expect(r.reason, contains('first-time buyers'));
+    });
+
+    test('allows a first-time buyer', () {
+      final r = CouponService.validateCouponData(
+        {..._baseCoupon(), 'firstTimeOnly': true},
+        'monthly',
+        1000,
+        uid: 'u1',
+        isFirstTimeBuyer: true,
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('absent firstTimeOnly skips the check', () {
+      final r = CouponService.validateCouponData(
+        _baseCoupon(),
+        'monthly',
+        1000,
+        uid: 'u1',
+        isFirstTimeBuyer: false,
+      );
+      expect(r.valid, isTrue);
+    });
+  });
+
+  group('examTiers', () {
+    test('blocks exam tier not in examTiers', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['exam'],
+          'examTiers': ['pro'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'exam',
+        contentId: 'e1',
+        examTier: 'free',
+      );
+      expect(r.valid, isFalse);
+      expect(r.reason, contains('exam type'));
+    });
+
+    test('allows exam tier in examTiers', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['exam'],
+          'examTiers': ['pro', 'free'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'exam',
+        contentId: 'e1',
+        examTier: 'free',
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('null examTier skips the check (fail-open)', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['exam'],
+          'examTiers': ['pro'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'exam',
+        contentId: 'e1',
+      );
+      expect(r.valid, isTrue);
+    });
+
+    test('absent examTiers skips the check', () {
+      final r = CouponService.validateCouponData(
+        {
+          ..._baseCoupon(),
+          'applicableTo': ['exam'],
+        },
+        'exam',
+        1000,
+        purchaseType: 'exam',
+        contentId: 'e1',
+        examTier: 'free',
+      );
+      expect(r.valid, isTrue);
+    });
+  });
 }

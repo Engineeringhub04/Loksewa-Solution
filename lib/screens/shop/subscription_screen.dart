@@ -39,7 +39,12 @@ const Color _onGradient = Colors.white;
 class SubscriptionScreenData {
   final List<SubscriptionPlan> plans;
   final List<SubscriptionRecord> history;
-  const SubscriptionScreenData({required this.plans, required this.history});
+
+  /// Null when the catalogue could not be loaded (offline/error) — cards
+  /// render an offline placeholder where the feature matrix would be.
+  final List<PlanFeatureGroup>? catalogue;
+  const SubscriptionScreenData(
+      {required this.plans, required this.history, this.catalogue});
 }
 
 class SubscriptionScreen extends StatefulWidget {
@@ -86,13 +91,25 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     try {
       await SubscriptionService.expireIfPastDue(uid);
     } catch (_) {}
+    // The catalogue is best-effort: a failure must not kill the page —
+    // cards render an offline placeholder for the feature matrix instead.
+    Future<List<PlanFeatureGroup>?> loadCatalogue() async {
+      try {
+        return await SubscriptionService.fetchFeatureCatalogue();
+      } catch (_) {
+        return null;
+      }
+    }
+
     final results = await Future.wait([
       SubscriptionService.fetchSubscriptionPlans(),
       SubscriptionService.fetchMySubscriptionHistory(uid),
+      loadCatalogue(),
     ]);
     return SubscriptionScreenData(
       plans: results[0] as List<SubscriptionPlan>,
       history: results[1] as List<SubscriptionRecord>,
+      catalogue: results[2] as List<PlanFeatureGroup>?,
     );
   }
 
@@ -142,6 +159,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
 
                 return RefreshIndicator.adaptive(
                   onRefresh: () async {
+                    SubscriptionService.clearFeatureCatalogueCache();
                     setState(() {
                       _future = _load();
                     });
@@ -192,6 +210,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                             delayMs: min(entry.key, 8) * 60,
                             child: _PlanCard(
                               plan: plan,
+                              catalogue: data.catalogue,
                               isCurrent: isCurrent,
                               savePercent:
                                   plan.billingCycle == BillingCycle.yearly
@@ -248,6 +267,43 @@ class _LoadError extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Shown inside a plan card where the feature matrix would be, when the
+/// catalogue could not be loaded (offline/error). There is deliberately no
+/// bundled fallback — the user is told to connect instead.
+class _CatalogueOffline extends StatelessWidget {
+  const _CatalogueOffline();
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(ExpoSpacing.md),
+      decoration: BoxDecoration(
+        color: pal.surfaceAlt,
+        border: Border.all(color: pal.border),
+        borderRadius: BorderRadius.circular(ExpoRadius.md),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_outlined,
+              size: 22, color: pal.textDisabled),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              AppLanguage.tr(
+                'Plan features need an internet connection.',
+                'योजना सुविधाहरूका लागि इन्टरनेट जडान चाहिन्छ।',
+              ),
+              style: TextStyle(
+                  fontSize: ExpoType.bodySmall, color: pal.textSecondary),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -798,11 +854,16 @@ List<Color> _planGradient(SubscriptionPlan plan) {
 
 class _PlanCard extends StatelessWidget {
   final SubscriptionPlan plan;
+
+  /// Null when the catalogue failed to load (offline) — the card renders an
+  /// offline placeholder where the feature matrix would be.
+  final List<PlanFeatureGroup>? catalogue;
   final bool isCurrent;
   final int? savePercent;
   final VoidCallback onSubscribe;
   const _PlanCard({
     required this.plan,
+    required this.catalogue,
     required this.isCurrent,
     required this.savePercent,
     required this.onSubscribe,
@@ -814,9 +875,12 @@ class _PlanCard extends StatelessWidget {
     final isFree = plan.billingCycle == BillingCycle.free;
     final isYearly = plan.billingCycle == BillingCycle.yearly;
     final gradient = _planGradient(plan);
-    final matrix = buildFeatureMatrix(plan.features, AppLanguage.isNepali);
-    final included = matrix.fold<int>(0, (s, g) => s + g.includedCount);
-    final total = matrix.fold<int>(0, (s, g) => s + g.rows.length);
+    final matrix = catalogue == null
+        ? null
+        : buildFeatureMatrix(catalogue!, plan.features, AppLanguage.isNepali);
+    final included =
+        matrix?.fold<int>(0, (s, g) => s + g.includedCount) ?? 0;
+    final total = matrix?.fold<int>(0, (s, g) => s + g.rows.length) ?? 0;
     final priceSuffix = plan.billingCycle == BillingCycle.monthly
         ? AppLanguage.tr('/ month', '/ महिना')
         : isYearly
@@ -894,14 +958,28 @@ class _PlanCard extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 2),
-                          Text(
-                            AppLanguage.tr('$included of $total features',
-                                '$total मध्ये $included सुविधा'),
-                            style: TextStyle(
-                              fontSize: ExpoType.caption,
-                              color: _onGradient.withValues(alpha: 0x9E / 0xFF),
+                          // Offline: the catalogue could not be loaded, so no
+                          // feature counts exist for this card.
+                          if (matrix == null)
+                            Text(
+                              AppLanguage.tr('Features need internet',
+                                  'सुविधाका लागि इन्टरनेट चाहिन्छ'),
+                              style: TextStyle(
+                                fontSize: ExpoType.caption,
+                                color: _onGradient.withValues(
+                                    alpha: 0x9E / 0xFF),
+                              ),
+                            )
+                          else
+                            Text(
+                              AppLanguage.tr('$included of $total features',
+                                  '$total मध्ये $included सुविधा'),
+                              style: TextStyle(
+                                fontSize: ExpoType.caption,
+                                color: _onGradient.withValues(
+                                    alpha: 0x9E / 0xFF),
+                              ),
                             ),
-                          ),
                         ],
                       ),
                     ),
@@ -968,20 +1046,23 @@ class _PlanCard extends StatelessWidget {
                       ),
                   ],
                 ),
-                // Progress of the matrix, drawn on the crown.
-                const SizedBox(height: ExpoSpacing.md),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(ExpoRadius.pill),
-                  child: Container(
-                    height: 5,
-                    color: _onGradient.withValues(alpha: 0x38 / 0xFF),
-                    child: FractionallySizedBox(
-                      alignment: Alignment.centerLeft,
-                      widthFactor: total > 0 ? included / total : 0,
-                      child: Container(color: _onGradient),
+                // Progress of the matrix, drawn on the crown. Hidden when the
+                // catalogue is offline (no counts to show).
+                if (matrix != null) ...[
+                  const SizedBox(height: ExpoSpacing.md),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(ExpoRadius.pill),
+                    child: Container(
+                      height: 5,
+                      color: _onGradient.withValues(alpha: 0x38 / 0xFF),
+                      child: FractionallySizedBox(
+                        alignment: Alignment.centerLeft,
+                        widthFactor: total > 0 ? included / total : 0,
+                        child: Container(color: _onGradient),
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
@@ -991,10 +1072,17 @@ class _PlanCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                ...matrix.map((group) => Padding(
-                      padding: const EdgeInsets.only(bottom: ExpoSpacing.md),
-                      child: _FeatureGroupBlock(group: group),
-                    )),
+                // Offline catalogue: placeholder where the matrix would be.
+                if (matrix == null)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: ExpoSpacing.md),
+                    child: _CatalogueOffline(),
+                  )
+                else
+                  ...matrix!.map((group) => Padding(
+                        padding: const EdgeInsets.only(bottom: ExpoSpacing.md),
+                        child: _FeatureGroupBlock(group: group),
+                      )),
                 // Three states — and the free card is deliberately NOT one of
                 // the paid states. "Currently Active" answers "which plan am I
                 // paying for?", so it only ever sits on one card. The free

@@ -77,6 +77,29 @@ SubscriptionRecord _record({
 SubscriptionScreenData _data() {
   final now = DateTime.now();
   return SubscriptionScreenData(
+    catalogue: const [
+      PlanFeatureGroup(
+        key: 'learning',
+        icon: 'library',
+        titleEn: 'Learning & Content',
+        titleNe: 'अध्ययन तथा सामग्री',
+        features: [
+          PlanFeature(
+              'All subjects, units & chapters', 'सबै विषय, एकाइ र अध्याय'),
+          PlanFeature(
+              'Syllabus & study notes library', 'पाठ्यक्रम तथा नोट्स संग्रह'),
+        ],
+      ),
+      PlanFeatureGroup(
+        key: 'community',
+        icon: 'community',
+        titleEn: 'Community & Support',
+        titleNe: 'समुदाय तथा सहयोग',
+        features: [
+          PlanFeature('Priority support', 'प्राथमिकता सहयोग'),
+        ],
+      ),
+    ],
     plans: [
       _plan(
           id: 'monthly',
@@ -289,6 +312,27 @@ void main() {
     expect(find.text('Subscribe Now'), findsOneWidget);
     expect(find.text('/ month'), findsOneWidget);
     expect(find.text('/ year'), findsOneWidget);
+  });
+
+  testWidgets('offline catalogue shows the placeholder, not the matrix',
+      (tester) async {
+    final d = _data();
+    final offline = SubscriptionScreenData(
+      plans: d.plans,
+      history: d.history,
+      catalogue: null,
+    );
+    await _pump(tester, _router(() async => offline));
+    await _settle(tester);
+
+    // Every card renders the offline placeholder where the matrix would be.
+    expect(find.text('Plan features need an internet connection.'),
+        findsWidgets);
+    // No matrix rows, no counts, no progress UI.
+    expect(find.text('All subjects, units & chapters'), findsNothing);
+    expect(find.text('Also included'), findsNothing);
+    // The cards themselves still render with working footers.
+    expect(find.text('Subscribe Now'), findsOneWidget);
   });
 
   testWidgets('subscribe navigates to checkout with the plan id',

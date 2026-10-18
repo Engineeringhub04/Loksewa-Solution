@@ -856,6 +856,15 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+    // Plan feature catalogue (sections + features driving the app's ✓/✗ matrix).
+    match /app_plan_feature_categories/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      match /features/{featureId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
     match /app_subscription_settings/{docId} {
       // Keep the existing `config` document. It is readable only after secretKey
       // fields have been removed. Firestore cannot return only selected fields,

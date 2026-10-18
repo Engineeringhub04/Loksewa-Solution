@@ -1,7 +1,7 @@
 // Unit tests for lib/services/subscription_service.dart.
 //
-// Pure-Dart coverage of the client-side subscription surface: the feature
-// catalogue integrity (mirrors PLAN_FEATURE_GROUPS), planFeatureLabel,
+// Pure-Dart coverage of the client-side subscription surface:
+// parseFeatureCatalogue (ordering, isActive filtering), planFeatureLabel,
 // buildFeatureMatrix (included/excluded + extras group), yearlySavePercent,
 // and the Firestore map parsers. No network is touched.
 import 'package:flutter_test/flutter_test.dart';
@@ -32,45 +32,101 @@ SubscriptionPlan _plan({
   );
 }
 
+/// Small catalogue mirroring the Firestore shape the admin seeds.
+const _catalogue = [
+  PlanFeatureGroup(
+    key: 'learning',
+    icon: 'library',
+    titleEn: 'Learning & Content',
+    titleNe: 'अध्ययन तथा सामग्री',
+    features: [
+      PlanFeature('All subjects, units & chapters', 'सबै विषय, एकाइ र अध्याय'),
+      PlanFeature(
+          'Syllabus & study notes library', 'पाठ्यक्रम तथा नोट्स संग्रह'),
+    ],
+  ),
+  PlanFeatureGroup(
+    key: 'community',
+    icon: 'community',
+    titleEn: 'Community & Support',
+    titleNe: 'समुदाय तथा सहयोग',
+    features: [
+      PlanFeature('Priority support', 'प्राथमिकता सहयोग'),
+    ],
+  ),
+];
+
 void main() {
-  group('planFeatureGroups catalogue', () {
-    test('has the four React catalogue groups in order', () {
-      expect(planFeatureGroups.map((g) => g.key).toList(),
-          ['learning', 'practice', 'progress', 'community']);
+  group('parseFeatureCatalogue', () {
+    test('orders categories and features by order', () {
+      final groups = parseFeatureCatalogue(
+        [
+          {'id': 'b', 'key': 'b', 'titleEn': 'B', 'order': 2},
+          {'id': 'a', 'key': 'a', 'titleEn': 'A', 'order': 1},
+        ],
+        {
+          'a': [
+            {'id': 'f2', 'en': 'F2', 'order': 2},
+            {'id': 'f1', 'en': 'F1', 'order': 1},
+          ],
+          'b': [],
+        },
+      );
+      expect(groups.map((g) => g.key).toList(), ['a', 'b']);
+      expect(groups.first.features.map((f) => f.id).toList(), ['F1', 'F2']);
     });
 
-    test('every feature has an id and a Nepali label; ids are unique', () {
-      final ids = <String>{};
-      var count = 0;
-      for (final group in planFeatureGroups) {
-        expect(group.titleEn.isNotEmpty, isTrue);
-        expect(group.titleNe.isNotEmpty, isTrue);
-        for (final feature in group.features) {
-          expect(feature.id.isNotEmpty, isTrue);
-          expect(feature.ne.isNotEmpty, isTrue);
-          expect(ids.add(feature.id), isTrue,
-              reason: 'duplicate feature id ${feature.id}');
-          count++;
-        }
-      }
-      expect(count, greaterThan(20));
+    test('skips inactive categories and features, and empty ids', () {
+      final groups = parseFeatureCatalogue(
+        [
+          {'id': 'gone', 'key': 'gone', 'isActive': false},
+          {'id': 'keep', 'key': 'keep'},
+          {'id': '', 'key': ''},
+        ],
+        {
+          'keep': [
+            {'id': 'off', 'en': 'Off', 'isActive': false},
+            {'id': '', 'en': ''},
+            {'id': 'On', 'en': 'On', 'ne': 'अन'},
+          ],
+        },
+      );
+      expect(groups.map((g) => g.key).toList(), ['keep']);
+      expect(groups.first.features.map((f) => f.id).toList(), ['On']);
+      expect(groups.first.features.first.ne, 'अन');
+    });
+
+    test('falls back to doc id for key and en', () {
+      final groups = parseFeatureCatalogue(
+        [
+          {'id': 'legacy-cat', 'titleEn': 'Legacy'},
+        ],
+        {
+          'legacy-cat': [
+            {'id': 'Legacy feature'},
+          ],
+        },
+      );
+      expect(groups.single.key, 'legacy-cat');
+      expect(groups.single.features.single.id, 'Legacy feature');
     });
   });
 
   group('planFeatureLabel', () {
     test('english returns the stored id verbatim', () {
-      expect(planFeatureLabel('All subjects, units & chapters', false),
+      expect(planFeatureLabel(_catalogue, 'All subjects, units & chapters', false),
           'All subjects, units & chapters');
     });
 
     test('nepali returns the catalogue label for known ids', () {
-      expect(planFeatureLabel('All subjects, units & chapters', true),
+      expect(planFeatureLabel(_catalogue, 'All subjects, units & chapters', true),
           'सबै विषय, एकाइ र अध्याय');
-      expect(planFeatureLabel('Priority support', true), 'प्राथमिकता सहयोग');
+      expect(planFeatureLabel(_catalogue, 'Priority support', true),
+          'प्राथमिकता सहयोग');
     });
 
     test('nepali falls back to the stored string for unknown ids', () {
-      expect(planFeatureLabel('Some admin-typed feature', true),
+      expect(planFeatureLabel(_catalogue, 'Some admin-typed feature', true),
           'Some admin-typed feature');
     });
   });
@@ -78,22 +134,21 @@ void main() {
   group('buildFeatureMatrix', () {
     test('marks owned features included and the rest excluded', () {
       final groups = buildFeatureMatrix(
-          ['All subjects, units & chapters', 'Daily practice questions'],
+          _catalogue,
+          ['All subjects, units & chapters', 'Priority support'],
           false);
-      final learning =
-          groups.firstWhere((g) => g.key == 'learning');
+      final learning = groups.firstWhere((g) => g.key == 'learning');
       expect(learning.rows.first.included, isTrue);
       expect(learning.rows[1].included, isFalse);
       expect(learning.includedCount, 1);
-      final practice =
-          groups.firstWhere((g) => g.key == 'practice');
-      expect(practice.rows.first.included, isTrue);
+      final community = groups.firstWhere((g) => g.key == 'community');
+      expect(community.rows.first.included, isTrue);
     });
 
     test('unknown stored features land in a trailing extras group', () {
       final groups = buildFeatureMatrix(
-          ['All subjects, units & chapters', 'Hand-typed bonus'], false);
-      expect(groups.length, 5);
+          _catalogue, ['All subjects, units & chapters', 'Hand-typed bonus'], false);
+      expect(groups.length, 3);
       final extras = groups.last;
       expect(extras.key, 'extras');
       expect(extras.rows.length, 1);
@@ -104,15 +159,22 @@ void main() {
 
     test('no extras group when every stored feature is known', () {
       final groups =
-          buildFeatureMatrix(['All subjects, units & chapters'], false);
-      expect(groups.length, 4);
+          buildFeatureMatrix(_catalogue, ['All subjects, units & chapters'], false);
+      expect(groups.length, 2);
     });
 
     test('nepali labels flow through the matrix', () {
-      final groups = buildFeatureMatrix(
-          ['All subjects, units & chapters'], true);
+      final groups =
+          buildFeatureMatrix(_catalogue, ['All subjects, units & chapters'], true);
       expect(groups.first.rows.first.label, 'सबै विषय, एकाइ र अध्याय');
       expect(groups.first.titleNe, 'अध्ययन तथा सामग्री');
+    });
+
+    test('empty catalogue puts everything in extras', () {
+      final groups =
+          buildFeatureMatrix(const [], ['Some feature'], false);
+      expect(groups.length, 1);
+      expect(groups.first.key, 'extras');
     });
   });
 

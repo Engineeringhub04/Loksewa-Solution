@@ -207,13 +207,23 @@ class SubscriptionRecord {
 
 // ===================== Plan feature catalogue =====================
 //
-// Mirrors PLAN_FEATURE_GROUPS in subscription.ts. The catalogue supplies
-// structure, order and the Nepali wording (presentation); the plan's own
-// `features: string[]` in Firestore is the source of truth for what a given
-// plan includes. A feature is "included" iff its id appears in that array.
+// Admin-managed in Firestore:
+//   app_plan_feature_categories/{key}
+//     key, icon, titleEn, titleNe, order, isActive
+//   app_plan_feature_categories/{key}/features/{featureId}
+//     en (== the exact string stored in plan `features`), ne, order, isActive
+//
+// The catalogue supplies structure, order and the Nepali wording
+// (presentation); the plan's own `features: string[]` in Firestore is the
+// source of truth for what a given plan includes. A feature is "included"
+// iff its id appears in that array.
 //
 // IDENTITY: a feature's `id` IS the exact string stored in Firestore.
 // Changing an id is a data migration, not a rename.
+//
+// There is deliberately NO offline fallback: plan data itself requires the
+// network, so a catalogue load failure renders an offline placeholder in
+// the UI instead of stale bundled data.
 
 /// One catalogue feature. `id` is the exact string stored on the plan
 /// document; `ne` is the Nepali label shown when the app language is Nepali.
@@ -239,78 +249,62 @@ class PlanFeatureGroup {
   });
 }
 
-/// Everything the app ships, grouped the way a person would shop for it.
-/// Mirrors PLAN_FEATURE_GROUPS exactly.
-const List<PlanFeatureGroup> planFeatureGroups = [
-  PlanFeatureGroup(
-    key: 'learning',
-    icon: 'library',
-    titleEn: 'Learning & Content',
-    titleNe: 'अध्ययन तथा सामग्री',
-    features: [
-      PlanFeature('All subjects, units & chapters', 'सबै विषय, एकाइ र अध्याय'),
-      PlanFeature('Syllabus & study notes library', 'पाठ्यक्रम तथा नोट्स संग्रह'),
-      PlanFeature('Constitution & legal reference', 'संविधान तथा कानुनी सन्दर्भ'),
-      PlanFeature('Gorkhapatra daily edition', 'गोरखापत्र दैनिक संस्करण'),
-      PlanFeature('Notices & exam updates', 'सूचना तथा परीक्षा अपडेट'),
-      PlanFeature('Downloadable PDF materials', 'डाउनलोड गर्न मिल्ने PDF सामग्री'),
-    ],
-  ),
-  PlanFeatureGroup(
-    key: 'practice',
-    icon: 'practice',
-    titleEn: 'Practice & Exams',
-    titleNe: 'अभ्यास तथा परीक्षा',
-    features: [
-      PlanFeature('Daily practice questions', 'दैनिक अभ्यास प्रश्नहरू'),
-      PlanFeature('Question of the Day', 'आजको प्रश्न'),
-      PlanFeature('Daily Test full access', 'दैनिक परीक्षामा पूर्ण पहुँच'),
-      PlanFeature('Unlimited mock exams & model sets', 'असीमित मक परीक्षा तथा मोडेल सेट'),
-      PlanFeature('Past year question papers', 'विगत वर्षका प्रश्नपत्रहरू'),
-      PlanFeature('Instant results with answer review', 'तत्काल नतिजा र उत्तर समीक्षा'),
-      PlanFeature('Theory answer submission & review', 'सैद्धान्तिक उत्तर पेस तथा समीक्षा'),
-    ],
-  ),
-  PlanFeatureGroup(
-    key: 'progress',
-    icon: 'progress',
-    titleEn: 'Progress & Analytics',
-    titleNe: 'प्रगति तथा विश्लेषण',
-    features: [
-      PlanFeature('Bookmarks & reading history', 'बुकमार्क तथा पढाइ इतिहास'),
-      PlanFeature('Leaderboard & exam rankings', 'लिडरबोर्ड तथा परीक्षा र्‍यांकिङ'),
-      PlanFeature('Performance analytics & charts', 'प्रदर्शन विश्लेषण तथा चार्टहरू'),
-      PlanFeature('Exam history & progress report', 'परीक्षा इतिहास तथा प्रगति प्रतिवेदन'),
-      PlanFeature('Streaks, milestones & coverage', 'स्ट्रिक, माइलस्टोन तथा कभरेज'),
-      PlanFeature('Strength & weakness insights', 'बलियो तथा कमजोर पक्षको विश्लेषण'),
-    ],
-  ),
-  PlanFeatureGroup(
-    key: 'community',
-    icon: 'community',
-    titleEn: 'Community & Support',
-    titleNe: 'समुदाय तथा सहयोग',
-    features: [
-      PlanFeature('Discussion community access', 'छलफल समुदायमा पहुँच'),
-      PlanFeature('Ask questions & post answers', 'प्रश्न सोध्ने तथा उत्तर दिने'),
-      PlanFeature('Verified premium badge & ring', 'भेरिफाइड प्रिमियम ब्याज तथा रिङ'),
-      PlanFeature('Priority support', 'प्राथमिकता सहयोग'),
-      PlanFeature('Early access to new features', 'नयाँ फिचरमा अग्रिम पहुँच'),
-    ],
-  ),
-];
-
 /// Nepali label for a stored feature string. Falls back to the stored string
 /// itself, so a hand-written feature an admin typed into Firestore still
 /// renders instead of disappearing. Mirrors planFeatureLabel().
-String planFeatureLabel(String id, bool isNepali) {
+String planFeatureLabel(
+    List<PlanFeatureGroup> catalogue, String id, bool isNepali) {
   if (!isNepali) return id;
-  for (final group in planFeatureGroups) {
+  for (final group in catalogue) {
     for (final feature in group.features) {
       if (feature.id == id) return feature.ne;
     }
   }
   return id;
+}
+
+/// Pure parser: builds the ordered catalogue from raw Firestore docs.
+/// [featuresByKey] maps a category key to its raw feature docs.
+/// Inactive categories/features and entries with empty ids are skipped.
+List<PlanFeatureGroup> parseFeatureCatalogue(
+  List<Map<String, dynamic>> categoryDocs,
+  Map<String, List<Map<String, dynamic>>> featuresByKey,
+) {
+  num orderOf(Map<String, dynamic> m) {
+    final v = m['order'];
+    return v is num ? v : num.tryParse(v.toString()) ?? 0;
+  }
+
+  final cats = categoryDocs.where((c) {
+    if (c['isActive'] == false) return false;
+    return (c['key'] ?? c['id'] ?? '').toString().isNotEmpty;
+  }).toList()
+    ..sort((a, b) => orderOf(a).compareTo(orderOf(b)));
+
+  final groups = <PlanFeatureGroup>[];
+  for (final c in cats) {
+    final key = (c['key'] ?? c['id'] ?? '').toString();
+    final rawFeatures =
+        (featuresByKey[key] ?? const <Map<String, dynamic>>[]).where((f) {
+      if (f['isActive'] == false) return false;
+      return (f['en'] ?? f['id'] ?? '').toString().isNotEmpty;
+    }).toList()
+          ..sort((a, b) => orderOf(a).compareTo(orderOf(b)));
+    groups.add(PlanFeatureGroup(
+      key: key,
+      icon: (c['icon'] ?? '').toString(),
+      titleEn: (c['titleEn'] ?? key).toString(),
+      titleNe: (c['titleNe'] ?? '').toString(),
+      features: [
+        for (final f in rawFeatures)
+          PlanFeature(
+            (f['en'] ?? f['id'] ?? '').toString(),
+            (f['ne'] ?? '').toString(),
+          ),
+      ],
+    ));
+  }
+  return groups;
 }
 
 // ===================== Feature matrix =====================
@@ -351,18 +345,19 @@ class FeatureMatrixGroup {
 /// dropping it would silently hide a feature an admin deliberately typed onto
 /// a paid plan. Mirrors usePlanMatrix().
 List<FeatureMatrixGroup> buildFeatureMatrix(
+  List<PlanFeatureGroup> catalogue,
   List<String> planFeatures,
   bool isNepali,
 ) {
   final owned = planFeatures.toSet();
   final known = <String>{};
   final groups = <FeatureMatrixGroup>[];
-  for (final group in planFeatureGroups) {
+  for (final group in catalogue) {
     final rows = group.features.map((feature) {
       known.add(feature.id);
       return FeatureMatrixRow(
         id: feature.id,
-        label: planFeatureLabel(feature.id, isNepali),
+        label: planFeatureLabel(catalogue, feature.id, isNepali),
         included: owned.contains(feature.id),
       );
     }).toList();
@@ -413,6 +408,44 @@ class SubscriptionService {
         .toList()
       ..sort((a, b) => a.order.compareTo(b.order));
     return plans;
+  }
+
+  /// In-memory catalogue cache: the catalogue changes only when an admin
+  /// edits it, so one fetch per app session is enough. Pull-to-refresh
+  /// clears it via [clearFeatureCatalogueCache].
+  static List<PlanFeatureGroup>? _catalogueCache;
+
+  static void clearFeatureCatalogueCache() {
+    _catalogueCache = null;
+  }
+
+  /// Admin-managed feature catalogue from Firestore. Throws on any failure —
+  /// callers render an offline placeholder instead (there is deliberately no
+  /// bundled fallback).
+  static Future<List<PlanFeatureGroup>> fetchFeatureCatalogue(
+      {bool refresh = false}) async {
+    if (!refresh && _catalogueCache != null) return _catalogueCache!;
+    final token = await AuthService.getValidIdToken();
+    final catDocs = await FirestoreRest.listDocuments(
+      'app_plan_feature_categories',
+      idToken: token,
+      pageSize: 100,
+    );
+    final featuresByKey = <String, List<Map<String, dynamic>>>{};
+    for (final c in catDocs) {
+      final key = (c['key'] ?? c['id'] ?? '').toString();
+      if (key.isEmpty) continue;
+      // A failing subcollection read fails the whole catalogue — the UI
+      // shows an offline placeholder instead of a partial list.
+      featuresByKey[key] = await FirestoreRest.listDocuments(
+        'app_plan_feature_categories/$key/features',
+        idToken: token,
+        pageSize: 200,
+      );
+    }
+    final catalogue = parseFeatureCatalogue(catDocs, featuresByKey);
+    _catalogueCache = catalogue;
+    return catalogue;
   }
 
   /// All of the current user's subscription requests, newest first.

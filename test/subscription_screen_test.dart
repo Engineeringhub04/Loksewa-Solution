@@ -302,12 +302,19 @@ void main() {
     expect(find.text('364 days left'), findsOneWidget);
     expect(find.text('25 days left'), findsNothing);
     expect(find.text('Yearly Entitlement'), findsWidgets);
+    // Request rows live behind the "Your Request" tab since v1.0.106.
+    await tester.tap(find.text('Your Request'));
+    await _settle(tester);
     expect(find.text('Monthly Entitlement'), findsOneWidget);
   });
 
   testWidgets('request rows show status pills and the rejection reason',
       (tester) async {
     await _pump(tester, _router(() async => _data()));
+    await _settle(tester);
+
+    // Request rows live behind the "Your Request" tab since v1.0.106.
+    await tester.tap(find.text('Your Request'));
     await _settle(tester);
 
     expect(find.text('Your Requests'), findsOneWidget);
@@ -389,6 +396,8 @@ void main() {
     await _pump(tester, _router(() async => _data()));
     await _settle(tester);
 
+    await tester.tap(find.text('Your Request'));
+    await _settle(tester);
     await tester.tap(find.text('New').first);
     await _settle(tester);
     expect(find.text('detail-marker:r-pending'), findsOneWidget);
@@ -400,16 +409,23 @@ void main() {
     await _settle(tester);
 
     expect(find.text('तपाईंको योजना'), findsOneWidget);
-    expect(find.text('तपाईंका अनुरोधहरू'), findsOneWidget);
     expect(find.text('आफ्नो योजना छान्नुहोस्'), findsOneWidget);
     expect(find.text('सबै विषय, एकाइ र अध्याय'), findsWidgets);
     expect(find.text('अहिले सदस्यता लिनुहोस्'), findsOneWidget);
     expect(find.text('तपाईंका निःशुल्क सेवा'), findsOneWidget);
+    // Request rows live behind the "Your Request" tab since v1.0.106.
+    await tester.tap(find.text('तपाईंको अनुरोध'));
+    await _settle(tester);
+    expect(find.text('तपाईंका अनुरोधहरू'), findsOneWidget);
   });
 
   testWidgets('rejected request quote-panel spine is clipped to the card',
       (tester) async {
     await _pump(tester, _router(() async => _data()));
+    await _settle(tester);
+
+    // Request rows live behind the "Your Request" tab since v1.0.106.
+    await tester.tap(find.text('Your Request'));
     await _settle(tester);
 
     expect(find.text('Receipt did not match'), findsOneWidget);

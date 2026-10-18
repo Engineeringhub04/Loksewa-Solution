@@ -178,6 +178,14 @@ class SubscriptionRecord {
   final String? userName;
   final String? userEmail;
 
+  /// Gateway lifecycle for eSewa/Khalti records:
+  /// 'initiated' | 'verified' | 'failed' | 'cancelled'. Null for QR/manual.
+  final String? gatewayStatus;
+
+  /// Machine reason when gatewayStatus == 'failed':
+  /// 'payment_not_completed' | 'amount_mismatch' | 'duplicate' | 'app_closed'.
+  final String? failureReason;
+
   const SubscriptionRecord({
     required this.id,
     required this.uid,
@@ -200,6 +208,8 @@ class SubscriptionRecord {
     this.couponCode,
     this.userName,
     this.userEmail,
+    this.gatewayStatus,
+    this.failureReason,
   });
 
   factory SubscriptionRecord.fromMap(Map<String, dynamic> m) {
@@ -234,8 +244,31 @@ class SubscriptionRecord {
       couponCode: optStr(m['couponCode']),
       userName: optStr(m['userName']),
       userEmail: optStr(m['userEmail']),
+      gatewayStatus: optStr(m['gatewayStatus']),
+      failureReason: optStr(m['failureReason']),
     );
   }
+
+  /// True for gateway (automatic) payments: eSewa / Khalti.
+  bool get isGateway => method == 'esewa' || method == 'khalti';
+
+  /// True when the gateway payment failed verification or the app was
+  /// closed before verification completed (stale initiated).
+  bool get isFraud =>
+      failureReason == 'amount_mismatch' || failureReason == 'duplicate';
+
+  /// An initiated gateway payment with no verification after 15 minutes
+  /// is treated as abandoned (app closed / user never finished).
+  bool get isStaleInitiated {
+    if (gatewayStatus != 'initiated') return false;
+    final submitted = submittedAt;
+    if (submitted == null) return true;
+    return DateTime.now().difference(submitted).inMinutes >= 15;
+  }
+
+  /// Shows the "Payment Problem" recovery section.
+  bool get needsPaymentRecovery =>
+      isGateway && (gatewayStatus == 'failed' || isStaleInitiated);
 }
 
 // ===================== Plan feature catalogue =====================

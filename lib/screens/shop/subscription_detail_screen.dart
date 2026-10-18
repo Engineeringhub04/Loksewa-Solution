@@ -12,12 +12,16 @@
 // request is sitting at, and the draining edit bar. Everything else animates
 // once on entry (SyllabusEntrance) and then holds still.
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/gateway_payment_service.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
+import '../../widgets/gateway_popups.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -281,6 +285,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       couponCode: record.couponCode,
       userName: record.userName,
       userEmail: record.userEmail,
+      gatewayStatus: record.gatewayStatus,
+      failureReason: record.failureReason,
     );
   }
 
@@ -343,6 +349,15 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
         children: [
           SyllabusEntrance(delayMs: 0, child: _StatusCrown(record: record)),
+          if (record.isGateway &&
+              record.status == SubscriptionStatus.pending &&
+              record.needsPaymentRecovery) ...[
+            const SizedBox(height: ExpoSpacing.md),
+            SyllabusEntrance(
+              delayMs: 40,
+              child: _VerificationPendingBanner(),
+            ),
+          ],
           if (showEditBar) ...[
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
@@ -410,6 +425,21 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 onPreview: _openZoom,
                 onCancel:
                     _saving ? null : () => setState(() => _editing = false),
+              ),
+            ),
+          ],
+          if (record.needsPaymentRecovery) ...[
+            const SizedBox(height: ExpoSpacing.md),
+            SyllabusEntrance(
+              delayMs: 280,
+              child: _SectionCard(
+                icon: Icons.error_outline,
+                tone: ExpoPalette.of(context).danger,
+                title: AppLanguage.tr('Payment Problem', 'भुक्तानी समस्या'),
+                child: _PaymentProblemSection(
+                  record: record,
+                  onRechecked: _refresh,
+                ),
               ),
             ),
           ],
@@ -851,6 +881,7 @@ class _TimelineStep {
 }
 
 List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
+  if (record.isGateway) return _buildGatewaySteps(record, pal);
   final reviewed =
       record.reviewedAt != null || record.status != SubscriptionStatus.pending;
   late final _TimelineStep finalStep;
@@ -911,6 +942,99 @@ List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
       tone: reviewed ? pal.info : pal.warning,
     ),
     finalStep,
+  ];
+}
+
+/// Gateway (eSewa/Khalti) timeline — no admin review step; the worker
+/// verifies server-side.
+List<_TimelineStep> _buildGatewaySteps(
+    SubscriptionRecord record, ExpoPalette pal) {
+  final submitted = _TimelineStep(
+    key: 'submitted',
+    title: AppLanguage.tr('Payment submitted', 'भुक्तानी पेस भयो'),
+    timestamp: record.submittedAt,
+    icon: Icons.send_outlined,
+    state: _StepState.done,
+    tone: pal.info,
+  );
+  final verified = record.gatewayStatus == 'verified' ||
+      record.status == SubscriptionStatus.active;
+  if (verified) {
+    return [
+      submitted,
+      _TimelineStep(
+        key: 'verification',
+        title: AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
+        timestamp: record.reviewedAt,
+        icon: Icons.verified_outlined,
+        state: _StepState.done,
+        tone: pal.info,
+      ),
+      _TimelineStep(
+        key: 'activated',
+        title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
+        timestamp: record.startDate ?? record.reviewedAt,
+        icon: Icons.check_circle_outline,
+        state: _StepState.done,
+        tone: pal.success,
+      ),
+    ];
+  }
+  if (record.gatewayStatus == 'cancelled') {
+    return [
+      submitted,
+      _TimelineStep(
+        key: 'verification',
+        title: AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
+        timestamp: null,
+        icon: Icons.search_outlined,
+        state: _StepState.upcoming,
+        tone: pal.textDisabled,
+      ),
+      _TimelineStep(
+        key: 'cancelled',
+        title: AppLanguage.tr('Payment cancelled', 'भुक्तानी रद्द गरियो'),
+        timestamp: null,
+        icon: Icons.cancel_outlined,
+        state: _StepState.failed,
+        tone: pal.textDisabled,
+      ),
+    ];
+  }
+  // Pending verification: fresh initiated is still in progress; stale
+  // initiated or failed means verification failed.
+  final failed =
+      record.gatewayStatus == 'failed' || record.isStaleInitiated;
+  return [
+    submitted,
+    _TimelineStep(
+      key: 'verification',
+      title: failed
+          ? AppLanguage.tr(
+              'Payment Verification Failed', 'भुक्तानी प्रमाणीकरण असफल')
+          : AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
+      timestamp: null,
+      icon: failed ? Icons.error_outline : Icons.search_outlined,
+      state: failed ? _StepState.failed : _StepState.current,
+      tone: failed ? pal.danger : pal.warning,
+    ),
+    _TimelineStep(
+      key: 'review',
+      title: AppLanguage.tr(
+          'Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
+      timestamp: null,
+      icon: Icons.search_outlined,
+      state: _StepState.upcoming,
+      tone: pal.textDisabled,
+    ),
+    _TimelineStep(
+      key: 'activated',
+      title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
+      timestamp: null,
+      icon: Icons.check_circle_outline,
+      state: _StepState.upcoming,
+      tone: pal.textDisabled,
+    ),
   ];
 }
 
@@ -1211,7 +1335,251 @@ class _EditForm extends StatelessWidget {
   }
 }
 
+// ===================== Payment problem (gateway recovery) =====================
+
+/// Banner shown when a gateway payment is stuck pending verification.
+class _VerificationPendingBanner extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: pal.warning.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(ExpoRadius.md),
+        border: Border.all(color: pal.warning.withValues(alpha: 0.45)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: pal.warning, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              AppLanguage.tr(
+                'Payment Verification Pending! Pls Contact Admin',
+                'भुक्तानी प्रमाणीकरण बाँकी छ! कृपया Admin लाई सम्पर्क गर्नुहोस्',
+              ),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: pal.warning,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "Payment Problem" section for gateway records whose verification never
+/// completed (app closed) or failed. Offers "Check My Payment" (re-verify
+/// via the worker) except for fraud cases, plus "Contact Our Admin".
+class _PaymentProblemSection extends StatefulWidget {
+  final SubscriptionRecord record;
+  final VoidCallback onRechecked;
+  const _PaymentProblemSection(
+      {required this.record, required this.onRechecked});
+
+  @override
+  State<_PaymentProblemSection> createState() => _PaymentProblemSectionState();
+}
+
+class _PaymentProblemSectionState extends State<_PaymentProblemSection> {
+  bool _checking = false;
+
+  String get _message {
+    if (widget.record.isFraud) {
+      return AppLanguage.tr(
+        "We couldn't verify this payment — the details don't match our records. Please contact admin.",
+        'यो भुक्तानी प्रमाणीकरण हुन सकेन — विवरण हाम्रो रेकर्डसँग मिलेन। कृपया admin लाई सम्पर्क गर्नुहोस्।',
+      );
+    }
+    return AppLanguage.tr(
+      "We couldn't verify your payment because the app was closed. If you've already paid, tap Check My Payment to activate your plan.",
+      'एप बन्द भएकाले भुक्तानी प्रमाणीकरण हुन सकेन। पैसा तिरिसक्नुभएको छ भने Check My Payment थिचेर plan activate गर्नुहोस्।',
+    );
+  }
+
+  Future<void> _checkMyPayment() async {
+    final record = widget.record;
+    final txnId = (record.transactionRef ?? '').trim();
+    if (txnId.isEmpty) {
+      showToast(
+          context,
+          AppLanguage.tr('No payment reference found. Please contact admin.',
+              'भुक्तानी सन्दर्भ फेला परेन। कृपया admin लाई सम्पर्क गर्नुहोस्।'),
+          ToastVariant.error);
+      return;
+    }
+    setState(() => _checking = true);
+    final closeVerifying = await showGatewayVerifyingPopup(context);
+    Map<String, dynamic> res;
+    try {
+      res = await GatewayPaymentService.recheckPayment(
+          gateway: record.method, transactionUuid: txnId);
+    } catch (_) {
+      res = {'ok': false, 'reason': 'network_error'};
+    }
+    if (!mounted) return;
+    closeVerifying();
+    setState(() => _checking = false);
+    if (!mounted) return;
+    if (res['ok'] == true) {
+      await GatewayPaymentService.clearPendingPayment();
+      final uid = AuthService.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await ProfileStore.instance.load(uid, refresh: true);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      widget.onRechecked();
+      await showGatewaySuccessPopup(
+        context,
+        planName: record.planName,
+        onNavigate: widget.onRechecked,
+      );
+    } else {
+      if (!mounted) return;
+      await showGatewayFailurePopup(
+        context,
+        message: gatewayFailureMessage(res['reason']?.toString()),
+      );
+      widget.onRechecked();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final fraud = widget.record.isFraud;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          _message,
+          style: TextStyle(
+              fontSize: ExpoType.bodySmall,
+              color: pal.textPrimary,
+              height: 1.5,
+              decoration: TextDecoration.none),
+        ),
+        const SizedBox(height: ExpoSpacing.md),
+        if (!fraud)
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _checking ? null : _checkMyPayment,
+              icon: _checking
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child:
+                          CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.refresh_rounded, size: 18),
+              label: Text(
+                _checking
+                    ? AppLanguage.tr('Checking…', 'जाँच हुँदैछ…')
+                    : AppLanguage.tr(
+                        'Check My Payment', 'मेरो भुक्तानी जाँच्नुहोस्'),
+                style: const TextStyle(
+                    fontWeight: FontWeight.w700,
+                    decoration: TextDecoration.none),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: pal.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        if (!fraud) const SizedBox(height: ExpoSpacing.sm),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            onPressed: () => context.push('/contact-us'),
+            icon: const Icon(Icons.support_agent_outlined, size: 18),
+            label: Text(
+              AppLanguage.tr(
+                  'Contact Our Admin', 'हाम्रो Admin लाई सम्पर्क गर्नुहोस्'),
+              style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  decoration: TextDecoration.none),
+            ),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(vertical: 13),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+        ),
+        const SizedBox(height: ExpoSpacing.sm),
+        Text(
+          AppLanguage.tr(
+            "If verification doesn't work, please contact our admin.",
+            'प्रमाणीकरण नभए कृपया admin लाई सम्पर्क गर्नुहोस्।',
+          ),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              fontSize: ExpoType.caption,
+              color: pal.textSecondary,
+              decoration: TextDecoration.none),
+        ),
+      ],
+    );
+  }
+}
+
 // ===================== Payment summary =====================
+
+/// Transaction reference with stable wrapping + tap-to-copy (long gateway
+/// ids like txn_xxx_xxx_xxx used to break mid-string).
+class _ReferenceValue extends StatelessWidget {
+  final String? ref;
+  const _ReferenceValue({required this.ref});
+
+  @override
+  Widget build(BuildContext context) {
+    final value = (ref ?? '').trim();
+    if (value.isEmpty) {
+      return const Text('—',
+          style: TextStyle(fontWeight: FontWeight.w600));
+    }
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: SelectableText(
+            value,
+            textAlign: TextAlign.end,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+        ),
+        const SizedBox(width: 4),
+        InkWell(
+          onTap: () {
+            Clipboard.setData(ClipboardData(text: value));
+            showToast(
+                context,
+                AppLanguage.tr('Reference copied', 'सन्दर्भ प्रतिलिपि भयो'),
+                ToastVariant.success);
+          },
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.all(4),
+            child: Icon(Icons.copy_outlined,
+                size: 15, color: ExpoPalette.of(context).textSecondary),
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 class _PaymentSummary extends StatelessWidget {
   final SubscriptionRecord record;
@@ -1243,10 +1611,10 @@ class _PaymentSummary extends StatelessWidget {
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
         _InfoRow(
-          icon: Icons.qr_code_outlined,
+          // Gateway payments never involve a QR — use a reference icon.
+          icon: record.isGateway ? Icons.link_outlined : Icons.qr_code_outlined,
           label: AppLanguage.tr('Reference', 'सन्दर्भ'),
-          value: Text(record.transactionRef ?? '—',
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          value: _ReferenceValue(ref: record.transactionRef),
           last: record.couponCode == null && record.customerMessage == null,
         ),
         if (record.couponCode != null)

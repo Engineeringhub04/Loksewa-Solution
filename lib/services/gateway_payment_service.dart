@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
 
@@ -85,6 +86,107 @@ class GatewayPaymentService {
     } catch (_) {
       return {'ok': false, 'error': 'Verification failed (${res.statusCode}).'};
     }
+  }
+
+  /// Re-check a payment whose verification never completed (e.g. the app
+  /// was closed mid-flow). The worker re-queries the gateway status API
+  /// using only the transactionUuid — no redirect proof needed — and
+  /// activates the subscription when the payment is COMPLETE.
+  ///
+  /// Returns `{ok: true, subscriptionId}` / `{ok: true, already: true,
+  /// subscriptionId}` on success, or `{ok: false, reason: '...'}` where
+  /// reason is 'payment_not_completed' | 'amount_mismatch' | 'duplicate'
+  /// | 'not_found'.
+  static Future<Map<String, dynamic>> recheckPayment({
+    required String gateway, // 'esewa' | 'khalti'
+    required String transactionUuid,
+  }) async {
+    final token = await AuthService.getValidIdToken();
+    final res = await http
+        .post(
+          Uri.parse('$_base/payments/recheck'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(
+              {'gateway': gateway, 'transactionUuid': transactionUuid}),
+        )
+        .timeout(const Duration(seconds: 45));
+    try {
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      return {'ok': false, 'reason': 'network_error'};
+    }
+  }
+
+  /// Tell the worker the user backed out before completing payment.
+  /// Best-effort: never throws; a completed payment is never cancelled
+  /// server-side (the worker replies payment_completed instead).
+  static Future<void> cancelPayment({
+    required String gateway,
+    required String transactionUuid,
+  }) async {
+    try {
+      final token = await AuthService.getValidIdToken();
+      await http
+          .post(
+            Uri.parse('$_base/payments/cancel'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(
+                {'gateway': gateway, 'transactionUuid': transactionUuid}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Best-effort only — the pending record ages out on its own.
+    }
+  }
+
+  // ---------------- pending-payment recovery (SharedPreferences) ----------
+
+  static const String _pendingKey = 'gateway_pending_payment_v1';
+
+  /// Persisted right after /payments/init succeeds, so an app kill during
+  /// the gateway/verify steps never loses the payment. Cleared on verify
+  /// success, definitive failure, or user cancel.
+  static Future<void> savePendingPayment({
+    required String gateway,
+    required String transactionUuid,
+    required String subId,
+    required String planId,
+    required String planName,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+        _pendingKey,
+        jsonEncode({
+          'gateway': gateway,
+          'transactionUuid': transactionUuid,
+          'subId': subId,
+          'planId': planId,
+          'planName': planName,
+          'initiatedAt': DateTime.now().toIso8601String(),
+        }));
+  }
+
+  /// Returns the pending payment map, or null when none is stored.
+  static Future<Map<String, dynamic>?> loadPendingPayment() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_pendingKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return jsonDecode(raw) as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> clearPendingPayment() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_pendingKey);
   }
 }
 

@@ -10,6 +10,8 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/notification_badge.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
+import 'package:loksewa_solution/services/gateway_payment_service.dart';
+import 'package:loksewa_solution/widgets/gateway_popups.dart';
 import 'package:loksewa_solution/widgets/home/home_header.dart';
 import 'package:loksewa_solution/widgets/home/banner_carousel.dart';
 import 'package:loksewa_solution/widgets/home/question_of_day_card.dart';
@@ -68,7 +70,70 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     if (uid != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) ProfileStore.instance.load(uid);
+        if (mounted) _recoverPendingGatewayPayment();
       });
+    }
+  }
+
+  /// App-start recovery: if a gateway payment was left pending (app closed
+  /// mid-flow) more than 2 minutes ago, re-check it once, silently unless
+  /// it actually succeeded — then celebrate and navigate.
+  Future<void> _recoverPendingGatewayPayment() async {
+    Map<String, dynamic>? pending;
+    try {
+      pending = await GatewayPaymentService.loadPendingPayment();
+    } catch (_) {
+      return;
+    }
+    if (pending == null || !mounted) return;
+    final initiatedAt =
+        DateTime.tryParse('${pending['initiatedAt'] ?? ''}');
+    if (initiatedAt == null ||
+        DateTime.now().difference(initiatedAt).inMinutes < 2) {
+      return;
+    }
+    final gateway = '${pending['gateway'] ?? ''}';
+    final txnId = '${pending['transactionUuid'] ?? ''}';
+    if (gateway.isEmpty || txnId.isEmpty) {
+      await GatewayPaymentService.clearPendingPayment();
+      return;
+    }
+    Map<String, dynamic> res;
+    try {
+      res = await GatewayPaymentService.recheckPayment(
+          gateway: gateway, transactionUuid: txnId);
+    } catch (_) {
+      return; // Network error — keep the pending record for next launch.
+    }
+    if (!mounted) return;
+    if (res['ok'] == true) {
+      await GatewayPaymentService.clearPendingPayment();
+      final uid = AuthService.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await ProfileStore.instance.load(uid, refresh: true);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      final subId = '${res['subscriptionId'] ?? pending['subId'] ?? ''}';
+      await showGatewaySuccessPopup(
+        context,
+        planName: '${pending['planName'] ?? ''}',
+        onNavigate: () {
+          if (subId.isNotEmpty) {
+            context.go('/subscription/$subId');
+          } else {
+            context.go('/subscription');
+          }
+        },
+      );
+    } else {
+      final reason = res['reason']?.toString();
+      // Definitive answers resolve the pending record; network-level
+      // failures keep it for the next launch.
+      if (reason != null && reason != 'network_error') {
+        await GatewayPaymentService.clearPendingPayment();
+      }
     }
   }
 

@@ -31,8 +31,8 @@ android {
         applicationId = "com.loksewasolutionnp.hub"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 105
-        versionName = "1.0.104"
+        versionCode = 106
+        versionName = "1.0.105"
     }
 
     signingConfigs {

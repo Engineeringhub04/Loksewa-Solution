@@ -42,7 +42,8 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
-import '../../widgets/payment_status_overlay.dart';
+import '../../widgets/gateway_popups.dart';
+import 'package:loksewa_solution/services/profile_service.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
@@ -548,6 +549,16 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final initRes = await GatewayPaymentService.initPayment(
           gateway: _method!, planId: planId);
       if (!mounted) return;
+      // Persist the pending payment BEFORE the gateway UI opens — an app
+      // kill during payment/verify must never lose the transaction.
+      // Cleared on verify success, definitive failure, or user cancel.
+      await GatewayPaymentService.savePendingPayment(
+        gateway: _method!,
+        transactionUuid: '${initRes['transactionUuid'] ?? ''}',
+        subId: '${initRes['subId'] ?? ''}',
+        planId: planId,
+        planName: '${d.plan!['name'] ?? ''}',
+      );
       if (_method == 'esewa') {
         await _runEsewaFlow(d, initRes, planId);
       } else {
@@ -597,11 +608,34 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final result = await Navigator.of(context).push<EsewaWebResult>(
       MaterialPageRoute(
         builder: (_) => EsewaWebViewScreen(
-            endpoint: endpoint, fields: fields, testMode: testMode),
+          endpoint: endpoint,
+          fields: fields,
+          testMode: testMode,
+          transactionUuid: transactionUuid,
+          gateway: 'esewa',
+        ),
       ),
     );
     if (!mounted) return;
+    if (result != null && result.status == 'expired') {
+      // The 15-minute session lapsed: the webview already asked the worker
+      // to cancel; just reset local state and tell the user.
+      await GatewayPaymentService.clearPendingPayment();
+      if (!mounted) return;
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Payment session expired.', 'भुक्तानी समय समाप्त भयो।'),
+          ToastVariant.warning);
+      return;
+    }
     if (result == null || result.status == 'cancelled') {
+      // User backed out: best-effort server cancel so the pending record
+      // doesn't linger as "in progress", then reset local state.
+      await GatewayPaymentService.cancelPayment(
+          gateway: 'esewa', transactionUuid: transactionUuid);
+      await GatewayPaymentService.clearPendingPayment();
+      if (!mounted) return;
       showToast(
           context,
           AppLanguage.tr('Payment cancelled.', 'भुक्तानी रद्द गरियो।'),
@@ -609,8 +643,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
     if (result.status == 'failure') {
-      _showGatewayResult(
-        success: false,
+      await GatewayPaymentService.clearPendingPayment();
+      if (!mounted) return;
+      await showGatewayFailurePopup(
+        context,
         message: result.message ??
             AppLanguage.tr(
                 'Payment was not completed.', 'भुक्तानी पूरा भएन।'),
@@ -691,9 +727,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     if (!mounted) return;
     khalti.open(context);
+    // Watchdog: if the Khalti page is dismissed without the SDK firing
+    // kpgDisposed (seen on some devices), the completer would hang forever
+    // and the pay button would spin forever. When our route is current
+    // again but nothing completed, treat it as a user cancel.
+    final checkoutRoute = ModalRoute.of(context);
+    Timer? watchdog;
+    watchdog = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (completer.isCompleted) {
+        watchdog?.cancel();
+        return;
+      }
+      if (checkoutRoute != null && checkoutRoute.isCurrent) {
+        completer.complete(null);
+      }
+    });
     final res = await completer.future;
+    watchdog.cancel();
     if (!mounted) return;
     if (res == null) {
+      await GatewayPaymentService.cancelPayment(
+          gateway: 'khalti', transactionUuid: transactionUuid);
+      await GatewayPaymentService.clearPendingPayment();
+      if (!mounted) return;
       showToast(
           context,
           AppLanguage.tr('Payment cancelled.', 'भुक्तानी रद्द गरियो।'),
@@ -708,9 +764,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  /// Premium checking animation while the worker verifies with the gateway,
-  /// then a premium success/failure state. The app never trusts its own
-  /// "payment done" signal — only the worker's verification activates.
+  /// Friendly message for a failed verify/recheck response.
+  String _verifyErrorMessage(Map<String, dynamic> res) {
+    const known = {
+      'amount_mismatch',
+      'duplicate',
+      'payment_not_completed',
+      'not_found',
+      'gateway_disabled',
+      'already_used',
+    };
+    final reason = res['reason']?.toString();
+    if (reason != null && reason.isNotEmpty && reason != 'network_error') {
+      return gatewayFailureMessage(reason);
+    }
+    final error = res['error']?.toString() ?? '';
+    if (known.contains(error)) return gatewayFailureMessage(error);
+    if (error.isNotEmpty) return error;
+    return gatewayFailureMessage(null);
+  }
+
+  /// AppModalShell checking popup while the worker verifies with the
+  /// gateway, then a premium success/failure state. The app never trusts
+  /// its own "payment done" signal — only the worker's verification
+  /// activates.
   Future<void> _verifyWithOverlay(
     _CheckoutData d, {
     required String gateway,
@@ -718,18 +795,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required Map<String, dynamic> proof,
   }) async {
     if (!mounted) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => PaymentStatusOverlay(
-        state: PaymentOverlayState.verifying,
-        title: AppLanguage.tr(
-            'Verifying payment…', 'भुक्तानी प्रमाणीकरण हुँदैछ…'),
-        subtitle: AppLanguage.tr(
-            'Confirming with the payment gateway. Please do not close the app.',
-            'भुक्तानी गेटवेसँग पुष्टि हुँदैछ। कृपया एप बन्द नगर्नुहोस्।'),
-      ),
-    );
+    final planName = '${d.plan?['name'] ?? ''}';
+    final closeVerifying = await showGatewayVerifyingPopup(context);
     Map<String, dynamic> res;
     try {
       res = await GatewayPaymentService.verifyPayment(
@@ -748,47 +815,42 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       };
     }
     if (!mounted) return;
-    Navigator.of(context).pop(); // dismiss the verifying overlay
+    closeVerifying();
     if (!mounted) return;
     if (res['ok'] == true) {
-      _showGatewayResult(
-        success: true,
-        message: AppLanguage.tr(
-            'Your subscription is now active. Enjoy learning!',
-            'तपाईंको सदस्यता सक्रिय भयो। रमाइलो सिकाइ!'),
+      await GatewayPaymentService.clearPendingPayment();
+      // Real-time profile update BEFORE navigating, so the profile pill
+      // flips Free -> plan name instantly without a manual refresh.
+      final uid = AuthService.currentUser?.uid;
+      if (uid != null) {
+        try {
+          await ProfileStore.instance.load(uid, refresh: true);
+        } catch (_) {}
+      }
+      if (!mounted) return;
+      final subId = '${res['subscriptionId'] ?? ''}';
+      await showGatewaySuccessPopup(
+        context,
+        planName: planName,
+        onNavigate: () {
+          // Subscription Details page with the fresh record — never back
+          // to the checkout/coupon page.
+          if (subId.isNotEmpty) {
+            context.go('/subscription/$subId');
+          } else {
+            context.go('/subscription');
+          }
+        },
       );
     } else {
-      _showGatewayResult(
-        success: false,
-        message: '${res['error'] ?? AppLanguage.tr('Payment verification failed.', 'भुक्तानी प्रमाणीकरण असफल भयो।')}',
+      await GatewayPaymentService.clearPendingPayment();
+      if (!mounted) return;
+      await showGatewayFailurePopup(
+        context,
+        message: _verifyErrorMessage(res),
         onRetry: () => _startGatewayPayment(d),
       );
     }
-  }
-
-  void _showGatewayResult({
-    required bool success,
-    required String message,
-    VoidCallback? onRetry,
-  }) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogCtx) => PaymentStatusOverlay(
-        state: success
-            ? PaymentOverlayState.success
-            : PaymentOverlayState.failure,
-        title: success
-            ? AppLanguage.tr('Payment successful', 'भुक्तानी सफल भयो')
-            : AppLanguage.tr('Payment failed', 'भुक्तानी असफल भयो'),
-        subtitle: message,
-        onRetry: onRetry,
-        onClose: () {
-          Navigator.of(dialogCtx).pop();
-          if (success) _refresh();
-        },
-      ),
-    );
   }
 
   // ------------------------------------------------------------------ QR

@@ -9,10 +9,12 @@
 //  - eSewa/Khalti availability is independently controlled by the existing
 //    app_subscription_settings/config enabled flags; false shows Coming Soon.
 //  - QR (Manual) never has an on/off switch — it is the zero-budget fallback.
-// Selecting eSewa/Khalti shows only a gateway action (the gateway itself is
-// still under construction — the Expo app only toasts here, so this screen
-// does the same). Manual receipt fields are rendered for QR only. Provider
-// secrets are never fetched by this screen.
+// Selecting eSewa/Khalti runs the in-app gateway flow: the worker's
+// /payments/init returns signed payloads (secrets never touch the app),
+// payment happens inside the app (eSewa webview / Khalti SDK), then the
+// worker's /payments/verify activates the subscription server-side.
+// Manual receipt fields are rendered for QR only. Provider secrets are
+// never fetched by this screen.
 //
 // Writes mirror submitPayment / submitExamPurchase / submitContentPurchase
 // exactly (via the existing services), then route to the detail screen.
@@ -23,6 +25,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:khalti_checkout_flutter/khalti_checkout_flutter.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
@@ -33,14 +36,17 @@ import 'package:loksewa_solution/services/coupon_service.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/gateway_payment_service.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/payment_status_overlay.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
+import 'esewa_webview_screen.dart';
 
 const _esewaLogo = 'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png';
 const _khaltiLogo = 'https://i.ibb.co/tMHZRHKQ/Khalti-Logo-New-3.png';
@@ -193,15 +199,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   String? _couponError;
   bool _validatingCoupon = false;
   bool _downloadingQr = false;
+  bool _paying = false; // gateway flow in progress (prevents double-taps)
 
   @override
   void initState() {
     super.initState();
     _future = _load();
+    _couponCtrl.addListener(_onCouponTextChanged);
+  }
+
+  void _onCouponTextChanged() {
+    // Rebuild so the Apply button enables/disables with the input.
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _couponCtrl.removeListener(_onCouponTextChanged);
     _refCtrl.dispose();
     _msgCtrl.dispose();
     _couponCtrl.dispose();
@@ -230,13 +244,23 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       }
       return '';
     }
+    // The admin saves receiver/bank fields separately; the display below
+    // expects one multi-line string. Compose it when the legacy combined
+    // field is absent so the details (with copy button) actually show.
+    final composedBankDetails = [
+      asStr(manual['receiverName']),
+      asStr(manual['receiverPhone']),
+      asStr(manual['bankName']),
+      asStr(manual['bankAccountNo']),
+    ].where((s) => s.isNotEmpty).join('\n');
     return {
       'esewa': {'enabled': asBool(esewa['enabled'])},
       'khalti': {'enabled': asBool(khalti['enabled'])},
       'manual': {
         'qrImageUrl':
             pick([manual['qrImageUrl'], d['qrImageUrl'], manual['qrUrl']]),
-        'bankDetails': pick([manual['bankDetails'], d['bankDetails']]),
+        'bankDetails': pick(
+            [manual['bankDetails'], d['bankDetails'], composedBankDetails]),
         'instructions': pick([manual['instructions'], d['instructions']]),
       },
     };
@@ -499,8 +523,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// Opens only the provider checkout. Receipt ID/screenshot submission is
   /// QR-only. Mirrors handleOpenGateway: the gateway itself is still under
   /// construction, so this only toasts like the Expo app does.
-  void _handleOpenGateway(_CheckoutData d) {
-    if (d.flow == 'exam' || d.plan == null || _method == null || _method == 'qr') {
+  /// In-app gateway payment: worker-signed init → gateway UI inside the
+  /// app → worker-side verification → subscription activation.
+  Future<void> _startGatewayPayment(_CheckoutData d) async {
+    if (d.flow == 'exam' ||
+        d.plan == null ||
+        _method == null ||
+        _method == 'qr' ||
+        _paying) {
       return;
     }
     if (!d.settingsAvailable) {
@@ -512,12 +542,253 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ToastVariant.info);
       return;
     }
-    showToast(
-        context,
-        AppLanguage.tr(
-            'This gateway is enabled in settings, but secure gateway processing is still under construction. Please use QR Method for now.',
-            'यो gateway सेटिङमा सक्रिय छ, तर सुरक्षित gateway processing अझै निर्माणाधीन छ। अहिले QR विधि प्रयोग गर्नुहोस्।'),
-        ToastVariant.info);
+    setState(() => _paying = true);
+    try {
+      final planId = '${d.plan!['id']}';
+      final initRes = await GatewayPaymentService.initPayment(
+          gateway: _method!, planId: planId);
+      if (!mounted) return;
+      if (_method == 'esewa') {
+        await _runEsewaFlow(d, initRes, planId);
+      } else {
+        await _runKhaltiFlow(d, initRes, planId);
+      }
+    } on GatewayException catch (e) {
+      if (mounted) {
+        showToast(context, e.message, ToastVariant.error);
+      }
+    } catch (_) {
+      if (mounted) {
+        showToast(
+            context,
+            AppLanguage.tr('Could not start payment. Please try again.',
+                'भुक्तानी सुरु हुन सकेन। कृपया पुनः प्रयास गर्नुहोस्।'),
+            ToastVariant.error);
+      }
+    } finally {
+      if (mounted) setState(() => _paying = false);
+    }
+  }
+
+  /// eSewa: in-app webview auto-POSTs the worker-signed form, intercepts the
+  /// success/failure redirects, then the worker verifies server-side.
+  Future<void> _runEsewaFlow(_CheckoutData d,
+      Map<String, dynamic> initRes, String planId) async {
+    final esewa = initRes['esewa'] is Map
+        ? Map<String, dynamic>.from(initRes['esewa'] as Map)
+        : <String, dynamic>{};
+    final endpoint = '${esewa['endpoint'] ?? ''}';
+    final rawFields = esewa['fields'];
+    final fields = <String, String>{};
+    if (rawFields is Map) {
+      rawFields.forEach((k, v) => fields['$k'] = '$v');
+    }
+    final transactionUuid = '${initRes['transactionUuid'] ?? ''}';
+    final testMode = initRes['testMode'] == true;
+    if (endpoint.isEmpty || fields.isEmpty || transactionUuid.isEmpty) {
+      showToast(
+          context,
+          AppLanguage.tr('eSewa is not configured correctly. Please use QR Method.',
+              'eSewa सही रूपमा कन्फिगर गरिएको छैन। कृपया QR विधि प्रयोग गर्नुहोस्।'),
+          ToastVariant.error);
+      return;
+    }
+
+    final result = await Navigator.of(context).push<EsewaWebResult>(
+      MaterialPageRoute(
+        builder: (_) => EsewaWebViewScreen(
+            endpoint: endpoint, fields: fields, testMode: testMode),
+      ),
+    );
+    if (!mounted) return;
+    if (result == null || result.status == 'cancelled') {
+      showToast(
+          context,
+          AppLanguage.tr('Payment cancelled.', 'भुक्तानी रद्द गरियो।'),
+          ToastVariant.info);
+      return;
+    }
+    if (result.status == 'failure') {
+      _showGatewayResult(
+        success: false,
+        message: result.message ??
+            AppLanguage.tr(
+                'Payment was not completed.', 'भुक्तानी पूरा भएन।'),
+        onRetry: () => _startGatewayPayment(d),
+      );
+      return;
+    }
+    // success → verifying overlay → worker verification.
+    await _verifyWithOverlay(
+      d,
+      gateway: 'esewa',
+      planId: planId,
+      proof: {
+        'transactionUuid': transactionUuid,
+        'esewaData': result.data,
+      },
+    );
+  }
+
+  /// Khalti: official SDK (in-app webview), then worker-side verification.
+  Future<void> _runKhaltiFlow(_CheckoutData d,
+      Map<String, dynamic> initRes, String planId) async {
+    final kh = initRes['khalti'] is Map
+        ? Map<String, dynamic>.from(initRes['khalti'] as Map)
+        : <String, dynamic>{};
+    final pidx = '${kh['pidx'] ?? ''}';
+    final paymentUrl = '${kh['paymentUrl'] ?? ''}';
+    final publicKey = '${kh['publicKey'] ?? ''}';
+    final transactionUuid = '${initRes['transactionUuid'] ?? ''}';
+    final testMode = initRes['testMode'] == true;
+    if (pidx.isEmpty || paymentUrl.isEmpty || publicKey.isEmpty) {
+      showToast(
+          context,
+          AppLanguage.tr('Khalti is not configured correctly. Please use QR Method.',
+              'Khalti सही रूपमा कन्फिगर गरिएको छैन। कृपया QR विधि प्रयोग गर्नुहोस्।'),
+          ToastVariant.error);
+      return;
+    }
+
+    final completer = Completer<Map<String, String>?>();
+    late final Khalti khalti;
+    try {
+      khalti = await Khalti.init(
+        payConfig: KhaltiPayConfig(
+          publicKey: publicKey,
+          pidx: pidx,
+          paymentUrl: paymentUrl,
+          environment: testMode ? Environment.test : Environment.prod,
+        ),
+        onPaymentResult: (paymentResult, kh) {
+          // Complete BEFORE closing: close() pops the page, which fires
+          // kpgDisposed — completing first keeps the payment result.
+          if (!completer.isCompleted) {
+            completer.complete({
+              'pidx': paymentResult.payload?.pidx ?? pidx,
+              'transactionId': paymentResult.payload?.transactionId ?? '',
+              'status': paymentResult.payload?.status ?? '',
+            });
+          }
+          kh.close(context);
+        },
+        onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
+          // User dismissed the Khalti page without paying.
+          if (event == KhaltiEvent.kpgDisposed && !completer.isCompleted) {
+            completer.complete(null);
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) {
+        showToast(
+            context,
+            AppLanguage.tr('Could not open Khalti. Please try again.',
+                'Khalti खोल्न सकिएन। कृपया पुनः प्रयास गर्नुहोस्।'),
+            ToastVariant.error);
+      }
+      return;
+    }
+    if (!mounted) return;
+    khalti.open(context);
+    final res = await completer.future;
+    if (!mounted) return;
+    if (res == null) {
+      showToast(
+          context,
+          AppLanguage.tr('Payment cancelled.', 'भुक्तानी रद्द गरियो।'),
+          ToastVariant.info);
+      return;
+    }
+    await _verifyWithOverlay(
+      d,
+      gateway: 'khalti',
+      planId: planId,
+      proof: {'transactionUuid': transactionUuid, 'pidx': res['pidx']},
+    );
+  }
+
+  /// Premium checking animation while the worker verifies with the gateway,
+  /// then a premium success/failure state. The app never trusts its own
+  /// "payment done" signal — only the worker's verification activates.
+  Future<void> _verifyWithOverlay(
+    _CheckoutData d, {
+    required String gateway,
+    required String planId,
+    required Map<String, dynamic> proof,
+  }) async {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => PaymentStatusOverlay(
+        state: PaymentOverlayState.verifying,
+        title: AppLanguage.tr(
+            'Verifying payment…', 'भुक्तानी प्रमाणीकरण हुँदैछ…'),
+        subtitle: AppLanguage.tr(
+            'Confirming with the payment gateway. Please do not close the app.',
+            'भुक्तानी गेटवेसँग पुष्टि हुँदैछ। कृपया एप बन्द नगर्नुहोस्।'),
+      ),
+    );
+    Map<String, dynamic> res;
+    try {
+      res = await GatewayPaymentService.verifyPayment(
+        gateway: gateway,
+        planId: planId,
+        couponCode: _couponApplied?.code,
+        proof: proof,
+      );
+    } catch (e) {
+      res = {
+        'ok': false,
+        'error': e is GatewayException
+            ? e.message
+            : AppLanguage.tr('Verification failed. Please try again.',
+                'प्रमाणीकरण असफल भयो। कृपया पुनः प्रयास गर्नुहोस्।')
+      };
+    }
+    if (!mounted) return;
+    Navigator.of(context).pop(); // dismiss the verifying overlay
+    if (!mounted) return;
+    if (res['ok'] == true) {
+      _showGatewayResult(
+        success: true,
+        message: AppLanguage.tr(
+            'Your subscription is now active. Enjoy learning!',
+            'तपाईंको सदस्यता सक्रिय भयो। रमाइलो सिकाइ!'),
+      );
+    } else {
+      _showGatewayResult(
+        success: false,
+        message: '${res['error'] ?? AppLanguage.tr('Payment verification failed.', 'भुक्तानी प्रमाणीकरण असफल भयो।')}',
+        onRetry: () => _startGatewayPayment(d),
+      );
+    }
+  }
+
+  void _showGatewayResult({
+    required bool success,
+    required String message,
+    VoidCallback? onRetry,
+  }) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogCtx) => PaymentStatusOverlay(
+        state: success
+            ? PaymentOverlayState.success
+            : PaymentOverlayState.failure,
+        title: success
+            ? AppLanguage.tr('Payment successful', 'भुक्तानी सफल भयो')
+            : AppLanguage.tr('Payment failed', 'भुक्तानी असफल भयो'),
+        subtitle: message,
+        onRetry: onRetry,
+        onClose: () {
+          Navigator.of(dialogCtx).pop();
+          if (success) _refresh();
+        },
+      ),
+    );
   }
 
   // ------------------------------------------------------------------ QR
@@ -1229,8 +1500,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               )
             else
               OutlinedButton(
-                onPressed:
-                    _validatingCoupon ? null : () => _handleApplyCoupon(d),
+                onPressed: (_validatingCoupon ||
+                        _couponCtrl.text.trim().isEmpty)
+                    ? null
+                    : () => _handleApplyCoupon(d),
                 child: _validatingCoupon
                     ? const SizedBox(
                         height: 16,
@@ -1378,26 +1651,84 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Widget _gatewayBlock(_CheckoutData d) {
     final pal = ExpoPalette.of(context);
+    final gatewayName = _method == 'esewa' ? 'eSewa' : 'Khalti';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ElevatedButton.icon(
-          onPressed: () => _handleOpenGateway(d),
-          icon: const Icon(Icons.open_in_new, size: 16),
-          label: Text(AppLanguage.tr('Continue to Payment Gateway',
-              'भुक्तानी गेटवेमा जानुहोस्')),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accent,
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
+        // Premium gradient pay button with a security reassurance row.
+        Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                AppColors.accent,
+                AppColors.accent.withValues(alpha: 0.78),
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.accent.withValues(alpha: 0.35),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(16),
+              onTap: _paying ? null : () => _startGatewayPayment(d),
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 15, horizontal: 16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    if (_paying)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.4, color: Colors.white),
+                      )
+                    else
+                      const Icon(Icons.lock_outline,
+                          size: 17, color: Colors.white),
+                    const SizedBox(width: 10),
+                    Text(
+                      _paying
+                          ? AppLanguage.tr('Starting secure payment…',
+                              'सुरक्षित भुक्तानी सुरु हुँदैछ…')
+                          : AppLanguage.tr('Pay securely with $gatewayName',
+                              '$gatewayName बाट सुरक्षित भुक्तानी गर्नुहोस्'),
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          AppLanguage.tr(
-              'Complete payment in the gateway. Transaction ID and screenshot are not required here.',
-              'Gateway मा भुक्तानी पूरा गर्नुहोस्। यहाँ Transaction ID वा screenshot आवश्यक छैन।'),
-          style: TextStyle(fontSize: 12, color: pal.textSecondary),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Icon(Icons.verified_user_outlined,
+                size: 14, color: pal.textSecondary),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                AppLanguage.tr(
+                    'Payment opens inside the app. Verified securely — no screenshot needed.',
+                    'भुक्तानी एपभित्रै खुल्छ। सुरक्षित रूपमा प्रमाणित हुन्छ — screenshot आवश्यक छैन।'),
+                style: TextStyle(fontSize: 12, color: pal.textSecondary),
+              ),
+            ),
+          ],
         ),
       ],
     );

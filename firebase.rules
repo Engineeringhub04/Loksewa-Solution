@@ -880,6 +880,11 @@ service cloud.firestore {
          !request.resource.data.khalti.keys().hasAny(['secretKey']));
       allow delete: if isAdmin() && docId == 'config';
     }
+    // Gateway secrets (eSewa/Khalti secret keys) — admin-only. The admin
+    // website reads/writes these; the app must never see them.
+    match /app_subscription_settings_secrets/{docId} {
+      allow read, write: if isAdmin();
+    }
     match /app_coupon_codes/{code} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();

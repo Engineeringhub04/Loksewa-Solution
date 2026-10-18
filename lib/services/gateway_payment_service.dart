@@ -30,6 +30,7 @@ class GatewayPaymentService {
   static Future<Map<String, dynamic>> initPayment({
     required String gateway, // 'esewa' | 'khalti'
     required String planId,
+    String? couponCode,
   }) async {
     final token = await AuthService.getValidIdToken();
     final res = await http
@@ -39,7 +40,12 @@ class GatewayPaymentService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({'gateway': gateway, 'planId': planId}),
+          body: jsonEncode({
+            'gateway': gateway,
+            'planId': planId,
+            if (couponCode != null && couponCode.trim().isNotEmpty)
+              'couponCode': couponCode.trim(),
+          }),
         )
         .timeout(const Duration(seconds: 30));
     Map<String, dynamic> body;
@@ -187,6 +193,35 @@ class GatewayPaymentService {
   static Future<void> clearPendingPayment() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_pendingKey);
+  }
+
+  /// Delete the user's own non-active subscription request via the worker.
+  /// The worker verifies ownership, refuses active records, deletes the
+  /// app_subscriptions doc, removes the id from the user's subscriptionIds,
+  /// and best-effort cancels the linked gateway payment. Throws
+  /// [GatewayException] on failure.
+  static Future<void> deleteRequest(String subId) async {
+    final token = await AuthService.getValidIdToken();
+    final res = await http
+        .post(
+          Uri.parse('$_base/payments/delete-request'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode({'subId': subId}),
+        )
+        .timeout(const Duration(seconds: 30));
+    Map<String, dynamic> body;
+    try {
+      body = jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (_) {
+      body = {};
+    }
+    if (res.statusCode != 200 || body['ok'] != true) {
+      throw GatewayException(
+          body['error']?.toString() ?? 'Delete failed (${res.statusCode}).');
+    }
   }
 }
 

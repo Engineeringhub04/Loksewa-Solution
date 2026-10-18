@@ -137,8 +137,11 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
 
   /// Mirrors the React canEdit: any non-active request still inside the
   /// 30-minute window (rejected requests are editable too).
+  /// Gateway (eSewa/Khalti) payments are NEVER editable — editing a
+  /// completed gateway payment is meaningless.
   bool get _canEdit =>
       _record != null &&
+      !_record!.isGateway &&
       _record!.status != SubscriptionStatus.active &&
       _remainingMs > 0;
 
@@ -153,6 +156,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       if (!mounted) return;
       final remaining = _remainingMs;
       final canEdit = _record != null &&
+          !_record!.isGateway &&
           _record!.status != SubscriptionStatus.active &&
           remaining > 0;
       setState(() {
@@ -341,7 +345,10 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       return _LoadError(onRetry: _refresh);
     }
     final record = _record!;
-    final showEditBar = record.status != SubscriptionStatus.active &&
+    // Gateway payments never show the edit bar — editing a completed
+    // gateway payment is meaningless (user requirement).
+    final showEditBar = !record.isGateway &&
+        record.status != SubscriptionStatus.active &&
         record.status != SubscriptionStatus.expired;
     return RefreshIndicator.adaptive(
       onRefresh: _refresh,
@@ -1422,26 +1429,35 @@ class _PaymentProblemSectionState extends State<_PaymentProblemSection> {
     } catch (_) {
       res = {'ok': false, 'reason': 'network_error'};
     }
-    if (!mounted) return;
-    closeVerifying();
+    if (!mounted) {
+      closeVerifying();
+      return;
+    }
     setState(() => _checking = false);
-    if (!mounted) return;
     if (res['ok'] == true) {
       await GatewayPaymentService.clearPendingPayment();
+      // Profile refresh while the verifying popup is still up — direct
+      // swap to the success popup, no blank gap.
       final uid = AuthService.currentUser?.uid;
       if (uid != null) {
         try {
           await ProfileStore.instance.load(uid, refresh: true);
         } catch (_) {}
       }
-      if (!mounted) return;
+      if (!mounted) {
+        closeVerifying();
+        return;
+      }
       widget.onRechecked();
+      closeVerifying();
+      if (!mounted) return;
       await showGatewaySuccessPopup(
         context,
         planName: record.planName,
         onNavigate: widget.onRechecked,
       );
     } else {
+      closeVerifying();
       if (!mounted) return;
       await showGatewayFailurePopup(
         context,

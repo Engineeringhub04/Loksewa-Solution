@@ -496,7 +496,23 @@ class SubscriptionService {
       }
     }
     records.sort((a, b) => _cmpDesc(a.submittedAt, b.submittedAt));
-    return records;
+    return filterHistoryForDisplay(records);
+  }
+
+  /// Display filter for the Your-Request list. Gateway (eSewa/Khalti)
+  /// payments that are freshly 'initiated' are NOT real requests yet —
+  /// money hasn't arrived, and the user is still in the payment flow. They
+  /// stay out of the list. Stale or failed gateway payments
+  /// (needsPaymentRecovery) DO show, so the user can reach
+  /// "Check My Payment". Manual (QR) pending requests still show
+  /// immediately.
+  static List<SubscriptionRecord> filterHistoryForDisplay(
+      List<SubscriptionRecord> records) {
+    return records
+        .where((r) => !(r.isGateway &&
+            r.status == SubscriptionStatus.pending &&
+            !r.needsPaymentRecovery))
+        .toList();
   }
 
   /// The current user's most relevant subscription record (active, else

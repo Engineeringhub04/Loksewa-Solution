@@ -185,105 +185,110 @@ $inputs
   Widget build(BuildContext context) {
     final pal = ExpoPalette.of(context);
     return Scaffold(
-      backgroundColor: pal.background,
-      // The app's curved header (eSewa's own page content is untouchable).
-      body: Column(
+      backgroundColor: const Color(0xFF0B0F1A),
+      // Full-bleed: the webview fills the whole screen and the curved
+      // header overlays on top — no white gap at the sides.
+      body: Stack(
         children: [
-          SubpageHeader(
-            title: AppLanguage.tr('eSewa Payment', 'eSewa भुक्तानी'),
-            onBackPress: () =>
-                _finish(const EsewaWebResult(status: 'cancelled')),
-            showThemeToggle: false,
-            actions: [
-              // Visible purchase countdown — UX only; the worker sweep is
-              // the source of truth for expiry.
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.35)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.timer_outlined,
-                        size: 12, color: Colors.white),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${AppLanguage.tr('Purchase Time', 'खरिद समय')}: $_countdownText',
-                      style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white),
-                    ),
-                  ],
-                ),
+          Positioned.fill(
+            child: InAppWebView(
+              initialData: InAppWebViewInitialData(data: _autoPostHtml),
+              initialSettings: InAppWebViewSettings(
+                javaScriptEnabled: true,
+                domStorageEnabled: true,
+                thirdPartyCookiesEnabled: true,
+                supportMultipleWindows: false,
               ),
-              if (widget.testMode)
+              shouldOverrideUrlLoading: _onShouldOverride,
+              onLoadStart: (_, __) {
+                if (mounted) setState(() => _loadingPage = true);
+              },
+              onLoadStop: (_, __) {
+                if (mounted) setState(() => _loadingPage = false);
+              },
+              onReceivedError: (_, __, ___) {
+                if (mounted) setState(() => _loadingPage = false);
+              },
+            ),
+          ),
+          // Curved header overlaid on top of the webview.
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SubpageHeader(
+              title: AppLanguage.tr('eSewa Payment', 'eSewa भुक्तानी'),
+              onBackPress: () =>
+                  _finish(const EsewaWebResult(status: 'cancelled')),
+              showThemeToggle: false,
+              actions: [
+                // Visible purchase countdown — UX only; the worker sweep is
+                // the source of truth for expiry.
                 Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.22),
+                    color: Colors.white.withValues(alpha: 0.16),
                     borderRadius: BorderRadius.circular(999),
                     border: Border.all(
-                        color: Colors.amber.withValues(alpha: 0.6)),
+                        color: Colors.white.withValues(alpha: 0.35)),
                   ),
-                  child: Text(AppLanguage.tr('TEST', 'टेस्ट'),
-                      style: const TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.amber)),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.timer_outlined,
+                          size: 12, color: Colors.white),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${AppLanguage.tr('Purchase Time', 'खरिद समय')}: $_countdownText',
+                        style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white),
+                      ),
+                    ],
+                  ),
                 ),
-            ],
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                InAppWebView(
-            initialData: InAppWebViewInitialData(data: _autoPostHtml),
-            initialSettings: InAppWebViewSettings(
-              javaScriptEnabled: true,
-              domStorageEnabled: true,
-              thirdPartyCookiesEnabled: true,
-              supportMultipleWindows: false,
-            ),
-            shouldOverrideUrlLoading: _onShouldOverride,
-            onLoadStart: (_, __) {
-              if (mounted) setState(() => _loadingPage = true);
-            },
-            onLoadStop: (_, __) {
-              if (mounted) setState(() => _loadingPage = false);
-            },
-            onReceivedError: (_, __, ___) {
-              if (mounted) setState(() => _loadingPage = false);
-            },
-          ),
-          if (_loadingPage)
-            Container(
-              color: pal.background,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(color: AppColors.accent),
-                    const SizedBox(height: 14),
-                    Text(
-                      AppLanguage.tr('Connecting to eSewa…',
-                          'eSewa मा जडान हुँदैछ…'),
-                      style: TextStyle(
-                          fontSize: 13, color: pal.textSecondary),
+                if (widget.testMode)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.amber.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(
+                          color: Colors.amber.withValues(alpha: 0.6)),
                     ),
-                  ],
-                ),
-              ),
-            ),
+                    child: Text(AppLanguage.tr('TEST', 'टेस्ट'),
+                        style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.amber)),
+                  ),
               ],
             ),
           ),
+          if (_loadingPage)
+            Positioned.fill(
+              child: Container(
+                color: const Color(0xFF0B0F1A),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(color: AppColors.accent),
+                      const SizedBox(height: 14),
+                      Text(
+                        AppLanguage.tr('Connecting to eSewa…',
+                            'eSewa मा जडान हुँदैछ…'),
+                        style: TextStyle(
+                            fontSize: 13, color: pal.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

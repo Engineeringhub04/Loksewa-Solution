@@ -547,7 +547,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     try {
       final planId = '${d.plan!['id']}';
       final initRes = await GatewayPaymentService.initPayment(
-          gateway: _method!, planId: planId);
+          gateway: _method!, planId: planId, couponCode: _couponApplied?.code);
       if (!mounted) return;
       // Persist the pending payment BEFORE the gateway UI opens — an app
       // kill during payment/verify must never lose the transaction.
@@ -708,6 +708,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           }
           kh.close(context);
         },
+        onReturn: () {
+          // The return_url was hit in-app: Khalti finished its side. If the
+          // SDK's own verify hangs, the watchdog below still releases the
+          // flow and the worker (source of truth) verifies server-side.
+        },
         onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
           // User dismissed the Khalti page without paying.
           if (event == KhaltiEvent.kpgDisposed && !completer.isCompleted) {
@@ -814,35 +819,45 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 'प्रमाणीकरण असफल भयो। कृपया पुनः प्रयास गर्नुहोस्।')
       };
     }
-    if (!mounted) return;
-    closeVerifying();
-    if (!mounted) return;
+    if (!mounted) {
+      closeVerifying();
+      return;
+    }
     if (res['ok'] == true) {
       await GatewayPaymentService.clearPendingPayment();
-      // Real-time profile update BEFORE navigating, so the profile pill
-      // flips Free -> plan name instantly without a manual refresh.
+      // Real-time profile update WHILE the verifying popup is still up, so
+      // the profile pill flips Free -> plan name instantly and the user
+      // never sees a blank gap between the popups.
       final uid = AuthService.currentUser?.uid;
       if (uid != null) {
         try {
           await ProfileStore.instance.load(uid, refresh: true);
         } catch (_) {}
       }
-      if (!mounted) return;
+      if (!mounted) {
+        closeVerifying();
+        return;
+      }
       final subId = '${res['subscriptionId'] ?? ''}';
+      // Direct swap: verifying out, success in — no intermediate frame.
+      closeVerifying();
+      if (!mounted) return;
       await showGatewaySuccessPopup(
         context,
         planName: planName,
         onNavigate: () {
-          // Subscription Details page with the fresh record — never back
-          // to the checkout/coupon page.
+          // Reset the stack to the subscription page, then push the detail
+          // on top — Back from detail lands on plans, never closes the app
+          // and never returns to the checkout.
+          context.go('/subscription');
           if (subId.isNotEmpty) {
-            context.go('/subscription/$subId');
-          } else {
-            context.go('/subscription');
+            context.push('/subscription/$subId');
           }
         },
       );
     } else {
+      closeVerifying();
+      if (!mounted) return;
       await GatewayPaymentService.clearPendingPayment();
       if (!mounted) return;
       await showGatewayFailurePopup(

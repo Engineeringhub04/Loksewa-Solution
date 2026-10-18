@@ -17,12 +17,16 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/gateway_payment_service.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/app_modal_shell.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/trash_icon.dart';
 
 /// Brand logos — brand marks drawn for a light background, shown as a
 /// subtle watermark (reduced opacity, no chips or boxes) directly on the
@@ -55,6 +59,9 @@ class SubscriptionScreen extends StatefulWidget {
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
   late Future<SubscriptionScreenData> _future = _load();
+
+  /// 0 = Plan tab, 1 = Your Request tab.
+  int _tabIndex = 0;
 
   /// Session guard for the logo warmup below: the payment logos live in
   /// Flutter's in-memory ImageCache only — never on disk — so a cold
@@ -153,59 +160,73 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
                       _PlanStatusHero(
                           record: activeRecord, pendingCount: pendingCount),
                       const SizedBox(height: ExpoSpacing.md),
-                      if (data.history.isNotEmpty) ...[
-                        _RequestsSection(history: data.history),
-                        const SizedBox(height: ExpoSpacing.md),
-                      ],
-                      Padding(
-                        padding: const EdgeInsets.only(
-                            bottom: ExpoSpacing.sm, top: ExpoSpacing.xs),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              AppLanguage.tr(
-                                  'Choose Your Plan', 'आफ्नो योजना छान्नुहोस्'),
-                              style: const TextStyle(
-                                  fontSize: ExpoType.h3,
-                                  fontWeight: FontWeight.bold),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              AppLanguage.tr(
-                                  'Everything the app offers, and exactly what each plan unlocks.',
-                                  'एपले दिने सबै सुविधा, र कुन योजनाले के खोल्छ भन्ने स्पष्ट विवरण।'),
-                              style: TextStyle(
-                                  fontSize: ExpoType.bodySmall,
-                                  color: ExpoPalette.of(context).textSecondary),
-                            ),
-                          ],
-                        ),
+                      _SubscriptionTabs(
+                        selected: _tabIndex,
+                        requestCount: data.history.length,
+                        onChanged: (i) => setState(() => _tabIndex = i),
                       ),
-                      ...data.plans.asMap().entries.map((entry) {
-                        final plan = entry.value;
-                        final isCurrent = activeRecord != null &&
-                            activeRecord.planId == plan.id;
-                        return Padding(
-                          padding:
-                              const EdgeInsets.only(bottom: ExpoSpacing.md),
-                          child: SyllabusEntrance(
-                            delayMs: min(entry.key, 8) * 60,
-                            child: _PlanCard(
-                              plan: plan,
-                              isCurrent: isCurrent,
-                              savePercent:
-                                  plan.billingCycle == BillingCycle.yearly
-                                      ? savePercent
-                                      : null,
-                              onSubscribe: () =>
-                                  context.push('/checkout?planId=${plan.id}'),
-                            ),
+                      const SizedBox(height: ExpoSpacing.md),
+                      if (_tabIndex == 0) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(
+                              bottom: ExpoSpacing.sm, top: ExpoSpacing.xs),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                AppLanguage.tr(
+                                    'Choose Your Plan', 'आफ्नो योजना छान्नुहोस्'),
+                                style: const TextStyle(
+                                    fontSize: ExpoType.h3,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                AppLanguage.tr(
+                                    'Everything the app offers, and exactly what each plan unlocks.',
+                                    'एपले दिने सबै सुविधा, र कुन योजनाले के खोल्छ भन्ने स्पष्ट विवरण।'),
+                                style: TextStyle(
+                                    fontSize: ExpoType.bodySmall,
+                                    color: ExpoPalette.of(context).textSecondary),
+                              ),
+                            ],
                           ),
-                        );
-                      }),
-                      const SizedBox(height: ExpoSpacing.sm),
-                      const _WeAcceptSection(),
+                        ),
+                        ...data.plans.asMap().entries.map((entry) {
+                          final plan = entry.value;
+                          final isCurrent = activeRecord != null &&
+                              activeRecord.planId == plan.id;
+                          return Padding(
+                            padding:
+                                const EdgeInsets.only(bottom: ExpoSpacing.md),
+                            child: SyllabusEntrance(
+                              delayMs: min(entry.key, 8) * 60,
+                              child: _PlanCard(
+                                plan: plan,
+                                isCurrent: isCurrent,
+                                savePercent:
+                                    plan.billingCycle == BillingCycle.yearly
+                                        ? savePercent
+                                        : null,
+                                onSubscribe: () =>
+                                    context.push('/checkout?planId=${plan.id}'),
+                              ),
+                            ),
+                          );
+                        }),
+                        const SizedBox(height: ExpoSpacing.sm),
+                        const _WeAcceptSection(),
+                      ] else ...[
+                        if (data.history.isNotEmpty)
+                          _RequestsSection(
+                            history: data.history,
+                            onChanged: () => setState(() {
+                              _future = _load();
+                            }),
+                          )
+                        else
+                          _EmptyRequests(),
+                      ],
                       const SizedBox(height: ExpoSpacing.lg),
                     ],
                   ),
@@ -450,6 +471,125 @@ class _GradientChip extends StatelessWidget {
   }
 }
 
+// ===================== Tabs =====================
+
+/// Segmented "Plan | Your Request" tabs below the header.
+class _SubscriptionTabs extends StatelessWidget {
+  final int selected;
+  final int requestCount;
+  final ValueChanged<int> onChanged;
+  const _SubscriptionTabs({
+    required this.selected,
+    required this.requestCount,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    final labels = [
+      AppLanguage.tr('Plan', 'योजना'),
+      AppLanguage.tr('Your Request', 'तपाईंको अनुरोध'),
+    ];
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: pal.surfaceAlt,
+        borderRadius: BorderRadius.circular(ExpoRadius.pill),
+        border: Border.all(color: pal.border),
+      ),
+      child: Row(
+        children: List.generate(2, (i) {
+          final isSel = i == selected;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => onChanged(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                decoration: BoxDecoration(
+                  color: isSel ? pal.primary : Colors.transparent,
+                  borderRadius: BorderRadius.circular(ExpoRadius.pill),
+                ),
+                alignment: Alignment.center,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      labels[i],
+                      style: TextStyle(
+                        fontSize: ExpoType.bodySmall,
+                        fontWeight: FontWeight.w700,
+                        color: isSel ? Colors.white : pal.textSecondary,
+                      ),
+                    ),
+                    if (i == 1 && requestCount > 0) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isSel
+                              ? Colors.white.withValues(alpha: 0.25)
+                              : pal.primary.withValues(alpha: 0.15),
+                          borderRadius:
+                              BorderRadius.circular(ExpoRadius.pill),
+                        ),
+                        child: Text(
+                          '$requestCount',
+                          style: TextStyle(
+                            fontSize: ExpoType.caption,
+                            fontWeight: FontWeight.w700,
+                            color: isSel ? Colors.white : pal.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+class _EmptyRequests extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: ExpoSpacing.xl),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        border: Border.all(color: pal.border),
+        borderRadius: BorderRadius.circular(ExpoRadius.lg),
+      ),
+      child: Column(
+        children: [
+          Icon(Icons.receipt_long_outlined,
+              size: 40, color: pal.textDisabled),
+          const SizedBox(height: 10),
+          Text(
+            AppLanguage.tr('No requests yet', 'अहिलेसम्म कुनै अनुरोध छैन'),
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            AppLanguage.tr(
+                'Your subscription requests will appear here.',
+                'तपाईंका सदस्यता अनुरोधहरू यहाँ देखिनेछन्।'),
+            style:
+                TextStyle(fontSize: ExpoType.caption, color: pal.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ===================== Request history =====================
 
 Color _statusToneColor(SubscriptionStatus status, ExpoPalette pal) {
@@ -493,7 +633,8 @@ String _statusTag(SubscriptionStatus status) {
 
 class _RequestsSection extends StatelessWidget {
   final List<SubscriptionRecord> history;
-  const _RequestsSection({required this.history});
+  final VoidCallback onChanged;
+  const _RequestsSection({required this.history, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -551,7 +692,8 @@ class _RequestsSection extends StatelessWidget {
           ...history.asMap().entries.map((entry) {
             final record = entry.value;
             final last = entry.key == history.length - 1;
-            return _RequestRow(record: record, last: last);
+            return _RequestRow(
+                record: record, last: last, onChanged: onChanged);
           }),
         ],
       ),
@@ -562,7 +704,22 @@ class _RequestsSection extends StatelessWidget {
 class _RequestRow extends StatelessWidget {
   final SubscriptionRecord record;
   final bool last;
-  const _RequestRow({required this.record, required this.last});
+  final VoidCallback onChanged;
+  const _RequestRow(
+      {required this.record, required this.last, required this.onChanged});
+
+  /// Active subscriptions can never be deleted (the worker refuses too).
+  bool get _deletable => record.status != SubscriptionStatus.active;
+
+  Future<void> _confirmDelete(BuildContext context) async {
+    final confirmed = await AppModalShell.show<bool>(
+      context: context,
+      builder: (_) => _DeleteRequestDialog(record: record),
+    );
+    if (confirmed == true && context.mounted) {
+      onChanged();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -625,6 +782,13 @@ class _RequestRow extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (_deletable)
+                  IconButton(
+                    onPressed: () => _confirmDelete(context),
+                    icon: TrashIcon(size: 18, color: pal.danger),
+                    tooltip: AppLanguage.tr('Delete request', 'अनुरोध हटाउनुहोस्'),
+                    splashRadius: 20,
+                  ),
                 Icon(Icons.chevron_right, size: 18, color: pal.textDisabled),
               ],
             ),
@@ -640,6 +804,149 @@ class _RequestRow extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Delete-request confirm dialog — AppModalShell danger style, following the
+/// standing popup-action pattern (confirm → loading on the action button →
+/// success → list refreshes after the pop).
+class _DeleteRequestDialog extends StatefulWidget {
+  final SubscriptionRecord record;
+  const _DeleteRequestDialog({required this.record});
+
+  @override
+  State<_DeleteRequestDialog> createState() => _DeleteRequestDialogState();
+}
+
+class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
+  bool _deleting = false;
+
+  Future<void> _confirmDelete() async {
+    if (_deleting) return;
+    setState(() => _deleting = true);
+    try {
+      await GatewayPaymentService.deleteRequest(widget.record.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _deleting = false);
+      showToast(
+        context,
+        AppLanguage.tr('Could not delete the request. Please try again.',
+            'अनुरोध हटाउन सकिएन। कृपया पुनः प्रयास गर्नुहोस्।'),
+        ToastVariant.error,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = ExpoPalette.of(context);
+    return AppModalShell(
+      maxWidth: 340,
+      tagLabel: AppLanguage.tr('Your Requests', 'तपाईंका अनुरोधहरू'),
+      accent: const Color(0xFFDC2626),
+      accentMid: const Color(0xFFF87171),
+      accentLight: const Color(0xFFFECACA),
+      tagColor: const Color(0xFFDC2626),
+      onClose: _deleting ? null : () => Navigator.of(context).pop(false),
+      icon: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: pal.danger,
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: _deleting
+              ? const SizedBox(
+                  key: ValueKey('deleting'),
+                  width: 28,
+                  height: 28,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 3, color: Colors.white),
+                )
+              : const TrashIcon(
+                  key: ValueKey('delete'),
+                  size: 28,
+                  color: Colors.white,
+                ),
+        ),
+      ),
+      title: Text(
+        AppLanguage.tr('Delete this request?', 'यो अनुरोध हटाउने?'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF0F172A),
+          height: 1.3,
+          decoration: TextDecoration.none,
+        ),
+      ),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.record.planName,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontSize: 14,
+              color: Color(0xFF0F172A),
+              decoration: TextDecoration.none,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppLanguage.tr(
+                'The request and its payment record will be permanently removed.',
+                'अनुरोध र यसको भुक्तानी रेकर्ड स्थायी रूपमा हटाइनेछ।'),
+            style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF64748B),
+              decoration: TextDecoration.none,
+            ),
+          ),
+        ],
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed:
+                  _deleting ? null : () => Navigator.of(context).pop(false),
+              style: OutlinedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton(
+              onPressed: _deleting ? null : _confirmDelete,
+              style: FilledButton.styleFrom(
+                backgroundColor: pal.danger,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              child: Text(_deleting
+                  ? AppLanguage.tr('Deleting…', 'हटाउँदैछ…')
+                  : AppLanguage.tr('Delete', 'हटाउनुहोस्')),
+            ),
+          ),
+        ],
       ),
     );
   }

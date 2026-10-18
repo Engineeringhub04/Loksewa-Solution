@@ -885,6 +885,11 @@ service cloud.firestore {
     match /app_subscription_settings_secrets/{docId} {
       allow read, write: if isAdmin();
     }
+    // Gateway payment ledger — worker-only (Admin SDK bypasses rules).
+    // Clients must never read or write payment proofs/results.
+    match /app_payments/{docId} {
+      allow read, write: if false;
+    }
     match /app_coupon_codes/{code} {
       allow read: if isSignedIn();
       allow create, delete: if isAdmin();

@@ -24,6 +24,8 @@ SubscriptionPlan _plan({
   required BillingCycle cycle,
   required num price,
   List<String> features = const [],
+  List<PlanCategory> categories = const [],
+  List<String> customFeatures = const [],
 }) =>
     SubscriptionPlan(
       id: id,
@@ -33,11 +35,58 @@ SubscriptionPlan _plan({
       currency: 'NPR',
       durationDays: 30,
       features: features,
+      categories: categories,
+      customFeatures: customFeatures,
       isActive: true,
       order: 0,
       colorFrom: '#7C3AED',
       colorTo: '#DB2777',
     );
+
+PlanCategory _cat(
+  String key,
+  String titleEn,
+  String titleNe, {
+  String icon = 'library',
+  num order = 0,
+  List<PlanFeature> features = const [],
+}) =>
+    PlanCategory(
+      key: key,
+      titleEn: titleEn,
+      titleNe: titleNe,
+      icon: icon,
+      order: order,
+      features: features,
+    );
+
+PlanFeature _feat(String id, String en, String ne,
+        {num order = 0, bool included = true}) =>
+    PlanFeature(id: id, en: en, ne: ne, order: order, included: included);
+
+List<PlanCategory> _learning({required bool allSubjectsIncluded}) => [
+      _cat('learning', 'Learning & Content', 'अध्ययन तथा सामग्री',
+          icon: 'library',
+          order: 1,
+          features: [
+            _feat('f-all', 'All subjects, units & chapters',
+                'सबै विषय, एकाइ र अध्याय',
+                order: 1, included: allSubjectsIncluded),
+            _feat('f-notes', 'Syllabus & study notes library',
+                'पाठ्यक्रम तथा नोट्स संग्रह',
+                order: 2, included: false),
+          ]),
+    ];
+
+List<PlanCategory> _community({required bool supportIncluded}) => [
+      _cat('community', 'Community & Support', 'समुदाय तथा सहयोग',
+          icon: 'community',
+          order: 2,
+          features: [
+            _feat('f-support', 'Priority support', 'प्राथमिकता सहयोग',
+                included: supportIncluded),
+          ]),
+    ];
 
 SubscriptionRecord _record({
   required String id,
@@ -77,48 +126,35 @@ SubscriptionRecord _record({
 SubscriptionScreenData _data() {
   final now = DateTime.now();
   return SubscriptionScreenData(
-    catalogue: const [
-      PlanFeatureGroup(
-        key: 'learning',
-        icon: 'library',
-        titleEn: 'Learning & Content',
-        titleNe: 'अध्ययन तथा सामग्री',
-        features: [
-          PlanFeature(
-              'All subjects, units & chapters', 'सबै विषय, एकाइ र अध्याय'),
-          PlanFeature(
-              'Syllabus & study notes library', 'पाठ्यक्रम तथा नोट्स संग्रह'),
-        ],
-      ),
-      PlanFeatureGroup(
-        key: 'community',
-        icon: 'community',
-        titleEn: 'Community & Support',
-        titleNe: 'समुदाय तथा सहयोग',
-        features: [
-          PlanFeature('Priority support', 'प्राथमिकता सहयोग'),
-        ],
-      ),
-    ],
     plans: [
       _plan(
-          id: 'monthly',
-          name: 'Monthly Pro',
-          cycle: BillingCycle.monthly,
-          price: 199,
-          features: ['All subjects, units & chapters']),
+        id: 'monthly',
+        name: 'Monthly Pro',
+        cycle: BillingCycle.monthly,
+        price: 199,
+        categories: _learning(allSubjectsIncluded: true),
+      ),
       _plan(
-          id: 'yearly',
-          name: 'Yearly Pro',
-          cycle: BillingCycle.yearly,
-          price: 1990,
-          features: ['Priority support', 'Hand-typed bonus']),
+        id: 'yearly',
+        name: 'Yearly Pro',
+        cycle: BillingCycle.yearly,
+        price: 1990,
+        categories: [
+          ..._learning(allSubjectsIncluded: false),
+          ..._community(supportIncluded: true),
+        ],
+        customFeatures: ['Hand-typed bonus'],
+      ),
       _plan(
-          id: 'free',
-          name: 'Free',
-          cycle: BillingCycle.free,
-          price: 0,
-          features: ['All subjects, units & chapters']),
+        id: 'free',
+        name: 'Free',
+        cycle: BillingCycle.free,
+        price: 0,
+        categories: [
+          ..._learning(allSubjectsIncluded: true),
+          ..._community(supportIncluded: false),
+        ],
+      ),
     ],
     history: [
       _record(
@@ -290,12 +326,13 @@ void main() {
     // Each plan card enters through a SyllabusEntrance cascade wrapper.
     expect(find.byType(SyllabusEntrance), findsWidgets);
 
-    // Matrix: known feature labelled, excluded rows still legible. 'Priority
-    // support' appears in both the free card (excluded row) and the yearly
-    // card (included row) because every card renders the full catalogue.
+    // Matrix: embedded categories per plan, excluded rows still legible.
+    // 'Priority support' appears in both the free card (excluded row) and
+    // the yearly card (included row) because each card renders its own
+    // embedded categories.
     expect(find.text('All subjects, units & chapters'), findsWidgets);
     expect(find.text('Priority support'), findsWidgets);
-    // Unknown stored feature renders in the trailing extras group.
+    // Custom extras render in the trailing Also included group.
     expect(find.text('Also included'), findsOneWidget);
     expect(find.text('Hand-typed bonus'), findsOneWidget);
 
@@ -314,24 +351,27 @@ void main() {
     expect(find.text('/ year'), findsOneWidget);
   });
 
-  testWidgets('offline catalogue shows the placeholder, not the matrix',
+  testWidgets('plan with no categories shows the no-details note, never crashes',
       (tester) async {
     final d = _data();
-    final offline = SubscriptionScreenData(
-      plans: d.plans,
+    final noCats = SubscriptionScreenData(
+      plans: [
+        _plan(
+            id: 'bare',
+            name: 'Bare Plan',
+            cycle: BillingCycle.monthly,
+            price: 99),
+      ],
       history: d.history,
-      catalogue: null,
     );
-    await _pump(tester, _router(() async => offline));
+    await _pump(tester, _router(() async => noCats));
     await _settle(tester);
 
-    // Every card renders the offline placeholder where the matrix would be.
-    expect(find.text('Plan features need an internet connection.'),
-        findsWidgets);
-    // No matrix rows, no counts, no progress UI.
-    expect(find.text('All subjects, units & chapters'), findsNothing);
+    // The card renders the note where the matrix would be — no crash.
+    expect(find.text('No feature details yet.'), findsOneWidget);
     expect(find.text('Also included'), findsNothing);
-    // The cards themselves still render with working footers.
+    expect(find.text('Bare Plan'), findsWidgets);
+    // Footers still work.
     expect(find.text('Subscribe Now'), findsOneWidget);
   });
 

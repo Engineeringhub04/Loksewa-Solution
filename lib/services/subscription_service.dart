@@ -1,5 +1,5 @@
-// Subscription service — plans, per-user subscription requests, and the
-// plan feature catalogue.
+// Subscription service — plans (with embedded feature categories),
+// per-user subscription requests, and plan analytics.
 //
 // Mirrors src/core/firebase/services/subscription.ts (the client-side surface
 // used by app/subscription/index.tsx and app/subscription/[id].tsx).
@@ -66,6 +66,13 @@ class SubscriptionPlan {
   final String currency;
   final int durationDays;
   final List<String> features;
+
+  /// Embedded feature categories (v1.0.103+). Missing on old docs → empty.
+  final List<PlanCategory> categories;
+
+  /// Extra strings shown under "Also included", always ✓. Missing → empty.
+  final List<String> customFeatures;
+
   final bool isActive;
   final num order;
 
@@ -82,6 +89,8 @@ class SubscriptionPlan {
     required this.currency,
     required this.durationDays,
     required this.features,
+    this.categories = const [],
+    this.customFeatures = const [],
     required this.isActive,
     required this.order,
     this.colorFrom,
@@ -93,6 +102,23 @@ class SubscriptionPlan {
     String strOf(dynamic v, [String fallback = '']) =>
         v == null ? fallback : v.toString();
     final rawFeatures = m['features'];
+
+    List<PlanCategory> parseCategories(dynamic raw) {
+      if (raw is! List) return const [];
+      final cats = <PlanCategory>[];
+      for (final c in raw) {
+        try {
+          final cm = (c as Map).cast<String, dynamic>();
+          final pc = PlanCategory.fromMap(cm);
+          if (pc != null) cats.add(pc);
+        } catch (_) {
+          // Skip malformed category entries; never crash the plan.
+        }
+      }
+      return cats;
+    }
+
+    final rawCustom = m['customFeatures'];
     return SubscriptionPlan(
       id: strOf(m['id']),
       name: strOf(m['name'], 'Plan'),
@@ -102,6 +128,13 @@ class SubscriptionPlan {
       durationDays: numOf(m['durationDays']).toInt(),
       features: rawFeatures is List
           ? rawFeatures.map((e) => e.toString()).toList()
+          : const [],
+      categories: parseCategories(m['categories']),
+      customFeatures: rawCustom is List
+          ? rawCustom
+              .map((e) => e.toString())
+              .where((s) => s.isNotEmpty)
+              .toList()
           : const [],
       isActive: m['isActive'] != false,
       order: numOf(m['order']),
@@ -215,96 +248,94 @@ class SubscriptionRecord {
 //
 // The catalogue supplies structure, order and the Nepali wording
 // (presentation); the plan's own `features: string[]` in Firestore is the
-// source of truth for what a given plan includes. A feature is "included"
-// iff its id appears in that array.
-//
-// IDENTITY: a feature's `id` IS the exact string stored in Firestore.
-// Changing an id is a data migration, not a rename.
-//
-// There is deliberately NO offline fallback: plan data itself requires the
-// network, so a catalogue load failure renders an offline placeholder in
-// the UI instead of stale bundled data.
+// DATA MODEL (v1.0.103): plans carry their feature categories EMBEDDED.
+// app_subscription_plans/{planId}:
+//   categories: [{key, titleEn, titleNe, icon, order,
+//                 features: [{id, en, ne, order, included}]}]
+//   customFeatures: [string] — extras shown under "Also included", always ✓.
+// The old app_plan_feature_categories collection is retired and never read.
+// The legacy `features[]` array is IGNORED (the admin keeps it stale).
 
-/// One catalogue feature. `id` is the exact string stored on the plan
-/// document; `ne` is the Nepali label shown when the app language is Nepali.
+/// One feature embedded on a plan document's category. `included` is the
+/// ✓/✗ truth — there is no catalogue to match against anymore.
 class PlanFeature {
   final String id;
+  final String en;
   final String ne;
-  const PlanFeature(this.id, this.ne);
+  final num order;
+  final bool included;
+
+  const PlanFeature({
+    required this.id,
+    required this.en,
+    required this.ne,
+    required this.order,
+    required this.included,
+  });
+
+  /// Null when the entry is malformed (missing/empty id) — callers skip it.
+  static PlanFeature? fromMap(Map<String, dynamic> m) {
+    final id = (m['id'] ?? '').toString();
+    if (id.isEmpty) return null;
+    num orderOf(dynamic v) => v is num ? v : num.tryParse(v.toString()) ?? 0;
+    return PlanFeature(
+      id: id,
+      en: (m['en'] ?? id).toString(),
+      ne: (m['ne'] ?? '').toString(),
+      order: orderOf(m['order']),
+      included: m['included'] != false,
+    );
+  }
 }
 
-/// One catalogue group. `icon` is a key mapped to an IconData by the UI.
-class PlanFeatureGroup {
+/// One feature category embedded on a plan document. The admin edits these
+/// per plan; a deleted category simply stops being fetched, so it stops
+/// being shown — no hide lists, no scoping.
+class PlanCategory {
   final String key;
-  final String icon;
   final String titleEn;
   final String titleNe;
+  final String icon;
+  final num order;
   final List<PlanFeature> features;
-  const PlanFeatureGroup({
+
+  const PlanCategory({
     required this.key,
-    required this.icon,
     required this.titleEn,
     required this.titleNe,
+    required this.icon,
+    required this.order,
     required this.features,
   });
-}
 
-/// Nepali label for a stored feature string. Falls back to the stored string
-/// itself, so a hand-written feature an admin typed into Firestore still
-/// renders instead of disappearing. Mirrors planFeatureLabel().
-String planFeatureLabel(
-    List<PlanFeatureGroup> catalogue, String id, bool isNepali) {
-  if (!isNepali) return id;
-  for (final group in catalogue) {
-    for (final feature in group.features) {
-      if (feature.id == id) return feature.ne;
+  /// Null when the entry is malformed (missing/empty key) — callers skip it.
+  static PlanCategory? fromMap(Map<String, dynamic> m) {
+    final key = (m['key'] ?? '').toString();
+    if (key.isEmpty) return null;
+    num orderOf(dynamic v) => v is num ? v : num.tryParse(v.toString()) ?? 0;
+    final features = <PlanFeature>[];
+    final rawFeatures = m['features'];
+    if (rawFeatures is List) {
+      for (final f in rawFeatures) {
+        try {
+          final fm = (f as Map).cast<String, dynamic>();
+          final pf = PlanFeature.fromMap(fm);
+          if (pf != null) features.add(pf);
+        } catch (_) {
+          // Skip malformed feature entries; never crash the plan.
+        }
+      }
     }
-  }
-  return id;
-}
-
-/// Pure parser: builds the ordered catalogue from raw Firestore docs.
-/// [featuresByKey] maps a category key to its raw feature docs.
-/// Inactive categories/features and entries with empty ids are skipped.
-List<PlanFeatureGroup> parseFeatureCatalogue(
-  List<Map<String, dynamic>> categoryDocs,
-  Map<String, List<Map<String, dynamic>>> featuresByKey,
-) {
-  num orderOf(Map<String, dynamic> m) {
-    final v = m['order'];
-    return v is num ? v : num.tryParse(v.toString()) ?? 0;
-  }
-
-  final cats = categoryDocs.where((c) {
-    if (c['isActive'] == false) return false;
-    return (c['key'] ?? c['id'] ?? '').toString().isNotEmpty;
-  }).toList()
-    ..sort((a, b) => orderOf(a).compareTo(orderOf(b)));
-
-  final groups = <PlanFeatureGroup>[];
-  for (final c in cats) {
-    final key = (c['key'] ?? c['id'] ?? '').toString();
-    final rawFeatures =
-        (featuresByKey[key] ?? const <Map<String, dynamic>>[]).where((f) {
-      if (f['isActive'] == false) return false;
-      return (f['en'] ?? f['id'] ?? '').toString().isNotEmpty;
-    }).toList()
-          ..sort((a, b) => orderOf(a).compareTo(orderOf(b)));
-    groups.add(PlanFeatureGroup(
+    features.sort((a, b) => a.order.compareTo(b.order));
+    return PlanCategory(
       key: key,
-      icon: (c['icon'] ?? '').toString(),
-      titleEn: (c['titleEn'] ?? key).toString(),
-      titleNe: (c['titleNe'] ?? '').toString(),
-      features: [
-        for (final f in rawFeatures)
-          PlanFeature(
-            (f['en'] ?? f['id'] ?? '').toString(),
-            (f['ne'] ?? '').toString(),
-          ),
-      ],
-    ));
+      titleEn: (m['titleEn'] ?? key).toString(),
+      titleNe: (m['titleNe'] ?? '').toString(),
+      icon: (m['icon'] ?? '').toString(),
+      order: orderOf(m['order']),
+      features: features,
+    );
   }
-  return groups;
 }
 
 // ===================== Feature matrix =====================
@@ -339,46 +370,44 @@ class FeatureMatrixGroup {
   int get includedCount => rows.where((r) => r.included).length;
 }
 
-/// Builds the grouped matrix for one plan. The catalogue supplies structure
-/// and order; the plan's stored `features` supply truth. Anything stored that
-/// the catalogue does not recognise is kept in a trailing "extras" group —
-/// dropping it would silently hide a feature an admin deliberately typed onto
-/// a paid plan. Mirrors usePlanMatrix().
-List<FeatureMatrixGroup> buildFeatureMatrix(
-  List<PlanFeatureGroup> catalogue,
-  List<String> planFeatures,
-  bool isNepali,
-) {
-  final owned = planFeatures.toSet();
-  final known = <String>{};
+/// Builds the grouped matrix for one plan from its EMBEDDED categories.
+/// Categories are rendered in `order`; each feature's ✓/✗ comes from its
+/// `included` flag. [customFeatures] (non-empty only) are appended as a
+/// trailing "Also included" group, all ✓.
+List<FeatureMatrixGroup> buildFeatureMatrix({
+  required List<PlanCategory> categories,
+  required List<String> customFeatures,
+  required bool isNepali,
+}) {
   final groups = <FeatureMatrixGroup>[];
-  for (final group in catalogue) {
-    final rows = group.features.map((feature) {
-      known.add(feature.id);
-      return FeatureMatrixRow(
-        id: feature.id,
-        label: planFeatureLabel(catalogue, feature.id, isNepali),
-        included: owned.contains(feature.id),
-      );
-    }).toList();
+  final cats = categories.toList()
+    ..sort((a, b) => a.order.compareTo(b.order));
+  for (final cat in cats) {
     groups.add(FeatureMatrixGroup(
-      key: group.key,
-      icon: group.icon,
-      titleEn: group.titleEn,
-      titleNe: group.titleNe,
-      rows: rows,
+      key: cat.key,
+      icon: cat.icon,
+      titleEn: cat.titleEn,
+      titleNe: cat.titleNe,
+      rows: [
+        for (final f in cat.features)
+          FeatureMatrixRow(
+            id: f.id,
+            label: isNepali && f.ne.isNotEmpty ? f.ne : f.en,
+            included: f.included,
+          ),
+      ],
     ));
   }
-  final extras = planFeatures.where((f) => !known.contains(f)).toList();
-  if (extras.isNotEmpty) {
+  if (customFeatures.isNotEmpty) {
     groups.add(FeatureMatrixGroup(
       key: 'extras',
       icon: 'extras',
       titleEn: 'Also included',
-      titleNe: 'थप सुविधा',
-      rows: extras
-          .map((f) => FeatureMatrixRow(id: f, label: f, included: true))
-          .toList(),
+      titleNe: 'थप समावेश',
+      rows: [
+        for (final f in customFeatures)
+          FeatureMatrixRow(id: f, label: f, included: true),
+      ],
     ));
   }
   return groups;
@@ -408,44 +437,6 @@ class SubscriptionService {
         .toList()
       ..sort((a, b) => a.order.compareTo(b.order));
     return plans;
-  }
-
-  /// In-memory catalogue cache: the catalogue changes only when an admin
-  /// edits it, so one fetch per app session is enough. Pull-to-refresh
-  /// clears it via [clearFeatureCatalogueCache].
-  static List<PlanFeatureGroup>? _catalogueCache;
-
-  static void clearFeatureCatalogueCache() {
-    _catalogueCache = null;
-  }
-
-  /// Admin-managed feature catalogue from Firestore. Throws on any failure —
-  /// callers render an offline placeholder instead (there is deliberately no
-  /// bundled fallback).
-  static Future<List<PlanFeatureGroup>> fetchFeatureCatalogue(
-      {bool refresh = false}) async {
-    if (!refresh && _catalogueCache != null) return _catalogueCache!;
-    final token = await AuthService.getValidIdToken();
-    final catDocs = await FirestoreRest.listDocuments(
-      'app_plan_feature_categories',
-      idToken: token,
-      pageSize: 100,
-    );
-    final featuresByKey = <String, List<Map<String, dynamic>>>{};
-    for (final c in catDocs) {
-      final key = (c['key'] ?? c['id'] ?? '').toString();
-      if (key.isEmpty) continue;
-      // A failing subcollection read fails the whole catalogue — the UI
-      // shows an offline placeholder instead of a partial list.
-      featuresByKey[key] = await FirestoreRest.listDocuments(
-        'app_plan_feature_categories/$key/features',
-        idToken: token,
-        pageSize: 200,
-      );
-    }
-    final catalogue = parseFeatureCatalogue(catDocs, featuresByKey);
-    _catalogueCache = catalogue;
-    return catalogue;
   }
 
   /// All of the current user's subscription requests, newest first.

@@ -1,8 +1,9 @@
 // Unit tests for lib/services/subscription_service.dart.
 //
 // Pure-Dart coverage of the client-side subscription surface:
-// parseFeatureCatalogue (ordering, isActive filtering), planFeatureLabel,
-// buildFeatureMatrix (included/excluded + extras group), yearlySavePercent,
+// PlanCategory/PlanFeature parsing (ordering, malformed-entry skipping),
+// buildFeatureMatrix (category order, included flags, Nepali labels,
+// customFeatures "Also included" group, empty categories), yearlySavePercent,
 // and the Firestore map parsers. No network is touched.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
@@ -13,6 +14,8 @@ SubscriptionPlan _plan({
   BillingCycle cycle = BillingCycle.monthly,
   num price = 199,
   List<String> features = const [],
+  List<PlanCategory> categories = const [],
+  List<String> customFeatures = const [],
   String? colorFrom,
   String? colorTo,
   num order = 0,
@@ -25,6 +28,8 @@ SubscriptionPlan _plan({
     currency: 'NPR',
     durationDays: 30,
     features: features,
+    categories: categories,
+    customFeatures: customFeatures,
     isActive: true,
     order: order,
     colorFrom: colorFrom,
@@ -32,147 +37,196 @@ SubscriptionPlan _plan({
   );
 }
 
-/// Small catalogue mirroring the Firestore shape the admin seeds.
-const _catalogue = [
-  PlanFeatureGroup(
-    key: 'learning',
-    icon: 'library',
-    titleEn: 'Learning & Content',
-    titleNe: 'अध्ययन तथा सामग्री',
-    features: [
-      PlanFeature('All subjects, units & chapters', 'सबै विषय, एकाइ र अध्याय'),
-      PlanFeature(
-          'Syllabus & study notes library', 'पाठ्यक्रम तथा नोट्स संग्रह'),
-    ],
-  ),
-  PlanFeatureGroup(
-    key: 'community',
-    icon: 'community',
-    titleEn: 'Community & Support',
-    titleNe: 'समुदाय तथा सहयोग',
-    features: [
-      PlanFeature('Priority support', 'प्राथमिकता सहयोग'),
-    ],
-  ),
+PlanCategory _cat(
+  String key, {
+  String icon = 'library',
+  num order = 0,
+  List<PlanFeature> features = const [],
+}) =>
+    PlanCategory(
+      key: key,
+      titleEn: '$key-en',
+      titleNe: '$key-ne',
+      icon: icon,
+      order: order,
+      features: features,
+    );
+
+PlanFeature _feat(
+  String id, {
+  String? en,
+  String? ne,
+  num order = 0,
+  bool included = true,
+}) =>
+    PlanFeature(
+      id: id,
+      en: en ?? id,
+      ne: ne ?? '',
+      order: order,
+      included: included,
+    );
+
+/// Embedded categories mirroring the Firestore shape the admin writes.
+final _categories = [
+  _cat('learning', order: 1, features: [
+    _feat('f-learn-1',
+        en: 'All subjects, units & chapters',
+        ne: 'सबै विषय, एकाइ र अध्याय',
+        order: 1,
+        included: true),
+    _feat('f-learn-2',
+        en: 'Syllabus & study notes library',
+        ne: 'पाठ्यक्रम तथा नोट्स संग्रह',
+        order: 2,
+        included: false),
+  ]),
+  _cat('community', order: 2, features: [
+    _feat('f-support',
+        en: 'Priority support', ne: 'प्राथमिकता सहयोग', included: true),
+  ]),
 ];
 
 void main() {
-  group('parseFeatureCatalogue', () {
-    test('orders categories and features by order', () {
-      final groups = parseFeatureCatalogue(
-        [
-          {'id': 'b', 'key': 'b', 'titleEn': 'B', 'order': 2},
-          {'id': 'a', 'key': 'a', 'titleEn': 'A', 'order': 1},
+  group('PlanCategory.fromMap / PlanFeature.fromMap', () {
+    test('parses the happy path and orders features', () {
+      final cat = PlanCategory.fromMap({
+        'key': 'learning',
+        'titleEn': 'Learning',
+        'titleNe': 'सिकाइ',
+        'icon': 'library',
+        'order': 3,
+        'features': [
+          {'id': 'b', 'en': 'B', 'order': 2, 'included': true},
+          {'id': 'a', 'en': 'A', 'order': 1, 'included': false},
         ],
-        {
-          'a': [
-            {'id': 'f2', 'en': 'F2', 'order': 2},
-            {'id': 'f1', 'en': 'F1', 'order': 1},
-          ],
-          'b': [],
-        },
-      );
-      expect(groups.map((g) => g.key).toList(), ['a', 'b']);
-      expect(groups.first.features.map((f) => f.id).toList(), ['F1', 'F2']);
+      })!;
+      expect(cat.key, 'learning');
+      expect(cat.titleNe, 'सिकाइ');
+      expect(cat.icon, 'library');
+      expect(cat.features.map((f) => f.id).toList(), ['a', 'b']);
+      expect(cat.features.first.included, isFalse);
+      expect(cat.features[1].included, isTrue);
     });
 
-    test('skips inactive categories and features, and empty ids', () {
-      final groups = parseFeatureCatalogue(
-        [
-          {'id': 'gone', 'key': 'gone', 'isActive': false},
-          {'id': 'keep', 'key': 'keep'},
-          {'id': '', 'key': ''},
+    test('skips malformed categories and features, never crashes', () {
+      expect(PlanCategory.fromMap({'titleEn': 'no key'}), isNull);
+      expect(PlanCategory.fromMap({'key': ''}), isNull);
+      final cat = PlanCategory.fromMap({
+        'key': 'k',
+        'features': [
+          {'en': 'no id'},
+          {'id': ''},
+          'not-a-map',
+          {'id': 'ok', 'en': 'Ok'},
+          42,
         ],
-        {
-          'keep': [
-            {'id': 'off', 'en': 'Off', 'isActive': false},
-            {'id': '', 'en': ''},
-            {'id': 'On', 'en': 'On', 'ne': 'अन'},
-          ],
-        },
-      );
-      expect(groups.map((g) => g.key).toList(), ['keep']);
-      expect(groups.first.features.map((f) => f.id).toList(), ['On']);
-      expect(groups.first.features.first.ne, 'अन');
+      })!;
+      expect(cat.features.map((f) => f.id).toList(), ['ok']);
     });
 
-    test('falls back to doc id for key and en', () {
-      final groups = parseFeatureCatalogue(
-        [
-          {'id': 'legacy-cat', 'titleEn': 'Legacy'},
-        ],
-        {
-          'legacy-cat': [
-            {'id': 'Legacy feature'},
-          ],
-        },
-      );
-      expect(groups.single.key, 'legacy-cat');
-      expect(groups.single.features.single.id, 'Legacy feature');
-    });
-  });
-
-  group('planFeatureLabel', () {
-    test('english returns the stored id verbatim', () {
-      expect(planFeatureLabel(_catalogue, 'All subjects, units & chapters', false),
-          'All subjects, units & chapters');
+    test('missing fields fall back to safe defaults', () {
+      final cat = PlanCategory.fromMap({'key': 'k'})!;
+      expect(cat.titleEn, 'k');
+      expect(cat.titleNe, '');
+      expect(cat.icon, '');
+      expect(cat.features, isEmpty);
+      final f = PlanFeature.fromMap({'id': 'x'})!;
+      expect(f.en, 'x');
+      expect(f.ne, '');
+      expect(f.included, isTrue);
     });
 
-    test('nepali returns the catalogue label for known ids', () {
-      expect(planFeatureLabel(_catalogue, 'All subjects, units & chapters', true),
-          'सबै विषय, एकाइ र अध्याय');
-      expect(planFeatureLabel(_catalogue, 'Priority support', true),
-          'प्राथमिकता सहयोग');
-    });
-
-    test('nepali falls back to the stored string for unknown ids', () {
-      expect(planFeatureLabel(_catalogue, 'Some admin-typed feature', true),
-          'Some admin-typed feature');
+    test('non-list categories/features become empty', () {
+      final cat = PlanCategory.fromMap(
+          {'key': 'k', 'features': 'nope'})!;
+      expect(cat.features, isEmpty);
     });
   });
 
   group('buildFeatureMatrix', () {
-    test('marks owned features included and the rest excluded', () {
+    test('renders categories in order with included flags', () {
       final groups = buildFeatureMatrix(
-          _catalogue,
-          ['All subjects, units & chapters', 'Priority support'],
-          false);
-      final learning = groups.firstWhere((g) => g.key == 'learning');
+        categories: _categories,
+        customFeatures: const [],
+        isNepali: false,
+      );
+      expect(groups.map((g) => g.key).toList(), ['learning', 'community']);
+      final learning = groups.first;
       expect(learning.rows.first.included, isTrue);
       expect(learning.rows[1].included, isFalse);
       expect(learning.includedCount, 1);
-      final community = groups.firstWhere((g) => g.key == 'community');
-      expect(community.rows.first.included, isTrue);
+      expect(groups[1].rows.first.included, isTrue);
     });
 
-    test('unknown stored features land in a trailing extras group', () {
+    test('orders unsorted categories by order', () {
       final groups = buildFeatureMatrix(
-          _catalogue, ['All subjects, units & chapters', 'Hand-typed bonus'], false);
+        categories: [_categories[1], _categories[0]],
+        customFeatures: const [],
+        isNepali: false,
+      );
+      expect(groups.map((g) => g.key).toList(), ['learning', 'community']);
+    });
+
+    test('customFeatures land in a trailing Also included group', () {
+      final groups = buildFeatureMatrix(
+        categories: _categories,
+        customFeatures: const ['Hand-typed bonus'],
+        isNepali: false,
+      );
       expect(groups.length, 3);
       final extras = groups.last;
       expect(extras.key, 'extras');
+      expect(extras.titleEn, 'Also included');
+      expect(extras.titleNe, 'थप समावेश');
       expect(extras.rows.length, 1);
       expect(extras.rows.first.label, 'Hand-typed bonus');
       expect(extras.rows.first.included, isTrue);
-      expect(extras.includedCount, 1);
     });
 
-    test('no extras group when every stored feature is known', () {
-      final groups =
-          buildFeatureMatrix(_catalogue, ['All subjects, units & chapters'], false);
+    test('no extras group when customFeatures is empty', () {
+      final groups = buildFeatureMatrix(
+        categories: _categories,
+        customFeatures: const [],
+        isNepali: false,
+      );
       expect(groups.length, 2);
     });
 
     test('nepali labels flow through the matrix', () {
-      final groups =
-          buildFeatureMatrix(_catalogue, ['All subjects, units & chapters'], true);
+      final groups = buildFeatureMatrix(
+        categories: _categories,
+        customFeatures: const [],
+        isNepali: true,
+      );
       expect(groups.first.rows.first.label, 'सबै विषय, एकाइ र अध्याय');
-      expect(groups.first.titleNe, 'अध्ययन तथा सामग्री');
+      expect(groups.first.titleNe, 'learning-ne');
     });
 
-    test('empty catalogue puts everything in extras', () {
-      final groups =
-          buildFeatureMatrix(const [], ['Some feature'], false);
+    test('nepali falls back to english when ne is empty', () {
+      final groups = buildFeatureMatrix(
+        categories: [
+          _cat('k', features: [_feat('x', en: 'English only', ne: '')])
+        ],
+        customFeatures: const [],
+        isNepali: true,
+      );
+      expect(groups.first.rows.first.label, 'English only');
+    });
+
+    test('empty categories and no customs yield an empty matrix', () {
+      expect(
+          buildFeatureMatrix(
+              categories: const [], customFeatures: const [], isNepali: false),
+          isEmpty);
+    });
+
+    test('customFeatures alone still render the extras group', () {
+      final groups = buildFeatureMatrix(
+        categories: const [],
+        customFeatures: const ['Bonus'],
+        isNepali: false,
+      );
       expect(groups.length, 1);
       expect(groups.first.key, 'extras');
     });
@@ -246,8 +300,47 @@ void main() {
       expect(plan.id, 'yearly1');
       expect(plan.billingCycle, BillingCycle.yearly);
       expect(plan.features, ['Priority support']);
+      expect(plan.categories, isEmpty);
+      expect(plan.customFeatures, isEmpty);
       expect(plan.colorFrom, '#0F766E');
       expect(plan.isActive, isTrue);
+    });
+
+    test('parses embedded categories and customFeatures', () {
+      final plan = SubscriptionPlan.fromMap({
+        'id': 'm1',
+        'name': 'Monthly',
+        'categories': [
+          {
+            'key': 'learning',
+            'titleEn': 'Learning',
+            'titleNe': 'सिकाइ',
+            'icon': 'library',
+            'order': 1,
+            'features': [
+              {'id': 'a', 'en': 'A', 'ne': 'ए', 'order': 1, 'included': true},
+              {'id': 'b', 'en': 'B', 'order': 2, 'included': false},
+            ],
+          },
+          {'titleEn': 'no key — skipped'},
+        ],
+        'customFeatures': ['Bonus', '', 42],
+      });
+      expect(plan.categories.length, 1);
+      final cat = plan.categories.first;
+      expect(cat.key, 'learning');
+      expect(cat.features.length, 2);
+      expect(cat.features.first.en, 'A');
+      expect(cat.features.first.ne, 'ए');
+      expect(cat.features[1].included, isFalse);
+      expect(plan.customFeatures, ['Bonus', '42']);
+    });
+
+    test('missing categories/customFeatures become empty, never crash', () {
+      final plan = SubscriptionPlan.fromMap(
+          {'id': 'x', 'name': 'X', 'categories': 'nope'});
+      expect(plan.categories, isEmpty);
+      expect(plan.customFeatures, isEmpty);
     });
 
     test('inactive plans parse as inactive', () {

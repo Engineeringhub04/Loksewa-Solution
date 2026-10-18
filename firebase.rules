@@ -852,9 +852,14 @@ service cloud.firestore {
     }
 
     // Subscription catalog and payment configuration.
+    // NOTE: app_subscription_plans holds ONLY real plans. The feature
+    // template + category backup live in app_subplan_config (admin-only).
     match /app_subscription_plans/{docId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+    match /app_subplan_config/{docId} {
+      allow read, write: if isAdmin();
     }
     match /app_subscription_settings/{docId} {
       // Keep the existing `config` document. It is readable only after secretKey

@@ -203,13 +203,27 @@ $inputs
             right: 0,
             bottom: 0,
             child: InAppWebView(
-              initialData: InAppWebViewInitialData(data: _autoPostHtml),
+              // iOS (WKWebView) intermittently renders initialData as a
+              // blank page, so the auto-POST HTML is loaded explicitly via
+              // the controller with explicit mimeType/encoding/baseUrl —
+              // the documented workaround. Single load only (no
+              // initialData): the form auto-submits on load, so loading
+              // twice would double-submit the payment POST.
+              initialUrlRequest: URLRequest(url: WebUri('about:blank')),
               initialSettings: InAppWebViewSettings(
                 javaScriptEnabled: true,
                 domStorageEnabled: true,
                 thirdPartyCookiesEnabled: true,
                 supportMultipleWindows: false,
               ),
+              onWebViewCreated: (controller) {
+                controller.loadData(
+                  data: _autoPostHtml,
+                  mimeType: 'text/html',
+                  encoding: 'utf8',
+                  baseUrl: WebUri(widget.endpoint),
+                );
+              },
               shouldOverrideUrlLoading: _onShouldOverride,
               onLoadStart: (_, __) {
                 if (mounted) setState(() => _loadingPage = true);
@@ -217,8 +231,18 @@ $inputs
               onLoadStop: (_, __) {
                 if (mounted) setState(() => _loadingPage = false);
               },
-              onReceivedError: (_, __, ___) {
+              onReceivedError: (controller, request, error) {
+                // iOS diagnostics: surface the failing URL + description so
+                // a future on-device test can report exactly what failed.
+                debugPrint(
+                    '[EsewaWebView] load error: ${error.description} '
+                    '(url: ${request.url})');
                 if (mounted) setState(() => _loadingPage = false);
+              },
+              onConsoleMessage: (controller, consoleMessage) {
+                debugPrint(
+                    '[EsewaWebView] console[${consoleMessage.messageLevel}]: '
+                    '${consoleMessage.message}');
               },
             ),
           ),

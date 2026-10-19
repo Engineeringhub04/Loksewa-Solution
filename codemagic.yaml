@@ -34,6 +34,12 @@ workflows:
     scripts:
       - name: Flutter packages
         script: flutter pub get
+      - name: Patch Khalti SDK header theme
+        # Same idempotent patch build_apk.sh applies for Android: pins dark
+        # title/icon colors on khalti_checkout_flutter's hardcoded-light
+        # in-webview AppBar. Must run AFTER pub get (the SDK lives in the
+        # pub cache) and BEFORE the build.
+        script: python3 patches/apply_khalti_patch.py
       - name: Build unsigned iOS app bundle
         script: |
           set -e

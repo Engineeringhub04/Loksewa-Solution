@@ -205,6 +205,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// Transaction id of the in-flight gateway payment (for exit-cancel).
   String _activeTransactionUuid = '';
 
+  /// purchaseType of the in-flight gateway payment ('subscription' | 'exam'
+  /// | 'content') — the worker's cancel endpoint needs it.
+  String _activePurchaseType = 'subscription';
+
   @override
   void initState() {
     super.initState();
@@ -524,17 +528,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   // --------------------------------------------------------------- gateway
 
-  /// Opens only the provider checkout. Receipt ID/screenshot submission is
-  /// QR-only. Mirrors handleOpenGateway: the gateway itself is still under
-  /// construction, so this only toasts like the Expo app does.
   /// In-app gateway payment: worker-signed init → gateway UI inside the
-  /// app → worker-side verification → subscription activation.
+  /// app → worker-side verification → purchase activation.
+  ///
+  /// Works for all three flows: subscription plans ('subscription'),
+  /// exam sets ('exam') and subject/unit/chapter content ('content').
+  /// The worker reads the real price server-side — the app never sends an
+  /// amount. Coupons are subscription-only on the gateway path (the worker
+  /// rejects couponCode for exam/content).
   Future<void> _startGatewayPayment(_CheckoutData d) async {
-    if (d.flow == 'exam' ||
-        d.plan == null ||
-        _method == null ||
-        _method == 'qr' ||
-        _paying) {
+    final purchasable = _purchasable(d);
+    if (purchasable == null || _method == null || _method == 'qr' || _paying) {
       return;
     }
     if (!d.settingsAvailable) {
@@ -546,28 +550,82 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ToastVariant.info);
       return;
     }
+    // 'plan' flow → worker purchaseType 'subscription'; exam/content pass
+    // through as-is.
+    final purchaseType = d.flow == 'plan' ? 'subscription' : d.flow;
+    final itemId = d.flow == 'plan'
+        ? '${d.plan!['id']}'
+        : (d.flow == 'exam' ? d.examId : d.contentId) ?? '';
+    if (itemId.isEmpty) {
+      showToast(
+          context,
+          AppLanguage.tr('Could not start payment. Please try again.',
+              'भुक्तानी सुरु हुन सकेन। कृपया पुनः प्रयास गर्नुहोस्।'),
+          ToastVariant.error);
+      return;
+    }
+    if (purchaseType != 'subscription' && _couponApplied != null) {
+      // Honest UX: the coupon stays valid for the QR/manual path, but the
+      // gateway charges the worker's server-side price (full). Never
+      // silently drop the discount.
+      showToast(
+          context,
+          AppLanguage.tr(
+              'Coupon codes apply to QR payments only — the gateway charges the full price.',
+              'कुपन कोड QR भुक्तानीमा मात्र लागू हुन्छ — गेटवेले पूरा मूल्य लिन्छ।'),
+          ToastVariant.info);
+    }
+    final itemTitle = _checkoutTitle(d);
     setState(() => _paying = true);
     try {
-      final planId = '${d.plan!['id']}';
       final initRes = await GatewayPaymentService.initPayment(
-          gateway: _method!, planId: planId, couponCode: _couponApplied?.code);
+        gateway: _method!,
+        purchaseType: purchaseType,
+        planId: d.flow == 'plan' ? '${d.plan!['id']}' : null,
+        itemId: d.flow == 'plan' ? null : itemId,
+        contentType: d.flow == 'content' ? d.contentType : null,
+        contentUnitId: d.flow == 'content' ? d.contentUnitId : null,
+        couponCode: _couponApplied?.code,
+      );
       if (!mounted) return;
       final txnUuid = '${initRes['transactionUuid'] ?? ''}';
-      setState(() => _activeTransactionUuid = txnUuid);
+      setState(() {
+        _activeTransactionUuid = txnUuid;
+        _activePurchaseType = purchaseType;
+      });
       // Persist the pending payment BEFORE the gateway UI opens — an app
       // kill during payment/verify must never lose the transaction.
       // Cleared on verify success, definitive failure, or user cancel.
       await GatewayPaymentService.savePendingPayment(
         gateway: _method!,
-        transactionUuid: '${initRes['transactionUuid'] ?? ''}',
+        transactionUuid: txnUuid,
         subId: '${initRes['subId'] ?? ''}',
-        planId: planId,
-        planName: '${d.plan!['name'] ?? ''}',
+        purchaseType: purchaseType,
+        planId: d.flow == 'plan' ? '${d.plan!['id']}' : null,
+        planName: d.flow == 'plan' ? '${d.plan!['name'] ?? ''}' : null,
+        itemId: d.flow == 'plan' ? null : itemId,
+        itemTitle: d.flow == 'plan' ? null : itemTitle,
       );
       if (_method == 'esewa') {
-        await _runEsewaFlow(d, initRes, planId);
+        await _runEsewaFlow(
+          d,
+          initRes,
+          purchaseType: purchaseType,
+          planId: d.flow == 'plan' ? '${d.plan!['id']}' : null,
+          itemId: d.flow == 'plan' ? null : itemId,
+          contentType: d.flow == 'content' ? d.contentType : null,
+          contentUnitId: d.flow == 'content' ? d.contentUnitId : null,
+        );
       } else {
-        await _runKhaltiFlow(d, initRes, planId);
+        await _runKhaltiFlow(
+          d,
+          initRes,
+          purchaseType: purchaseType,
+          planId: d.flow == 'plan' ? '${d.plan!['id']}' : null,
+          itemId: d.flow == 'plan' ? null : itemId,
+          contentType: d.flow == 'content' ? d.contentType : null,
+          contentUnitId: d.flow == 'content' ? d.contentUnitId : null,
+        );
       }
     } on GatewayException catch (e) {
       if (mounted) {
@@ -586,6 +644,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         setState(() {
           _paying = false;
           _activeTransactionUuid = '';
+          _activePurchaseType = 'subscription';
         });
       }
     }
@@ -593,8 +652,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   /// eSewa: in-app webview auto-POSTs the worker-signed form, intercepts the
   /// success/failure redirects, then the worker verifies server-side.
-  Future<void> _runEsewaFlow(_CheckoutData d,
-      Map<String, dynamic> initRes, String planId) async {
+  Future<void> _runEsewaFlow(
+    _CheckoutData d,
+    Map<String, dynamic> initRes, {
+    required String purchaseType,
+    String? planId,
+    String? itemId,
+    String? contentType,
+    String? contentUnitId,
+  }) async {
     final esewa = initRes['esewa'] is Map
         ? Map<String, dynamic>.from(initRes['esewa'] as Map)
         : <String, dynamic>{};
@@ -623,6 +689,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           testMode: testMode,
           transactionUuid: transactionUuid,
           gateway: 'esewa',
+          purchaseType: purchaseType,
         ),
       ),
     );
@@ -644,7 +711,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // on it — the toast must show within a second even on bad network),
       // then reset local state immediately.
       unawaited(GatewayPaymentService.cancelPayment(
-          gateway: 'esewa', transactionUuid: transactionUuid));
+          gateway: 'esewa',
+          transactionUuid: transactionUuid,
+          purchaseType: purchaseType));
       await GatewayPaymentService.clearPendingPayment();
       if (!mounted) return;
       showToast(
@@ -669,7 +738,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await _verifyWithOverlay(
       d,
       gateway: 'esewa',
+      purchaseType: purchaseType,
       planId: planId,
+      itemId: itemId,
+      contentType: contentType,
+      contentUnitId: contentUnitId,
       proof: {
         'transactionUuid': transactionUuid,
         'esewaData': result.data,
@@ -678,8 +751,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   }
 
   /// Khalti: official SDK (in-app webview), then worker-side verification.
-  Future<void> _runKhaltiFlow(_CheckoutData d,
-      Map<String, dynamic> initRes, String planId) async {
+  Future<void> _runKhaltiFlow(
+    _CheckoutData d,
+    Map<String, dynamic> initRes, {
+    required String purchaseType,
+    String? planId,
+    String? itemId,
+    String? contentType,
+    String? contentUnitId,
+  }) async {
     final kh = initRes['khalti'] is Map
         ? Map<String, dynamic>.from(initRes['khalti'] as Map)
         : <String, dynamic>{};
@@ -787,7 +867,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       // User backed out: fire-and-forget server cancel (never block the UI
       // on it), reset local state immediately, toast at once.
       unawaited(GatewayPaymentService.cancelPayment(
-          gateway: 'khalti', transactionUuid: transactionUuid));
+          gateway: 'khalti',
+          transactionUuid: transactionUuid,
+          purchaseType: purchaseType));
       await GatewayPaymentService.clearPendingPayment();
       if (!mounted) return;
       showToast(
@@ -799,7 +881,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     await _verifyWithOverlay(
       d,
       gateway: 'khalti',
+      purchaseType: purchaseType,
       planId: planId,
+      itemId: itemId,
+      contentType: contentType,
+      contentUnitId: contentUnitId,
       proof: {'transactionUuid': transactionUuid, 'pidx': res['pidx']},
     );
   }
@@ -835,17 +921,29 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   Future<void> _verifyWithOverlay(
     _CheckoutData d, {
     required String gateway,
-    required String planId,
+    String purchaseType = 'subscription',
+    String? planId,
+    String? itemId,
+    String? contentType,
+    String? contentUnitId,
     required Map<String, dynamic> proof,
   }) async {
     if (!mounted) return;
-    final planName = '${d.plan?['name'] ?? ''}';
+    final isSubscription = purchaseType == 'subscription';
+    // Display name for the success popup: plan name, else the item title.
+    final successTitle = isSubscription
+        ? '${d.plan?['name'] ?? ''}'
+        : _checkoutTitle(d);
     final closeVerifying = await showGatewayVerifyingPopup(context);
     Map<String, dynamic> res;
     try {
       res = await GatewayPaymentService.verifyPayment(
         gateway: gateway,
+        purchaseType: purchaseType,
         planId: planId,
+        itemId: itemId,
+        contentType: contentType,
+        contentUnitId: contentUnitId,
         couponCode: _couponApplied?.code,
         proof: proof,
       );
@@ -864,41 +962,58 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     if (res['ok'] == true) {
       await GatewayPaymentService.clearPendingPayment();
-      // Real-time profile update WHILE the verifying popup is still up, so
-      // the profile pill flips Free -> plan name instantly and the user
-      // never sees a blank gap between the popups.
-      final uid = AuthService.currentUser?.uid;
-      if (uid != null) {
-        try {
-          await ProfileStore.instance.load(uid, refresh: true);
-        } catch (_) {}
+      if (isSubscription) {
+        // Real-time profile update WHILE the verifying popup is still up, so
+        // the profile pill flips Free -> plan name instantly and the user
+        // never sees a blank gap between the popups.
+        final uid = AuthService.currentUser?.uid;
+        if (uid != null) {
+          try {
+            await ProfileStore.instance.load(uid, refresh: true);
+          } catch (_) {}
+        }
+        if (!mounted) {
+          closeVerifying();
+          return;
+        }
       }
-      if (!mounted) {
-        closeVerifying();
-        return;
-      }
-      final subId = '${res['subscriptionId'] ?? ''}';
+      // The worker returns the purchase doc id in `subscriptionId` for every
+      // purchase kind (naming is historical).
+      final purchaseId = '${res['subscriptionId'] ?? ''}';
       // Direct swap: verifying out, success in — no intermediate frame.
       closeVerifying();
       if (!mounted) return;
       await showGatewaySuccessPopup(
         context,
-        planName: planName,
+        planName: successTitle,
         onNavigate: () {
-          // Pop back to the plans page, PRESERVING the original stack
-          // (Profile stays underneath). Then push the detail on top.
-          // Result: Profile -> Plans -> Detail. Back goes Detail -> Plans
-          // -> Profile; the app never closes and never returns to checkout.
-          // (context.go would wipe the stack and lose Profile.)
-          final router = GoRouter.of(context);
-          while (router.routerDelegate.currentConfiguration.last
-                      .matchedLocation !=
-                  '/subscription' &&
-              context.canPop()) {
-            context.pop();
+          if (isSubscription) {
+            // Pop back to the plans page, PRESERVING the original stack
+            // (Profile stays underneath). Then push the detail on top.
+            // Result: Profile -> Plans -> Detail. Back goes Detail -> Plans
+            // -> Profile; the app never closes and never returns to checkout.
+            // (context.go would wipe the stack and lose Profile.)
+            final router = GoRouter.of(context);
+            while (router.routerDelegate.currentConfiguration.last
+                        .matchedLocation !=
+                    '/subscription' &&
+                context.canPop()) {
+              context.pop();
+            }
+            if (purchaseId.isNotEmpty) {
+              context.push('/subscription/$purchaseId');
+            }
+            return;
           }
-          if (subId.isNotEmpty) {
-            context.push('/subscription/$subId');
+          // Exam/content: close the checkout, then open the purchase's
+          // request page (unified timeline + problem section UI).
+          if (context.canPop()) context.pop();
+          if (purchaseId.isEmpty) {
+            context.push('/purchase-details');
+          } else if (purchaseType == 'exam') {
+            context.push('/subscription/exam-purchase/$purchaseId');
+          } else {
+            context.push('/purchase-details/content/$purchaseId');
           }
         },
       );
@@ -1595,13 +1710,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   /// server cancel, unlock the UI, and pop the checkout page.
   Future<void> _exitPaying() async {
     final txnUuid = _activeTransactionUuid;
+    final purchaseType = _activePurchaseType;
     setState(() {
       _paying = false;
       _activeTransactionUuid = '';
+      _activePurchaseType = 'subscription';
     });
     if (txnUuid.isNotEmpty && _method != null && _method != 'qr') {
       unawaited(GatewayPaymentService.cancelPayment(
-          gateway: _method!, transactionUuid: txnUuid));
+          gateway: _method!,
+          transactionUuid: txnUuid,
+          purchaseType: purchaseType));
     }
     if (mounted && context.canPop()) {
       context.pop();

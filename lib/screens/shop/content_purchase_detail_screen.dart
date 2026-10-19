@@ -17,6 +17,8 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/request_timeline.dart';
+import '../../widgets/payment_problem_section.dart';
 
 class ContentPurchaseDetailScreen extends StatefulWidget {
   final String id;
@@ -359,6 +361,118 @@ class _ContentPurchaseDetailScreenState
             ),
           ),
 
+          // Gateway (eSewa/Khalti) request timeline — the SAME treatment as
+          // the subscription request page: submitted → payment verification
+          // → verified & activated.
+          if (record.isGateway) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt,
+                border:
+                    Border.all(color: palette.border, width: 0.5),
+                borderRadius: BorderRadius.circular(ExpoRadius.lg),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: palette.info.withValues(alpha: 0x14 / 0xFF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(Icons.commit_outlined,
+                            size: 18, color: palette.info),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _t('Request Timeline', 'अनुरोधको क्रम'),
+                          style: TextStyle(
+                            fontSize: ExpoType.body,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  RequestTimeline(
+                    steps: buildGatewayRequestSteps(
+                      pal: palette,
+                      submittedAt: record.submittedAtDate,
+                      gatewayStatus: record.gatewayStatus ?? '',
+                      status: record.status,
+                      verifiedBy: record.verifiedBy,
+                      reviewedAt: record.reviewedAt == null
+                          ? null
+                          : DateTime.tryParse(record.reviewedAt!),
+                      isStaleInitiated: record.isStaleInitiated,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          // Gateway payment problem (app closed mid-payment / verification
+          // failed) — Check My Payment re-verifies via the worker.
+          if (record.needsPaymentRecovery || record.isFraud) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFFDC2626).withValues(alpha: 0x0F / 0xFF),
+                border: Border.all(
+                    color: const Color(0xFFDC2626)
+                        .withValues(alpha: 0x55 / 0xFF),
+                    width: 0.5),
+                borderRadius: BorderRadius.circular(ExpoRadius.lg),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFDC2626)
+                              .withValues(alpha: 0x14 / 0xFF),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.error_outline,
+                            size: 18, color: Color(0xFFDC2626)),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _t('Payment Problem', 'भुक्तानी समस्या'),
+                          style: TextStyle(
+                            fontSize: ExpoType.body,
+                            fontWeight: FontWeight.w700,
+                            color: palette.textPrimary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  PaymentProblemSection(
+                    record: _ContentProblemRecord(record),
+                    purchaseType: 'content',
+                    onRechecked: _load,
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           if (record.adminMessage != null)
             Container(
               margin: const EdgeInsets.only(top: 12),
@@ -396,7 +510,9 @@ class _ContentPurchaseDetailScreenState
               ),
             ),
 
-          if (status == 'pending') ...[
+          // Edit / save request (pending only, never for gateway payments —
+          // editing a worker-verified gateway payment is meaningless).
+          if (status == 'pending' && !record.isGateway) ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -649,4 +765,26 @@ class _ContentPurchaseDetailScreenState
       color: palette.divider,
     );
   }
+}
+
+/// Adapter: exposes a ContentPurchaseRecord through the shared
+/// PaymentProblemSection's record interface.
+class _ContentProblemRecord implements PaymentProblemRecord {
+  final ContentPurchaseRecord record;
+  _ContentProblemRecord(this.record);
+
+  @override
+  String get method => record.method;
+
+  @override
+  String get transactionRef => record.transactionRef ?? '';
+
+  @override
+  String? get failureReason => record.failureReason;
+
+  @override
+  bool get isFraud => record.isFraud;
+
+  @override
+  String get successTitle => record.contentTitle;
 }

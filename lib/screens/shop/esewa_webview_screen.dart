@@ -36,6 +36,10 @@ class EsewaWebViewScreen extends StatefulWidget {
   /// 'esewa' (kept explicit so the cancel call is never ambiguous).
   final String gateway;
 
+  /// Worker purchaseType ('subscription' | 'exam' | 'content') — the
+  /// expiry-cancel must target the right collection.
+  final String purchaseType;
+
   const EsewaWebViewScreen({
     super.key,
     required this.endpoint,
@@ -43,6 +47,7 @@ class EsewaWebViewScreen extends StatefulWidget {
     required this.testMode,
     required this.transactionUuid,
     this.gateway = 'esewa',
+    this.purchaseType = 'subscription',
   });
 
   @override
@@ -93,6 +98,7 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
     await GatewayPaymentService.cancelPayment(
       gateway: widget.gateway,
       transactionUuid: widget.transactionUuid,
+      purchaseType: widget.purchaseType,
     );
     if (!mounted) return;
     Navigator.of(context).pop(const EsewaWebResult(status: 'expired'));

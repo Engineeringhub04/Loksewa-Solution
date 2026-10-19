@@ -18,10 +18,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/gateway_payment_service.dart';
-import 'package:loksewa_solution/services/profile_service.dart';
-import '../../widgets/gateway_popups.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -31,6 +27,8 @@ import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/request_timeline.dart';
+import '../../widgets/payment_problem_section.dart';
 
 const int _editWindowMs = 30 * 60 * 1000;
 
@@ -514,7 +512,8 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               icon: Icons.commit_outlined,
               tone: ExpoPalette.of(context).info,
               title: AppLanguage.tr('Request Timeline', 'अनुरोधको क्रम'),
-              child: _RequestTimeline(record: record),
+              child: RequestTimeline(
+                  steps: _buildSteps(record, ExpoPalette.of(context))),
             ),
           ),
           if (_editing) ...[
@@ -548,8 +547,9 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 icon: Icons.error_outline,
                 tone: ExpoPalette.of(context).danger,
                 title: AppLanguage.tr('Payment Problem', 'भुक्तानी समस्या'),
-                child: _PaymentProblemSection(
-                  record: record,
+                child: PaymentProblemSection(
+                  record: _SubscriptionProblemRecord(record),
+                  purchaseType: 'subscription',
                   onRechecked: _refresh,
                 ),
               ),
@@ -999,94 +999,77 @@ class _EditWindowBarState extends State<_EditWindowBar> {
 }
 
 // ===================== Timeline =====================
+// (Shared widgets live in lib/widgets/request_timeline.dart — same visual
+// language on the exam/content request pages.)
 
-enum _StepState { done, current, upcoming, failed }
-
-class _TimelineStep {
-  final String key;
-  final String title;
-  final DateTime? timestamp;
-  final IconData icon;
-  final _StepState state;
-  final Color tone;
-  const _TimelineStep({
-    required this.key,
-    required this.title,
-    required this.timestamp,
-    required this.icon,
-    required this.state,
-    required this.tone,
-  });
-}
-
-List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
+List<RequestTimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
   if (record.isGateway) return _buildGatewaySteps(record, pal);
   final reviewed =
       record.reviewedAt != null || record.status != SubscriptionStatus.pending;
-  late final _TimelineStep finalStep;
+  late final RequestTimelineStep finalStep;
   switch (record.status) {
     case SubscriptionStatus.active:
-      finalStep = _TimelineStep(
+      finalStep = RequestTimelineStep(
         key: 'approved',
         title: AppLanguage.tr('Approved & activated', 'स्वीकृत तथा सक्रिय'),
         timestamp: record.startDate ?? record.reviewedAt,
         icon: Icons.check_circle_outline,
-        state: _StepState.done,
+        state: RequestStepState.done,
         tone: pal.success,
       );
     case SubscriptionStatus.rejected:
-      finalStep = _TimelineStep(
+      finalStep = RequestTimelineStep(
         key: 'rejected',
         title: AppLanguage.tr('Rejected by admin', 'एड्मिनद्वारा अस्वीकृत'),
         timestamp: record.reviewedAt,
         icon: Icons.cancel_outlined,
-        state: _StepState.failed,
+        state: RequestStepState.failed,
         tone: pal.danger,
       );
     case SubscriptionStatus.expired:
-      finalStep = _TimelineStep(
+      finalStep = RequestTimelineStep(
         key: 'expired',
         title: AppLanguage.tr('Subscription expired', 'सदस्यता समाप्त भयो'),
         timestamp: record.expiryDate,
         icon: Icons.schedule_outlined,
-        state: _StepState.done,
+        state: RequestStepState.done,
         tone: pal.textDisabled,
       );
     case SubscriptionStatus.pending:
-      finalStep = _TimelineStep(
+      finalStep = RequestTimelineStep(
         key: 'approved',
         title: AppLanguage.tr('Approved & activated', 'स्वीकृत तथा सक्रिय'),
         timestamp: null,
         icon: Icons.check_circle_outline,
-        state: _StepState.upcoming,
+        state: RequestStepState.upcoming,
         tone: pal.textDisabled,
       );
     case SubscriptionStatus.cancelled:
-      finalStep = _TimelineStep(
+      finalStep = RequestTimelineStep(
         key: 'cancelled',
         title: AppLanguage.tr('Cancelled', 'रद्द गरिएको'),
         timestamp: null,
         icon: Icons.cancel_outlined,
-        state: _StepState.upcoming,
+        state: RequestStepState.upcoming,
         tone: pal.textDisabled,
       );
   }
   return [
-    _TimelineStep(
+    RequestTimelineStep(
       key: 'submitted',
       title: AppLanguage.tr('Payment submitted', 'भुक्तानी पेस भयो'),
       timestamp: record.submittedAt,
       icon: Icons.send_outlined,
-      state: _StepState.done,
+      state: RequestStepState.done,
       tone: pal.info,
     ),
-    _TimelineStep(
+    RequestTimelineStep(
       key: 'review',
       title: AppLanguage.tr(
           'Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
       timestamp: record.reviewedAt,
       icon: Icons.search_outlined,
-      state: reviewed ? _StepState.done : _StepState.current,
+      state: reviewed ? RequestStepState.done : RequestStepState.current,
       tone: reviewed ? pal.info : pal.warning,
     ),
     finalStep,
@@ -1095,14 +1078,14 @@ List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
 
 /// Gateway (eSewa/Khalti) timeline — no admin review step; the worker
 /// verifies server-side.
-List<_TimelineStep> _buildGatewaySteps(
+List<RequestTimelineStep> _buildGatewaySteps(
     SubscriptionRecord record, ExpoPalette pal) {
-  final submitted = _TimelineStep(
+  final submitted = RequestTimelineStep(
     key: 'submitted',
     title: AppLanguage.tr('Payment submitted', 'भुक्तानी पेस भयो'),
     timestamp: record.submittedAt,
     icon: Icons.send_outlined,
-    state: _StepState.done,
+    state: RequestStepState.done,
     tone: pal.info,
   );
   final verified = record.gatewayStatus == 'verified' ||
@@ -1112,44 +1095,44 @@ List<_TimelineStep> _buildGatewaySteps(
     // 'user' | 'admin'). A manual step is inserted so the user (and the
     // admin panel) can tell HOW this payment was verified.
     final verifiedBy = (record.verifiedBy ?? 'gateway').toLowerCase();
-    final steps = <_TimelineStep>[
+    final steps = <RequestTimelineStep>[
       submitted,
-      _TimelineStep(
+      RequestTimelineStep(
         key: 'verification',
         title: AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
         timestamp: record.reviewedAt,
         icon: Icons.verified_outlined,
-        state: _StepState.done,
+        state: RequestStepState.done,
         tone: pal.info,
       ),
     ];
     if (verifiedBy == 'user') {
-      steps.add(_TimelineStep(
+      steps.add(RequestTimelineStep(
         key: 'manual_verification',
         title: AppLanguage.tr(
             'Manual Verification By User', 'प्रयोगकर्ताद्वारा म्यानुअल प्रमाणीकरण'),
         timestamp: record.reviewedAt,
         icon: Icons.touch_app_outlined,
-        state: _StepState.done,
+        state: RequestStepState.done,
         tone: pal.info,
       ));
     } else if (verifiedBy == 'admin') {
-      steps.add(_TimelineStep(
+      steps.add(RequestTimelineStep(
         key: 'admin_review',
         title: AppLanguage.tr(
             'Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
         timestamp: record.reviewedAt,
         icon: Icons.search_outlined,
-        state: _StepState.done,
+        state: RequestStepState.done,
         tone: pal.info,
       ));
     }
-    steps.add(_TimelineStep(
+    steps.add(RequestTimelineStep(
       key: 'activated',
       title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
       timestamp: record.startDate ?? record.reviewedAt,
       icon: Icons.check_circle_outline,
-      state: _StepState.done,
+      state: RequestStepState.done,
       tone: pal.success,
     ));
     return steps;
@@ -1157,20 +1140,20 @@ List<_TimelineStep> _buildGatewaySteps(
   if (record.gatewayStatus == 'cancelled') {
     return [
       submitted,
-      _TimelineStep(
+      RequestTimelineStep(
         key: 'verification',
         title: AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
         timestamp: null,
         icon: Icons.search_outlined,
-        state: _StepState.upcoming,
+        state: RequestStepState.upcoming,
         tone: pal.textDisabled,
       ),
-      _TimelineStep(
+      RequestTimelineStep(
         key: 'cancelled',
         title: AppLanguage.tr('Payment cancelled', 'भुक्तानी रद्द गरियो'),
         timestamp: null,
         icon: Icons.cancel_outlined,
-        state: _StepState.failed,
+        state: RequestStepState.failed,
         tone: pal.textDisabled,
       ),
     ];
@@ -1181,7 +1164,7 @@ List<_TimelineStep> _buildGatewaySteps(
       record.gatewayStatus == 'failed' || record.isStaleInitiated;
   return [
     submitted,
-    _TimelineStep(
+    RequestTimelineStep(
       key: 'verification',
       title: failed
           ? AppLanguage.tr(
@@ -1189,208 +1172,27 @@ List<_TimelineStep> _buildGatewaySteps(
           : AppLanguage.tr('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
       timestamp: null,
       icon: failed ? Icons.error_outline : Icons.search_outlined,
-      state: failed ? _StepState.failed : _StepState.current,
+      state: failed ? RequestStepState.failed : RequestStepState.current,
       tone: failed ? pal.danger : pal.warning,
     ),
-    _TimelineStep(
+    RequestTimelineStep(
       key: 'review',
       title: AppLanguage.tr(
           'Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
       timestamp: null,
       icon: Icons.search_outlined,
-      state: _StepState.upcoming,
+      state: RequestStepState.upcoming,
       tone: pal.textDisabled,
     ),
-    _TimelineStep(
+    RequestTimelineStep(
       key: 'activated',
       title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
       timestamp: null,
       icon: Icons.check_circle_outline,
-      state: _StepState.upcoming,
+      state: RequestStepState.upcoming,
       tone: pal.textDisabled,
     ),
   ];
-}
-
-class _RequestTimeline extends StatelessWidget {
-  final SubscriptionRecord record;
-  const _RequestTimeline({required this.record});
-
-  @override
-  Widget build(BuildContext context) {
-    final steps = _buildSteps(record, ExpoPalette.of(context));
-    return Column(
-      children: steps.asMap().entries.map((entry) {
-        return _TimelineRow(
-          step: entry.value,
-          last: entry.key == steps.length - 1,
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _TimelineRow extends StatelessWidget {
-  final _TimelineStep step;
-  final bool last;
-  const _TimelineRow({required this.step, required this.last});
-
-  @override
-  Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    final dim = step.state == _StepState.upcoming;
-    final node = Container(
-      width: 30,
-      height: 30,
-      decoration: BoxDecoration(
-        color: dim ? pal.surfaceAlt : step.tone.withValues(alpha: 0x1F / 0xFF),
-        border: Border.all(
-          color: dim ? pal.border : step.tone.withValues(alpha: 0x33 / 0xFF),
-          width: 0.5,
-        ),
-        shape: BoxShape.circle,
-      ),
-      alignment: Alignment.center,
-      child:
-          Icon(step.icon, size: 15, color: dim ? pal.textDisabled : step.tone),
-    );
-    // v1.0.110: current step pulses, done steps pop once (cheap, no loops).
-    final animatedNode = step.state == _StepState.current
-        ? _Pulse(child: node)
-        : step.state == _StepState.done
-            ? _PopIn(child: node)
-            : node;
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            width: 30,
-            child: Column(
-              children: [
-                animatedNode,
-                if (!last)
-                  Expanded(
-                    child: Container(
-                      width: 2,
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      decoration: BoxDecoration(
-                        color: pal.divider,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(bottom: last ? 0 : ExpoSpacing.md),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    step.title,
-                    style: TextStyle(
-                      fontSize: ExpoType.body,
-                      fontWeight: dim ? FontWeight.normal : FontWeight.w600,
-                      color: dim ? pal.textDisabled : pal.textPrimary,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
-                  if (step.timestamp != null)
-                    Text(
-                      _fmtDateTime(step.timestamp),
-                      style: TextStyle(
-                          fontSize: ExpoType.caption, color: pal.textSecondary),
-                    )
-                  else if (step.state == _StepState.current)
-                    StatusPill(label: '•••', color: pal.warning),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// The one looping animation on the page: it marks the step the request is
-/// actually sitting at.
-class _Pulse extends StatefulWidget {
-  final Widget child;
-  const _Pulse({required this.child});
-
-  @override
-  State<_Pulse> createState() => _PulseState();
-}
-
-class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  late final Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 780),
-    )..repeat(reverse: true);
-    _scale = Tween<double>(begin: 1, end: 1.16).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(scale: _scale, child: widget.child);
-  }
-}
-
-/// v1.0.110: one-shot scale pop for completed timeline steps. Plays once
-/// on build (no repeat loop) — cheap on low-end devices.
-class _PopIn extends StatefulWidget {
-  final Widget child;
-  const _PopIn({required this.child});
-
-  @override
-  State<_PopIn> createState() => _PopInState();
-}
-
-class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
-  late final AnimationController _c;
-  late final Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 320),
-    )..forward();
-    _scale = Tween<double>(begin: 0.6, end: 1.0).animate(
-      CurvedAnimation(parent: _c, curve: Curves.elasticOut),
-    );
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(scale: _scale, child: widget.child);
-  }
 }
 
 // ===================== Edit form =====================
@@ -1587,176 +1389,6 @@ class _VerificationPendingBanner extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// "Payment Problem" section for gateway records whose verification never
-/// completed (app closed) or failed. Offers "Check My Payment" (re-verify
-/// via the worker) except for fraud cases, plus "Contact Our Admin".
-class _PaymentProblemSection extends StatefulWidget {
-  final SubscriptionRecord record;
-  final VoidCallback onRechecked;
-  const _PaymentProblemSection(
-      {required this.record, required this.onRechecked});
-
-  @override
-  State<_PaymentProblemSection> createState() => _PaymentProblemSectionState();
-}
-
-class _PaymentProblemSectionState extends State<_PaymentProblemSection> {
-  bool _checking = false;
-
-  String get _message {
-    if (widget.record.isFraud) {
-      return AppLanguage.tr(
-        "We couldn't verify this payment — the details don't match our records. Please contact admin.",
-        'यो भुक्तानी प्रमाणीकरण हुन सकेन — विवरण हाम्रो रेकर्डसँग मिलेन। कृपया admin लाई सम्पर्क गर्नुहोस्।',
-      );
-    }
-    return AppLanguage.tr(
-      "We couldn't verify your payment because the app was closed. If you've already paid, tap Check My Payment to activate your plan.",
-      'एप बन्द भएकाले भुक्तानी प्रमाणीकरण हुन सकेन। पैसा तिरिसक्नुभएको छ भने Check My Payment थिचेर plan activate गर्नुहोस्।',
-    );
-  }
-
-  Future<void> _checkMyPayment() async {
-    final record = widget.record;
-    final txnId = (record.transactionRef ?? '').trim();
-    if (txnId.isEmpty) {
-      showToast(
-          context,
-          AppLanguage.tr('No payment reference found. Please contact admin.',
-              'भुक्तानी सन्दर्भ फेला परेन। कृपया admin लाई सम्पर्क गर्नुहोस्।'),
-          ToastVariant.error);
-      return;
-    }
-    setState(() => _checking = true);
-    final closeVerifying = await showGatewayVerifyingPopup(context);
-    Map<String, dynamic> res;
-    try {
-      res = await GatewayPaymentService.recheckPayment(
-          gateway: record.method, transactionUuid: txnId);
-    } catch (e) {
-      res = {'ok': false, 'reason': 'network_error'};
-    }
-    if (!mounted) {
-      closeVerifying();
-      return;
-    }
-    setState(() => _checking = false);
-    if (res['ok'] == true) {
-      await GatewayPaymentService.clearPendingPayment();
-      // Profile refresh while the verifying popup is still up — direct
-      // swap to the success popup, no blank gap.
-      final uid = AuthService.currentUser?.uid;
-      if (uid != null) {
-        try {
-          await ProfileStore.instance.load(uid, refresh: true);
-        } catch (_) {}
-      }
-      if (!mounted) {
-        closeVerifying();
-        return;
-      }
-      widget.onRechecked();
-      closeVerifying();
-      if (!mounted) return;
-      await showGatewaySuccessPopup(
-        context,
-        planName: record.planName,
-        onNavigate: widget.onRechecked,
-      );
-    } else {
-      closeVerifying();
-      if (!mounted) return;
-      await showGatewayFailurePopup(
-        context,
-        message: gatewayFailureMessage(res['reason']?.toString()),
-      );
-      widget.onRechecked();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    final fraud = widget.record.isFraud;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          _message,
-          style: TextStyle(
-              fontSize: ExpoType.bodySmall,
-              color: pal.textPrimary,
-              height: 1.5,
-              decoration: TextDecoration.none),
-        ),
-        const SizedBox(height: ExpoSpacing.md),
-        if (!fraud)
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _checking ? null : _checkMyPayment,
-              icon: _checking
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.refresh_rounded, size: 18),
-              label: Text(
-                _checking
-                    ? AppLanguage.tr('Checking…', 'जाँच हुँदैछ…')
-                    : AppLanguage.tr(
-                        'Check My Payment', 'मेरो भुक्तानी जाँच्नुहोस्'),
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                    decoration: TextDecoration.none),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: pal.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 13),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-          ),
-        if (!fraud) const SizedBox(height: ExpoSpacing.sm),
-        SizedBox(
-          width: double.infinity,
-          child: OutlinedButton.icon(
-            onPressed: () => context.push('/contact-us'),
-            icon: const Icon(Icons.support_agent_outlined, size: 18),
-            label: Text(
-              AppLanguage.tr(
-                  'Contact Our Admin', 'हाम्रो Admin लाई सम्पर्क गर्नुहोस्'),
-              style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  decoration: TextDecoration.none),
-            ),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 13),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-          ),
-        ),
-        const SizedBox(height: ExpoSpacing.sm),
-        Text(
-          AppLanguage.tr(
-            "If verification doesn't work, please contact our admin.",
-            'प्रमाणीकरण नभए कृपया admin लाई सम्पर्क गर्नुहोस्।',
-          ),
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: ExpoType.caption,
-              color: pal.textSecondary,
-              decoration: TextDecoration.none),
-        ),
-      ],
     );
   }
 }
@@ -2081,10 +1713,31 @@ class _QuotePanel extends StatelessWidget {
   }
 }
 
+/// Adapter: exposes a SubscriptionRecord through the shared
+/// PaymentProblemSection's record interface.
+class _SubscriptionProblemRecord implements PaymentProblemRecord {
+  final SubscriptionRecord record;
+  _SubscriptionProblemRecord(this.record);
+
+  @override
+  String get method => record.method;
+
+  @override
+  String get transactionRef => record.transactionRef ?? '';
+
+  @override
+  String? get failureReason => record.failureReason;
+
+  @override
+  bool get isFraud => record.isFraud;
+
+  @override
+  String get successTitle => record.planName;
+}
+
 /// Premium section card: tone-tinted icon box + title (+ optional trailing)
 /// over a bordered surface. Mirrors SectionCard.
-class _SectionCard extends StatelessWidget {
-  final IconData icon;
+class _SectionCard extends StatelessWidget {  final IconData icon;
   final Color tone;
   final String title;
   final Widget? trailing;

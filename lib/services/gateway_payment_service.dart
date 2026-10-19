@@ -19,18 +19,29 @@ class GatewayPaymentService {
 
   /// Ask the worker to initiate a gateway payment.
   ///
+  /// [purchaseType] is 'subscription' (default), 'exam' or 'content'.
+  /// For 'exam', [itemId] is the exam set id; for 'content' it is the
+  /// content id (+ [contentType]/[contentUnitId]). The worker reads the
+  /// real price server-side — the app never sends an amount.
+  /// Coupons are subscription-only: [couponCode] is only sent for
+  /// subscriptions (the worker rejects it for exam/content).
+  ///
   /// Returns the worker payload, e.g.:
   /// ```json
   /// {
   ///   "ok": true, "gateway": "esewa", "testMode": true,
-  ///   "transactionUuid": "...",
+  ///   "transactionUuid": "...", "purchaseType": "exam",
   ///   "esewa": {"endpoint": "https://...", "fields": {"amount": "...", ...}},
   ///   "khalti": {"pidx": "...", "paymentUrl": "...", "publicKey": "..."}
   /// }
   /// ```
   static Future<Map<String, dynamic>> initPayment({
     required String gateway, // 'esewa' | 'khalti'
-    required String planId,
+    String purchaseType = 'subscription',
+    String? planId,
+    String? itemId,
+    String? contentType,
+    String? contentUnitId,
     String? couponCode,
   }) async {
     final token = await AuthService.getValidIdToken();
@@ -43,8 +54,16 @@ class GatewayPaymentService {
           },
           body: jsonEncode({
             'gateway': gateway,
-            'planId': planId,
-            if (couponCode != null && couponCode.trim().isNotEmpty)
+            'purchaseType': purchaseType,
+            if (planId != null && planId.isNotEmpty) 'planId': planId,
+            if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
+            if (contentType != null && contentType.isNotEmpty)
+              'contentType': contentType,
+            if (contentUnitId != null && contentUnitId.isNotEmpty)
+              'contentUnitId': contentUnitId,
+            if (purchaseType == 'subscription' &&
+                couponCode != null &&
+                couponCode.trim().isNotEmpty)
               'couponCode': couponCode.trim(),
           }),
         )
@@ -63,11 +82,16 @@ class GatewayPaymentService {
   }
 
   /// Ask the worker to verify a completed gateway payment and, on success,
-  /// activate the subscription. Returns the worker's JSON, e.g.
-  /// `{ok: true, subscriptionId: "..."}` or `{ok: false, error: "..."}`.
+  /// activate the purchase. Returns the worker's JSON, e.g.
+  /// `{ok: true, subscriptionId: "...", purchaseType: "exam"}` or
+  /// `{ok: false, error: "..."}`.
   static Future<Map<String, dynamic>> verifyPayment({
     required String gateway, // 'esewa' | 'khalti'
-    required String planId,
+    String purchaseType = 'subscription',
+    String? planId,
+    String? itemId,
+    String? contentType,
+    String? contentUnitId,
     String? couponCode,
     required Map<String, dynamic> proof,
   }) async {
@@ -81,8 +105,16 @@ class GatewayPaymentService {
           },
           body: jsonEncode({
             'gateway': gateway,
-            'planId': planId,
-            if (couponCode != null && couponCode.trim().isNotEmpty)
+            'purchaseType': purchaseType,
+            if (planId != null && planId.isNotEmpty) 'planId': planId,
+            if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
+            if (contentType != null && contentType.isNotEmpty)
+              'contentType': contentType,
+            if (contentUnitId != null && contentUnitId.isNotEmpty)
+              'contentUnitId': contentUnitId,
+            if (purchaseType == 'subscription' &&
+                couponCode != null &&
+                couponCode.trim().isNotEmpty)
               'couponCode': couponCode.trim(),
             'proof': proof,
           }),
@@ -109,6 +141,7 @@ class GatewayPaymentService {
   static Future<Map<String, dynamic>> recheckPayment({
     required String gateway, // 'esewa' | 'khalti'
     required String transactionUuid,
+    String purchaseType = 'subscription',
   }) async {
     final token = await AuthService.getValidIdToken();
     final res = await http
@@ -118,8 +151,11 @@ class GatewayPaymentService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode(
-              {'gateway': gateway, 'transactionUuid': transactionUuid}),
+          body: jsonEncode({
+            'gateway': gateway,
+            'transactionUuid': transactionUuid,
+            'purchaseType': purchaseType,
+          }),
         )
         .timeout(const Duration(seconds: 45));
     try {
@@ -137,6 +173,7 @@ class GatewayPaymentService {
   static Future<void> cancelPayment({
     required String gateway,
     required String transactionUuid,
+    String purchaseType = 'subscription',
   }) async {
     try {
       final token = await AuthService.getValidIdToken();
@@ -147,8 +184,11 @@ class GatewayPaymentService {
               'Content-Type': 'application/json',
               'Authorization': 'Bearer $token',
             },
-            body: jsonEncode(
-                {'gateway': gateway, 'transactionUuid': transactionUuid}),
+            body: jsonEncode({
+              'gateway': gateway,
+              'transactionUuid': transactionUuid,
+              'purchaseType': purchaseType,
+            }),
           )
           .timeout(const Duration(seconds: 10));
     } catch (e) {
@@ -163,12 +203,19 @@ class GatewayPaymentService {
   /// Persisted right after /payments/init succeeds, so an app kill during
   /// the gateway/verify steps never loses the payment. Cleared on verify
   /// success, definitive failure, or user cancel.
+  ///
+  /// [purchaseType] is 'subscription' (default), 'exam' or 'content';
+  /// [itemId]/[itemTitle] identify the purchased item for non-subscription
+  /// flows ([planId]/[planName] stay for subscriptions).
   static Future<void> savePendingPayment({
     required String gateway,
     required String transactionUuid,
     required String subId,
-    required String planId,
-    required String planName,
+    String purchaseType = 'subscription',
+    String? planId,
+    String? planName,
+    String? itemId,
+    String? itemTitle,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
@@ -177,8 +224,11 @@ class GatewayPaymentService {
           'gateway': gateway,
           'transactionUuid': transactionUuid,
           'subId': subId,
-          'planId': planId,
-          'planName': planName,
+          'purchaseType': purchaseType,
+          if (planId != null) 'planId': planId,
+          if (planName != null) 'planName': planName,
+          if (itemId != null) 'itemId': itemId,
+          if (itemTitle != null) 'itemTitle': itemTitle,
           'initiatedAt': DateTime.now().toIso8601String(),
         }));
   }
@@ -200,12 +250,13 @@ class GatewayPaymentService {
     await prefs.remove(_pendingKey);
   }
 
-  /// Delete the user's own non-active subscription request via the worker.
+  /// Delete the user's own non-active purchase request via the worker.
   /// The worker verifies ownership, refuses active records, deletes the
-  /// app_subscriptions doc, removes the id from the user's subscriptionIds,
-  /// and best-effort cancels the linked gateway payment. Throws
+  /// purchase doc, removes the id from the user's id array, and
+  /// best-effort cancels the linked gateway payment. Throws
   /// [GatewayException] on failure.
-  static Future<void> deleteRequest(String subId) async {
+  static Future<void> deleteRequest(String subId,
+      {String purchaseType = 'subscription'}) async {
     const url = '$_base/payments/delete-request';
     final token = await AuthService.getValidIdToken();
     final res = await http
@@ -215,7 +266,8 @@ class GatewayPaymentService {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
           },
-          body: jsonEncode({'subId': subId}),
+          body:
+              jsonEncode({'subId': subId, 'purchaseType': purchaseType}),
         )
         .timeout(const Duration(seconds: 30));
     Map<String, dynamic> body;

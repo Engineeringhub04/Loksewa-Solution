@@ -44,6 +44,11 @@ class ContentPurchaseRecord {
   final String? reviewedAt;
   final String? reviewedBy;
   final String? rejectionReason;
+  // Gateway fields (written by the worker for eSewa/Khalti purchases).
+  final String? gatewayStatus; // 'initiated' | 'verified' | 'failed'
+  final String? failureReason; // 'payment_not_completed' | 'amount_mismatch' | 'duplicate'
+  final String? verifiedBy; // 'gateway' | 'user' | 'admin'
+  final String? platform; // 'app'
 
   const ContentPurchaseRecord({
     required this.id,
@@ -71,6 +76,10 @@ class ContentPurchaseRecord {
     this.reviewedAt,
     this.reviewedBy,
     this.rejectionReason,
+    this.gatewayStatus,
+    this.failureReason,
+    this.verifiedBy,
+    this.platform,
   });
 
   static String? _str(dynamic v) =>
@@ -99,7 +108,7 @@ class ContentPurchaseRecord {
       unitId: _str(doc['unitId']),
       amount: _num(doc['amount']),
       currency: doc['currency']?.toString() ?? 'NPR',
-      method: 'qr',
+      method: doc['method']?.toString() ?? 'qr',
       status:
           status == 'active' || status == 'rejected' ? status! : 'pending',
       transactionRef: _str(doc['transactionRef']),
@@ -111,8 +120,35 @@ class ContentPurchaseRecord {
       reviewedAt: _str(doc['reviewedAt']),
       reviewedBy: _str(doc['reviewedBy']),
       rejectionReason: _str(doc['rejectionReason']),
+      gatewayStatus: _str(doc['gatewayStatus']),
+      failureReason: _str(doc['failureReason']),
+      verifiedBy: _str(doc['verifiedBy']),
+      platform: _str(doc['platform']),
     );
   }
+
+  /// Gateway purchase (eSewa/Khalti) still awaiting verification.
+  bool get isGateway => method == 'esewa' || method == 'khalti';
+
+  /// Pending gateway request that needs payment recovery (Check My Payment).
+  bool get needsPaymentRecovery =>
+      isGateway && status == 'pending' && gatewayStatus == 'initiated';
+
+  /// Definitive gateway failure (amount mismatch / duplicate) — no retry.
+  bool get isFraud =>
+      isGateway &&
+      status == 'pending' &&
+      (gatewayStatus == 'failed' || (failureReason ?? '').isNotEmpty);
+
+  /// Initiated but never verified and past the 15-minute gateway window —
+  /// the app was closed mid-payment.
+  bool get isStaleInitiated =>
+      needsPaymentRecovery &&
+      submittedAtDate != null &&
+      DateTime.now().difference(submittedAtDate!).inMinutes >= 15;
+
+  DateTime? get submittedAtDate =>
+      submittedAt == null ? null : DateTime.tryParse(submittedAt!);
 }
 
 List<ContentPurchaseRecord> _newestFirst(

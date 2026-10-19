@@ -1413,8 +1413,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   @override
   Widget build(BuildContext context) {
     // System back while a payment is processing → confirm dialog
-    // ("Exit Payment?"). In-app touches are blocked by the dim overlay
-    // below (and the header is pointer-locked), so no state can change
+    // ("Exit Payment?"). In-app touches are blocked by the FULL-SCREEN dim
+    // overlay below (covers the header too), so no state can change
     // mid-processing (user requirement).
     return PopScope(
       canPop: !_paying,
@@ -1426,12 +1426,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         }
       },
       child: Scaffold(
-      body: Column(
+      body: Stack(
         children: [
-          // Header is pointer-locked while paying — nothing is clickable.
-          IgnorePointer(
-            ignoring: _paying,
-            child: FutureBuilder<_CheckoutData>(
+      Column(
+        children: [
+          FutureBuilder<_CheckoutData>(
             future: _future,
             builder: (context, snap) => SubpageHeader(
               title: snap.hasData
@@ -1439,11 +1438,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   : AppLanguage.tr('Subscription Details', 'सदस्यता विवरण'),
             ),
           ),
-          ),
           Expanded(
-            child: Stack(
-              children: [
-            FutureBuilder<_CheckoutData>(
+            child: FutureBuilder<_CheckoutData>(
             future: _future,
             builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
@@ -1508,16 +1504,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 );
               },
             ),
-                // Dim overlay BELOW the header while a gateway payment is
-                // being processed. No popup card — the Pay button itself
-                // shows the loading spinner + "Starting secure payment…".
-                // Blocks ALL touches (coupon field, method picker, etc.).
-                if (_paying)
-                  const ModalBarrier(
-                      dismissible: false, color: Colors.black54),
-              ],
-            ),
           ),
+        ],
+      ),
+          // FULL-SCREEN dim overlay while a gateway payment is being
+          // processed — covers the header too (v1.0.110: the header was
+          // left undimmed in light mode). No popup card — the Pay button
+          // itself shows the loading spinner + "Starting secure payment…".
+          // Blocks ALL touches (header, coupon field, method picker, etc.).
+          if (_paying)
+            const ModalBarrier(
+                dismissible: false, color: Colors.black54),
         ],
       ),
       ),

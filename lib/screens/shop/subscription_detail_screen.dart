@@ -1042,7 +1042,11 @@ List<_TimelineStep> _buildGatewaySteps(
   final verified = record.gatewayStatus == 'verified' ||
       record.status == SubscriptionStatus.active;
   if (verified) {
-    return [
+    // v1.0.110: who verified is recorded in `verifiedBy` ('gateway' |
+    // 'user' | 'admin'). A manual step is inserted so the user (and the
+    // admin panel) can tell HOW this payment was verified.
+    final verifiedBy = (record.verifiedBy ?? 'gateway').toLowerCase();
+    final steps = <_TimelineStep>[
       submitted,
       _TimelineStep(
         key: 'verification',
@@ -1052,15 +1056,37 @@ List<_TimelineStep> _buildGatewaySteps(
         state: _StepState.done,
         tone: pal.info,
       ),
-      _TimelineStep(
-        key: 'activated',
-        title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
-        timestamp: record.startDate ?? record.reviewedAt,
-        icon: Icons.check_circle_outline,
-        state: _StepState.done,
-        tone: pal.success,
-      ),
     ];
+    if (verifiedBy == 'user') {
+      steps.add(_TimelineStep(
+        key: 'manual_verification',
+        title: AppLanguage.tr(
+            'Manual Verification By User', 'प्रयोगकर्ताद्वारा म्यानुअल प्रमाणीकरण'),
+        timestamp: record.reviewedAt,
+        icon: Icons.touch_app_outlined,
+        state: _StepState.done,
+        tone: pal.info,
+      ));
+    } else if (verifiedBy == 'admin') {
+      steps.add(_TimelineStep(
+        key: 'admin_review',
+        title: AppLanguage.tr(
+            'Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
+        timestamp: record.reviewedAt,
+        icon: Icons.search_outlined,
+        state: _StepState.done,
+        tone: pal.info,
+      ));
+    }
+    steps.add(_TimelineStep(
+      key: 'activated',
+      title: AppLanguage.tr('Verified & Activated', 'प्रमाणित तथा सक्रिय'),
+      timestamp: record.startDate ?? record.reviewedAt,
+      icon: Icons.check_circle_outline,
+      state: _StepState.done,
+      tone: pal.success,
+    ));
+    return steps;
   }
   if (record.gatewayStatus == 'cancelled') {
     return [
@@ -1162,6 +1188,12 @@ class _TimelineRow extends StatelessWidget {
       child:
           Icon(step.icon, size: 15, color: dim ? pal.textDisabled : step.tone),
     );
+    // v1.0.110: current step pulses, done steps pop once (cheap, no loops).
+    final animatedNode = step.state == _StepState.current
+        ? _Pulse(child: node)
+        : step.state == _StepState.done
+            ? _PopIn(child: node)
+            : node;
     return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1170,7 +1202,7 @@ class _TimelineRow extends StatelessWidget {
             width: 30,
             child: Column(
               children: [
-                step.state == _StepState.current ? _Pulse(child: node) : node,
+                animatedNode,
                 if (!last)
                   Expanded(
                     child: Container(
@@ -1242,6 +1274,44 @@ class _PulseState extends State<_Pulse> with SingleTickerProviderStateMixin {
     )..repeat(reverse: true);
     _scale = Tween<double>(begin: 1, end: 1.16).animate(
       CurvedAnimation(parent: _c, curve: Curves.easeOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(scale: _scale, child: widget.child);
+  }
+}
+
+/// v1.0.110: one-shot scale pop for completed timeline steps. Plays once
+/// on build (no repeat loop) — cheap on low-end devices.
+class _PopIn extends StatefulWidget {
+  final Widget child;
+  const _PopIn({required this.child});
+
+  @override
+  State<_PopIn> createState() => _PopInState();
+}
+
+class _PopInState extends State<_PopIn> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final Animation<double> _scale;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+    )..forward();
+    _scale = Tween<double>(begin: 0.6, end: 1.0).animate(
+      CurvedAnimation(parent: _c, curve: Curves.elasticOut),
     );
   }
 
@@ -1699,6 +1769,13 @@ class _PaymentSummary extends StatelessWidget {
           icon: Icons.credit_card_outlined,
           label: AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
           value: Text(record.method.toUpperCase(),
+              style: const TextStyle(fontWeight: FontWeight.w600)),
+        ),
+        // v1.0.110: where the payment was made — "App - eSewa" etc.
+        _InfoRow(
+          icon: Icons.smartphone_outlined,
+          label: AppLanguage.tr('Platform', 'प्लेटफर्म'),
+          value: Text(record.platformLabel,
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
         _InfoRow(

@@ -97,6 +97,17 @@ class AuthService {
 
   static _Session? _session;
 
+  /// v1.0.110: logout hooks — services with user-specific in-memory or
+  /// disk caches register a wipe function here (avoids circular imports:
+  /// AuthService cannot import the services that import it). All hooks run
+  /// on every logout so the next login starts 100% fresh.
+  static final List<Future<void> Function()> _logoutHooks = [];
+
+  /// Registers a cleanup to run on logout. Idempotent per function.
+  static void addLogoutHook(Future<void> Function() hook) {
+    if (!_logoutHooks.contains(hook)) _logoutHooks.add(hook);
+  }
+
   static Future<Map<String, dynamic>> _identityRequest(
     String endpoint,
     Map<String, dynamic> body,
@@ -215,39 +226,119 @@ class AuthService {
   /// signInWithGoogleIdTokenResult in auth.ts. Returns the user plus whether
   /// the account was just created. Login passes allowCreate: false (lookup
   /// only); signup passes allowCreate: true.
+  ///
+  /// v1.0.110: when the Google email already has a password account
+  /// (account-exists-with-different-credential), the Google account is
+  /// AUTO-LINKED via the worker (the Google ID token proves email
+  /// ownership) instead of blocking. No new account is created, the
+  /// password is untouched, and both login methods keep working.
   static Future<({AppUser user, bool isNewUser})> signInWithGoogleIdToken(
     String idToken, {
     required bool allowCreate,
+    String? googlePhotoUrl,
   }) async {
-    final res = await _identityRequest('signInWithIdp', {
-      // Keep the OAuth token URL-safe in the REST postBody.
-      'postBody':
-          'id_token=${Uri.encodeComponent(idToken)}&providerId=google.com',
-      'requestUri': 'http://localhost',
-      'returnSecureToken': true,
-      // Ask Firebase to return the provider-conflict marker instead of
-      // silently linking or creating.
-      'returnIdpCredential': true,
-      'autoCreate': allowCreate,
-    });
-    // With one-account-per-email enabled, Firebase can return HTTP 200 with
-    // EMAIL_EXISTS instead of issuing a second account — never authenticate
-    // an email/password account through a Google credential silently.
-    if (res['needConfirmation'] == true ||
-        res['errorMessage'] == 'EMAIL_EXISTS' ||
-        res['errorMessage'] == 'FEDERATED_USER_ID_ALREADY_LINKED') {
+    try {
+      final res = await _identityRequest('signInWithIdp', {
+        // Keep the OAuth token URL-safe in the REST postBody.
+        'postBody':
+            'id_token=${Uri.encodeComponent(idToken)}&providerId=google.com',
+        'requestUri': 'http://localhost',
+        'returnSecureToken': true,
+        // Ask Firebase to return the provider-conflict marker instead of
+        // silently linking or creating.
+        'returnIdpCredential': true,
+        'autoCreate': allowCreate,
+      });
+      // With one-account-per-email enabled, Firebase can return HTTP 200 with
+      // EMAIL_EXISTS instead of issuing a second account.
+      if (res['needConfirmation'] == true ||
+          res['errorMessage'] == 'EMAIL_EXISTS' ||
+          res['errorMessage'] == 'FEDERATED_USER_ID_ALREADY_LINKED') {
+        throw AuthError('auth/account-exists-with-different-credential');
+      }
+      final isNewUser = res['isNewUser'] == true;
+      if (!allowCreate && isNewUser) {
+        // Defensive guard in case the backend ignores autoCreate. Never persist
+        // a session for an unexpected new account on the login screen.
+        throw AuthError('auth/google-account-creation-blocked');
+      }
+      await _storeSession(res);
+      await _maybeSyncGooglePhoto(_session!.user.uid, googlePhotoUrl);
+      // Move FCM token to the user collection (best effort).
+      PushNotificationService.onSignIn().catchError((_) {});
+      return (user: _session!.user, isNewUser: isNewUser);
+    } on AuthError catch (e) {
+      if (e.code == 'auth/account-exists-with-different-credential') {
+        // Auto-link: hand the Google ID token to the worker, which verifies
+        // email ownership and returns a custom token for the EXISTING user.
+        return _linkGoogleToExisting(idToken, googlePhotoUrl);
+      }
+      rethrow;
+    }
+  }
+
+  /// v1.0.110: links a Google credential to an existing password account.
+  /// The worker verifies the Google ID token (proving the caller owns the
+  /// email), finds the existing user by email, and mints a custom token.
+  /// The app signs in with it — same account, password untouched.
+  static const _workerBase =
+      'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+
+  static Future<({AppUser user, bool isNewUser})> _linkGoogleToExisting(
+    String googleIdToken,
+    String? googlePhotoUrl,
+  ) async {
+    final res = await http.post(
+      Uri.parse('$_workerBase/auth/link-google'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'googleIdToken': googleIdToken}),
+    );
+    final data = json.decode(res.body) as Map<String, dynamic>;
+    if (res.statusCode != 200 || data['ok'] != true) {
+      // Worker refused (bad token, blacklisted, etc.) — surface the
+      // original conflict so the UI can explain.
       throw AuthError('auth/account-exists-with-different-credential');
     }
-    final isNewUser = res['isNewUser'] == true;
-    if (!allowCreate && isNewUser) {
-      // Defensive guard in case the backend ignores autoCreate. Never persist
-      // a session for an unexpected new account on the login screen.
-      throw AuthError('auth/google-account-creation-blocked');
+    final customToken = data['customToken'] as String?;
+    if (customToken == null || customToken.isEmpty) {
+      throw AuthError('auth/account-exists-with-different-credential');
     }
-    await _storeSession(res);
-    // Move FCM token to the user collection (best effort).
+    final signInRes = await _identityRequest('signInWithCustomToken', {
+      'token': customToken,
+      'returnSecureToken': true,
+    });
+    await _storeSession(signInRes);
+    await _maybeSyncGooglePhoto(_session!.user.uid, googlePhotoUrl);
     PushNotificationService.onSignIn().catchError((_) {});
-    return (user: _session!.user, isNewUser: isNewUser);
+    return (user: _session!.user, isNewUser: data['isNewUser'] == true);
+  }
+
+  /// v1.0.110: profile photo rules for Google sign-in.
+  /// - Manual (user-uploaded) photo → NEVER overwritten by Google's image.
+  /// - No photo or Google-sourced photo → save Google's image.
+  /// First-time Google signup therefore keeps Google's photo; a later
+  /// manual upload flips the source to 'manual' and sticks.
+  static Future<void> _maybeSyncGooglePhoto(
+      String uid, String? googlePhotoUrl) async {
+    if (googlePhotoUrl == null || googlePhotoUrl.isEmpty) return;
+    try {
+      final token = await getValidIdToken();
+      if (token.isEmpty) return;
+      final doc = await FirestoreRest.getDocument('users/$uid', idToken: token);
+      final source = doc?['photoURLSource']?.toString() ?? 'none';
+      if (source == 'manual') return; // user-uploaded — hands off.
+      final current = doc?['photoURL']?.toString() ?? '';
+      if (current == googlePhotoUrl) return;
+      await FirestoreRest.setDocument(
+        'users/$uid',
+        {
+          'photoURL': googlePhotoUrl,
+          'photoURLSource': 'google',
+        },
+        idToken: token,
+        merge: true,
+      );
+    } catch (_) {}
   }
 
   static Future<void> logout() async {
@@ -257,6 +348,14 @@ class AuthService {
     final idToken = await getValidIdToken().catchError((_) => '');
     _session = null;
     await PrefsService.remove(PrefsService.sessionKey);
+    // v1.0.110: wipe ALL user-specific caches (ProfileStore, pending
+    // payments, etc.) so the next login fetches 100% fresh data — no
+    // stale state from the previous account.
+    for (final hook in List.of(_logoutHooks)) {
+      try {
+        await hook();
+      } catch (_) {}
+    }
     if (uid != null) {
       // Release the one-device claim (best effort) — only when it still
       // names THIS device, so a displaced phone never wipes the new holder.

@@ -8,6 +8,8 @@ import 'services/theme_service.dart';
 import 'services/app_language.dart';
 import 'services/password_reset_service.dart';
 import 'services/prefs_service.dart';
+import 'services/profile_service.dart';
+import 'services/gateway_payment_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/reset_link_service.dart';
 
@@ -20,6 +22,14 @@ Future<void> main() async {
   // tapped link's token. Capture it first — the splash consumes the stash
   // and routes to the reset form. Best-effort, never blocks startup.
   await ResetLinkService.captureInitialLink();
+  // v1.0.110: register logout cache wipes — every user-specific cache
+  // is cleared on logout so the next login fetches 100% fresh data.
+  AuthService.addLogoutHook(() async {
+    ProfileStore.instance.clear();
+  });
+  AuthService.addLogoutHook(() async {
+    await GatewayPaymentService.clearPendingPayment();
+  });
   // FCM push: token registration (best-effort, never blocks startup).
   PushNotificationService.init().catchError((_) {});
   // Notification tap → stash the payload for the splash on cold start;

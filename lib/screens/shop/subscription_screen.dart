@@ -95,17 +95,30 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
     if (uid == null) {
       return const SubscriptionScreenData(plans: [], history: []);
     }
-    // Best-effort: sweep an expired active subscription before reading.
-    try {
-      await SubscriptionService.expireIfPastDue(uid);
-    } catch (_) {}
+    // v1.0.110: fetch plans + history in parallel, then run the
+    // expiry sweep on the ALREADY-FETCHED history — no second N+1 pass.
     final results = await Future.wait([
       SubscriptionService.fetchSubscriptionPlans(),
       SubscriptionService.fetchMySubscriptionHistory(uid),
     ]);
+    final history = results[1] as List<SubscriptionRecord>;
+    // Best-effort: sweep an expired active subscription before reading.
+    // Patch the local list with whatever the sweep expired (no re-fetch).
+    try {
+      final expiredIds =
+          await SubscriptionService.expireIfPastDue(uid, history: history);
+      if (expiredIds.isNotEmpty) {
+        final expiredSet = expiredIds.toSet();
+        for (var i = 0; i < history.length; i++) {
+          if (expiredSet.contains(history[i].id)) {
+            history[i] = history[i].copyWith(status: SubscriptionStatus.expired);
+          }
+        }
+      }
+    } catch (_) {}
     return SubscriptionScreenData(
       plans: results[0] as List<SubscriptionPlan>,
-      history: results[1] as List<SubscriptionRecord>,
+      history: history,
     );
   }
 

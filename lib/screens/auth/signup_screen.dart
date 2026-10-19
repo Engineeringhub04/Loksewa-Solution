@@ -285,6 +285,7 @@ class _SignupScreenState extends State<SignupScreen>
       final result = await AuthService.signInWithGoogleIdToken(
         idToken,
         allowCreate: true,
+        googlePhotoUrl: account.photoUrl,
       );
       if (!mounted) return;
       // Mirror the email-signup user document (merge — never clobbers).

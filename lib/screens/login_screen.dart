@@ -246,6 +246,7 @@ class _LoginScreenState extends State<LoginScreen>
       final result = await AuthService.signInWithGoogleIdToken(
         idToken,
         allowCreate: false,
+        googlePhotoUrl: account.photoUrl,
       );
       if (!mounted) return;
       // NOTE 1 — blacklisted emails cannot log back in.
@@ -259,11 +260,19 @@ class _LoginScreenState extends State<LoginScreen>
     } on AuthError catch (e) {
       if (!mounted) return;
       final code = e.code;
-      if (code == 'auth/account-exists-with-different-credential' ||
-          code == 'auth/google-account-creation-blocked') {
+      // v1.0.110: account-exists is now auto-linked inside
+      // signInWithGoogleIdToken — reaching here means the worker refused
+      // (bad token etc.), so keep the explanatory message.
+      if (code == 'auth/account-exists-with-different-credential') {
         showAuthToast(
           context,
-          'This Google account is not linked here. Please use the existing login method for this email.',
+          'Could not link this Google account. Please try again or use email login.',
+          isError: true,
+        );
+      } else if (code == 'auth/google-account-creation-blocked') {
+        showAuthToast(
+          context,
+          'No account found for this Google account. Please sign up first.',
           isError: true,
         );
       } else {

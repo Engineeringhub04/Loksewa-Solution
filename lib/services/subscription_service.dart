@@ -20,6 +20,7 @@
 //     transactionRef, screenshotUrl, customerMessage, adminMessage,
 //     submittedAt, reviewedAt, reviewedBy, rejectionReason, startDate,
 //     expiryDate, couponCode, createdAt, updatedAt
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 
@@ -192,6 +193,15 @@ class SubscriptionRecord {
   /// 'plan_change' when a newer purchase superseded it.
   final String? expiredReason;
 
+  /// Who verified/activated this subscription:
+  /// 'gateway' (automatic server verification) | 'user' (manual
+  /// "Check My Payment") | 'admin' (admin panel approval).
+  final String? verifiedBy;
+
+  /// Where the payment was made: 'app' (mobile app) | 'web' (website,
+  /// future). Set server-side by the worker at init.
+  final String? platform;
+
   const SubscriptionRecord({
     required this.id,
     required this.uid,
@@ -217,7 +227,41 @@ class SubscriptionRecord {
     this.gatewayStatus,
     this.failureReason,
     this.expiredReason,
+    this.verifiedBy,
+    this.platform,
   });
+
+  /// Minimal copy — only status is ever patched client-side (expiry sweep).
+  SubscriptionRecord copyWith({SubscriptionStatus? status}) {
+    return SubscriptionRecord(
+      id: id,
+      uid: uid,
+      planId: planId,
+      planName: planName,
+      billingCycle: billingCycle,
+      amount: amount,
+      currency: currency,
+      method: method,
+      status: status ?? this.status,
+      transactionRef: transactionRef,
+      screenshotUrl: screenshotUrl,
+      customerMessage: customerMessage,
+      adminMessage: adminMessage,
+      submittedAt: submittedAt,
+      reviewedAt: reviewedAt,
+      rejectionReason: rejectionReason,
+      startDate: startDate,
+      expiryDate: expiryDate,
+      couponCode: couponCode,
+      userName: userName,
+      userEmail: userEmail,
+      gatewayStatus: gatewayStatus,
+      failureReason: failureReason,
+      expiredReason: expiredReason,
+      verifiedBy: verifiedBy,
+      platform: platform,
+    );
+  }
 
   factory SubscriptionRecord.fromMap(Map<String, dynamic> m) {
     num numOf(dynamic v) => v is num ? v : num.tryParse(v.toString()) ?? 0;
@@ -254,11 +298,28 @@ class SubscriptionRecord {
       gatewayStatus: optStr(m['gatewayStatus']),
       failureReason: optStr(m['failureReason']),
       expiredReason: optStr(m['expiredReason']),
+      verifiedBy: optStr(m['verifiedBy']),
+      platform: optStr(m['platform']),
     );
   }
 
   /// True for gateway (automatic) payments: eSewa / Khalti.
   bool get isGateway => method == 'esewa' || method == 'khalti';
+
+  /// Human label for where the payment was made, e.g. "App - eSewa".
+  /// Platform comes from the server ('app' | 'web'); method is local.
+  String get platformLabel {
+    final p = (platform ?? 'app').toLowerCase();
+    final prefix = p == 'web'
+        ? AppLanguage.tr('Web', 'वेब')
+        : AppLanguage.tr('App', 'एप');
+    final methodLabel = method == 'esewa'
+        ? 'eSewa'
+        : method == 'khalti'
+            ? 'Khalti'
+            : AppLanguage.tr('Manual QR', 'म्यानुअल QR');
+    return '$prefix - $methodLabel';
+  }
 
   /// True when the gateway payment failed verification or the app was
   /// closed before verification completed (stale initiated).
@@ -509,16 +570,17 @@ class SubscriptionService {
       for (final e in (userDoc?['subscriptionIds'] as List? ?? [])) e.toString(),
     ];
     if (ids.isEmpty) return [];
-    final records = <SubscriptionRecord>[];
-    for (final sid in ids) {
-      try {
-        final doc =
-            await FirestoreRest.getDocument('app_subscriptions/$sid', idToken: token);
-        if (doc != null) records.add(SubscriptionRecord.fromMap(doc));
-      } catch (_) {
-        // Skip docs that fail to load; never crash the whole list.
-      }
-    }
+    // v1.0.110: fetch the per-doc records IN PARALLEL (was a sequential
+    // for-loop — N round trips on the itel). Failures are skipped per-doc.
+    final docs = await Future.wait(
+      ids.map((sid) => FirestoreRest.getDocument('app_subscriptions/$sid',
+              idToken: token)
+          .then((doc) => doc == null
+              ? null
+              : SubscriptionRecord.fromMap(doc))
+          .catchError((_) => null)),
+    );
+    final records = docs.whereType<SubscriptionRecord>().toList();
     records.sort((a, b) => _cmpDesc(a.submittedAt, b.submittedAt));
     return filterHistoryForDisplay(records);
   }
@@ -589,18 +651,23 @@ class SubscriptionService {
   /// profile pill reads through the user doc). With no valid active left,
   /// the premium flag is cleared. When nothing is past due, nothing is
   /// written.
-  static Future<void> expireIfPastDue(String uid) async {
-    final history = await fetchMySubscriptionHistory(uid);
-    if (history.isEmpty) return;
+  /// Returns the IDs it expired (so callers can patch an already-fetched
+  /// list instead of re-reading).
+  static Future<List<String>> expireIfPastDue(String uid,
+      {List<SubscriptionRecord>? history}) async {
+    // v1.0.110: accept pre-fetched history to avoid a second N+1 fetch
+    // (the Subscription page already loads it in the same pass).
+    final records = history ?? await fetchMySubscriptionHistory(uid);
+    if (records.isEmpty) return const [];
     final now = DateTime.now();
     final expiredIds = <String>[];
-    for (final r in history) {
+    for (final r in records) {
       if (r.status != SubscriptionStatus.active) continue;
       final expiry = r.expiryDate;
       if (expiry != null && !expiry.isAfter(now)) expiredIds.add(r.id);
     }
-    if (expiredIds.isEmpty) return;
-    final remaining = history
+    if (expiredIds.isEmpty) return const [];
+    final remaining = records
         .where((r) =>
             r.status == SubscriptionStatus.active &&
             !expiredIds.contains(r.id))
@@ -642,6 +709,7 @@ class SubscriptionService {
       ],
       idToken: token,
     );
+    return expiredIds;
   }
 
   /// One request by id. Mirrors fetchSubscriptionById().

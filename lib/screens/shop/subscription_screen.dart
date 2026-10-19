@@ -830,13 +830,19 @@ class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
       await GatewayPaymentService.deleteRequest(widget.record.id);
       if (!mounted) return;
       Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _deleting = false);
+      // Show the specific error (e.g. active_not_deletable, forbidden) so
+      // failures are diagnosable instead of a generic message.
+      final detail = e is GatewayException && e.message.isNotEmpty
+          ? ' (${e.message})'
+          : '';
       showToast(
         context,
-        AppLanguage.tr('Could not delete the request. Please try again.',
-            'अनुरोध हटाउन सकिएन। कृपया पुनः प्रयास गर्नुहोस्।'),
+        AppLanguage.tr(
+            'Could not delete the request$detail. Please try again.',
+            'अनुरोध हटाउन सकिएन$detail। कृपया पुनः प्रयास गर्नुहोस्।'),
         ToastVariant.error,
       );
     }

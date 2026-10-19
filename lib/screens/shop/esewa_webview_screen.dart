@@ -5,7 +5,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
-import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
 
 /// Result returned by [EsewaWebViewScreen] via Navigator.pop.
@@ -183,11 +183,12 @@ $inputs
 
   @override
   Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
     return Scaffold(
       backgroundColor: const Color(0xFF0B0F1A),
       // Full-bleed: the webview fills the whole screen and the curved
-      // header overlays on top — no white gap at the sides.
+      // Header renders FIRST (immediately on open); the webview loads
+      // underneath. The loading overlay sits between them — behind the
+      // header, above the webview — so the header is never covered.
       body: Stack(
         children: [
           Positioned.fill(
@@ -211,7 +212,20 @@ $inputs
               },
             ),
           ),
-          // Curved header overlaid on top of the webview.
+          if (_loadingPage)
+            Positioned.fill(
+              child: Container(
+                color: const Color(0xFF0B0F1A),
+                child: Center(
+                  child: PreloadingWidget(
+                    label: AppLanguage.tr(
+                        'Connecting to eSewa…', 'eSewa मा जडान हुँदैछ…'),
+                  ),
+                ),
+              ),
+            ),
+          // Curved header overlaid on top of everything — always visible,
+          // never hidden behind the loading state.
           Positioned(
             top: 0,
             left: 0,
@@ -268,27 +282,6 @@ $inputs
               ],
             ),
           ),
-          if (_loadingPage)
-            Positioned.fill(
-              child: Container(
-                color: const Color(0xFF0B0F1A),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const CircularProgressIndicator(color: AppColors.accent),
-                      const SizedBox(height: 14),
-                      Text(
-                        AppLanguage.tr('Connecting to eSewa…',
-                            'eSewa मा जडान हुँदैछ…'),
-                        style: TextStyle(
-                            fontSize: 13, color: pal.textSecondary),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
         ],
       ),
     );

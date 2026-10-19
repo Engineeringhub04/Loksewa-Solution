@@ -630,10 +630,11 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       return;
     }
     if (result == null || result.status == 'cancelled') {
-      // User backed out: best-effort server cancel so the pending record
-      // doesn't linger as "in progress", then reset local state.
-      await GatewayPaymentService.cancelPayment(
-          gateway: 'esewa', transactionUuid: transactionUuid);
+      // User backed out: fire-and-forget server cancel (never block the UI
+      // on it — the toast must show within a second even on bad network),
+      // then reset local state immediately.
+      unawaited(GatewayPaymentService.cancelPayment(
+          gateway: 'esewa', transactionUuid: transactionUuid));
       await GatewayPaymentService.clearPendingPayment();
       if (!mounted) return;
       showToast(
@@ -687,13 +688,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
 
     final completer = Completer<Map<String, String>?>();
+    // The Khalti SDK only auto-detects the payment return (firing onReturn
+    // and its own verify → onPaymentResult) when the payment URL carries
+    // return_url as a query parameter. Khalti's payment_url lacks it, so
+    // append it explicitly — otherwise the user gets stuck on the
+    // "Payment received" page with no automatic return.
+    const khaltiReturnUrl =
+        'https://loksewa-push-worker.loksewasolutionapi.workers.dev/payments/khalti/return';
+    final paymentUrlWithReturn =
+        '$paymentUrl${paymentUrl.contains('?') ? '&' : '?'}return_url=${Uri.encodeComponent(khaltiReturnUrl)}';
     late final Khalti khalti;
     try {
       khalti = await Khalti.init(
         payConfig: KhaltiPayConfig(
           publicKey: publicKey,
           pidx: pidx,
-          paymentUrl: paymentUrl,
+          paymentUrl: paymentUrlWithReturn,
           environment: testMode ? Environment.test : Environment.prod,
         ),
         onPaymentResult: (paymentResult, kh) {
@@ -709,15 +719,27 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           kh.close(context);
         },
         onReturn: () {
-          // The return_url was hit in-app: Khalti finished its side. If the
-          // SDK's own verify hangs, the watchdog below still releases the
-          // flow and the worker (source of truth) verifies server-side.
+          // Khalti redirected to our return_url in-app: the payment finished
+          // on Khalti's side. The SDK now runs its own verify(pidx) and
+          // routes to onPaymentResult/onMessage automatically — nothing to
+          // do here except let it proceed. Fully automatic, no user action.
         },
         onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
+          if (completer.isCompleted) return;
           // User dismissed the Khalti page without paying.
-          if (event == KhaltiEvent.kpgDisposed && !completer.isCompleted) {
+          if (event == KhaltiEvent.kpgDisposed) {
             completer.complete(null);
+            return;
           }
+          // Any other SDK-side issue (e.g. its own verify failed): fall back
+          // to the worker, which is the source of truth. Close the Khalti
+          // page and let the worker verify the pidx server-side.
+          completer.complete({
+            'pidx': pidx,
+            'transactionId': '',
+            'status': 'sdk_fallback',
+          });
+          kh.close(context);
         },
       );
     } catch (_) {
@@ -751,8 +773,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     watchdog.cancel();
     if (!mounted) return;
     if (res == null) {
-      await GatewayPaymentService.cancelPayment(
-          gateway: 'khalti', transactionUuid: transactionUuid);
+      // User backed out: fire-and-forget server cancel (never block the UI
+      // on it), reset local state immediately, toast at once.
+      unawaited(GatewayPaymentService.cancelPayment(
+          gateway: 'khalti', transactionUuid: transactionUuid));
       await GatewayPaymentService.clearPendingPayment();
       if (!mounted) return;
       showToast(
@@ -846,10 +870,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         context,
         planName: planName,
         onNavigate: () {
-          // Reset the stack to the subscription page, then push the detail
-          // on top — Back from detail lands on plans, never closes the app
-          // and never returns to the checkout.
-          context.go('/subscription');
+          // Pop back to the plans page, PRESERVING the original stack
+          // (Profile stays underneath). Then push the detail on top.
+          // Result: Profile -> Plans -> Detail. Back goes Detail -> Plans
+          // -> Profile; the app never closes and never returns to checkout.
+          // (context.go would wipe the stack and lose Profile.)
+          final router = GoRouter.of(context);
+          while (router.routerDelegate.currentConfiguration.last
+                      .matchedLocation !=
+                  '/subscription' &&
+              context.canPop()) {
+            context.pop();
+          }
           if (subId.isNotEmpty) {
             context.push('/subscription/$subId');
           }

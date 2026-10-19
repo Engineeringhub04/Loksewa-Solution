@@ -27,7 +27,7 @@ import 'package:loksewa_solution/services/firestore_rest.dart';
 enum BillingCycle { monthly, yearly, free, exam }
 
 /// Request lifecycle. Mirrors SubscriptionStatus.
-enum SubscriptionStatus { pending, active, rejected, expired }
+enum SubscriptionStatus { pending, active, rejected, expired, cancelled }
 
 BillingCycle billingCycleFrom(String? value) {
   switch (value) {
@@ -52,6 +52,8 @@ SubscriptionStatus subscriptionStatusFrom(String? value) {
       return SubscriptionStatus.rejected;
     case 'expired':
       return SubscriptionStatus.expired;
+    case 'cancelled':
+      return SubscriptionStatus.cancelled;
     default:
       return SubscriptionStatus.pending;
   }
@@ -266,9 +268,22 @@ class SubscriptionRecord {
     return DateTime.now().difference(submitted).inMinutes >= 15;
   }
 
-  /// Shows the "Payment Problem" recovery section.
-  bool get needsPaymentRecovery =>
-      isGateway && (gatewayStatus == 'failed' || isStaleInitiated);
+  /// Shows the "Payment Problem" recovery section with the
+  /// "Check My Payment" button.
+  ///
+  /// User rule: the button appears ONLY for stale initiated gateway
+  /// payments — the gateway status is unknown and money MAY have arrived.
+  /// Definitive failures (failureReason == 'payment_not_completed') get a
+  /// plain "no money was charged" notice instead — no button. Fraud cases
+  /// (amount_mismatch / duplicate) keep their admin-only message.
+  bool get needsPaymentRecovery => isGateway && isStaleInitiated;
+
+  /// True when the gateway definitively reported no money arrived.
+  bool get hasDefinitiveFailure =>
+      isGateway &&
+      gatewayStatus == 'failed' &&
+      failureReason == 'payment_not_completed' &&
+      !isFraud;
 }
 
 // ===================== Plan feature catalogue =====================
@@ -499,19 +514,19 @@ class SubscriptionService {
     return filterHistoryForDisplay(records);
   }
 
-  /// Display filter for the Your-Request list. Gateway (eSewa/Khalti)
-  /// payments that are freshly 'initiated' are NOT real requests yet —
-  /// money hasn't arrived, and the user is still in the payment flow. They
-  /// stay out of the list. Stale or failed gateway payments
-  /// (needsPaymentRecovery) DO show, so the user can reach
-  /// "Check My Payment". Manual (QR) pending requests still show
-  /// immediately.
+  /// Display filter for the Your-Request list.
+  ///
+  /// User rule: a gateway payment is a real, visible request from the
+  /// moment it is initiated — this list is the recovery entry point for
+  /// app-closed payments. The ONLY gateway records hidden here are
+  /// cancelled ones (user backed out / no money arrived); those are
+  /// deleted server-side and must never show. Manual (QR) requests keep
+  /// their existing visibility.
   static List<SubscriptionRecord> filterHistoryForDisplay(
       List<SubscriptionRecord> records) {
     return records
-        .where((r) => !(r.isGateway &&
-            r.status == SubscriptionStatus.pending &&
-            !r.needsPaymentRecovery))
+        .where((r) =>
+            !(r.isGateway && r.status == SubscriptionStatus.cancelled))
         .toList();
   }
 

@@ -1,9 +1,17 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
+
+/// Temporary debug tag for the v1.0.108 delete/verify trace.
+/// TODO(v1.0.109): remove [gatewayDebugLog] calls once the user confirms
+/// delete + Khalti verify work on device.
+void gatewayDebugLog(String message) {
+  debugPrint('[GatewayDebug] $message');
+}
 
 /// Client for the Cloudflare worker's /payments endpoints.
 ///
@@ -70,6 +78,8 @@ class GatewayPaymentService {
     String? couponCode,
     required Map<String, dynamic> proof,
   }) async {
+    gatewayDebugLog(
+        'verifyPayment → gateway=$gateway planId=$planId proof=$proof');
     final token = await AuthService.getValidIdToken();
     final res = await http
         .post(
@@ -87,11 +97,15 @@ class GatewayPaymentService {
           }),
         )
         .timeout(const Duration(seconds: 45));
+    Map<String, dynamic> decoded;
     try {
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      decoded = jsonDecode(res.body) as Map<String, dynamic>;
     } catch (_) {
-      return {'ok': false, 'error': 'Verification failed (${res.statusCode}).'};
+      decoded = {'ok': false, 'error': 'Verification failed (${res.statusCode}).'};
     }
+    gatewayDebugLog(
+        'verifyPayment ← status=${res.statusCode} body=${res.body}');
+    return decoded;
   }
 
   /// Re-check a payment whose verification never completed (e.g. the app
@@ -127,15 +141,19 @@ class GatewayPaymentService {
   }
 
   /// Tell the worker the user backed out before completing payment.
-  /// Best-effort: never throws; a completed payment is never cancelled
-  /// server-side (the worker replies payment_completed instead).
+  /// The worker DELETES the pending records (zero trace) — a completed
+  /// payment is never deleted server-side (the worker replies
+  /// payment_completed instead).
+  /// Best-effort: never throws.
   static Future<void> cancelPayment({
     required String gateway,
     required String transactionUuid,
   }) async {
+    gatewayDebugLog(
+        'cancelPayment → gateway=$gateway transactionUuid=$transactionUuid');
     try {
       final token = await AuthService.getValidIdToken();
-      await http
+      final res = await http
           .post(
             Uri.parse('$_base/payments/cancel'),
             headers: {
@@ -146,8 +164,11 @@ class GatewayPaymentService {
                 {'gateway': gateway, 'transactionUuid': transactionUuid}),
           )
           .timeout(const Duration(seconds: 10));
-    } catch (_) {
-      // Best-effort only — the pending record ages out on its own.
+      gatewayDebugLog(
+          'cancelPayment ← status=${res.statusCode} body=${res.body}');
+    } catch (e) {
+      // Best-effort only.
+      gatewayDebugLog('cancelPayment exception: $e');
     }
   }
 
@@ -201,10 +222,12 @@ class GatewayPaymentService {
   /// and best-effort cancels the linked gateway payment. Throws
   /// [GatewayException] on failure.
   static Future<void> deleteRequest(String subId) async {
+    const url = '$_base/payments/delete-request';
+    gatewayDebugLog('deleteRequest → POST $url subId=$subId');
     final token = await AuthService.getValidIdToken();
     final res = await http
         .post(
-          Uri.parse('$_base/payments/delete-request'),
+          Uri.parse(url),
           headers: {
             'Content-Type': 'application/json',
             'Authorization': 'Bearer $token',
@@ -218,6 +241,8 @@ class GatewayPaymentService {
     } catch (_) {
       body = {};
     }
+    gatewayDebugLog(
+        'deleteRequest ← status=${res.statusCode} body=${res.body}');
     if (res.statusCode != 200 || body['ok'] != true) {
       throw GatewayException(
           body['error']?.toString() ?? 'Delete failed (${res.statusCode}).');

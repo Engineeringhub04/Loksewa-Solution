@@ -135,8 +135,8 @@ Future<void> _pumpDetail(WidgetTester tester,
 void main() {
   setUp(() => AppLanguage.current.value = 'en');
   tearDown(() => AppLanguage.current.value = 'en');
-  group('filterHistoryForDisplay (v1.0.106 #1)', () {
-    test('hides fresh initiated gateway payments', () {
+  group('filterHistoryForDisplay (v1.0.108 #1)', () {
+    test('shows fresh initiated gateway payments (recovery entry point)', () {
       final fresh = _record(
         id: 'g1',
         method: 'esewa',
@@ -145,6 +145,17 @@ void main() {
         submittedAt: DateTime.now().subtract(const Duration(minutes: 5)),
       );
       final out = SubscriptionService.filterHistoryForDisplay([fresh]);
+      expect(out.map((r) => r.id), ['g1']);
+    });
+
+    test('hides cancelled gateway payments', () {
+      final cancelled = _record(
+        id: 'g5',
+        method: 'esewa',
+        status: SubscriptionStatus.cancelled,
+        gatewayStatus: 'cancelled',
+      );
+      final out = SubscriptionService.filterHistoryForDisplay([cancelled]);
       expect(out, isEmpty);
     });
 

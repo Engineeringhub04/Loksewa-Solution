@@ -40,6 +40,7 @@ const Map<SubscriptionStatus, List<Color>> _statusGradient = {
   SubscriptionStatus.active: [Color(0xFF047857), Color(0xFF0D9488)],
   SubscriptionStatus.rejected: [Color(0xFFB91C1C), Color(0xFFDC2626)],
   SubscriptionStatus.expired: [Color(0xFF475569), Color(0xFF334155)],
+  SubscriptionStatus.cancelled: [Color(0xFF475569), Color(0xFF334155)],
 };
 
 const Color _onGradient = Colors.white;
@@ -435,7 +436,12 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               ),
             ),
           ],
-          if (record.needsPaymentRecovery) ...[
+          // Payment Problem section: ONLY for stale initiated gateway
+          // payments (money may have arrived, status unknown) — offers
+          // "Check My Payment". Fraud cases keep their admin-only message
+          // (no button). Definitive failures (payment_not_completed) get a
+          // plain "no money was charged" notice — no button.
+          if (record.needsPaymentRecovery || record.isFraud) ...[
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
               delayMs: 280,
@@ -446,6 +452,29 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 child: _PaymentProblemSection(
                   record: record,
                   onRechecked: _refresh,
+                ),
+              ),
+            ),
+          ],
+          if (record.hasDefinitiveFailure) ...[
+            const SizedBox(height: ExpoSpacing.md),
+            SyllabusEntrance(
+              delayMs: 280,
+              child: _SectionCard(
+                icon: Icons.info_outline,
+                tone: ExpoPalette.of(context).info,
+                title: AppLanguage.tr('Payment Not Completed',
+                    'भुक्तानी पूरा भएन'),
+                child: Text(
+                  AppLanguage.tr(
+                    'The payment was not completed at the gateway. No amount was charged.',
+                    'गेटवैमा भुक्तानी पूरा भएन। कुनै रकम काटिएन।',
+                  ),
+                  style: TextStyle(
+                      fontSize: ExpoType.bodySmall,
+                      color: ExpoPalette.of(context).textPrimary,
+                      height: 1.5,
+                      decoration: TextDecoration.none),
                 ),
               ),
             ),
@@ -926,6 +955,15 @@ List<_TimelineStep> _buildSteps(SubscriptionRecord record, ExpoPalette pal) {
         title: AppLanguage.tr('Approved & activated', 'स्वीकृत तथा सक्रिय'),
         timestamp: null,
         icon: Icons.check_circle_outline,
+        state: _StepState.upcoming,
+        tone: pal.textDisabled,
+      );
+    case SubscriptionStatus.cancelled:
+      finalStep = _TimelineStep(
+        key: 'cancelled',
+        title: AppLanguage.tr('Cancelled', 'रद्द गरिएको'),
+        timestamp: null,
+        icon: Icons.cancel_outlined,
         state: _StepState.upcoming,
         tone: pal.textDisabled,
       );
@@ -1424,9 +1462,13 @@ class _PaymentProblemSectionState extends State<_PaymentProblemSection> {
     final closeVerifying = await showGatewayVerifyingPopup(context);
     Map<String, dynamic> res;
     try {
+      gatewayDebugLog(
+          'recheckPayment → gateway=${record.method} transactionUuid=$txnId');
       res = await GatewayPaymentService.recheckPayment(
           gateway: record.method, transactionUuid: txnId);
-    } catch (_) {
+      gatewayDebugLog('recheckPayment ← $res');
+    } catch (e) {
+      gatewayDebugLog('recheckPayment exception: $e');
       res = {'ok': false, 'reason': 'network_error'};
     }
     if (!mounted) {
@@ -1966,6 +2008,8 @@ String _statusTag(SubscriptionStatus status) {
       return AppLanguage.tr('Expired', 'म्याद सकिएको');
     case SubscriptionStatus.pending:
       return AppLanguage.tr('New', 'नयाँ');
+    case SubscriptionStatus.cancelled:
+      return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
   }
 }
 
@@ -1979,6 +2023,8 @@ IconData _statusIcon(SubscriptionStatus status) {
       return Icons.schedule_outlined;
     case SubscriptionStatus.pending:
       return Icons.auto_awesome_outlined;
+    case SubscriptionStatus.cancelled:
+      return Icons.cancel_outlined;
   }
 }
 

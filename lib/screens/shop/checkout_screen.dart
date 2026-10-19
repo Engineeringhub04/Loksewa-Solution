@@ -709,12 +709,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         onPaymentResult: (paymentResult, kh) {
           // Complete BEFORE closing: close() pops the page, which fires
           // kpgDisposed — completing first keeps the payment result.
+          final resultData = {
+            'pidx': paymentResult.payload?.pidx ?? pidx,
+            'transactionId': paymentResult.payload?.transactionId ?? '',
+            'status': paymentResult.payload?.status ?? '',
+          };
+          gatewayDebugLog(
+              'Khalti onPaymentResult → status=${resultData['status']} '
+              'transactionId=${resultData['transactionId']} '
+              'pidx=${resultData['pidx']} (init pidx=$pidx)');
           if (!completer.isCompleted) {
-            completer.complete({
-              'pidx': paymentResult.payload?.pidx ?? pidx,
-              'transactionId': paymentResult.payload?.transactionId ?? '',
-              'status': paymentResult.payload?.status ?? '',
-            });
+            completer.complete(resultData);
           }
           kh.close(context);
         },
@@ -725,6 +730,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           // do here except let it proceed. Fully automatic, no user action.
         },
         onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
+          gatewayDebugLog(
+              'Khalti onMessage → event=$event statusCode=$statusCode '
+              'description=$description needsPaymentConfirmation=$needsPaymentConfirmation');
           if (completer.isCompleted) return;
           // User dismissed the Khalti page without paying.
           if (event == KhaltiEvent.kpgDisposed) {
@@ -802,6 +810,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'not_found',
       'gateway_disabled',
       'already_used',
+      'order_mismatch',
+      'uuid_mismatch',
+      'signature_mismatch',
+      'product_code_mismatch',
     };
     final reason = res['reason']?.toString();
     if (reason != null && reason.isNotEmpty && reason != 'network_error') {
@@ -1397,8 +1409,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Column(
+    // Block the system back button while a payment is processing — no
+    // state may change mid-processing (user requirement).
+    return PopScope(
+      canPop: !_paying,
+      child: Scaffold(
+      body: Stack(
+        children: [
+          Column(
         children: [
           FutureBuilder<_CheckoutData>(
             future: _future,
@@ -1476,6 +1494,55 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ),
           ),
         ],
+          ),
+          // Full-screen blocking overlay while a gateway payment is being
+          // processed (init / gateway UI / verify). Blocks ALL input —
+          // coupon field, payment method picker, back button — so no state
+          // can change mid-processing (user requirement).
+          if (_paying) ...[
+            const ModalBarrier(
+                dismissible: false, color: Colors.black54),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 28, vertical: 22),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.2),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 36,
+                      height: 36,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      AppLanguage.tr('Processing payment…',
+                          'भुक्तानी प्रक्रिया हुँदैछ…'),
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF0F172A),
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
       ),
     );
   }

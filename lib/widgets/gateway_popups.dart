@@ -409,6 +409,18 @@ String gatewayFailureMessage(String? reason) {
         'This payment was already used. Please contact admin if you need help.',
         'यो भुक्तानी पहिले नै प्रयोग भइसकेको छ। सहयोग चाहिएमा कृपया admin लाई सम्पर्क गर्नुहोस्।',
       );
+    case 'order_mismatch':
+    case 'uuid_mismatch':
+      return AppLanguage.tr(
+        "We couldn't match this payment to your order. Please don't pay again — contact admin with your payment reference.",
+        'यो भुक्तानी तपाईंको अर्डरसँग मिलाउन सकिएन। कृपया फेरि पैसा नतिर्नुहोस् — आफ्नो भुक्तानी सन्दर्भ सहित admin लाई सम्पर्क गर्नुहोस्।',
+      );
+    case 'signature_mismatch':
+    case 'product_code_mismatch':
+      return AppLanguage.tr(
+        "We couldn't verify this payment — the payment details look tampered. Please contact admin.",
+        'यो भुक्तानी प्रमाणीकरण हुन सकेन — भुक्तानी विवरण शंकास्पद देखियो। कृपया admin लाई सम्पर्क गर्नुहोस्।',
+      );
     case 'payment_not_completed':
       return AppLanguage.tr(
         'The payment was not completed at the gateway. No amount was charged.',

@@ -602,6 +602,8 @@ Color _statusToneColor(SubscriptionStatus status, ExpoPalette pal) {
       return pal.textDisabled;
     case SubscriptionStatus.pending:
       return pal.warning;
+    case SubscriptionStatus.cancelled:
+      return pal.textDisabled;
   }
 }
 
@@ -615,6 +617,8 @@ IconData _statusIcon(SubscriptionStatus status) {
       return Icons.schedule_outlined;
     case SubscriptionStatus.pending:
       return Icons.auto_awesome_outlined;
+    case SubscriptionStatus.cancelled:
+      return Icons.cancel_outlined;
   }
 }
 
@@ -628,6 +632,8 @@ String _statusTag(SubscriptionStatus status) {
       return AppLanguage.tr('Expired', 'म्याद सकिएको');
     case SubscriptionStatus.pending:
       return AppLanguage.tr('New', 'नयाँ');
+    case SubscriptionStatus.cancelled:
+      return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
   }
 }
 
@@ -712,10 +718,13 @@ class _RequestRow extends StatelessWidget {
   bool get _deletable => record.status != SubscriptionStatus.active;
 
   Future<void> _confirmDelete(BuildContext context) async {
+    gatewayDebugLog(
+        'delete UI → tap delete on record id=${record.id} status=${record.status}');
     final confirmed = await AppModalShell.show<bool>(
       context: context,
       builder: (_) => _DeleteRequestDialog(record: record),
     );
+    gatewayDebugLog('delete UI ← dialog result: $confirmed');
     if (confirmed == true && context.mounted) {
       onChanged();
     }
@@ -827,7 +836,10 @@ class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
     if (_deleting) return;
     setState(() => _deleting = true);
     try {
+      gatewayDebugLog(
+          'delete dialog → calling deleteRequest id=${widget.record.id}');
       await GatewayPaymentService.deleteRequest(widget.record.id);
+      gatewayDebugLog('delete dialog ← deleteRequest succeeded');
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {

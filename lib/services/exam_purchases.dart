@@ -96,7 +96,10 @@ class ExamPurchaseRecord {
       subcourseId: _str(doc['subcourseId']),
       subcourseName: _str(doc['subcourseName']),
       examSetId: doc['examSetId']?.toString() ?? '',
-      examTitle: doc['examTitle']?.toString() ?? '',
+      // The worker writes `examSetTitle` on gateway purchase docs while the
+      // manual flow writes `examTitle` — accept both so list cards and the
+      // request page always show the real exam name.
+      examTitle: _str(doc['examTitle']) ?? _str(doc['examSetTitle']) ?? '',
       examContentType:
           doc['examContentType']?.toString() == 'pdf' ? 'pdf' : 'mcq',
       amount: _num(doc['amount']),

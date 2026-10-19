@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
@@ -62,6 +62,12 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   bool _done = false;
   Timer? _redirectTimer;
 
+  /// webview_flutter controller — the proven renderer on iOS (the same
+  /// plugin family the working Khalti page uses). Replaces the old
+  /// flutter_inappwebview InAppWebView whose loadData/initialData path
+  /// rendered blank on iOS/WKWebView.
+  late final WebViewController _controller;
+
   /// UX-only purchase countdown (the worker sweep is the source of truth
   /// for expiry — it also covers the app-closed case).
   static const int _sessionSecs = 15 * 60;
@@ -71,6 +77,33 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   @override
   void initState() {
     super.initState();
+    // Display-widget swap only: the auto-POST HTML, the success/failure
+    // interception, the countdown and the overlay are all unchanged.
+    _controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0xFF0B0F1A))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: _onNavigationRequest,
+          onPageStarted: (_) {
+            if (mounted) setState(() => _loadingPage = true);
+          },
+          onPageFinished: (_) {
+            if (mounted) setState(() => _loadingPage = false);
+          },
+          onWebResourceError: (error) {
+            // iOS diagnostics: surface the failing URL + description so
+            // a future on-device test can report exactly what failed.
+            debugPrint('[EsewaWebView] load error: ${error.description} '
+                '(url: ${error.url})');
+            if (mounted) setState(() => _loadingPage = false);
+          },
+        ),
+      )
+      ..setOnConsoleMessage((message) {
+        debugPrint('[EsewaWebView] console: ${message.message}');
+      })
+      ..loadHtmlString(_autoPostHtml);
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _done) return;
       if (_remainingSecs <= 1) {
@@ -152,9 +185,8 @@ $inputs
     _redirectTimer = Timer(delay, () => _finish(r));
   }
 
-  Future<NavigationActionPolicy?> _onShouldOverride(
-      InAppWebViewController controller, NavigationAction action) async {
-    final raw = action.request.url?.toString() ?? '';
+  FutureOr<NavigationDecision> _onNavigationRequest(NavigationRequest request) {
+    final raw = request.url;
     if (raw.startsWith(_successPrefix)) {
       final uri = Uri.tryParse(raw);
       final data = uri?.queryParameters['data'];
@@ -169,7 +201,7 @@ $inputs
                     'eSewa ले भुक्तानी डेटा फर्काएन।')),
             const Duration(milliseconds: 800));
       }
-      return NavigationActionPolicy.CANCEL;
+      return NavigationDecision.prevent;
     }
     if (raw.startsWith(_failurePrefix)) {
       final uri = Uri.tryParse(raw);
@@ -182,9 +214,9 @@ $inputs
                   : AppLanguage.tr(
                       'Payment was not completed.', 'भुक्तानी पूरा भएन।')),
           const Duration(milliseconds: 800));
-      return NavigationActionPolicy.CANCEL;
+      return NavigationDecision.prevent;
     }
-    return NavigationActionPolicy.ALLOW;
+    return NavigationDecision.navigate;
   }
 
   @override
@@ -208,49 +240,7 @@ $inputs
             left: 0,
             right: 0,
             bottom: 0,
-            child: InAppWebView(
-              // iOS (WKWebView) intermittently renders initialData as a
-              // blank page, so the auto-POST HTML is loaded explicitly via
-              // the controller with explicit mimeType/encoding/baseUrl —
-              // the documented workaround. Single load only (no
-              // initialData): the form auto-submits on load, so loading
-              // twice would double-submit the payment POST.
-              initialUrlRequest: URLRequest(url: WebUri('about:blank')),
-              initialSettings: InAppWebViewSettings(
-                javaScriptEnabled: true,
-                domStorageEnabled: true,
-                thirdPartyCookiesEnabled: true,
-                supportMultipleWindows: false,
-              ),
-              onWebViewCreated: (controller) {
-                controller.loadData(
-                  data: _autoPostHtml,
-                  mimeType: 'text/html',
-                  encoding: 'utf8',
-                  baseUrl: WebUri(widget.endpoint),
-                );
-              },
-              shouldOverrideUrlLoading: _onShouldOverride,
-              onLoadStart: (_, __) {
-                if (mounted) setState(() => _loadingPage = true);
-              },
-              onLoadStop: (_, __) {
-                if (mounted) setState(() => _loadingPage = false);
-              },
-              onReceivedError: (controller, request, error) {
-                // iOS diagnostics: surface the failing URL + description so
-                // a future on-device test can report exactly what failed.
-                debugPrint(
-                    '[EsewaWebView] load error: ${error.description} '
-                    '(url: ${request.url})');
-                if (mounted) setState(() => _loadingPage = false);
-              },
-              onConsoleMessage: (controller, consoleMessage) {
-                debugPrint(
-                    '[EsewaWebView] console[${consoleMessage.messageLevel}]: '
-                    '${consoleMessage.message}');
-              },
-            ),
+            child: WebViewWidget(controller: _controller),
           ),
           if (_loadingPage)
             Positioned.fill(

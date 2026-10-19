@@ -294,6 +294,27 @@ List<RequestTimelineStep> buildGatewayRequestSteps({
     ));
     return steps;
   }
+  if (gatewayStatus == 'cancelled') {
+    return [
+      submitted,
+      RequestTimelineStep(
+        key: 'verification',
+        title: t('Payment Verification', 'भुक्तानी प्रमाणीकरण'),
+        timestamp: null,
+        icon: Icons.search_outlined,
+        state: RequestStepState.upcoming,
+        tone: pal.textDisabled,
+      ),
+      RequestTimelineStep(
+        key: 'cancelled',
+        title: t('Payment cancelled', 'भुक्तानी रद्द गरियो'),
+        timestamp: null,
+        icon: Icons.cancel_outlined,
+        state: RequestStepState.failed,
+        tone: pal.textDisabled,
+      ),
+    ];
+  }
   // Pending verification: fresh initiated is still in progress; failed or
   // stale initiated means verification failed.
   final failed = gatewayStatus == 'failed' || isStaleInitiated;
@@ -317,5 +338,89 @@ List<RequestTimelineStep> buildGatewayRequestSteps({
       state: RequestStepState.upcoming,
       tone: pal.textDisabled,
     ),
+  ];
+}
+
+/// Manual (QR) request timeline — mirrors the subscription detail's manual
+/// timeline exactly: submitted → waiting for admin review → final outcome.
+/// Used by the exam/content purchase request pages for non-gateway records.
+List<RequestTimelineStep> buildManualRequestSteps({
+  required ExpoPalette pal,
+  DateTime? submittedAt,
+  String status = 'pending',
+  DateTime? reviewedAt,
+  DateTime? activatedAt,
+  DateTime? expiryDate,
+}) {
+  String t(String en, String ne) => AppLanguage.tr(en, ne);
+  final s = status.toLowerCase();
+  final reviewed = reviewedAt != null || s != 'pending';
+  late final RequestTimelineStep finalStep;
+  switch (s) {
+    case 'active':
+      finalStep = RequestTimelineStep(
+        key: 'approved',
+        title: t('Approved & activated', 'स्वीकृत तथा सक्रिय'),
+        timestamp: activatedAt ?? reviewedAt,
+        icon: Icons.check_circle_outline,
+        state: RequestStepState.done,
+        tone: pal.success,
+      );
+    case 'rejected':
+      finalStep = RequestTimelineStep(
+        key: 'rejected',
+        title: t('Rejected by admin', 'एड्मिनद्वारा अस्वीकृत'),
+        timestamp: reviewedAt,
+        icon: Icons.cancel_outlined,
+        state: RequestStepState.failed,
+        tone: pal.danger,
+      );
+    case 'expired':
+      finalStep = RequestTimelineStep(
+        key: 'expired',
+        title: t('Purchase expired', 'खरिदको म्याद सकियो'),
+        timestamp: expiryDate,
+        icon: Icons.schedule_outlined,
+        state: RequestStepState.done,
+        tone: pal.textDisabled,
+      );
+    case 'cancelled':
+      finalStep = RequestTimelineStep(
+        key: 'cancelled',
+        title: t('Cancelled', 'रद्द गरिएको'),
+        timestamp: null,
+        icon: Icons.cancel_outlined,
+        state: RequestStepState.upcoming,
+        tone: pal.textDisabled,
+      );
+    case 'pending':
+    default:
+      finalStep = RequestTimelineStep(
+        key: 'approved',
+        title: t('Approved & activated', 'स्वीकृत तथा सक्रिय'),
+        timestamp: null,
+        icon: Icons.check_circle_outline,
+        state: RequestStepState.upcoming,
+        tone: pal.textDisabled,
+      );
+  }
+  return [
+    RequestTimelineStep(
+      key: 'submitted',
+      title: t('Payment submitted', 'भुक्तानी पेस भयो'),
+      timestamp: submittedAt,
+      icon: Icons.send_outlined,
+      state: RequestStepState.done,
+      tone: pal.info,
+    ),
+    RequestTimelineStep(
+      key: 'review',
+      title: t('Waiting for admin review', 'एड्मिन समीक्षाको प्रतीक्षामा'),
+      timestamp: reviewedAt,
+      icon: Icons.search_outlined,
+      state: reviewed ? RequestStepState.done : RequestStepState.current,
+      tone: reviewed ? pal.info : pal.warning,
+    ),
+    finalStep,
   ];
 }

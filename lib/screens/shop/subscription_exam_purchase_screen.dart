@@ -21,6 +21,10 @@ import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/request_timeline.dart';
 import '../../widgets/payment_problem_section.dart';
+import '../../widgets/request_crown.dart';
+import '../../widgets/request_section_card.dart';
+import '../../widgets/request_info_row.dart';
+import '../../widgets/verification_pending_banner.dart';
 
 class SubscriptionExamPurchaseScreen extends StatefulWidget {
   final String id;
@@ -280,239 +284,45 @@ class _SubscriptionExamPurchaseScreenState
     }
     final record = _record!;
     final status = record.status;
-    final statusColor = status == 'active'
-        ? const Color(0xFF16A34A)
-        : status == 'rejected'
-            ? const Color(0xFFDC2626)
-            : const Color(0xFFD97706);
-    final statusLabel = status == 'active'
-        ? _t('Approved', 'स्वीकृत')
-        : status == 'rejected'
-            ? _t('Rejected', 'अस्वीकृत')
-            : _t('Pending Review', 'समीक्षा हुँदैछ');
-    final statusIcon = status == 'active'
-        ? Icons.check_circle
-        : status == 'rejected'
-            ? Icons.cancel
-            : Icons.access_time;
-    final canEdit = isExamPurchaseEditable(record, _nowMs);
+    final isGateway = record.isGateway;
+    // Edit features exist ONLY for manual-QR purchases: a worker-verified
+    // gateway payment must never be editable (user requirement).
+    final canEdit = !isGateway && isExamPurchaseEditable(record, _nowMs);
     final remainingLabel =
         _formatDuration(examPurchaseEditRemainingMs(record, _nowMs));
+    final examName = record.examTitle.isNotEmpty
+        ? record.examTitle
+        : _t('Exam Details', 'परीक्षा विवरण');
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Status box.
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0x14 / 0xFF),
-              border: Border.all(color: statusColor),
-              borderRadius: BorderRadius.circular(ExpoRadius.lg),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(statusIcon, size: 22, color: statusColor),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        statusLabel,
-                        style: TextStyle(
-                          fontSize: ExpoType.bodyLarge,
-                          fontWeight: FontWeight.bold,
-                          color: statusColor,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                if (status == 'pending')
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      canEdit
-                          ? '${_t('Edit time remaining', 'सम्पादन गर्न बाँकी समय')}: $remainingLabel'
-                          : _t('The 30-minute edit window has expired.',
-                              '३० मिनेटको सम्पादन समय समाप्त भयो।'),
-                      style: TextStyle(
-                        fontSize: ExpoType.caption,
-                        color: palette.textSecondary,
-                      ),
-                    ),
-                  ),
-                if (record.rejectionReason != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      record.rejectionReason!,
-                      style: TextStyle(
-                        fontSize: ExpoType.body,
-                        color: statusColor,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+          // Payment crown — status-driven colors, the same card as the
+          // subscription request page.
+          RequestCrown(
+            status: status,
+            isFraud: record.isFraud,
+            gatewayInitiated: isGateway &&
+                status == 'pending' &&
+                (record.gatewayStatus ?? '') == 'initiated',
+            title: examName,
+            amount: record.amount,
+            method: record.method,
+            submittedAt: record.submittedAtDate,
           ),
 
-          // Gateway (eSewa/Khalti) request timeline — the SAME treatment as
-          // the subscription request page: submitted → payment verification
-          // → verified & activated.
-          if (record.isGateway) ...[
+          // Pending verification message — gateway recovery only.
+          if (isGateway &&
+              status == 'pending' &&
+              record.needsPaymentRecovery) ...[
             const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: palette.surfaceAlt,
-                border:
-                    Border.all(color: palette.border, width: 0.5),
-                borderRadius: BorderRadius.circular(ExpoRadius.lg),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: palette.info.withValues(alpha: 0x14 / 0xFF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(Icons.commit_outlined,
-                            size: 18, color: palette.info),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _t('Request Timeline', 'अनुरोधको क्रम'),
-                          style: TextStyle(
-                            fontSize: ExpoType.body,
-                            fontWeight: FontWeight.w700,
-                            color: palette.textPrimary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  RequestTimeline(
-                    steps: buildGatewayRequestSteps(
-                      pal: palette,
-                      submittedAt: record.submittedAtDate,
-                      gatewayStatus: record.gatewayStatus ?? '',
-                      status: record.status,
-                      verifiedBy: record.verifiedBy,
-                      reviewedAt: record.reviewedAt == null
-                          ? null
-                          : DateTime.tryParse(record.reviewedAt!),
-                      isStaleInitiated: record.isStaleInitiated,
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            const VerificationPendingBanner(),
           ],
 
-          // Gateway payment problem (app closed mid-payment / verification
-          // failed) — Check My Payment re-verifies via the worker.
-          if (record.needsPaymentRecovery || record.isFraud) ...[
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: const Color(0xFFDC2626).withValues(alpha: 0x0F / 0xFF),
-                border: Border.all(
-                    color: const Color(0xFFDC2626)
-                        .withValues(alpha: 0x55 / 0xFF),
-                    width: 0.5),
-                borderRadius: BorderRadius.circular(ExpoRadius.lg),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFDC2626)
-                              .withValues(alpha: 0x14 / 0xFF),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Icon(Icons.error_outline,
-                            size: 18, color: Color(0xFFDC2626)),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          _t('Payment Problem', 'भुक्तानी समस्या'),
-                          style: TextStyle(
-                            fontSize: ExpoType.body,
-                            fontWeight: FontWeight.w700,
-                            color: palette.textPrimary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  PaymentProblemSection(
-                    record: _ExamProblemRecord(record),
-                    purchaseType: 'exam',
-                    onRechecked: _load,
-                  ),
-                ],
-              ),
-            ),
-          ],
-
-          // Admin message.
-          if (record.adminMessage != null)
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: palette.primary
-                    .withValues(alpha: 0x14 / 0xFF),
-                border: Border.all(color: palette.primary),
-                borderRadius: BorderRadius.circular(ExpoRadius.md),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.chat_bubble_outline,
-                          size: 18, color: palette.primary),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _t('Message from Admin', 'एड्मिनको सन्देश'),
-                          style: TextStyle(
-                            fontSize: ExpoType.bodySmall,
-                            fontWeight: FontWeight.bold,
-                            color: palette.primary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(record.adminMessage!,
-                      style: const TextStyle(fontSize: ExpoType.body)),
-                ],
-              ),
-            ),
-
-          // Edit / save request (pending only, never for gateway payments —
-          // editing a worker-verified gateway payment is meaningless).
-          if (status == 'pending' && !record.isGateway) ...[
+          // Edit request — manual QR only, never for gateway payments.
+          if (!isGateway && status == 'pending') ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -557,6 +367,115 @@ class _SubscriptionExamPurchaseScreenState
               ),
             ),
           ],
+
+          // Admin message.
+          if (record.adminMessage != null)
+            Container(
+              margin: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: palette.primary
+                    .withValues(alpha: 0x14 / 0xFF),
+                border: Border.all(color: palette.primary),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.chat_bubble_outline,
+                          size: 18, color: palette.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _t('Message from Admin', 'एड्मिनको सन्देश'),
+                          style: TextStyle(
+                            fontSize: ExpoType.bodySmall,
+                            fontWeight: FontWeight.bold,
+                            color: palette.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(record.adminMessage!,
+                      style: const TextStyle(fontSize: ExpoType.body)),
+                ],
+              ),
+            ),
+
+          // Rejection reason.
+          if (status == 'rejected' &&
+              (record.rejectionReason ?? '').isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color:
+                    palette.danger.withValues(alpha: 0x14 / 0xFF),
+                border: Border.all(color: palette.danger),
+                borderRadius: BorderRadius.circular(ExpoRadius.md),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.error_outline,
+                          size: 18, color: palette.danger),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _t('Rejected', 'अस्वीकृत'),
+                          style: TextStyle(
+                            fontSize: ExpoType.bodySmall,
+                            fontWeight: FontWeight.bold,
+                            color: palette.danger,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(record.rejectionReason!,
+                      style: const TextStyle(fontSize: ExpoType.body)),
+                ],
+              ),
+            ),
+          ],
+
+          // Request timeline — same component and step logic as the
+          // subscription request page, for gateway AND manual purchases.
+          const SizedBox(height: 12),
+          RequestSectionCard(
+            icon: Icons.commit_outlined,
+            tone: palette.info,
+            title: _t('Request Timeline', 'अनुरोधको क्रम'),
+            child: RequestTimeline(
+              steps: isGateway
+                  ? buildGatewayRequestSteps(
+                      pal: palette,
+                      submittedAt: record.submittedAtDate,
+                      gatewayStatus: record.gatewayStatus ?? '',
+                      status: record.status,
+                      verifiedBy: record.verifiedBy,
+                      reviewedAt: record.reviewedAt == null
+                          ? null
+                          : DateTime.tryParse(record.reviewedAt!),
+                      isStaleInitiated: record.isStaleInitiated,
+                    )
+                  : buildManualRequestSteps(
+                      pal: palette,
+                      submittedAt: record.submittedAtDate,
+                      status: record.status,
+                      reviewedAt: record.reviewedAt == null
+                          ? null
+                          : DateTime.tryParse(record.reviewedAt!),
+                    ),
+            ),
+          ),
 
           // Edit box.
           if (_editing) ...[
@@ -654,39 +573,82 @@ class _SubscriptionExamPurchaseScreenState
             ),
           ],
 
-          const SizedBox(height: 12),
-          // Details card.
-          Container(
-            decoration: BoxDecoration(
-              color: palette.surface,
-              border:
-                  Border.all(color: palette.border, width: 0.5),
-              borderRadius: BorderRadius.circular(ExpoRadius.lg),
+          // Payment problem — Check My Payment re-verifies via the worker.
+          if (record.needsPaymentRecovery || record.isFraud) ...[
+            const SizedBox(height: 12),
+            RequestSectionCard(
+              icon: Icons.error_outline,
+              tone: palette.danger,
+              title: _t('Payment Problem', 'भुक्तानी समस्या'),
+              child: PaymentProblemSection(
+                record: _ExamProblemRecord(record),
+                purchaseType: 'exam',
+                onRechecked: _load,
+              ),
             ),
-            clipBehavior: Clip.antiAlias,
+          ],
+
+          // Payment summary — subscription-style card.
+          const SizedBox(height: 12),
+          RequestSectionCard(
+            icon: Icons.receipt_long_outlined,
+            tone: palette.primary,
+            title: _t('Payment Summary', 'भुक्तानी विवरण'),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _row(palette, _t('Exam Details', 'परीक्षा विवरण'),
-                    record.examTitle),
-                _divider(palette),
-                _row(palette, _t('Course', 'कोर्स'),
-                    record.courseName ?? '—'),
-                _divider(palette),
-                _row(palette, _t('Subcourse', 'सबकोर्स'),
-                    record.subcourseName ?? '—'),
-                _divider(palette),
-                _row(palette, _t('Amount', 'रकम'),
-                    'Rs. ${record.amount}'),
-                _divider(palette),
-                _row(palette, _t('Reference', 'सन्दर्भ'),
-                    record.transactionRef ?? '—'),
-                if (record.customerMessage != null) ...[
-                  _divider(palette),
-                  _row(palette,
-                      _t('Message (optional)', 'सन्देश (वैकल्पिक)'),
-                      record.customerMessage!),
-                ],
+                RequestInfoRow(
+                  icon: Icons.description_outlined,
+                  label: _t('Exam', 'परीक्षा'),
+                  value: Text(examName,
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                RequestInfoRow(
+                  icon: Icons.payments_outlined,
+                  label: _t('Amount', 'रकम'),
+                  tone: palette.success,
+                  value: Text('Rs. ${requestMoney(record.amount)}',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: palette.success)),
+                ),
+                RequestInfoRow(
+                  icon: Icons.credit_card_outlined,
+                  label: _t('Payment Method', 'भुक्तानी विधि'),
+                  value: Text(record.method.toUpperCase(),
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                RequestInfoRow(
+                  icon: Icons.smartphone_outlined,
+                  label: _t('Platform', 'प्लेटफर्म'),
+                  value: Text(
+                      requestPlatformLabel(
+                          record.platform, record.method),
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                RequestInfoRow(
+                  icon: record.isGateway
+                      ? Icons.link_outlined
+                      : Icons.qr_code_outlined,
+                  label: _t('Reference', 'सन्दर्भ'),
+                  value: Text(
+                      (record.transactionRef ?? '').isNotEmpty
+                          ? record.transactionRef!
+                          : '—',
+                      style:
+                          const TextStyle(fontWeight: FontWeight.w600)),
+                  last: record.customerMessage == null,
+                ),
+                if (record.customerMessage != null)
+                  RequestInfoRow(
+                    icon: Icons.chat_bubble_outline,
+                    label: _t('Message (optional)', 'सन्देश (वैकल्पिक)'),
+                    stacked: true,
+                    last: true,
+                    value: Text(record.customerMessage!),
+                  ),
               ],
             ),
           ),
@@ -723,46 +685,6 @@ class _SubscriptionExamPurchaseScreenState
           const SizedBox(height: 8),
         ],
       ),
-    );
-  }
-
-  Widget _row(ExpoPalette palette, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 110,
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: ExpoType.bodySmall,
-                color: palette.textSecondary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Text(
-              value,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: ExpoType.bodyLarge,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _divider(ExpoPalette palette) {
-    return Container(
-      height: 0.5,
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      color: palette.divider,
     );
   }
 }

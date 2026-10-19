@@ -29,6 +29,7 @@ dependencies:
   curved_navigation_bar: ^1.0.6
   lottie: ^3.6.1
   flutter_inappwebview: ^6.1.5
+  webview_flutter: ^4.14.1
   khalti_checkout_flutter: ^1.0.1
 
 dev_dependencies:

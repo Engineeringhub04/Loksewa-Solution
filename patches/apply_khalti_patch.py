@@ -1,34 +1,57 @@
 #!/usr/bin/env python3
-"""Idempotently patch khalti_checkout_flutter's in-app webview AppBar.
+"""Idempotently theme khalti_checkout_flutter's in-app webview AppBar.
 
 The SDK hardcodes a light AppBar background (0xFFE8F0F7) while the title and
-refresh-icon colors follow the app theme, so in dark mode the "Pay with
-Khalti" header is unreadable. This pins explicit dark colors on both.
+icon colors follow the app theme, so the "Pay with Khalti" header looks
+wrong in one of the themes. This pins the WHOLE AppBar to FIXED colors that
+are identical in both light and dark theme:
+
+  - background : dark navy 0xFF0B0F1A (matches the app's eSewa header)
+  - title text : white
+  - back icon  : white (via iconTheme — the SDK uses the default leading)
+  - refresh icon : white
 
 Same transformation build_apk.sh used to apply via sed; now repo-side so
 BOTH build paths get it:
   - Android: ~/workspace/flutter-build/build_apk.sh calls this script
-  - iOS:     codemagic.yaml runs it after `flutter pub get`
+  - iOS:     codemagic.yaml + .github/workflows/build-ipa.yml run it after
+             `flutter pub get`
 
 Idempotent: safe to run on every build. No-op when already applied, when
 the SDK is absent from the pub cache, or when a future SDK version changes
-the patched lines (prints a warning in that case).
+the patched lines (prints a warning in that case). Also upgrades files that
+carry the previous (title+refresh-icon-only) patch.
 """
 
 import glob
 import os
 import sys
 
-# (pristine_snippet, patched_snippet)
+# (old_variants, new) — old_variants covers the pristine SDK lines AND the
+# output of the previous patch generation (0xFF1A1A1A title/icon pinning).
 REPLACEMENTS = [
     (
-        "title: const Text(s_payWithKhalti),",
+        [
+            "title: const Text(s_payWithKhalti),",
+            "title: const Text(s_payWithKhalti, "
+            "style: TextStyle(color: Color(0xFF1A1A1A))),",
+        ],
         "title: const Text(s_payWithKhalti, "
-        "style: TextStyle(color: Color(0xFF1A1A1A))),",
+        "style: TextStyle(color: Colors.white)),",
     ),
     (
-        "icon: const Icon(Icons.refresh),",
-        "icon: const Icon(Icons.refresh, color: Color(0xFF1A1A1A)),",
+        [
+            "backgroundColor: Color(0xFFE8F0F7),",
+        ],
+        "backgroundColor: Color(0xFF0B0F1A),\n"
+        "              iconTheme: const IconThemeData(color: Colors.white),",
+    ),
+    (
+        [
+            "icon: const Icon(Icons.refresh),",
+            "icon: const Icon(Icons.refresh, color: Color(0xFF1A1A1A)),",
+        ],
+        "icon: const Icon(Icons.refresh, color: Colors.white),",
     ),
 ]
 
@@ -43,13 +66,15 @@ def patch_file(path: str) -> str:
         src = f.read()
     original = src
     matched_any = False
-    for old, new in REPLACEMENTS:
+    for olds, new in REPLACEMENTS:
         if new in src:
             matched_any = True
             continue  # already applied
-        if old in src:
-            matched_any = True
-            src = src.replace(old, new)
+        for old in olds:
+            if old in src:
+                matched_any = True
+                src = src.replace(old, new)
+                break
     if not matched_any:
         return "unmatched"
     if src != original:

@@ -1,9 +1,9 @@
-// v1.0.106 payment-UX correction round tests.
+// v1.0.106 payment-UX correction round tests (extended for v1.0.109).
 //
 // Covers the user-tested findings from v1.0.105:
-//  1. Gateway-pending filter: fresh initiated gateway payments are hidden
-//     from the Your-Request list; stale/failed ones still show (recovery);
-//     manual QR pending still shows immediately.
+//  1. Gateway-pending filter: ALL gateway pendings are visible in the
+//     Your-Request list (the recovery entry point); only cancelled
+//     gateway records are hidden; manual QR pending still shows.
 //  2. No "Edit Request" for gateway (eSewa/Khalti) records on the detail
 //     screen — editing a completed gateway payment is meaningless.
 //  3. Subscription page has "Plan" | "Your Request" tabs below the header.
@@ -288,6 +288,64 @@ void main() {
       );
       await _pumpDetail(tester, (_) async => record);
       expect(find.text('Edit Request'), findsOneWidget);
+    });
+  });
+
+  group('v1.0.109: immediate recovery + user-facing labels', () {
+    test('needsPaymentRecovery is true for FRESH initiated (no 15-min wait)',
+        () {
+      final fresh = _record(
+        id: 'g1',
+        method: 'esewa',
+        status: SubscriptionStatus.pending,
+        gatewayStatus: 'initiated',
+        submittedAt: DateTime.now().subtract(const Duration(minutes: 2)),
+      );
+      expect(fresh.needsPaymentRecovery, isTrue);
+    });
+
+    test('needsPaymentRecovery is false for non-initiated gateway records',
+        () {
+      final verified = _record(
+        id: 'g2',
+        method: 'khalti',
+        status: SubscriptionStatus.active,
+        gatewayStatus: 'verified',
+      );
+      expect(verified.needsPaymentRecovery, isFalse);
+      final qr = _record(
+        id: 'q1',
+        method: 'qr',
+        status: SubscriptionStatus.pending,
+      );
+      expect(qr.needsPaymentRecovery, isFalse);
+    });
+
+    test('expiredReason parses from the worker-written field', () {
+      final m = {
+        'id': 's1',
+        'uid': 'u1',
+        'planId': 'monthly',
+        'planName': 'Premium Monthly',
+        'billingCycle': 'monthly',
+        'amount': 299,
+        'currency': 'NPR',
+        'method': 'esewa',
+        'status': 'expired',
+        'transactionRef': '',
+        'screenshotUrl': '',
+        'gatewayStatus': 'verified',
+        'expiredReason': 'plan_change',
+      };
+      final r = SubscriptionRecord.fromMap(m);
+      expect(r.status, SubscriptionStatus.expired);
+      expect(r.expiredReason, 'plan_change');
+    });
+
+    test('expiredReason is null when the worker never set it', () {
+      final r = _record(
+          id: 's2', method: 'qr', status: SubscriptionStatus.expired);
+      expect(r.expiredReason, isNull);
     });
   });
 }

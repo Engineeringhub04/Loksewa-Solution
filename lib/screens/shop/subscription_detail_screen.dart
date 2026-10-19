@@ -72,6 +72,12 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   bool _editing = false;
   bool _saving = false;
 
+  /// Whether the loaded record is the user's currently-active
+  /// subscription. Resolved best-effort in [_refresh] (falls back to
+  /// treating an active record as current when the history can't load,
+  /// e.g. in widget tests).
+  bool _isCurrentActive = false;
+
   /// The screenshot URL on the record; replaced by [_pickedBytes] when the
   /// user picks a new image in the edit form.
   String _screenshotUri = '';
@@ -114,6 +120,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           _pickedBytes = null;
         }
       });
+      _resolveCurrentActive(record);
       _armTimer();
     } catch (_) {
       if (!mounted) return;
@@ -121,6 +128,29 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
         _loading = false;
         _loadingError = true;
       });
+    }
+  }
+
+  /// Best-effort: determines whether the loaded record is the user's
+  /// currently-active subscription (for the "Approved and Currently
+  /// Active" label). Falls back to treating an active record as current
+  /// when the history can't be loaded.
+  Future<void> _resolveCurrentActive(SubscriptionRecord? record) async {
+    final isActive = record?.status == SubscriptionStatus.active;
+    if (record == null) {
+      if (mounted) setState(() => _isCurrentActive = false);
+      return;
+    }
+    try {
+      final history =
+          await SubscriptionService.fetchMySubscriptionHistory(record.uid);
+      final current = SubscriptionService.currentActiveRecord(history);
+      if (!mounted) return;
+      setState(() => _isCurrentActive =
+          current != null ? current.id == record.id : isActive);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isCurrentActive = isActive);
     }
   }
 
@@ -356,7 +386,9 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
       child: ListView(
         padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
         children: [
-          SyllabusEntrance(delayMs: 0, child: _StatusCrown(record: record)),
+          SyllabusEntrance(
+              delayMs: 0,
+              child: _StatusCrown(record: record, isCurrent: _isCurrentActive)),
           if (record.isGateway &&
               record.status == SubscriptionStatus.pending &&
               record.needsPaymentRecovery) ...[
@@ -436,11 +468,12 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
               ),
             ),
           ],
-          // Payment Problem section: ONLY for stale initiated gateway
-          // payments (money may have arrived, status unknown) — offers
-          // "Check My Payment". Fraud cases keep their admin-only message
-          // (no button). Definitive failures (payment_not_completed) get a
-          // plain "no money was charged" notice — no button.
+          // Payment Problem section: for EVERY initiated gateway payment
+          // (money may have arrived, status unknown) — offers
+          // "Check My Payment" immediately, with no 15-minute wait.
+          // Fraud cases keep their admin-only message (no button).
+          // Definitive failures (payment_not_completed) get a plain
+          // "no money was charged" notice — no button.
           if (record.needsPaymentRecovery || record.isFraud) ...[
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
@@ -559,12 +592,16 @@ int maxInt(int a, int b) => a > b ? a : b;
 
 class _StatusCrown extends StatelessWidget {
   final SubscriptionRecord record;
-  const _StatusCrown({required this.record});
+
+  /// Whether this record is the user's currently-active subscription.
+  final bool isCurrent;
+
+  const _StatusCrown({required this.record, this.isCurrent = false});
 
   @override
   Widget build(BuildContext context) {
     final gradient = _statusGradient[record.status]!;
-    final label = _statusTag(record.status);
+    final label = _statusTag(record, isCurrent: isCurrent);
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(ExpoRadius.lg),
@@ -1462,13 +1499,9 @@ class _PaymentProblemSectionState extends State<_PaymentProblemSection> {
     final closeVerifying = await showGatewayVerifyingPopup(context);
     Map<String, dynamic> res;
     try {
-      gatewayDebugLog(
-          'recheckPayment → gateway=${record.method} transactionUuid=$txnId');
       res = await GatewayPaymentService.recheckPayment(
           gateway: record.method, transactionUuid: txnId);
-      gatewayDebugLog('recheckPayment ← $res');
     } catch (e) {
-      gatewayDebugLog('recheckPayment exception: $e');
       res = {'ok': false, 'reason': 'network_error'};
     }
     if (!mounted) {
@@ -1998,19 +2031,40 @@ class _LoadError extends StatelessWidget {
   }
 }
 
-String _statusTag(SubscriptionStatus status) {
-  switch (status) {
-    case SubscriptionStatus.active:
-      return AppLanguage.tr('Approved', 'स्वीकृत');
-    case SubscriptionStatus.rejected:
-      return AppLanguage.tr('Rejected', 'अस्वीकृत');
-    case SubscriptionStatus.expired:
-      return AppLanguage.tr('Expired', 'म्याद सकिएको');
-    case SubscriptionStatus.pending:
-      return AppLanguage.tr('New', 'नयाँ');
-    case SubscriptionStatus.cancelled:
-      return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
+/// User-facing status label — same mapping as the Your-Request list.
+/// "New" is admin language and never shown to users.
+String _statusTag(SubscriptionRecord record, {required bool isCurrent}) {
+  final status = record.status;
+  if (status == SubscriptionStatus.active) {
+    return isCurrent
+        ? AppLanguage.tr(
+            'Approved and Currently Active', 'स्वीकृत र हाल सक्रिय')
+        : AppLanguage.tr('Approved', 'स्वीकृत');
   }
+  if (status == SubscriptionStatus.expired) {
+    return record.expiredReason == 'plan_change'
+        ? AppLanguage.tr('Expired (User Change Plan)',
+            'म्याद सकिएको (योजना परिवर्तन)')
+        : AppLanguage.tr('Expired', 'म्याद सकिएको');
+  }
+  if (status == SubscriptionStatus.rejected) {
+    return AppLanguage.tr('Rejected', 'अस्वीकृत');
+  }
+  if (status == SubscriptionStatus.cancelled) {
+    return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
+  }
+  // pending
+  if (record.isFraud) {
+    return AppLanguage.tr('Verification Failed', 'प्रमाणीकरण असफल');
+  }
+  if (record.hasDefinitiveFailure) {
+    return AppLanguage.tr('Payment Not Completed', 'भुक्तानी पूरा भएन');
+  }
+  if (record.isGateway && record.gatewayStatus == 'initiated') {
+    return AppLanguage.tr(
+        'Verification Not Confirmed', 'प्रमाणीकरण पुष्टि भएको छैन');
+  }
+  return AppLanguage.tr('Pending Review', 'समीक्षा बाँकी');
 }
 
 IconData _statusIcon(SubscriptionStatus status) {

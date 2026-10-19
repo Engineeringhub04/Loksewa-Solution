@@ -318,8 +318,8 @@ void main() {
     await _settle(tester);
 
     expect(find.text('Your Requests'), findsOneWidget);
-    expect(find.text('Approved'), findsOneWidget);
-    expect(find.text('New'), findsOneWidget);
+    expect(find.text('Approved and Currently Active'), findsOneWidget);
+    expect(find.text('Pending Review'), findsOneWidget);
     expect(find.text('Rejected'), findsOneWidget);
     expect(find.text('Receipt did not match'), findsOneWidget);
     expect(find.textContaining('Rs. 199 · QR'), findsWidgets);
@@ -398,7 +398,7 @@ void main() {
 
     await tester.tap(find.text('Your Request'));
     await _settle(tester);
-    await tester.tap(find.text('New').first);
+    await tester.tap(find.text('Pending Review').first);
     await _settle(tester);
     expect(find.text('detail-marker:r-pending'), findsOneWidget);
   });

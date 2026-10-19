@@ -188,6 +188,10 @@ class SubscriptionRecord {
   /// 'payment_not_completed' | 'amount_mismatch' | 'duplicate' | 'app_closed'.
   final String? failureReason;
 
+  /// Why an active subscription was expired by the worker:
+  /// 'plan_change' when a newer purchase superseded it.
+  final String? expiredReason;
+
   const SubscriptionRecord({
     required this.id,
     required this.uid,
@@ -212,6 +216,7 @@ class SubscriptionRecord {
     this.userEmail,
     this.gatewayStatus,
     this.failureReason,
+    this.expiredReason,
   });
 
   factory SubscriptionRecord.fromMap(Map<String, dynamic> m) {
@@ -248,6 +253,7 @@ class SubscriptionRecord {
       userEmail: optStr(m['userEmail']),
       gatewayStatus: optStr(m['gatewayStatus']),
       failureReason: optStr(m['failureReason']),
+      expiredReason: optStr(m['expiredReason']),
     );
   }
 
@@ -271,12 +277,15 @@ class SubscriptionRecord {
   /// Shows the "Payment Problem" recovery section with the
   /// "Check My Payment" button.
   ///
-  /// User rule: the button appears ONLY for stale initiated gateway
-  /// payments — the gateway status is unknown and money MAY have arrived.
+  /// User rule: the button appears for EVERY initiated gateway payment,
+  /// fresh or stale — the 15-minute rule is ONLY the gateway payment
+  /// window / sweep auto-delete timer, never a UI gate. A payment whose
+  /// money arrived must be recoverable immediately, with no waiting.
   /// Definitive failures (failureReason == 'payment_not_completed') get a
   /// plain "no money was charged" notice instead — no button. Fraud cases
   /// (amount_mismatch / duplicate) keep their admin-only message.
-  bool get needsPaymentRecovery => isGateway && isStaleInitiated;
+  bool get needsPaymentRecovery =>
+      isGateway && gatewayStatus == 'initiated';
 
   /// True when the gateway definitively reported no money arrived.
   bool get hasDefinitiveFailure =>

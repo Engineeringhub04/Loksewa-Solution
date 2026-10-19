@@ -183,15 +183,25 @@ $inputs
 
   @override
   Widget build(BuildContext context) {
+    // The gateway page starts BELOW the curved header (small gap, no
+    // overlap). The header's own height = status-bar inset + 12 top
+    // padding + 36 content + 20 bottom padding — mirror it here so the
+    // webview never slides under the header.
+    final headerBottom =
+        MediaQuery.of(context).padding.top + 12 + 36 + 20 + 8;
     return Scaffold(
       backgroundColor: const Color(0xFF0B0F1A),
-      // Full-bleed: the webview fills the whole screen and the curved
-      // Header renders FIRST (immediately on open); the webview loads
-      // underneath. The loading overlay sits between them — behind the
-      // header, above the webview — so the header is never covered.
+      // Full-bleed: the webview fills the screen below the header and the
+      // curved Header renders FIRST (immediately on open); the webview
+      // loads underneath. The loading overlay sits between them — behind
+      // the header, above the webview — so the header is never covered.
       body: Stack(
         children: [
-          Positioned.fill(
+          Positioned(
+            top: headerBottom,
+            left: 0,
+            right: 0,
+            bottom: 0,
             child: InAppWebView(
               initialData: InAppWebViewInitialData(data: _autoPostHtml),
               initialSettings: InAppWebViewSettings(

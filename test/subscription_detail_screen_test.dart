@@ -153,7 +153,7 @@ void main() {
 
     // Crown: status tag + plan name + amount hero + method. The amount also
     // appears in the payment summary, so both are expected.
-    expect(find.text('NEW'), findsOneWidget);
+    expect(find.text('PENDING REVIEW'), findsOneWidget);
     expect(find.text('Rs. 199'), findsWidgets);
     // Method chip on the crown + the payment-summary row value.
     expect(find.text('QR'), findsWidgets);
@@ -258,7 +258,7 @@ void main() {
                 )));
     await _settle(tester);
 
-    expect(find.text('APPROVED'), findsOneWidget);
+    expect(find.text('APPROVED AND CURRENTLY ACTIVE'), findsOneWidget);
     expect(find.text('You can still edit this request'), findsNothing);
     expect(find.text('Edit Request'), findsNothing);
     expect(find.text('Approved & activated'), findsOneWidget);

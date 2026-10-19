@@ -6,13 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
 
-/// Temporary debug tag for the v1.0.108 delete/verify trace.
-/// TODO(v1.0.109): remove [gatewayDebugLog] calls once the user confirms
-/// delete + Khalti verify work on device.
-void gatewayDebugLog(String message) {
-  debugPrint('[GatewayDebug] $message');
-}
-
 /// Client for the Cloudflare worker's /payments endpoints.
 ///
 /// Security model: the worker holds every gateway secret (merchant secret
@@ -78,8 +71,6 @@ class GatewayPaymentService {
     String? couponCode,
     required Map<String, dynamic> proof,
   }) async {
-    gatewayDebugLog(
-        'verifyPayment → gateway=$gateway planId=$planId proof=$proof');
     final token = await AuthService.getValidIdToken();
     final res = await http
         .post(
@@ -103,8 +94,6 @@ class GatewayPaymentService {
     } catch (_) {
       decoded = {'ok': false, 'error': 'Verification failed (${res.statusCode}).'};
     }
-    gatewayDebugLog(
-        'verifyPayment ← status=${res.statusCode} body=${res.body}');
     return decoded;
   }
 
@@ -149,11 +138,9 @@ class GatewayPaymentService {
     required String gateway,
     required String transactionUuid,
   }) async {
-    gatewayDebugLog(
-        'cancelPayment → gateway=$gateway transactionUuid=$transactionUuid');
     try {
       final token = await AuthService.getValidIdToken();
-      final res = await http
+      await http
           .post(
             Uri.parse('$_base/payments/cancel'),
             headers: {
@@ -164,11 +151,8 @@ class GatewayPaymentService {
                 {'gateway': gateway, 'transactionUuid': transactionUuid}),
           )
           .timeout(const Duration(seconds: 10));
-      gatewayDebugLog(
-          'cancelPayment ← status=${res.statusCode} body=${res.body}');
     } catch (e) {
       // Best-effort only.
-      gatewayDebugLog('cancelPayment exception: $e');
     }
   }
 
@@ -223,7 +207,6 @@ class GatewayPaymentService {
   /// [GatewayException] on failure.
   static Future<void> deleteRequest(String subId) async {
     const url = '$_base/payments/delete-request';
-    gatewayDebugLog('deleteRequest → POST $url subId=$subId');
     final token = await AuthService.getValidIdToken();
     final res = await http
         .post(
@@ -241,8 +224,6 @@ class GatewayPaymentService {
     } catch (_) {
       body = {};
     }
-    gatewayDebugLog(
-        'deleteRequest ← status=${res.statusCode} body=${res.body}');
     if (res.statusCode != 200 || body['ok'] != true) {
       throw GatewayException(
           body['error']?.toString() ?? 'Delete failed (${res.statusCode}).');

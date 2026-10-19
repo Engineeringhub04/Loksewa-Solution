@@ -202,6 +202,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   bool _downloadingQr = false;
   bool _paying = false; // gateway flow in progress (prevents double-taps)
 
+  /// Transaction id of the in-flight gateway payment (for exit-cancel).
+  String _activeTransactionUuid = '';
+
   @override
   void initState() {
     super.initState();
@@ -549,6 +552,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       final initRes = await GatewayPaymentService.initPayment(
           gateway: _method!, planId: planId, couponCode: _couponApplied?.code);
       if (!mounted) return;
+      final txnUuid = '${initRes['transactionUuid'] ?? ''}';
+      setState(() => _activeTransactionUuid = txnUuid);
       // Persist the pending payment BEFORE the gateway UI opens — an app
       // kill during payment/verify must never lose the transaction.
       // Cleared on verify success, definitive failure, or user cancel.
@@ -577,7 +582,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             ToastVariant.error);
       }
     } finally {
-      if (mounted) setState(() => _paying = false);
+      if (mounted) {
+        setState(() {
+          _paying = false;
+          _activeTransactionUuid = '';
+        });
+      }
     }
   }
 
@@ -714,10 +724,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             'transactionId': paymentResult.payload?.transactionId ?? '',
             'status': paymentResult.payload?.status ?? '',
           };
-          gatewayDebugLog(
-              'Khalti onPaymentResult → status=${resultData['status']} '
-              'transactionId=${resultData['transactionId']} '
-              'pidx=${resultData['pidx']} (init pidx=$pidx)');
           if (!completer.isCompleted) {
             completer.complete(resultData);
           }
@@ -730,9 +736,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           // do here except let it proceed. Fully automatic, no user action.
         },
         onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
-          gatewayDebugLog(
-              'Khalti onMessage → event=$event statusCode=$statusCode '
-              'description=$description needsPaymentConfirmation=$needsPaymentConfirmation');
           if (completer.isCompleted) return;
           // User dismissed the Khalti page without paying.
           if (event == KhaltiEvent.kpgDisposed) {
@@ -1409,16 +1412,26 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Block the system back button while a payment is processing — no
-    // state may change mid-processing (user requirement).
+    // System back while a payment is processing → confirm dialog
+    // ("Exit Payment?"). In-app touches are blocked by the dim overlay
+    // below (and the header is pointer-locked), so no state can change
+    // mid-processing (user requirement).
     return PopScope(
       canPop: !_paying,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || !_paying) return;
+        final exit = await _confirmExitPayment();
+        if (exit == true && mounted) {
+          await _exitPaying();
+        }
+      },
       child: Scaffold(
-      body: Stack(
+      body: Column(
         children: [
-          Column(
-        children: [
-          FutureBuilder<_CheckoutData>(
+          // Header is pointer-locked while paying — nothing is clickable.
+          IgnorePointer(
+            ignoring: _paying,
+            child: FutureBuilder<_CheckoutData>(
             future: _future,
             builder: (context, snap) => SubpageHeader(
               title: snap.hasData
@@ -1426,10 +1439,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                   : AppLanguage.tr('Subscription Details', 'सदस्यता विवरण'),
             ),
           ),
+          ),
           Expanded(
-            child: FutureBuilder<_CheckoutData>(
-              future: _future,
-              builder: (context, snap) {
+            child: Stack(
+              children: [
+            FutureBuilder<_CheckoutData>(
+            future: _future,
+            builder: (context, snap) {
                 if (snap.connectionState == ConnectionState.waiting) {
                   return PreloadingWidget(
                     tinted: false,
@@ -1492,59 +1508,107 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 );
               },
             ),
-          ),
-        ],
-          ),
-          // Full-screen blocking overlay while a gateway payment is being
-          // processed (init / gateway UI / verify). Blocks ALL input —
-          // coupon field, payment method picker, back button — so no state
-          // can change mid-processing (user requirement).
-          if (_paying) ...[
-            const ModalBarrier(
-                dismissible: false, color: Colors.black54),
-            Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 22),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.2),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const SizedBox(
-                      width: 36,
-                      height: 36,
-                      child: CircularProgressIndicator(strokeWidth: 3),
-                    ),
-                    const SizedBox(height: 14),
-                    Text(
-                      AppLanguage.tr('Processing payment…',
-                          'भुक्तानी प्रक्रिया हुँदैछ…'),
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF0F172A),
-                        decoration: TextDecoration.none,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+                // Dim overlay BELOW the header while a gateway payment is
+                // being processed. No popup card — the Pay button itself
+                // shows the loading spinner + "Starting secure payment…".
+                // Blocks ALL touches (coupon field, method picker, etc.).
+                if (_paying)
+                  const ModalBarrier(
+                      dismissible: false, color: Colors.black54),
+              ],
             ),
-          ],
+          ),
         ],
       ),
       ),
     );
+  }
+
+  /// "Exit Payment?" confirm shown when the system back button is pressed
+  /// while a payment is processing. Returns true when the user confirms.
+  Future<bool?> _confirmExitPayment() {
+    return AppModalShell.show<bool>(
+      context: context,
+      builder: (_) => AppModalShell(
+        icon: Container(
+          width: 52,
+          height: 52,
+          decoration: BoxDecoration(
+            color: const Color(0xFFDE6E00).withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: const Icon(Icons.exit_to_app,
+              size: 26, color: Color(0xFFDE6E00)),
+        ),
+        tagLabel: AppLanguage.tr('PAYMENT IN PROGRESS', 'भुक्तानी जारी छ'),
+        title: Text(
+          AppLanguage.tr('Exit Payment?', 'भुक्तानीबाट बाहिरिने?'),
+          style: const TextStyle(
+              fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
+        ),
+        body: Text(
+          AppLanguage.tr(
+            'The payment is still processing. If you exit now, it will be cancelled.',
+            'भुक्तानी अझै प्रक्रिया हुँदैछ। अहिले बाहिरिनुभयो भने यो रद्द हुनेछ।',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 14, color: Color(0xFF475569)),
+        ),
+        footer: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFDC2626),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: Text(AppLanguage.tr(
+                      'Exit Payment', 'भुक्तानीबाट बाहिरिनुहोस्')),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: Text(AppLanguage.tr('Stay', 'रहनुहोस्')),
+                ),
+              ),
+            ],
+          ),
+        ),
+        onClose: () => Navigator.of(context).pop(false),
+      ),
+    );
+  }
+
+  /// User confirmed exiting a processing payment: fire-and-forget the
+  /// server cancel, unlock the UI, and pop the checkout page.
+  Future<void> _exitPaying() async {
+    final txnUuid = _activeTransactionUuid;
+    setState(() {
+      _paying = false;
+      _activeTransactionUuid = '';
+    });
+    if (txnUuid.isNotEmpty && _method != null && _method != 'qr') {
+      unawaited(GatewayPaymentService.cancelPayment(
+          gateway: _method!, transactionUuid: txnUuid));
+    }
+    if (mounted && context.canPop()) {
+      context.pop();
+    }
   }
 
   Widget _notFound() {

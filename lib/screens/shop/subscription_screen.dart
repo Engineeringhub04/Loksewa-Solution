@@ -58,7 +58,12 @@ class SubscriptionScreen extends StatefulWidget {
 }
 
 class _SubscriptionScreenState extends State<SubscriptionScreen> {
-  late Future<SubscriptionScreenData> _future = _load();
+  /// Last successfully loaded data — kept visible during tab refreshes so
+  /// only the tab content area preloads (header + tabs never flicker).
+  SubscriptionScreenData? _data;
+  bool _initialLoading = true;
+  bool _refreshing = false;
+  bool _loadError = false;
 
   /// 0 = Plan tab, 1 = Your Request tab.
   int _tabIndex = 0;
@@ -105,135 +110,191 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _reload();
+  }
+
+  /// Initial load (or retry after error).
+  Future<void> _reload() async {
+    try {
+      final data = await _load();
+      if (!mounted) return;
+      setState(() {
+        _data = data;
+        _initialLoading = false;
+        _loadError = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _initialLoading = false;
+        _loadError = true;
+      });
+    }
+  }
+
+  /// Tab refresh: header + tabs stay visible; only the active tab's
+  /// content area shows the preloading animation with a label while
+  /// fresh data loads (user requirement).
+  Future<void> _refreshTab() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      final data = await _load();
+      if (!mounted) return;
+      setState(() {
+        _data = data;
+        _refreshing = false;
+        _loadError = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _refreshing = false);
+    }
+  }
+
+  /// Preloader shown ONLY in the tab content area during a refresh —
+  /// header, hero and tabs stay on screen.
+  Widget _tabRefreshingPreloader() {
+    final label = _tabIndex == 0
+        ? AppLanguage.tr('Refreshing plans...', 'योजनाहरू ताजा गर्दै...')
+        : AppLanguage.tr('Refreshing your requests...',
+            'तपाईंका अनुरोधहरू ताजा गर्दै...');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: ExpoSpacing.lg),
+      child: PreloadingWidget(tinted: false, label: label),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Column(
         children: [
           SubpageHeader(
               title: AppLanguage.tr('Subscription Details', 'सदस्यता विवरण')),
-          Expanded(
-            child: FutureBuilder<SubscriptionScreenData>(
-              future: _future,
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  // In-memory-only logo warmup: runs during this page's
-                  // preloading phase, once per app run.
-                  _warmLogoCache(context);
-                  return PreloadingWidget(
-                    tinted: false,
-                    label: AppLanguage.tr(
-                        'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
-                    hint: AppLanguage.tr('Fetching your purchase history',
-                        'खरिद इतिहास ल्याउँदै'),
-                  );
-                }
-                if (snap.hasError) {
-                  return _LoadError(
-                    onRetry: () {
-                      setState(() {
-                        _future = _load();
-                      });
-                    },
-                  );
-                }
-                final data = snap.data!;
-                // The current plan is the last-APPROVED active record — the
-                // one the users/{uid} premium mirror (and the profile pill)
-                // describes — not merely the most recently submitted one.
-                final activeRecord =
-                    SubscriptionService.currentActiveRecord(data.history);
-                final pendingCount = data.history
-                    .where((r) => r.status == SubscriptionStatus.pending)
-                    .length;
-                final savePercent =
-                    SubscriptionService.yearlySavePercent(data.plans);
+          Expanded(child: _buildBody()),
+        ],
+      ),
+    );
+  }
 
-                return RefreshIndicator.adaptive(
-                  onRefresh: () async {
-                    setState(() {
-                      _future = _load();
-                    });
-                  },
-                  child: ListView(
-                    padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
-                    children: [
-                      _PlanStatusHero(
-                          record: activeRecord, pendingCount: pendingCount),
-                      const SizedBox(height: ExpoSpacing.md),
-                      _SubscriptionTabs(
-                        selected: _tabIndex,
-                        requestCount: data.history.length,
-                        onChanged: (i) => setState(() => _tabIndex = i),
-                      ),
-                      const SizedBox(height: ExpoSpacing.md),
-                      if (_tabIndex == 0) ...[
-                        Padding(
-                          padding: const EdgeInsets.only(
-                              bottom: ExpoSpacing.sm, top: ExpoSpacing.xs),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                AppLanguage.tr(
-                                    'Choose Your Plan', 'आफ्नो योजना छान्नुहोस्'),
-                                style: const TextStyle(
-                                    fontSize: ExpoType.h3,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                AppLanguage.tr(
-                                    'Everything the app offers, and exactly what each plan unlocks.',
-                                    'एपले दिने सबै सुविधा, र कुन योजनाले के खोल्छ भन्ने स्पष्ट विवरण।'),
-                                style: TextStyle(
-                                    fontSize: ExpoType.bodySmall,
-                                    color: ExpoPalette.of(context).textSecondary),
-                              ),
-                            ],
-                          ),
-                        ),
-                        ...data.plans.asMap().entries.map((entry) {
-                          final plan = entry.value;
-                          final isCurrent = activeRecord != null &&
-                              activeRecord.planId == plan.id;
-                          return Padding(
-                            padding:
-                                const EdgeInsets.only(bottom: ExpoSpacing.md),
-                            child: SyllabusEntrance(
-                              delayMs: min(entry.key, 8) * 60,
-                              child: _PlanCard(
-                                plan: plan,
-                                isCurrent: isCurrent,
-                                savePercent:
-                                    plan.billingCycle == BillingCycle.yearly
-                                        ? savePercent
-                                        : null,
-                                onSubscribe: () =>
-                                    context.push('/checkout?planId=${plan.id}'),
-                              ),
-                            ),
-                          );
-                        }),
-                        const SizedBox(height: ExpoSpacing.sm),
-                        const _WeAcceptSection(),
-                      ] else ...[
-                        if (data.history.isNotEmpty)
-                          _RequestsSection(
-                            history: data.history,
-                            onChanged: () => setState(() {
-                              _future = _load();
-                            }),
-                          )
-                        else
-                          _EmptyRequests(),
-                      ],
-                      const SizedBox(height: ExpoSpacing.lg),
-                    ],
-                  ),
-                );
-              },
-            ),
+  Widget _buildBody() {
+    if (_initialLoading) {
+      // In-memory-only logo warmup: runs during this page's
+      // preloading phase, once per app run.
+      _warmLogoCache(context);
+      return PreloadingWidget(
+        tinted: false,
+        label: AppLanguage.tr(
+            'Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
+        hint: AppLanguage.tr('Fetching your purchase history',
+            'खरिद इतिहास ल्याउँदै'),
+      );
+    }
+    if (_loadError || _data == null) {
+      return _LoadError(
+        onRetry: () {
+          setState(() {
+            _initialLoading = true;
+            _loadError = false;
+          });
+          _reload();
+        },
+      );
+    }
+    final data = _data!;
+    // The current plan is the last-APPROVED active record — the
+    // one the users/{uid} premium mirror (and the profile pill)
+    // describes — not merely the most recently submitted one.
+    final activeRecord =
+        SubscriptionService.currentActiveRecord(data.history);
+    final pendingCount = data.history
+        .where((r) => r.status == SubscriptionStatus.pending)
+        .length;
+    final savePercent =
+        SubscriptionService.yearlySavePercent(data.plans);
+
+    return RefreshIndicator.adaptive(
+      onRefresh: _refreshTab,
+      child: ListView(
+        padding: const EdgeInsets.all(ExpoSpacing.screenPadding),
+        children: [
+          _PlanStatusHero(
+              record: activeRecord, pendingCount: pendingCount),
+          const SizedBox(height: ExpoSpacing.md),
+          _SubscriptionTabs(
+            selected: _tabIndex,
+            requestCount: data.history.length,
+            onChanged: (i) => setState(() => _tabIndex = i),
           ),
+          const SizedBox(height: ExpoSpacing.md),
+          // During a refresh only the tab content area preloads (with a
+          // label) — header, hero and tabs stay visible throughout.
+          if (_refreshing)
+            _tabRefreshingPreloader()
+          else if (_tabIndex == 0) ...[
+            Padding(
+              padding: const EdgeInsets.only(
+                  bottom: ExpoSpacing.sm, top: ExpoSpacing.xs),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    AppLanguage.tr(
+                        'Choose Your Plan', 'आफ्नो योजना छान्नुहोस्'),
+                    style: const TextStyle(
+                        fontSize: ExpoType.h3,
+                        fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    AppLanguage.tr(
+                        'Everything the app offers, and exactly what each plan unlocks.',
+                        'एपले दिने सबै सुविधा, र कुन योजनाले के खोल्छ भन्ने स्पष्ट विवरण।'),
+                    style: TextStyle(
+                        fontSize: ExpoType.bodySmall,
+                        color: ExpoPalette.of(context).textSecondary),
+                  ),
+                ],
+              ),
+            ),
+            ...data.plans.asMap().entries.map((entry) {
+              final plan = entry.value;
+              final isCurrent = activeRecord != null &&
+                  activeRecord.planId == plan.id;
+              return Padding(
+                padding:
+                    const EdgeInsets.only(bottom: ExpoSpacing.md),
+                child: SyllabusEntrance(
+                  delayMs: min(entry.key, 8) * 60,
+                  child: _PlanCard(
+                    plan: plan,
+                    isCurrent: isCurrent,
+                    savePercent:
+                        plan.billingCycle == BillingCycle.yearly
+                            ? savePercent
+                            : null,
+                    onSubscribe: () =>
+                        context.push('/checkout?planId=${plan.id}'),
+                  ),
+                ),
+              );
+            }),
+            const SizedBox(height: ExpoSpacing.sm),
+            const _WeAcceptSection(),
+          ] else ...[
+            if (data.history.isNotEmpty)
+              _RequestsSection(
+                history: data.history,
+                currentActiveId: activeRecord?.id,
+                onChanged: _refreshTab,
+              )
+            else
+              _EmptyRequests(),
+          ],
+          const SizedBox(height: ExpoSpacing.lg),
         ],
       ),
     );
@@ -622,25 +683,60 @@ IconData _statusIcon(SubscriptionStatus status) {
   }
 }
 
-String _statusTag(SubscriptionStatus status) {
-  switch (status) {
-    case SubscriptionStatus.active:
-      return AppLanguage.tr('Approved', 'स्वीकृत');
-    case SubscriptionStatus.rejected:
-      return AppLanguage.tr('Rejected', 'अस्वीकृत');
-    case SubscriptionStatus.expired:
-      return AppLanguage.tr('Expired', 'म्याद सकिएको');
-    case SubscriptionStatus.pending:
-      return AppLanguage.tr('New', 'नयाँ');
-    case SubscriptionStatus.cancelled:
-      return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
+/// User-facing status label for a request row.
+///
+/// "New" is admin language and never shown to users. Mapping (user spec):
+/// - active + current plan → "Approved and Currently Active"
+/// - expired + expiredReason == 'plan_change' → "Expired (User Change Plan)"
+/// - expired → "Expired"
+/// - pending + gateway initiated (any age) → "Verification Not Confirmed"
+/// - pending + fraud → "Verification Failed"
+/// - pending + definitive no-charge → "Payment Not Completed"
+/// - pending (manual QR) → "Pending Review"
+/// - rejected → "Rejected", cancelled → "Cancelled"
+String _statusTag(SubscriptionRecord record, {required bool isCurrent}) {
+  final status = record.status;
+  if (status == SubscriptionStatus.active) {
+    return isCurrent
+        ? AppLanguage.tr(
+            'Approved and Currently Active', 'स्वीकृत र हाल सक्रिय')
+        : AppLanguage.tr('Approved', 'स्वीकृत');
   }
+  if (status == SubscriptionStatus.expired) {
+    return record.expiredReason == 'plan_change'
+        ? AppLanguage.tr('Expired (User Change Plan)',
+            'म्याद सकिएको (योजना परिवर्तन)')
+        : AppLanguage.tr('Expired', 'म्याद सकिएको');
+  }
+  if (status == SubscriptionStatus.rejected) {
+    return AppLanguage.tr('Rejected', 'अस्वीकृत');
+  }
+  if (status == SubscriptionStatus.cancelled) {
+    return AppLanguage.tr('Cancelled', 'रद्द गरिएको');
+  }
+  // pending
+  if (record.isFraud) {
+    return AppLanguage.tr('Verification Failed', 'प्रमाणीकरण असफल');
+  }
+  if (record.hasDefinitiveFailure) {
+    return AppLanguage.tr('Payment Not Completed', 'भुक्तानी पूरा भएन');
+  }
+  if (record.isGateway && record.gatewayStatus == 'initiated') {
+    return AppLanguage.tr(
+        'Verification Not Confirmed', 'प्रमाणीकरण पुष्टि भएको छैन');
+  }
+  return AppLanguage.tr('Pending Review', 'समीक्षा बाँकी');
 }
 
 class _RequestsSection extends StatelessWidget {
   final List<SubscriptionRecord> history;
   final VoidCallback onChanged;
-  const _RequestsSection({required this.history, required this.onChanged});
+
+  /// Id of the user's currently-active subscription (may be null).
+  final String? currentActiveId;
+
+  const _RequestsSection(
+      {required this.history, required this.onChanged, this.currentActiveId});
 
   @override
   Widget build(BuildContext context) {
@@ -696,10 +792,13 @@ class _RequestsSection extends StatelessWidget {
             ),
           ),
           ...history.asMap().entries.map((entry) {
-            final record = entry.value;
+            final rec = entry.value;
             final last = entry.key == history.length - 1;
             return _RequestRow(
-                record: record, last: last, onChanged: onChanged);
+                record: rec,
+                last: last,
+                isCurrent: currentActiveId != null && rec.id == currentActiveId,
+                onChanged: onChanged);
           }),
         ],
       ),
@@ -710,21 +809,22 @@ class _RequestsSection extends StatelessWidget {
 class _RequestRow extends StatelessWidget {
   final SubscriptionRecord record;
   final bool last;
+  final bool isCurrent;
   final VoidCallback onChanged;
   const _RequestRow(
-      {required this.record, required this.last, required this.onChanged});
+      {required this.record,
+      required this.last,
+      this.isCurrent = false,
+      required this.onChanged});
 
   /// Active subscriptions can never be deleted (the worker refuses too).
   bool get _deletable => record.status != SubscriptionStatus.active;
 
   Future<void> _confirmDelete(BuildContext context) async {
-    gatewayDebugLog(
-        'delete UI → tap delete on record id=${record.id} status=${record.status}');
     final confirmed = await AppModalShell.show<bool>(
       context: context,
       builder: (_) => _DeleteRequestDialog(record: record),
     );
-    gatewayDebugLog('delete UI ← dialog result: $confirmed');
     if (confirmed == true && context.mounted) {
       onChanged();
     }
@@ -787,7 +887,9 @@ class _RequestRow extends StatelessWidget {
                             color: pal.textSecondary),
                       ),
                       const SizedBox(height: 4),
-                      StatusPill(label: _statusTag(record.status), color: tone),
+                      StatusPill(
+                          label: _statusTag(record, isCurrent: isCurrent),
+                          color: tone),
                     ],
                   ),
                 ),
@@ -836,10 +938,7 @@ class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
     if (_deleting) return;
     setState(() => _deleting = true);
     try {
-      gatewayDebugLog(
-          'delete dialog → calling deleteRequest id=${widget.record.id}');
       await GatewayPaymentService.deleteRequest(widget.record.id);
-      gatewayDebugLog('delete dialog ← deleteRequest succeeded');
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } catch (e) {

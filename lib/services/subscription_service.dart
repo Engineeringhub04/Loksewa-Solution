@@ -323,8 +323,15 @@ class SubscriptionRecord {
 
   /// True when the gateway payment failed verification or the app was
   /// closed before verification completed (stale initiated).
+  ///
+  /// Pending-only: once the request leaves pending (active / rejected /
+  /// expired / cancelled) the problem UI must disappear — e.g. an admin
+  /// approval writes status directly without touching gatewayStatus, so
+  /// keying this on gatewayStatus alone left the section visible on
+  /// approved requests (v1.0.111).
   bool get isFraud =>
-      failureReason == 'amount_mismatch' || failureReason == 'duplicate';
+      status == SubscriptionStatus.pending &&
+      (failureReason == 'amount_mismatch' || failureReason == 'duplicate');
 
   /// An initiated gateway payment with no verification after 15 minutes
   /// is treated as abandoned (app closed / user never finished).
@@ -345,12 +352,20 @@ class SubscriptionRecord {
   /// Definitive failures (failureReason == 'payment_not_completed') get a
   /// plain "no money was charged" notice instead — no button. Fraud cases
   /// (amount_mismatch / duplicate) keep their admin-only message.
+  ///
+  /// Pending-only (v1.0.111): active / rejected / expired / cancelled
+  /// requests never show the section, even when gatewayStatus is still
+  /// 'initiated' (admin approvals don't touch gatewayStatus).
   bool get needsPaymentRecovery =>
-      isGateway && gatewayStatus == 'initiated';
+      isGateway &&
+      status == SubscriptionStatus.pending &&
+      gatewayStatus == 'initiated';
 
   /// True when the gateway definitively reported no money arrived.
+  /// Pending-only, like the rest of the problem UI.
   bool get hasDefinitiveFailure =>
       isGateway &&
+      status == SubscriptionStatus.pending &&
       gatewayStatus == 'failed' &&
       failureReason == 'payment_not_completed' &&
       !isFraud;

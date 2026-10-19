@@ -85,4 +85,87 @@ void main() {
           'Web - eSewa');
     });
   });
+
+  group('problem section pending-only (v1.0.111)', () {
+    test('needsPaymentRecovery is false for ACTIVE + initiated (admin-approved bug)', () {
+      final r = _rec(
+        status: SubscriptionStatus.active,
+        gatewayStatus: 'initiated',
+      );
+      expect(r.needsPaymentRecovery, isFalse);
+    });
+
+    test('needsPaymentRecovery is false for rejected/expired/cancelled + initiated', () {
+      for (final s in [
+        SubscriptionStatus.rejected,
+        SubscriptionStatus.expired,
+        SubscriptionStatus.cancelled,
+      ]) {
+        expect(
+          _rec(status: s, gatewayStatus: 'initiated').needsPaymentRecovery,
+          isFalse,
+          reason: 'status $s',
+        );
+      }
+    });
+
+    test('needsPaymentRecovery stays true for pending + initiated', () {
+      final r = _rec(
+        status: SubscriptionStatus.pending,
+        gatewayStatus: 'initiated',
+      );
+      expect(r.needsPaymentRecovery, isTrue);
+    });
+
+    test('isFraud is false once the request leaves pending', () {
+      const fraud = SubscriptionRecord(
+        id: 'f1',
+        uid: 'u1',
+        planId: 'monthly',
+        planName: 'Premium Monthly',
+        billingCycle: BillingCycle.monthly,
+        amount: 299,
+        currency: 'NPR',
+        method: 'khalti',
+        status: SubscriptionStatus.rejected,
+        screenshotUrl: '',
+        gatewayStatus: 'failed',
+        failureReason: 'amount_mismatch',
+      );
+      expect(fraud.isFraud, isFalse);
+      const pendingFraud = SubscriptionRecord(
+        id: 'f2',
+        uid: 'u1',
+        planId: 'monthly',
+        planName: 'Premium Monthly',
+        billingCycle: BillingCycle.monthly,
+        amount: 299,
+        currency: 'NPR',
+        method: 'khalti',
+        status: SubscriptionStatus.pending,
+        screenshotUrl: '',
+        gatewayStatus: 'failed',
+        failureReason: 'amount_mismatch',
+      );
+      expect(pendingFraud.isFraud, isTrue);
+    });
+
+    test('hasDefinitiveFailure is false once the request leaves pending', () {
+      const r = SubscriptionRecord(
+        id: 'd1',
+        uid: 'u1',
+        planId: 'monthly',
+        planName: 'Premium Monthly',
+        billingCycle: BillingCycle.monthly,
+        amount: 299,
+        currency: 'NPR',
+        method: 'esewa',
+        status: SubscriptionStatus.active,
+        screenshotUrl: '',
+        gatewayStatus: 'failed',
+        failureReason: 'payment_not_completed',
+      );
+      expect(r.hasDefinitiveFailure, isFalse);
+    });
+  });
 }

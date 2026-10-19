@@ -86,15 +86,26 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   Timer? _timer;
   double _barPercent = 100;
 
+  /// Live-update ticker: re-reads the subscription doc every few seconds
+  /// while this screen is open, so an admin approve / reject / expire
+  /// reflects instantly with no manual refresh. The app talks to Firestore
+  /// over hand-rolled REST (no cloud_firestore snapshots stream), so this
+  /// short-interval poll is the realtime mechanism — one small doc read
+  /// per tick, cancelled the moment the screen closes.
+  Timer? _liveTimer;
+  static const _liveInterval = Duration(seconds: 5);
+
   @override
   void initState() {
     super.initState();
     _refresh();
+    _startLiveUpdates();
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _liveTimer?.cancel();
     _refCtrl.dispose();
     _msgCtrl.dispose();
     super.dispose();
@@ -129,6 +140,61 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
         _loadingError = true;
       });
     }
+  }
+
+  void _startLiveUpdates() {
+    _liveTimer?.cancel();
+    _liveTimer = Timer.periodic(_liveInterval, (_) => _pollRecord());
+  }
+
+  /// One quiet re-read of the doc. Never shows the loading spinner and
+  /// never touches the edit form — it only swaps the record when something
+  /// actually changed. Skipped while the user is editing or saving, so a
+  /// background change can't clobber the form mid-edit (the post-save
+  /// _refresh picks it up instead).
+  Future<void> _pollRecord() async {
+    if (!mounted || _editing || _saving) return;
+    try {
+      final record = widget.loader != null
+          ? await widget.loader!(widget.id)
+          : await SubscriptionService.fetchSubscriptionById(widget.id);
+      if (!mounted || record == null) return;
+      if (_sameRecord(_record, record)) return;
+      setState(() {
+        _record = record;
+        _refCtrl.text = record.transactionRef ?? '';
+        _msgCtrl.text = record.customerMessage ?? '';
+        _screenshotUri = record.screenshotUrl;
+        _pickedBytes = null;
+      });
+      _resolveCurrentActive(record);
+      _armTimer();
+    } catch (_) {
+      // Transient network error — the next tick retries; never break the
+      // screen over a background refresh.
+    }
+  }
+
+  /// Field-by-field comparison of everything this screen renders.
+  /// SubscriptionRecord has no operator==, so compare explicitly.
+  bool _sameRecord(SubscriptionRecord? a, SubscriptionRecord b) {
+    if (a == null) return false;
+    return a.status == b.status &&
+        a.gatewayStatus == b.gatewayStatus &&
+        a.failureReason == b.failureReason &&
+        a.transactionRef == b.transactionRef &&
+        a.screenshotUrl == b.screenshotUrl &&
+        a.customerMessage == b.customerMessage &&
+        a.adminMessage == b.adminMessage &&
+        a.rejectionReason == b.rejectionReason &&
+        a.reviewedAt == b.reviewedAt &&
+        a.startDate == b.startDate &&
+        a.expiryDate == b.expiryDate &&
+        a.verifiedBy == b.verifiedBy &&
+        a.platform == b.platform &&
+        a.expiredReason == b.expiredReason &&
+        a.amount == b.amount &&
+        a.planName == b.planName;
   }
 
   /// Best-effort: determines whether the loaded record is the user's

@@ -109,6 +109,35 @@ Future<void> _settle(WidgetTester tester) async {
   }
 }
 
+
+/// Gateway-flavoured record builder for the v1.0.111 live-update tests.
+SubscriptionRecord _gatewayRecord({
+  String id = 'g1',
+  SubscriptionStatus status = SubscriptionStatus.pending,
+  String? gatewayStatus = 'initiated',
+  String? failureReason,
+  DateTime? reviewedAt,
+}) {
+  final now = DateTime.now();
+  return SubscriptionRecord(
+    id: id,
+    uid: 'u1',
+    planId: 'monthly',
+    planName: 'Premium Monthly',
+    billingCycle: BillingCycle.monthly,
+    amount: 299,
+    currency: 'NPR',
+    method: 'esewa',
+    status: status,
+    transactionRef: 'TXN-ESEWA-1',
+    screenshotUrl: '',
+    submittedAt: now.subtract(const Duration(minutes: 20)),
+    reviewedAt: reviewedAt,
+    gatewayStatus: gatewayStatus,
+    failureReason: failureReason,
+  );
+}
+
 void main() {
   setUp(() => AppLanguage.current.value = 'en');
   tearDown(() {
@@ -383,5 +412,56 @@ void main() {
     expect(find.text('अनुरोधको क्रम'), findsOneWidget);
     expect(find.text('भुक्तानी रसिद'), findsWidgets);
     expect(find.text('एड्मिनद्वारा अस्वीकृत'), findsOneWidget);
+  });
+
+  testWidgets(
+      'v1.0.111: Payment Problem hidden for ACTIVE record with stale initiated gatewayStatus',
+      (tester) async {
+    // The admin-approval bug: status active, but gatewayStatus untouched.
+    await _pump(
+        tester,
+        _router(
+            loader: (_) async => _gatewayRecord(
+                  status: SubscriptionStatus.active,
+                  gatewayStatus: 'initiated',
+                  reviewedAt:
+                      DateTime.now().subtract(const Duration(minutes: 3)),
+                )));
+    await _settle(tester);
+    expect(find.text('Payment Problem'), findsNothing);
+    expect(find.text('Check My Payment'), findsNothing);
+    expect(find.text('Verified & Activated'), findsWidgets);
+  });
+
+  testWidgets('v1.0.111: detail screen live-updates on admin approve (no refresh)',
+      (tester) async {
+    var calls = 0;
+    final pending = _gatewayRecord();
+    final approved = _gatewayRecord(
+      status: SubscriptionStatus.active,
+      gatewayStatus: 'initiated',
+      reviewedAt: DateTime.now(),
+    );
+    await _pump(
+        tester,
+        _router(loader: (_) async {
+          calls++;
+          return calls == 1 ? pending : approved;
+        }));
+    await _settle(tester);
+    // Initial load: problem section visible for the pending record.
+    expect(find.text('Payment Problem'), findsOneWidget);
+    expect(find.text('Check My Payment'), findsOneWidget);
+
+    // Advance past the 5s live-update tick: the loader now returns the
+    // admin-approved record, and the UI must swap with no manual refresh.
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 500));
+    }
+    await _settle(tester);
+    expect(calls, greaterThan(1));
+    expect(find.text('Payment Problem'), findsNothing);
+    expect(find.text('Check My Payment'), findsNothing);
+    expect(find.text('Verified & Activated'), findsWidgets);
   });
 }

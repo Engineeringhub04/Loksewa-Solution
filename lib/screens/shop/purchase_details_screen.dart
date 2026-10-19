@@ -15,6 +15,7 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
+import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
@@ -37,6 +38,20 @@ class _PurchaseDetailsScreenState extends State<PurchaseDetailsScreen> {
   String _filter = 'all'; // all | exam | content
 
   String _t(String en, String ne) => AppLanguage.tr(en, ne);
+
+  @override
+  void initState() {
+    super.initState();
+    // A purchase just succeeded in checkout (gateway verify or manual QR
+    // submit): re-read the records immediately, no manual refresh needed.
+    PurchaseRefreshBus.version.addListener(_refresh);
+  }
+
+  @override
+  void dispose() {
+    PurchaseRefreshBus.version.removeListener(_refresh);
+    super.dispose();
+  }
 
   Future<_Purchases> _load() async {
     final uid = AuthService.currentUser?.uid;

@@ -37,6 +37,7 @@ import 'package:loksewa_solution/services/exam_purchases.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
+import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
@@ -962,6 +963,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     if (res['ok'] == true) {
       await GatewayPaymentService.clearPendingPayment();
+      // A purchase was just recorded/activated: tell the purchase list and
+      // the exam/subject pages to re-read their data (no manual refresh).
+      PurchaseRefreshBus.bump();
       if (isSubscription) {
         // Real-time profile update WHILE the verifying popup is still up, so
         // the profile pill flips Free -> plan name instantly and the user
@@ -1269,6 +1273,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     final outcome = await _showSubmitPopup(d);
     if (outcome == null || !mounted) return; // user cancelled / dismissed
     if (!outcome.ok) return; // unreachable: popup stays open on error
+    // The request is recorded: refresh the purchase list and premium/lock
+    // states on the exam + subject pages without any manual refresh.
+    PurchaseRefreshBus.bump();
     showToast(
         context,
         AppLanguage.tr(

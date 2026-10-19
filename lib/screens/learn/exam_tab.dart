@@ -8,6 +8,7 @@ import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_purchases.dart';
 import '../../services/exam_service.dart' hide UserProfile;
+import '../../services/purchase_refresh.dart';
 import '../../services/profile_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
@@ -53,6 +54,9 @@ class _ExamTabState extends State<ExamTab> {
   bool _loading = true;
   String? _error;
   bool _purchaseNavigating = false;
+  // A purchase succeeded while a checkout route was on top: the model list
+  // (and lock states) re-read on route return, via didChangeDependencies.
+  bool _purchaseRefreshDirty = false;
   Timer? _ticker;
   bool _shellLoaded = false;
   final Map<String, _SectionCache> _sectionCache = {};
@@ -66,6 +70,7 @@ class _ExamTabState extends State<ExamTab> {
   @override
   void initState() {
     super.initState();
+    PurchaseRefreshBus.version.addListener(_markPurchaseRefreshDirty);
     _load();
     // Re-resolve hidden -> countdown -> live -> ended every second from the
     // cache, without re-fetching.
@@ -96,10 +101,22 @@ class _ExamTabState extends State<ExamTab> {
     if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseNavigating) {
       _purchaseNavigating = false;
     }
+    // A purchase succeeded while we were covered: re-read the model list so
+    // premium/lock states update with no manual refresh.
+    if ((ModalRoute.of(context)?.isCurrent ?? false) &&
+        _purchaseRefreshDirty) {
+      _purchaseRefreshDirty = false;
+      _load();
+    }
+  }
+
+  void _markPurchaseRefreshDirty() {
+    _purchaseRefreshDirty = true;
   }
 
   @override
   void dispose() {
+    PurchaseRefreshBus.version.removeListener(_markPurchaseRefreshDirty);
     _ticker?.cancel();
     _scrollController.dispose();
     super.dispose();

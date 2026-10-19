@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/content_purchases.dart';
+import '../../services/purchase_refresh.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart' hide fetchMyContentPurchases;
 import '../../widgets/premium_gate_dialog.dart';
@@ -27,6 +28,10 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
   late Future<_ChapterPage> _future;
   bool _ne = true; // language toggle: NE default, EN alternate (React)
   Map<String, dynamic>? _premiumChapter;
+
+  // A purchase succeeded while a checkout route was on top: re-read the
+  // premium/lock states on route return, no manual refresh needed.
+  bool _purchaseRefreshDirty = false;
   Map<String, dynamic>? _sheetChapter;
 
   /// Cached page data so the mode sheet / premium gate overlays can render
@@ -42,6 +47,7 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
   @override
   void initState() {
     super.initState();
+    PurchaseRefreshBus.version.addListener(_onPurchaseRefresh);
     _sheetController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 280),
@@ -60,8 +66,27 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
 
   @override
   void dispose() {
+    PurchaseRefreshBus.version.removeListener(_onPurchaseRefresh);
     _sheetController.dispose();
     super.dispose();
+  }
+
+  void _onPurchaseRefresh() {
+    if (!mounted) return;
+    if (ModalRoute.of(context)?.isCurrent ?? false) {
+      _reload();
+    } else {
+      _purchaseRefreshDirty = true;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseRefreshDirty) {
+      _purchaseRefreshDirty = false;
+      _reload();
+    }
   }
 
   void _reload() {

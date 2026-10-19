@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/content_purchases.dart';
+import '../../services/purchase_refresh.dart';
 import '../../services/firestore_rest.dart';
 import '../../services/exam_service.dart' hide fetchMyContentPurchases;
 import '../../widgets/premium_gate_dialog.dart';
@@ -22,6 +23,9 @@ class SubjectsScreen extends StatefulWidget {
 class _SubjectsScreenState extends State<SubjectsScreen> {
   late Future<_SubjectPage> _future;
   Map<String, dynamic>? _premiumSubject;
+  // A purchase succeeded while a checkout route was on top: re-read the
+  // premium/lock states on route return, no manual refresh needed.
+  bool _purchaseRefreshDirty = false;
 
   static const _colors = [
     Color(0xFF2563EB),
@@ -38,7 +42,32 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   @override
   void initState() {
     super.initState();
+    PurchaseRefreshBus.version.addListener(_onPurchaseRefresh);
     _future = _load();
+  }
+
+  void _onPurchaseRefresh() {
+    if (!mounted) return;
+    if (ModalRoute.of(context)?.isCurrent ?? false) {
+      setState(() => _future = _load());
+    } else {
+      _purchaseRefreshDirty = true;
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseRefreshDirty) {
+      _purchaseRefreshDirty = false;
+      setState(() => _future = _load());
+    }
+  }
+
+  @override
+  void dispose() {
+    PurchaseRefreshBus.version.removeListener(_onPurchaseRefresh);
+    super.dispose();
   }
 
   Future<_SubjectPage> _load() async {

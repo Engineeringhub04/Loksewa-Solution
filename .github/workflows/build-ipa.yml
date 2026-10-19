@@ -18,6 +18,12 @@ jobs:
       - name: Get dependencies
         run: flutter pub get
 
+      - name: Patch Khalti SDK header theme
+        # khalti_checkout_flutter's in-app webview AppBar hardcodes a light
+        # theme — the repo-side script themes it (idempotent; same as
+        # build_apk.sh and codemagic.yaml use).
+        run: python3 patches/apply_khalti_patch.py
+
       - name: Build unsigned iOS app bundle
         # NOTE: `flutter build ipa --no-codesign` SKIPS the .ipa export in
         # current Flutter, so we build the .app and package Payload/*.ipa

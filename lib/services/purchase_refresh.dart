@@ -8,8 +8,9 @@
 //   - Exam tab              → force-refreshes the section cache
 //   - Subject/Unit/Chapter screens → re-runs their page load
 //
-// Listeners refresh lazily (dirty flag + didChangeDependencies, or direct
-// re-fetch while off-screen) — no polling loops.
+// Listeners reload DIRECTLY in the addListener callback (initState), even
+// while their route is covered — the data is fresh the moment the user
+// returns. No dirty flags, no didChangeDependencies tricks, no polling loops.
 import 'package:flutter/foundation.dart';
 
 class PurchaseRefreshBus {

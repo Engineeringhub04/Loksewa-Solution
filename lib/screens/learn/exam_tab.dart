@@ -56,7 +56,6 @@ class _ExamTabState extends State<ExamTab> {
   bool _purchaseNavigating = false;
   // A purchase succeeded while a checkout route was on top: the model list
   // (and lock states) re-read on route return, via didChangeDependencies.
-  bool _purchaseRefreshDirty = false;
   Timer? _ticker;
   bool _shellLoaded = false;
   final Map<String, _SectionCache> _sectionCache = {};
@@ -70,7 +69,10 @@ class _ExamTabState extends State<ExamTab> {
   @override
   void initState() {
     super.initState();
-    PurchaseRefreshBus.version.addListener(_markPurchaseRefreshDirty);
+    // Problem 6: reload immediately on bump, even while this tab is
+    // covered — the data is fresh the moment the user returns. The old
+    // dirty-flag + didChangeDependencies path never fired on pop-back.
+    PurchaseRefreshBus.version.addListener(_onPurchaseRefresh);
     _load();
     // Re-resolve hidden -> countdown -> live -> ended every second from the
     // cache, without re-fetching.
@@ -101,22 +103,16 @@ class _ExamTabState extends State<ExamTab> {
     if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseNavigating) {
       _purchaseNavigating = false;
     }
-    // A purchase succeeded while we were covered: re-read the model list so
-    // premium/lock states update with no manual refresh.
-    if ((ModalRoute.of(context)?.isCurrent ?? false) &&
-        _purchaseRefreshDirty) {
-      _purchaseRefreshDirty = false;
-      _load();
-    }
   }
 
-  void _markPurchaseRefreshDirty() {
-    _purchaseRefreshDirty = true;
+  void _onPurchaseRefresh() {
+    if (!mounted) return;
+    _load();
   }
 
   @override
   void dispose() {
-    PurchaseRefreshBus.version.removeListener(_markPurchaseRefreshDirty);
+    PurchaseRefreshBus.version.removeListener(_onPurchaseRefresh);
     _ticker?.cancel();
     _scrollController.dispose();
     super.dispose();

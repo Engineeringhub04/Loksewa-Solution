@@ -23,9 +23,6 @@ class SubjectsScreen extends StatefulWidget {
 class _SubjectsScreenState extends State<SubjectsScreen> {
   late Future<_SubjectPage> _future;
   Map<String, dynamic>? _premiumSubject;
-  // A purchase succeeded while a checkout route was on top: re-read the
-  // premium/lock states on route return, no manual refresh needed.
-  bool _purchaseRefreshDirty = false;
 
   static const _colors = [
     Color(0xFF2563EB),
@@ -46,22 +43,12 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     _future = _load();
   }
 
+  // Problem 6: reload immediately on bump, even while covered — the data
+  // is fresh the moment the user returns. The old dirty-flag +
+  // didChangeDependencies path never fired reliably on pop-back.
   void _onPurchaseRefresh() {
     if (!mounted) return;
-    if (ModalRoute.of(context)?.isCurrent ?? false) {
       setState(() => _future = _load());
-    } else {
-      _purchaseRefreshDirty = true;
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseRefreshDirty) {
-      _purchaseRefreshDirty = false;
-      setState(() => _future = _load());
-    }
   }
 
   @override
@@ -318,13 +305,10 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                           setState(() => _premiumSubject = null);
                           final qs =
                               'contentId=${Uri.encodeComponent(sid)}&contentType=subject&contentSubjectId=${Uri.encodeComponent(sid)}';
-                          // Refresh on return so a just-submitted request
-                          // shows its Pending state immediately.
-                          context.push('/checkout?$qs').then((_) {
-                            if (mounted) {
-                              setState(() => _future = _load());
-                            }
-                          });
+                          // Problem 8: no reload on return — a real purchase
+                          // bumps PurchaseRefreshBus, which refreshes this
+                          // page by itself.
+                          context.push('/checkout?$qs');
                         },
                         confirmLabel: AppLanguage.tr(
                             'Go To Subscription Plan',

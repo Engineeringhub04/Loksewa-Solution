@@ -26,6 +26,11 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:khalti_checkout_flutter/khalti_checkout_flutter.dart';
+// Direct src import (the widget is not re-exported): we push the SDK's
+// own page ourselves so the route can carry our PopScope back-veto.
+// No SDK source is modified.
+// ignore: implementation_imports
+import 'package:khalti_checkout_flutter/src/widget/khalti_webview.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
@@ -673,7 +678,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
     final transactionUuid = '${initRes['transactionUuid'] ?? ''}';
     final testMode = initRes['testMode'] == true;
-    if (endpoint.isEmpty || fields.isEmpty || transactionUuid.isEmpty) {
+    // Worker-served auto-post form URL (GET /payments/esewa/form/:txnId):
+    // the webview loads this real URL (iOS-proven pattern). Absent on old
+    // workers → the screen falls back to the HTML-string auto-post form.
+    final formUrl = '${initRes['formUrl'] ?? ''}';
+    if (transactionUuid.isEmpty ||
+        (formUrl.isEmpty && (endpoint.isEmpty || fields.isEmpty))) {
       showToast(
           context,
           AppLanguage.tr('eSewa is not configured correctly. Please use QR Method.',
@@ -691,6 +701,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           transactionUuid: transactionUuid,
           gateway: 'esewa',
           purchaseType: purchaseType,
+          formUrl: formUrl.isEmpty ? null : formUrl,
         ),
       ),
     );
@@ -751,6 +762,33 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  /// Back pressed on the Khalti page (vetoed by its PopScope): confirm
+  /// first. On confirm, the pending payment is cancelled server-side
+  /// (zero trace, per the request-save rule) and the veto is lifted so
+  /// the page closes; the flow's watchdog then completes the pending
+  /// future as a user cancel (existing cancel path: worker cancel +
+  /// toast). On dismiss, the user stays on the payment page.
+  Future<void> _confirmKhaltiCancel({
+    required BuildContext routeContext,
+    required ValueNotifier<bool> popAllowed,
+    required String transactionUuid,
+    required String purchaseType,
+  }) async {
+    final confirmed = await showCancelPaymentConfirm(routeContext);
+    if (!confirmed) return;
+    // Fire-and-forget server cancel immediately (never block the UI),
+    // then lift the veto and close the page.
+    unawaited(GatewayPaymentService.cancelPayment(
+      gateway: 'khalti',
+      transactionUuid: transactionUuid,
+      purchaseType: purchaseType,
+    ));
+    popAllowed.value = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (routeContext.mounted) Navigator.of(routeContext).pop();
+    });
+  }
+
   /// Khalti: official SDK (in-app webview), then worker-side verification.
   Future<void> _runKhaltiFlow(
     _CheckoutData d,
@@ -779,6 +817,30 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     }
 
     final completer = Completer<Map<String, String>?>();
+    // This checkout page's route — the watchdog and closeKhaltiPage pop
+    // back to it.
+    final checkoutRoute = ModalRoute.of(context);
+    // Back-veto switch for the Khalti route pushed below: false during
+    // payment (every back path — app-bar back, Android system back, iOS
+    // swipe-back — is vetoed and routed through the cancel confirm), true
+    // only when the SDK flow itself finished and the page may close.
+    final khaltiPopAllowed = ValueNotifier<bool>(false);
+    BuildContext? khaltiRouteContext;
+    // Programmatic close after the veto has been lifted. The pop is
+    // deferred one frame so the PopScope rebuilds with canPop: true
+    // before the pop is attempted (an immediate pop would be vetoed).
+    // popUntil (not pop): if the cancel-confirm dialog is open on top,
+    // it is dismissed first and the page still closes.
+    void closeKhaltiPage() {
+      khaltiPopAllowed.value = true;
+      final rc = khaltiRouteContext;
+      final cr = checkoutRoute;
+      if (rc == null || cr == null) return;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!rc.mounted) return;
+        Navigator.of(rc).popUntil((route) => route == cr);
+      });
+    }
     // The Khalti SDK only auto-detects the payment return (firing onReturn
     // and its own verify → onPaymentResult) when the payment URL carries
     // return_url as a query parameter. Khalti's payment_url lacks it, so
@@ -798,8 +860,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           environment: testMode ? Environment.test : Environment.prod,
         ),
         onPaymentResult: (paymentResult, kh) {
-          // Complete BEFORE closing: close() pops the page, which fires
-          // kpgDisposed — completing first keeps the payment result.
+          // Complete BEFORE closing: the close pops the page — completing
+          // first keeps the payment result.
           final resultData = {
             'pidx': paymentResult.payload?.pidx ?? pidx,
             'transactionId': paymentResult.payload?.transactionId ?? '',
@@ -808,7 +870,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           if (!completer.isCompleted) {
             completer.complete(resultData);
           }
-          kh.close(context);
+          closeKhaltiPage();
         },
         onReturn: () {
           // Khalti redirected to our return_url in-app: the payment finished
@@ -831,7 +893,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
             'transactionId': '',
             'status': 'sdk_fallback',
           });
-          kh.close(context);
+          closeKhaltiPage();
         },
       );
     } catch (_) {
@@ -842,15 +904,50 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 'Khalti खोल्न सकिएन। कृपया पुनः प्रयास गर्नुहोस्।'),
             ToastVariant.error);
       }
+      khaltiPopAllowed.dispose();
       return;
     }
-    if (!mounted) return;
-    khalti.open(context);
+    if (!mounted) {
+      khaltiPopAllowed.dispose();
+      return;
+    }
+    // NOTE: intentionally NOT khalti.open(context). The SDK pushes its
+    // page without a veto-able PopScope, so an accidental back would
+    // cancel the payment with no confirm. We push the SDK's own page
+    // widget ourselves (identical content) wrapped in a PopScope that
+    // vetoes every back path during payment — app-bar back, Android
+    // system back, and the iOS edge-swipe-back (the gesture is disabled
+    // while a PopScope veto is active). Back always means the cancel
+    // confirm; the webview's internal history never hijacks it.
+    // Not awaited: the watchdog below must run while the page is up.
+    unawaited(Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (routeContext) {
+          khaltiRouteContext = routeContext;
+          return ValueListenableBuilder<bool>(
+            valueListenable: khaltiPopAllowed,
+            builder: (_, allowed, __) => PopScope(
+              canPop: allowed,
+              onPopInvokedWithResult: (didPop, _) {
+                if (!didPop) {
+                  _confirmKhaltiCancel(
+                    routeContext: routeContext,
+                    popAllowed: khaltiPopAllowed,
+                    transactionUuid: transactionUuid,
+                    purchaseType: purchaseType,
+                  );
+                }
+              },
+              child: KhaltiWebView(khalti: khalti),
+            ),
+          );
+        },
+      ),
+    ));
     // Watchdog: if the Khalti page is dismissed without the SDK firing
     // kpgDisposed (seen on some devices), the completer would hang forever
     // and the pay button would spin forever. When our route is current
     // again but nothing completed, treat it as a user cancel.
-    final checkoutRoute = ModalRoute.of(context);
     Timer? watchdog;
     watchdog = Timer.periodic(const Duration(seconds: 1), (_) {
       if (completer.isCompleted) {
@@ -863,6 +960,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     });
     final res = await completer.future;
     watchdog.cancel();
+    khaltiPopAllowed.dispose();
     if (!mounted) return;
     if (res == null) {
       // User backed out: fire-and-forget server cancel (never block the UI

@@ -42,7 +42,7 @@ class _SubscriptionExamPurchaseScreenState
   ExamPurchaseRecord? _record;
   bool _loading = true;
   Object? _error;
-  String _title = 'Exam Details';
+  String _title = 'Exam Purchase';
 
   final _refCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
@@ -50,6 +50,11 @@ class _SubscriptionExamPurchaseScreenState
   Uint8List? _screenshotBytes; // newly picked, not yet uploaded
   bool _editing = false;
   bool _saving = false;
+  // Problem 7: original values snapshotted when edit mode is entered — the
+  // Save button stays disabled until the form actually differs from them.
+  String _origRef = '';
+  String _origMsg = '';
+  String? _origScreenshotUrl;
   int _nowMs = DateTime.now().millisecondsSinceEpoch;
   Timer? _ticker;
 
@@ -58,6 +63,10 @@ class _SubscriptionExamPurchaseScreenState
   @override
   void initState() {
     super.initState();
+    // Problem 7: re-evaluate the Save button's enabled state on every
+    // keystroke while editing.
+    _refCtrl.addListener(_onEditFieldChanged);
+    _msgCtrl.addListener(_onEditFieldChanged);
     _load();
     // React ticks `now` every second so the remaining edit time counts down
     // live on screen.
@@ -72,9 +81,33 @@ class _SubscriptionExamPurchaseScreenState
   @override
   void dispose() {
     _ticker?.cancel();
+    _refCtrl.removeListener(_onEditFieldChanged);
+    _msgCtrl.removeListener(_onEditFieldChanged);
     _refCtrl.dispose();
     _msgCtrl.dispose();
     super.dispose();
+  }
+
+  /// True once the edit form differs from the values it opened with.
+  bool get _editDirty {
+    if (!_editing) return false;
+    if (_refCtrl.text.trim() != _origRef) return true;
+    if (_msgCtrl.text.trim() != _origMsg) return true;
+    if (_screenshotBytes != null) return true;
+    if ((_screenshotUrl ?? '') != (_origScreenshotUrl ?? '')) return true;
+    return false;
+  }
+
+  void _onEditFieldChanged() {
+    if (_editing && mounted) setState(() {});
+  }
+
+  /// Enter edit mode, snapshotting the current values for the dirty check.
+  void _enterEdit() {
+    _origRef = _refCtrl.text.trim();
+    _origMsg = _msgCtrl.text.trim();
+    _origScreenshotUrl = _screenshotUrl;
+    setState(() => _editing = true);
   }
 
   Future<void> _load() async {
@@ -231,8 +264,7 @@ class _SubscriptionExamPurchaseScreenState
                                 color: Colors.white),
                             const SizedBox(height: 12),
                             Text(
-                              _t('Loading Subscription...',
-                                  'सदस्यता लोड हुँदैछ...'),
+                              _t('Saving...', 'सेभ हुँदैछ...'),
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w600),
@@ -254,9 +286,9 @@ class _SubscriptionExamPurchaseScreenState
     if (_loading) {
       return PreloadingWidget(
         tinted: false,
-        label: _t('Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
-        hint: _t('Fetching your purchase history',
-            'खरिद इतिहास ल्याउँदै'),
+        label: _t('Loading Exam Purchase...', 'परीक्षा खरिद लोड हुँदैछ...'),
+        hint: _t('Fetching your purchase details',
+            'तपाईंको खरिद विवरण ल्याउँदैछ'),
       );
     }
     if (_error != null || _record == null) {
@@ -327,11 +359,13 @@ class _SubscriptionExamPurchaseScreenState
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
+                // Problem 7: Save stays disabled until the form actually
+                // differs from the values it opened with.
                 onPressed: !canEdit
                     ? null
                     : _editing
-                        ? _save
-                        : () => setState(() => _editing = true),
+                        ? ((_editDirty && !_saving) ? _save : null)
+                        : _enterEdit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.navy,
                   foregroundColor: Colors.white,

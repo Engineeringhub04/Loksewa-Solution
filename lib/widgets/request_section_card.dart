@@ -49,10 +49,13 @@ class RequestSectionCard extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
+                // Section header: a touch larger + bold so it reads clearly
+                // distinct from the timeline/content rows below it.
                 child: Text(
                   title,
                   style: const TextStyle(
-                      fontSize: ExpoType.body, fontWeight: FontWeight.bold),
+                      fontSize: ExpoType.bodyLarge,
+                      fontWeight: FontWeight.bold),
                 ),
               ),
               if (trailing != null) trailing!,

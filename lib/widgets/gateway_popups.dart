@@ -10,8 +10,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 
 import 'app_modal_shell.dart';
+import 'popup_action_button.dart';
 
 const _navy = Color(0xFF0F172A);
 const _blue = Color(0xFF2563EB);
@@ -442,4 +444,76 @@ String gatewayFailureMessage(String? reason) {
         'भुक्तानी प्रमाणीकरण असफल भयो। कृपया पुनः प्रयास गर्नुहोस् वा admin लाई सम्पर्क गर्नुहोस्।',
       );
   }
+}
+
+/// "Cancel payment?" confirm — shown when the user backs out of a gateway
+/// (eSewa/Khalti) page: app-bar back, Android system back, or the iOS
+/// swipe-back (all vetoed by the page's PopScope). Returns true when the
+/// user confirms the cancel; false/null on dismiss.
+///
+/// The caller owns the cancel itself (worker /payments/cancel → pop).
+/// Shared AppModalShell design, EN+NE strings.
+Future<bool> showCancelPaymentConfirm(BuildContext context) async {
+  final confirmed = await AppModalShell.show<bool>(
+    context: context,
+    builder: (dialogContext) => AppModalShell(
+      accent: AppColors.navy,
+      accentMid: const Color(0xFF1E3A8A),
+      accentLight: const Color(0xFFBFDBFE),
+      tagColor: AppColors.navy,
+      tagLabel: AppLanguage.tr('PAYMENT', 'भुक्तानी'),
+      onClose: () => Navigator.of(dialogContext).pop(false),
+      icon: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: AppColors.navy,
+        ),
+        child: const Icon(Icons.money_off_rounded,
+            size: 28, color: Colors.white),
+      ),
+      title: Text(
+        AppLanguage.tr('Cancel payment?', 'भुक्तानी रद्द गर्ने?'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: Color(0xFF0F172A),
+          decoration: TextDecoration.none,
+        ),
+      ),
+      body: Text(
+        AppLanguage.tr(
+          'If you go back now, this payment is cancelled and its payment record is removed completely.',
+          'अहिले फर्कनुभयो भने यो भुक्तानी रद्द हुन्छ र यसको भुक्तानी रेकर्ड पूर्ण रूपमा हट्छ।',
+        ),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+            fontSize: 13,
+            color: Color(0xFF475569),
+            decoration: TextDecoration.none),
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Stay', 'रहनुहोस्'),
+              onTap: () => Navigator.of(dialogContext).pop(false),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: PopupActionButton(
+              label: AppLanguage.tr('Cancel Payment', 'भुक्तानी रद्द गर्नुहोस्'),
+              backgroundColor: const Color(0xFFDC2626),
+              onTap: () => Navigator.of(dialogContext).pop(true),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+  return confirmed == true;
 }

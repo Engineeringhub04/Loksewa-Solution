@@ -42,7 +42,7 @@ class _ContentPurchaseDetailScreenState
   ContentPurchaseRecord? _record;
   bool _loading = true;
   Object? _error;
-  String _title = 'Content Purchase';
+  String _title = 'Subject Purchase';
 
   final _refCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
@@ -50,17 +50,28 @@ class _ContentPurchaseDetailScreenState
   Uint8List? _screenshotBytes;
   bool _editing = false;
   bool _saving = false;
+  // Problem 7: original values snapshotted when edit mode is entered — the
+  // Save button stays disabled until the form actually differs from them.
+  String _origRef = '';
+  String _origMsg = '';
+  String? _origScreenshotUrl;
   int _nowMs = DateTime.now().millisecondsSinceEpoch;
   Timer? _ticker;
   // Best-effort display names for the "Subject - Unit - Chapter" title.
   String? _subjectName;
   String? _unitName;
+  // The item's own resolved name (when the stored contentTitle is a raw ID).
+  String? _ownName;
 
   String _t(String en, String ne) => AppLanguage.tr(en, ne);
 
   @override
   void initState() {
     super.initState();
+    // Problem 7: re-evaluate the Save button's enabled state on every
+    // keystroke while editing.
+    _refCtrl.addListener(_onEditFieldChanged);
+    _msgCtrl.addListener(_onEditFieldChanged);
     _load();
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -73,9 +84,33 @@ class _ContentPurchaseDetailScreenState
   @override
   void dispose() {
     _ticker?.cancel();
+    _refCtrl.removeListener(_onEditFieldChanged);
+    _msgCtrl.removeListener(_onEditFieldChanged);
     _refCtrl.dispose();
     _msgCtrl.dispose();
     super.dispose();
+  }
+
+  /// True once the edit form differs from the values it opened with.
+  bool get _editDirty {
+    if (!_editing) return false;
+    if (_refCtrl.text.trim() != _origRef) return true;
+    if (_msgCtrl.text.trim() != _origMsg) return true;
+    if (_screenshotBytes != null) return true;
+    if ((_screenshotUrl ?? '') != (_origScreenshotUrl ?? '')) return true;
+    return false;
+  }
+
+  void _onEditFieldChanged() {
+    if (_editing && mounted) setState(() {});
+  }
+
+  /// Enter edit mode, snapshotting the current values for the dirty check.
+  void _enterEdit() {
+    _origRef = _refCtrl.text.trim();
+    _origMsg = _msgCtrl.text.trim();
+    _origScreenshotUrl = _screenshotUrl;
+    setState(() => _editing = true);
   }
 
   String _contentTitle(ContentPurchaseRecord r) {
@@ -87,49 +122,118 @@ class _ContentPurchaseDetailScreenState
 
   /// "Subject - Chapter" / "Subject - Unit - Chapter" display title.
   /// Subject/unit names are enriched best-effort in _load; falls back to the
-  /// item's own title when the names can't be resolved.
+  /// item's own title when the names can't be resolved — never a raw doc ID.
   String _displayTitle(ContentPurchaseRecord r) {
-    final own = _contentTitle(r);
+    var own = _contentTitle(r);
+    if ((_ownName ?? '').isNotEmpty) own = _ownName!;
     if (r.contentType == 'subject') {
-      return own.isNotEmpty ? own : _t('Subject', 'विषय');
+      if (own.isEmpty) return _t('Subject', 'विषय');
+      return _looksLikeDocId(own) ? _cleanIdName(own) : own;
     }
     final parts = <String>[];
     if ((_subjectName ?? '').isNotEmpty) parts.add(_subjectName!);
     if (r.contentType == 'chapter' && (_unitName ?? '').isNotEmpty) {
       parts.add(_unitName!);
     }
-    parts.add(own.isNotEmpty ? own : _t('Content Purchase', 'सामग्री खरिद'));
+    if (own.isNotEmpty) {
+      parts.add(_looksLikeDocId(own) ? _cleanIdName(own) : own);
+    } else {
+      parts.add(_t('Subject Purchase', 'विषय खरिद'));
+    }
     return parts.join(' - ');
   }
 
-  /// Best-effort: resolve subject/unit display names for the title.
-  /// Fail-soft — the item title alone is used when lookups fail.
+  /// Best-effort: resolve subject/unit/chapter display names for the title.
+  /// Reads the REAL production fields: the subject detail collections use
+  /// `name`/`nameNe` (NOT `title` — that was the raw-doc-ID bug). Also
+  /// resolves the item's own name from its detail doc when the stored
+  /// contentTitle is itself a raw doc ID (older gateway purchases).
+  /// Fail-soft — falls back to a cleaned human-readable name, never a raw ID.
   Future<void> _enrichNames(ContentPurchaseRecord record) async {
     var changed = false;
+
+    /// Language-aware name pick from a detail doc.
+    String? docName(Map<String, dynamic>? doc) {
+      if (doc == null) return null;
+      final ne = doc['nameNe']?.toString().trim();
+      final en = doc['name']?.toString().trim();
+      final t = doc['title']?.toString().trim();
+      String? pick;
+      if (AppLanguage.isNepali) {
+        pick = (ne != null && ne.isNotEmpty) ? ne : en;
+      } else {
+        pick = (en != null && en.isNotEmpty) ? en : ne;
+      }
+      if (pick == null || pick.isEmpty) pick = t;
+      return (pick != null && pick.isNotEmpty) ? pick : null;
+    }
+
+    /// Detail-doc path for the purchased item itself.
+    String? itemDocPath() {
+      final id = record.contentId;
+      if (id.isEmpty) return null;
+      switch (record.contentType) {
+        case 'subject':
+          return 'app_subjects_details/$id';
+        case 'unit':
+          return 'app_subjects_units_details/$id';
+        case 'chapter':
+        default:
+          return (record.unitId ?? '').isNotEmpty
+              ? 'app_subjects_unit-chapters_details/$id'
+              : 'app_subjects_chapter_details/$id';
+      }
+    }
+
     try {
+      // Subject name (for chapter/unit items).
       if (record.contentType != 'subject' && record.subjectId.isNotEmpty) {
         final doc =
             await ExamRest.getDoc('app_subjects_details/${record.subjectId}');
-        final name = doc?['title']?.toString();
-        if (name != null && name.isNotEmpty) {
+        final name = docName(doc);
+        if (name != null) {
           _subjectName = name;
           changed = true;
         }
       }
+      // Unit name (for chapters inside a unit).
       if (record.contentType == 'chapter' &&
           (record.unitId ?? '').isNotEmpty) {
         final doc = await ExamRest.getDoc(
             'app_subjects_units_details/${record.unitId}');
-        final name = doc?['title']?.toString();
-        if (name != null && name.isNotEmpty) {
+        final name = docName(doc);
+        if (name != null) {
           _unitName = name;
           changed = true;
+        }
+      }
+      // The item's own name — only when the stored title is a raw doc ID.
+      final own = _contentTitle(record);
+      if (_looksLikeDocId(own)) {
+        final path = itemDocPath();
+        if (path != null) {
+          final doc = await ExamRest.getDoc(path);
+          final name = docName(doc);
+          if (name != null) {
+            _ownName = name;
+            changed = true;
+          }
         }
       }
     } catch (_) {}
     if (changed && mounted) {
       setState(() => _title = _displayTitle(record));
     }
+  }
+
+  /// A raw Firestore doc ID (segments joined by __) — never show these.
+  bool _looksLikeDocId(String s) => s.contains('__');
+
+  /// Fail-soft: turn a raw doc ID into something human-readable.
+  String _cleanIdName(String s) {
+    if (!_looksLikeDocId(s)) return s;
+    final last = s.split('__').lastWhere((p) => p.isNotEmpty, orElse: () => '');
+    return last.replaceAll('-', ' ').replaceAll('_', ' ').trim();
   }
 
   Future<void> _load() async {
@@ -146,9 +250,10 @@ class _ContentPurchaseDetailScreenState
         _loading = false;
         _title = title.isNotEmpty
             ? title
-            : _t('Content Purchase', 'सामग्री खरिद');
+            : _t('Subject Purchase', 'विषय खरिद');
         _subjectName = null;
         _unitName = null;
+        _ownName = null;
         if (!_editing) {
           _refCtrl.text = record?.transactionRef ?? '';
           _msgCtrl.text = record?.customerMessage ?? '';
@@ -276,9 +381,9 @@ class _ContentPurchaseDetailScreenState
             child: Stack(
               children: [
                 _buildBody(palette),
-                // React's PageLoaderOverlay — visible on initial load and
-                // while the save is in flight.
-                if (_loading || _saving)
+                // Single loading state: the body shows PreloadingWidget while
+                // loading; this overlay is ONLY for the in-flight save.
+                if (_saving)
                   Positioned.fill(
                     child: Container(
                       color: Colors.black.withValues(alpha: 0.45),
@@ -290,8 +395,7 @@ class _ContentPurchaseDetailScreenState
                                 color: Colors.white),
                             const SizedBox(height: 12),
                             Text(
-                              _t('Loading Subscription...',
-                                  'सदस्यता लोड हुँदैछ...'),
+                              _t('Saving...', 'सेभ हुँदैछ...'),
                               style: const TextStyle(
                                   color: Colors.white,
                                   fontWeight: FontWeight.w600),
@@ -313,9 +417,9 @@ class _ContentPurchaseDetailScreenState
     if (_loading) {
       return PreloadingWidget(
         tinted: false,
-        label: _t('Loading Subscription...', 'सदस्यता लोड हुँदैछ...'),
-        hint: _t('Fetching your purchase history',
-            'खरिद इतिहास ल्याउँदै'),
+        label: _t('Loading Subject Purchase...', 'विषय खरिद लोड हुँदैछ...'),
+        hint: _t('Fetching your purchase details',
+            'तपाईंको खरिद विवरण ल्याउँदैछ'),
       );
     }
     if (_error != null || _record == null) {
@@ -384,11 +488,13 @@ class _ContentPurchaseDetailScreenState
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
+                // Problem 7: Save stays disabled until the form actually
+                // differs from the values it opened with.
                 onPressed: !canEdit
                     ? null
                     : _editing
-                        ? _save
-                        : () => setState(() => _editing = true),
+                        ? ((_editDirty && !_saving) ? _save : null)
+                        : _enterEdit,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.navy,
                   foregroundColor: Colors.white,

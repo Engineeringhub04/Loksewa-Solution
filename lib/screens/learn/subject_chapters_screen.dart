@@ -31,7 +31,6 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
 
   // A purchase succeeded while a checkout route was on top: re-read the
   // premium/lock states on route return, no manual refresh needed.
-  bool _purchaseRefreshDirty = false;
   Map<String, dynamic>? _sheetChapter;
 
   /// Cached page data so the mode sheet / premium gate overlays can render
@@ -71,22 +70,12 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
     super.dispose();
   }
 
+  // Problem 6: reload immediately on bump, even while covered — the data
+  // is fresh the moment the user returns. The old dirty-flag +
+  // didChangeDependencies path never fired reliably on pop-back.
   void _onPurchaseRefresh() {
     if (!mounted) return;
-    if (ModalRoute.of(context)?.isCurrent ?? false) {
       _reload();
-    } else {
-      _purchaseRefreshDirty = true;
-    }
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if ((ModalRoute.of(context)?.isCurrent ?? false) && _purchaseRefreshDirty) {
-      _purchaseRefreshDirty = false;
-      _reload();
-    }
   }
 
   void _reload() {
@@ -613,10 +602,9 @@ class _SubjectChaptersScreenState extends State<SubjectChaptersScreen>
         setState(() => _premiumChapter = null);
         final qs =
             'contentId=${Uri.encodeComponent(chapterId)}&contentType=chapter&contentSubjectId=${Uri.encodeComponent(widget.subjectId)}';
-        // Refresh on return so a just-submitted request shows Pending.
-        context.push('/checkout?$qs').then((_) {
-          if (mounted) _reload();
-        });
+        // Problem 8: no reload on return — a real purchase bumps
+        // PurchaseRefreshBus, which refreshes this page by itself.
+        context.push('/checkout?$qs');
       },
       confirmLabel: AppLanguage.tr(
           'Go To Subscription Plan', 'सदस्यता योजना खोल्नुहोस्'),

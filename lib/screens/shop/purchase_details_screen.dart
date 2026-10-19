@@ -525,9 +525,9 @@ class _TrackFilter extends StatelessWidget {
   Widget build(BuildContext context) {
     final items = [
       _TrackItemData('all', _t('All', 'सबै'), allCount, Icons.layers_outlined),
-      _TrackItemData('exam', _t('Exam Details', 'परीक्षा विवरण'), examCount,
+      _TrackItemData('exam', _t('Exam Purchase', 'परीक्षा खरिद'), examCount,
           Icons.description_outlined),
-      _TrackItemData('content', _t('Content Details', 'सामग्री विवरण'),
+      _TrackItemData('content', _t('Subject Purchase', 'विषय खरिद'),
           contentCount, Icons.book_outlined),
     ];
     return SingleChildScrollView(
@@ -925,7 +925,7 @@ class _ContentPurchaseCard extends StatelessWidget {
     return _PurchaseCardShell(
       icon: Icons.book_outlined,
       tone: palette.accent,
-      title: title.isNotEmpty ? title : _t('Content Purchase', 'सामग्री खरिद'),
+      title: title.isNotEmpty ? title : _t('Subject Purchase', 'विषय खरिद'),
       meta: '',
       badge: StatusPill(
         label: typeLabel,

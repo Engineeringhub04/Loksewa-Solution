@@ -228,7 +228,21 @@ void main() {
     await _settle(tester);
     expect(find.text('Transaction ID / Reference'), findsOneWidget);
 
-    // Save with an empty reference is rejected; the form stays open.
+    // Problem 7: Save stays disabled until the form actually differs from
+    // the record's values.
+    var saveBtn = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Save Request'));
+    expect(saveBtn.onPressed, isNull);
+
+    // Fill the reference (no screenshot yet): Save enables, but the save
+    // itself is rejected by validation; the form stays open.
+    await tester.enterText(
+        find.widgetWithText(TextField, 'Transaction ID / Reference').first,
+        'TXN999');
+    await _settle(tester);
+    saveBtn = tester.widget<ElevatedButton>(
+        find.widgetWithText(ElevatedButton, 'Save Request'));
+    expect(saveBtn.onPressed, isNotNull);
     await tester.tap(find.text('Save Request'));
     await _settle(tester);
     expect(
@@ -237,16 +251,13 @@ void main() {
         findsOneWidget);
     expect(find.text('Transaction ID / Reference'), findsOneWidget);
 
-    // Pick a screenshot, fill the reference, save. The pick target is the
+    // Pick a screenshot, save. The pick target is the
     // outlined button (the form field label shares the same text).
     await tester.tap(
         find.widgetWithText(OutlinedButton, 'Payment Screenshot'));
     await _settle(tester);
     expect(find.text('Edit'), findsOneWidget); // pick button relabels
 
-    await tester.enterText(
-        find.widgetWithText(TextField, 'Transaction ID / Reference').first,
-        'TXN999');
     await tester.tap(find.text('Save Request'));
     await _settle(tester);
 

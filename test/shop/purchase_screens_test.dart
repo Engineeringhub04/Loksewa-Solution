@@ -30,8 +30,8 @@ void main() {
     expect(find.text('No exam purchase requests yet.'), findsOneWidget);
     // Track filter carries counts.
     expect(find.textContaining('All (0)'), findsOneWidget);
-    expect(find.textContaining('Exam Details (0)'), findsOneWidget);
-    expect(find.textContaining('Content Details (0)'), findsOneWidget);
+    expect(find.textContaining('Exam Purchase (0)'), findsOneWidget);
+    expect(find.textContaining('Subject Purchase (0)'), findsOneWidget);
   });
 
   testWidgets('exam purchase detail errors and offers retry',

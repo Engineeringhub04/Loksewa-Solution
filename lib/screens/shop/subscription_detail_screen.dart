@@ -28,6 +28,8 @@ import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/request_timeline.dart';
+import '../../widgets/request_info_row.dart';
+import '../../widgets/request_section_card.dart';
 import '../../widgets/payment_problem_section.dart';
 
 const int _editWindowMs = 30 * 60 * 1000;
@@ -81,6 +83,12 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   String _screenshotUri = '';
   Uint8List? _pickedBytes;
 
+  /// Problem 7: original values snapshotted when edit mode is entered — the
+  /// Save button stays disabled until the form actually differs from them.
+  String _origRef = '';
+  String _origMsg = '';
+  String _origScreenshotUri = '';
+
   Timer? _timer;
   double _barPercent = 100;
 
@@ -96,14 +104,42 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
   @override
   void initState() {
     super.initState();
+    // Problem 7: re-evaluate the Save button's enabled state on every
+    // keystroke while editing.
+    _refCtrl.addListener(_onEditFieldChanged);
+    _msgCtrl.addListener(_onEditFieldChanged);
     _refresh();
     _startLiveUpdates();
+  }
+
+  /// True once the edit form differs from the values it opened with.
+  bool get _editDirty {
+    if (!_editing) return false;
+    if (_refCtrl.text.trim() != _origRef) return true;
+    if (_msgCtrl.text.trim() != _origMsg) return true;
+    if (_pickedBytes != null) return true;
+    if (_screenshotUri != _origScreenshotUri) return true;
+    return false;
+  }
+
+  void _onEditFieldChanged() {
+    if (_editing && mounted) setState(() {});
+  }
+
+  /// Enter edit mode, snapshotting the current values for the dirty check.
+  void _enterEdit() {
+    _origRef = _refCtrl.text.trim();
+    _origMsg = _msgCtrl.text.trim();
+    _origScreenshotUri = _screenshotUri;
+    setState(() => _editing = true);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
     _liveTimer?.cancel();
+    _refCtrl.removeListener(_onEditFieldChanged);
+    _msgCtrl.removeListener(_onEditFieldChanged);
     _refCtrl.dispose();
     _msgCtrl.dispose();
     super.dispose();
@@ -472,8 +508,11 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
                 canEdit: _canEdit,
                 editing: _editing,
                 saving: _saving,
+                // Problem 7: Save stays disabled until the form differs from
+                // the values it opened with.
+                dirty: _editDirty,
                 onToggle: () =>
-                    _editing ? _saveEdits() : setState(() => _editing = true),
+                    _editing ? _saveEdits() : _enterEdit(),
               ),
             ),
           ],
@@ -508,7 +547,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           const SizedBox(height: ExpoSpacing.md),
           SyllabusEntrance(
             delayMs: 240,
-            child: _SectionCard(
+            child: RequestSectionCard(
               icon: Icons.commit_outlined,
               tone: ExpoPalette.of(context).info,
               title: AppLanguage.tr('Request Timeline', 'अनुरोधको क्रम'),
@@ -543,7 +582,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
               delayMs: 280,
-              child: _SectionCard(
+              child: RequestSectionCard(
                 icon: Icons.error_outline,
                 tone: ExpoPalette.of(context).danger,
                 title: AppLanguage.tr('Payment Problem', 'भुक्तानी समस्या'),
@@ -559,7 +598,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
               delayMs: 280,
-              child: _SectionCard(
+              child: RequestSectionCard(
                 icon: Icons.info_outline,
                 tone: ExpoPalette.of(context).info,
                 title: AppLanguage.tr('Payment Not Completed',
@@ -581,7 +620,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
           const SizedBox(height: ExpoSpacing.md),
           SyllabusEntrance(
             delayMs: 300,
-            child: _SectionCard(
+            child: RequestSectionCard(
               icon: Icons.receipt_long_outlined,
               tone: ExpoPalette.of(context).primary,
               title: AppLanguage.tr('Payment Summary', 'भुक्तानी विवरण'),
@@ -592,7 +631,7 @@ class _SubscriptionDetailScreenState extends State<SubscriptionDetailScreen> {
             const SizedBox(height: ExpoSpacing.md),
             SyllabusEntrance(
               delayMs: 360,
-              child: _SectionCard(
+              child: RequestSectionCard(
                 icon: Icons.image_outlined,
                 tone: ExpoPalette.of(context).accent,
                 title: AppLanguage.tr('Payment Receipt', 'भुक्तानी रसिद'),
@@ -831,6 +870,7 @@ class _EditWindowBar extends StatefulWidget {
   final bool canEdit;
   final bool editing;
   final bool saving;
+  final bool dirty;
   final VoidCallback onToggle;
   const _EditWindowBar({
     required this.remainingMs,
@@ -838,6 +878,7 @@ class _EditWindowBar extends StatefulWidget {
     required this.canEdit,
     required this.editing,
     required this.saving,
+    required this.dirty,
     required this.onToggle,
   });
 
@@ -966,8 +1007,11 @@ class _EditWindowBarState extends State<_EditWindowBar> {
           ],
           const SizedBox(height: ExpoSpacing.sm),
           ElevatedButton.icon(
-            onPressed:
-                (!widget.canEdit || widget.saving) ? null : widget.onToggle,
+            onPressed: (!widget.canEdit ||
+                    widget.saving ||
+                    (widget.editing && !widget.dirty))
+                ? null
+                : widget.onToggle,
             style: ElevatedButton.styleFrom(
               backgroundColor: pal.primary,
               foregroundColor: Colors.white,
@@ -1449,13 +1493,13 @@ class _PaymentSummary extends StatelessWidget {
     final pal = ExpoPalette.of(context);
     return Column(
       children: [
-        _InfoRow(
+        RequestInfoRow(
           icon: Icons.diamond_outlined,
           label: AppLanguage.tr('Plan', 'योजना'),
           value: Text(record.planName,
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
-        _InfoRow(
+        RequestInfoRow(
           icon: Icons.payments_outlined,
           label: AppLanguage.tr('Amount', 'रकम'),
           tone: pal.success,
@@ -1463,20 +1507,20 @@ class _PaymentSummary extends StatelessWidget {
               style:
                   TextStyle(fontWeight: FontWeight.w600, color: pal.success)),
         ),
-        _InfoRow(
+        RequestInfoRow(
           icon: Icons.credit_card_outlined,
           label: AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
           value: Text(record.method.toUpperCase(),
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
         // v1.0.110: where the payment was made — "App - eSewa" etc.
-        _InfoRow(
+        RequestInfoRow(
           icon: Icons.smartphone_outlined,
           label: AppLanguage.tr('Platform', 'प्लेटफर्म'),
           value: Text(record.platformLabel,
               style: const TextStyle(fontWeight: FontWeight.w600)),
         ),
-        _InfoRow(
+        RequestInfoRow(
           // Gateway payments never involve a QR — use a reference icon.
           icon: record.isGateway ? Icons.link_outlined : Icons.qr_code_outlined,
           label: AppLanguage.tr('Reference', 'सन्दर्भ'),
@@ -1484,7 +1528,7 @@ class _PaymentSummary extends StatelessWidget {
           last: record.couponCode == null && record.customerMessage == null,
         ),
         if (record.couponCode != null)
-          _InfoRow(
+          RequestInfoRow(
             icon: Icons.local_offer_outlined,
             label:
                 AppLanguage.tr('Coupon Code (optional)', 'कुपन कोड (वैकल्पिक)'),
@@ -1496,7 +1540,7 @@ class _PaymentSummary extends StatelessWidget {
             last: record.customerMessage == null,
           ),
         if (record.customerMessage != null)
-          _InfoRow(
+          RequestInfoRow(
             icon: Icons.chat_bubble_outline,
             label: AppLanguage.tr('Message (optional)', 'सन्देश (वैकल्पिक)'),
             stacked: true,
@@ -1504,77 +1548,6 @@ class _PaymentSummary extends StatelessWidget {
             value: Text(record.customerMessage!),
           ),
       ],
-    );
-  }
-}
-
-class _InfoRow extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Widget value;
-  final Color? tone;
-  final bool stacked;
-  final bool last;
-  const _InfoRow({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.tone,
-    this.stacked = false,
-    this.last = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    final iconColor = tone ?? pal.textSecondary;
-    final content = stacked
-        ? Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label,
-                  style: TextStyle(
-                      fontSize: ExpoType.caption, color: pal.textSecondary)),
-              const SizedBox(height: 4),
-              value,
-            ],
-          )
-        : Row(
-            children: [
-              Expanded(
-                child: Text(label,
-                    style: TextStyle(
-                        fontSize: ExpoType.bodySmall,
-                        color: pal.textSecondary)),
-              ),
-              Flexible(
-                child: DefaultTextStyle(
-                  style: TextStyle(
-                      fontSize: ExpoType.bodySmall, color: pal.textPrimary),
-                  textAlign: TextAlign.end,
-                  child: value,
-                ),
-              ),
-            ],
-          );
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(
-            color: last ? Colors.transparent : pal.divider,
-            width: 0.5,
-          ),
-        ),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 16, color: iconColor),
-          const SizedBox(width: 10),
-          Expanded(child: content),
-        ],
-      ),
     );
   }
 }
@@ -1737,62 +1710,6 @@ class _SubscriptionProblemRecord implements PaymentProblemRecord {
 
 /// Premium section card: tone-tinted icon box + title (+ optional trailing)
 /// over a bordered surface. Mirrors SectionCard.
-class _SectionCard extends StatelessWidget {  final IconData icon;
-  final Color tone;
-  final String title;
-  final Widget? trailing;
-  final Widget child;
-  const _SectionCard({
-    required this.icon,
-    required this.tone,
-    required this.title,
-    this.trailing,
-    required this.child,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final pal = ExpoPalette.of(context);
-    return Container(
-      decoration: BoxDecoration(
-        color: pal.surface,
-        border: Border.all(color: pal.border),
-        borderRadius: BorderRadius.circular(ExpoRadius.lg),
-      ),
-      padding: const EdgeInsets.all(ExpoSpacing.md),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: tone.withValues(alpha: 0x1F / 0xFF),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                alignment: Alignment.center,
-                child: Icon(icon, size: 18, color: tone),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                      fontSize: ExpoType.body, fontWeight: FontWeight.bold),
-                ),
-              ),
-              if (trailing != null) trailing!,
-            ],
-          ),
-          const SizedBox(height: ExpoSpacing.md),
-          child,
-        ],
-      ),
-    );
-  }
-}
 
 class _LoadError extends StatelessWidget {
   final VoidCallback onRetry;

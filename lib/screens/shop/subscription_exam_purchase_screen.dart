@@ -714,34 +714,27 @@ class _SubscriptionExamPurchaseScreenState
                 RequestInfoRow(
                   icon: Icons.description_outlined,
                   label: _t('Exam', 'परीक्षा'),
-                  value: Text(examName,
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                  value: Text(examName),
                 ),
                 RequestInfoRow(
                   icon: Icons.payments_outlined,
                   label: _t('Amount', 'रकम'),
                   tone: palette.success,
                   value: Text('Rs. ${requestMoney(record.amount)}',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: palette.success)),
+                      style: TextStyle(color: palette.success)),
                 ),
                 RequestInfoRow(
                   icon: Icons.credit_card_outlined,
                   label: _t('Payment Method', 'भुक्तानी विधि'),
                   value: Text(record.method.toUpperCase(),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                      style: TextStyle(
+                          color: requestMethodColor(context, record.method))),
                 ),
                 RequestInfoRow(
                   icon: Icons.smartphone_outlined,
                   label: _t('Platform', 'प्लेटफर्म'),
-                  value: Text(
-                      requestPlatformLabel(
-                          record.platform, record.method),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                  value: Text(requestPlatformLabel(
+                      record.platform, record.method)),
                 ),
                 RequestInfoRow(
                   icon: record.isGateway
@@ -751,9 +744,7 @@ class _SubscriptionExamPurchaseScreenState
                   value: Text(
                       (record.transactionRef ?? '').isNotEmpty
                           ? record.transactionRef!
-                          : '—',
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                          : '—'),
                   last: record.customerMessage == null,
                 ),
                 if (record.customerMessage != null)

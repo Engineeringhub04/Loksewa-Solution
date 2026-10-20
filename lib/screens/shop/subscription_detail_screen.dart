@@ -1441,48 +1441,9 @@ class _VerificationPendingBanner extends StatelessWidget {
 
 /// Transaction reference with stable wrapping + tap-to-copy (long gateway
 /// ids like txn_xxx_xxx_xxx used to break mid-string).
-class _ReferenceValue extends StatelessWidget {
-  final String? ref;
-  const _ReferenceValue({required this.ref});
-
-  @override
-  Widget build(BuildContext context) {
-    final value = (ref ?? '').trim();
-    if (value.isEmpty) {
-      return const Text('—',
-          style: TextStyle(fontWeight: FontWeight.w600));
-    }
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        Expanded(
-          child: SelectableText(
-            value,
-            textAlign: TextAlign.end,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-          ),
-        ),
-        const SizedBox(width: 4),
-        InkWell(
-          onTap: () {
-            Clipboard.setData(ClipboardData(text: value));
-            showToast(
-                context,
-                AppLanguage.tr('Reference copied', 'सन्दर्भ प्रतिलिपि भयो'),
-                ToastVariant.success);
-          },
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.all(4),
-            child: Icon(Icons.copy_outlined,
-                size: 15, color: ExpoPalette.of(context).textSecondary),
-          ),
-        ),
-      ],
-    );
-  }
-}
+// The copy-enabled Reference value now lives in the shared row widget
+// (RequestReferenceValue in widgets/request_info_row.dart) so its value
+// column aligns with every other summary row.
 
 class _PaymentSummary extends StatelessWidget {
   final SubscriptionRecord record;
@@ -1496,35 +1457,33 @@ class _PaymentSummary extends StatelessWidget {
         RequestInfoRow(
           icon: Icons.diamond_outlined,
           label: AppLanguage.tr('Plan', 'योजना'),
-          value: Text(record.planName,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          value: Text(record.planName),
         ),
         RequestInfoRow(
           icon: Icons.payments_outlined,
           label: AppLanguage.tr('Amount', 'रकम'),
           tone: pal.success,
           value: Text('Rs. ${_money(record.amount)}',
-              style:
-                  TextStyle(fontWeight: FontWeight.w600, color: pal.success)),
+              style: TextStyle(color: pal.success)),
         ),
         RequestInfoRow(
           icon: Icons.credit_card_outlined,
           label: AppLanguage.tr('Payment Method', 'भुक्तानी विधि'),
           value: Text(record.method.toUpperCase(),
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+              style: TextStyle(
+                  color: requestMethodColor(context, record.method))),
         ),
         // v1.0.110: where the payment was made — "App - eSewa" etc.
         RequestInfoRow(
           icon: Icons.smartphone_outlined,
           label: AppLanguage.tr('Platform', 'प्लेटफर्म'),
-          value: Text(record.platformLabel,
-              style: const TextStyle(fontWeight: FontWeight.w600)),
+          value: Text(record.platformLabel),
         ),
         RequestInfoRow(
           // Gateway payments never involve a QR — use a reference icon.
           icon: record.isGateway ? Icons.link_outlined : Icons.qr_code_outlined,
           label: AppLanguage.tr('Reference', 'सन्दर्भ'),
-          value: _ReferenceValue(ref: record.transactionRef),
+          value: RequestReferenceValue(ref: record.transactionRef),
           last: record.couponCode == null && record.customerMessage == null,
         ),
         if (record.couponCode != null)

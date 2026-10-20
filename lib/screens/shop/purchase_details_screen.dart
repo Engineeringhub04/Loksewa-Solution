@@ -14,6 +14,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
+import 'package:loksewa_solution/services/content_title_resolver.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
 import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -893,7 +894,7 @@ class _ExamPurchaseCard extends StatelessWidget {
   }
 }
 
-class _ContentPurchaseCard extends StatelessWidget {
+class _ContentPurchaseCard extends StatefulWidget {
   final ContentPurchaseRecord record;
   final String date;
   final VoidCallback onPress;
@@ -901,19 +902,69 @@ class _ContentPurchaseCard extends StatelessWidget {
   const _ContentPurchaseCard(
       {required this.record, required this.date, required this.onPress});
 
+  @override
+  State<_ContentPurchaseCard> createState() => _ContentPurchaseCardState();
+}
+
+class _ContentPurchaseCardState extends State<_ContentPurchaseCard> {
+  // Composed display title ("Subject - Unit - Chapter"): starts from the
+  // stored-title fallback, then swaps in the resolved detail-doc names.
+  late String _title = _compose(null);
+
   String _t(String en, String ne) => AppLanguage.tr(en, ne);
+
+  String _storedTitle() {
+    final r = widget.record;
+    return AppLanguage.isNepali && r.contentTitleNe.isNotEmpty
+        ? r.contentTitleNe
+        : r.contentTitle;
+  }
+
+  String _compose(ContentDisplayNames? names) => composeContentTitle(
+        contentType: widget.record.contentType,
+        subjectName: names?.subjectName,
+        unitName: names?.unitName,
+        ownName: names?.ownName,
+        storedTitle: _storedTitle(),
+        contentId: widget.record.contentId,
+      );
+
+  Future<void> _resolveNames() async {
+    try {
+      final names = await resolveContentDisplayNames(widget.record);
+      if (!mounted) return;
+      setState(() => _title = _compose(names));
+    } catch (_) {
+      // Fail-soft — the stored-title fallback stays.
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveNames();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ContentPurchaseCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.record.id != widget.record.id ||
+        oldWidget.record.contentTitle != widget.record.contentTitle ||
+        oldWidget.record.contentTitleNe != widget.record.contentTitleNe) {
+      _title = _compose(null);
+      _resolveNames();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
+    final record = widget.record;
     final statusLabel = record.status == 'active'
         ? _t('Approved', 'स्वीकृत')
         : record.status == 'rejected'
             ? _t('Rejected', 'अस्वीकृत')
             : _t('Purchase Pending', 'खरिद समीक्षा हुँदैछ');
-    final title = AppLanguage.isNepali && record.contentTitleNe.isNotEmpty
-        ? record.contentTitleNe
-        : record.contentTitle;
     // The old card printed `contentType · subjectId` — a raw enum next to a
     // raw document id. The type is the only part a student can read, so it
     // becomes a translated pill.
@@ -925,7 +976,7 @@ class _ContentPurchaseCard extends StatelessWidget {
     return _PurchaseCardShell(
       icon: Icons.book_outlined,
       tone: palette.accent,
-      title: title.isNotEmpty ? title : _t('Subject Purchase', 'विषय खरिद'),
+      title: _title.isNotEmpty ? _title : _t('Subject Purchase', 'विषय खरिद'),
       meta: '',
       badge: StatusPill(
         label: typeLabel,
@@ -935,9 +986,9 @@ class _ContentPurchaseCard extends StatelessWidget {
       status: record.status,
       statusLabel: statusLabel,
       amount: record.amount,
-      date: date,
+      date: widget.date,
       adminMessage: record.adminMessage,
-      onPress: onPress,
+      onPress: widget.onPress,
     );
   }
 }

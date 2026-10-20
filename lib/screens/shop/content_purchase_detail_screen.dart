@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
+import 'package:loksewa_solution/services/content_title_resolver.dart';
 import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -25,7 +26,6 @@ import '../../widgets/request_crown.dart';
 import '../../widgets/request_section_card.dart';
 import '../../widgets/request_info_row.dart';
 import '../../widgets/verification_pending_banner.dart';
-import 'package:loksewa_solution/services/exam_service.dart';
 
 class ContentPurchaseDetailScreen extends StatefulWidget {
   final String id;
@@ -66,7 +66,7 @@ class _ContentPurchaseDetailScreenState
   // Best-effort display names for the "Subject - Unit - Chapter" title.
   String? _subjectName;
   String? _unitName;
-  // The item's own resolved name (when the stored contentTitle is a raw ID).
+  // The item's own name, resolved from its detail doc.
   String? _ownName;
 
   String _t(String en, String ne) => AppLanguage.tr(en, ne);
@@ -128,120 +128,44 @@ class _ContentPurchaseDetailScreenState
     return r.contentTitle;
   }
 
-  /// "Subject - Chapter" / "Subject - Unit - Chapter" display title.
-  /// Subject/unit names are enriched best-effort in _load; falls back to the
-  /// item's own title when the names can't be resolved — never a raw doc ID.
+  /// "Subject - Chapter" / "Subject - Unit - Chapter" display title,
+  /// composed by the shared content_title_resolver from the names
+  /// enriched in _load. The fallback chain (stored title → cleaned ID)
+  /// never surfaces a raw doc ID.
   String _displayTitle(ContentPurchaseRecord r) {
-    var own = _contentTitle(r);
-    if ((_ownName ?? '').isNotEmpty) own = _ownName!;
-    if (r.contentType == 'subject') {
-      if (own.isEmpty) return _t('Subject', 'विषय');
-      return _looksLikeDocId(own) ? _cleanIdName(own) : own;
-    }
-    final parts = <String>[];
-    if ((_subjectName ?? '').isNotEmpty) parts.add(_subjectName!);
-    if (r.contentType == 'chapter' && (_unitName ?? '').isNotEmpty) {
-      parts.add(_unitName!);
-    }
-    if (own.isNotEmpty) {
-      parts.add(_looksLikeDocId(own) ? _cleanIdName(own) : own);
-    } else {
-      parts.add(_t('Subject Purchase', 'विषय खरिद'));
-    }
-    return parts.join(' - ');
+    final composed = composeContentTitle(
+      contentType: r.contentType,
+      subjectName: _subjectName,
+      unitName: _unitName,
+      ownName: _ownName,
+      storedTitle: _contentTitle(r),
+      contentId: r.contentId,
+    );
+    return composed.isNotEmpty
+        ? composed
+        : _t('Subject Purchase', 'विषय खरिद');
   }
 
-  /// Best-effort: resolve subject/unit/chapter display names for the title.
-  /// Reads the REAL production fields: the subject detail collections use
-  /// `name`/`nameNe` (NOT `title` — that was the raw-doc-ID bug). Also
-  /// resolves the item's own name from its detail doc when the stored
-  /// contentTitle is itself a raw doc ID (older gateway purchases).
-  /// Fail-soft — falls back to a cleaned human-readable name, never a raw ID.
+  /// Best-effort: resolve subject/unit/chapter display names for the
+  /// title via the shared resolver. Gateway records carry no
+  /// subjectId/unitId — the resolver derives them from the purchased
+  /// item's own detail doc. Fail-soft: on any miss the stored-title
+  /// fallback in _displayTitle still applies.
   Future<void> _enrichNames(ContentPurchaseRecord record) async {
-    var changed = false;
-
-    /// Language-aware name pick from a detail doc.
-    String? docName(Map<String, dynamic>? doc) {
-      if (doc == null) return null;
-      final ne = doc['nameNe']?.toString().trim();
-      final en = doc['name']?.toString().trim();
-      final t = doc['title']?.toString().trim();
-      String? pick;
-      if (AppLanguage.isNepali) {
-        pick = (ne != null && ne.isNotEmpty) ? ne : en;
-      } else {
-        pick = (en != null && en.isNotEmpty) ? en : ne;
-      }
-      if (pick == null || pick.isEmpty) pick = t;
-      return (pick != null && pick.isNotEmpty) ? pick : null;
-    }
-
-    /// Detail-doc path for the purchased item itself.
-    String? itemDocPath() {
-      final id = record.contentId;
-      if (id.isEmpty) return null;
-      switch (record.contentType) {
-        case 'subject':
-          return 'app_subjects_details/$id';
-        case 'unit':
-          return 'app_subjects_units_details/$id';
-        case 'chapter':
-        default:
-          return (record.unitId ?? '').isNotEmpty
-              ? 'app_subjects_unit-chapters_details/$id'
-              : 'app_subjects_chapter_details/$id';
-      }
-    }
-
     try {
-      // Subject name (for chapter/unit items).
-      if (record.contentType != 'subject' && record.subjectId.isNotEmpty) {
-        final doc =
-            await ExamRest.getDoc('app_subjects_details/${record.subjectId}');
-        final name = docName(doc);
-        if (name != null) {
-          _subjectName = name;
-          changed = true;
-        }
-      }
-      // Unit name (for chapters inside a unit).
-      if (record.contentType == 'chapter' &&
-          (record.unitId ?? '').isNotEmpty) {
-        final doc = await ExamRest.getDoc(
-            'app_subjects_units_details/${record.unitId}');
-        final name = docName(doc);
-        if (name != null) {
-          _unitName = name;
-          changed = true;
-        }
-      }
-      // The item's own name — only when the stored title is a raw doc ID.
-      final own = _contentTitle(record);
-      if (_looksLikeDocId(own)) {
-        final path = itemDocPath();
-        if (path != null) {
-          final doc = await ExamRest.getDoc(path);
-          final name = docName(doc);
-          if (name != null) {
-            _ownName = name;
-            changed = true;
-          }
-        }
-      }
-    } catch (_) {}
-    if (changed && mounted) {
-      setState(() => _title = _displayTitle(record));
+      final names = await resolveContentDisplayNames(record);
+      if (!mounted) return;
+      setState(() {
+        _subjectName = names.subjectName;
+        _unitName = names.unitName;
+        _ownName = names.ownName;
+        // Header (SubpageHeader), crown and Item row all read the
+        // composed title — refresh it now that real names are in.
+        _title = _displayTitle(record);
+      });
+    } catch (_) {
+      // Fail-soft — the fallback title stays.
     }
-  }
-
-  /// A raw Firestore doc ID (segments joined by __) — never show these.
-  bool _looksLikeDocId(String s) => s.contains('__');
-
-  /// Fail-soft: turn a raw doc ID into something human-readable.
-  String _cleanIdName(String s) {
-    if (!_looksLikeDocId(s)) return s;
-    final last = s.split('__').lastWhere((p) => p.isNotEmpty, orElse: () => '');
-    return last.replaceAll('-', ' ').replaceAll('_', ' ').trim();
   }
 
   Future<void> _load() async {
@@ -252,16 +176,17 @@ class _ContentPurchaseDetailScreenState
     try {
       final record = await fetchContentPurchaseById(widget.id);
       if (!mounted) return;
-      final title = record != null ? _contentTitle(record) : '';
       setState(() {
         _record = record;
         _loading = false;
-        _title = title.isNotEmpty
-            ? title
-            : _t('Subject Purchase', 'विषय खरिद');
         _subjectName = null;
         _unitName = null;
         _ownName = null;
+        // Composed from the stored title first (never the raw doc ID);
+        // _enrichNames swaps in the real names when they resolve.
+        _title = record != null
+            ? _displayTitle(record)
+            : _t('Subject Purchase', 'विषय खरिद');
         if (!_editing) {
           _refCtrl.text = record?.transactionRef ?? '';
           _msgCtrl.text = record?.customerMessage ?? '';
@@ -839,41 +764,32 @@ class _ContentPurchaseDetailScreenState
                 RequestInfoRow(
                   icon: Icons.book_outlined,
                   label: _t('Item', 'वस्तु'),
-                  value: Text(itemName,
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                  value: Text(itemName),
                 ),
                 RequestInfoRow(
                   icon: Icons.layers_outlined,
                   label: _t('Type', 'प्रकार'),
-                  value: Text(_typeLabel(record.contentType),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                  value: Text(_typeLabel(record.contentType)),
                 ),
                 RequestInfoRow(
                   icon: Icons.payments_outlined,
                   label: _t('Amount', 'रकम'),
                   tone: palette.success,
                   value: Text('Rs. ${requestMoney(record.amount)}',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w600,
-                          color: palette.success)),
+                      style: TextStyle(color: palette.success)),
                 ),
                 RequestInfoRow(
                   icon: Icons.credit_card_outlined,
                   label: _t('Payment Method', 'भुक्तानी विधि'),
                   value: Text(record.method.toUpperCase(),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                      style: TextStyle(
+                          color: requestMethodColor(context, record.method))),
                 ),
                 RequestInfoRow(
                   icon: Icons.smartphone_outlined,
                   label: _t('Platform', 'प्लेटफर्म'),
-                  value: Text(
-                      requestPlatformLabel(
-                          record.platform, record.method),
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                  value: Text(requestPlatformLabel(
+                      record.platform, record.method)),
                 ),
                 RequestInfoRow(
                   icon: record.isGateway
@@ -883,9 +799,7 @@ class _ContentPurchaseDetailScreenState
                   value: Text(
                       (record.transactionRef ?? '').isNotEmpty
                           ? record.transactionRef!
-                          : '—',
-                      style:
-                          const TextStyle(fontWeight: FontWeight.w600)),
+                          : '—'),
                   last: record.customerMessage == null,
                 ),
                 if (record.customerMessage != null)

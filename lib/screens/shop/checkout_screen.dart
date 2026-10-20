@@ -762,6 +762,10 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
+  /// Guards [_confirmKhaltiCancel] against stacked dialogs from rapid
+  /// repeated back presses (mirrors the eSewa screen's guard).
+  bool _khaltiConfirmingCancel = false;
+
   /// Back pressed on the Khalti page (vetoed by its PopScope): confirm
   /// first. On confirm, the pending payment is cancelled server-side
   /// (zero trace, per the request-save rule) and the veto is lifted so
@@ -774,19 +778,25 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required String transactionUuid,
     required String purchaseType,
   }) async {
-    final confirmed = await showCancelPaymentConfirm(routeContext);
-    if (!confirmed) return;
-    // Fire-and-forget server cancel immediately (never block the UI),
-    // then lift the veto and close the page.
-    unawaited(GatewayPaymentService.cancelPayment(
-      gateway: 'khalti',
-      transactionUuid: transactionUuid,
-      purchaseType: purchaseType,
-    ));
-    popAllowed.value = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (routeContext.mounted) Navigator.of(routeContext).pop();
-    });
+    if (_khaltiConfirmingCancel) return;
+    _khaltiConfirmingCancel = true;
+    try {
+      final confirmed = await showCancelPaymentConfirm(routeContext);
+      if (!confirmed) return;
+      // Fire-and-forget server cancel immediately (never block the UI),
+      // then lift the veto and close the page.
+      unawaited(GatewayPaymentService.cancelPayment(
+        gateway: 'khalti',
+        transactionUuid: transactionUuid,
+        purchaseType: purchaseType,
+      ));
+      popAllowed.value = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (routeContext.mounted) Navigator.of(routeContext).pop();
+      });
+    } finally {
+      _khaltiConfirmingCancel = false;
+    }
   }
 
   /// Khalti: official SDK (in-app webview), then worker-side verification.
@@ -880,9 +890,22 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         },
         onMessage: (kh, {statusCode, description, event, needsPaymentConfirmation}) {
           if (completer.isCompleted) return;
-          // User dismissed the Khalti page without paying.
+          // kpgDisposed is NOT a completed dismissal — do NOT complete
+          // the flow here. The SDK's own KhaltiPopScope (inside
+          // KhaltiWebView) fires this event on EVERY pop attempt that
+          // gets vetoed (it even passes needsPaymentConfirmation: true —
+          // it is an exit REQUEST, not a fact). Our route's PopScope
+          // vetoes every back press during payment, so a single header
+          // back tap used to complete the completer as 'cancelled' in
+          // the same dispatch that opened the confirm popup — the
+          // "Payment cancelled." toast fired alongside the popup, and by
+          // the time the user confirmed, the flow was already over
+          // (a later payment result was discarded too). The exit is
+          // owned by _confirmKhaltiCancel: on confirm it pops the page,
+          // and the watchdog below then completes null — the toast
+          // shows exactly once, at the end. On dismiss, the flow stays
+          // alive and the SDK page is untouched.
           if (event == KhaltiEvent.kpgDisposed) {
-            completer.complete(null);
             return;
           }
           // Any other SDK-side issue (e.g. its own verify failed): fall back

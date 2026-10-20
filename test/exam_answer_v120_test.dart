@@ -464,7 +464,8 @@ void main() {
             fileName: 'checked.pdf',
             downloadFn: (url, onProgress) async {
               onProgress(10, 10);
-              return Uint8List.fromList([1, 2, 3]);
+              // v1.0.121: bytes must pass the dialog's PDF header gate.
+              return Uint8List.fromList('%PDF-1.7 checked'.codeUnits);
             },
             saveFn: (bytes) async => true,
             resolveDir: () async => tmp,
@@ -492,7 +493,8 @@ void main() {
             fileName: 'checked.pdf',
             downloadFn: (url, onProgress) async {
               onProgress(10, 10);
-              return Uint8List.fromList([4, 5, 6]);
+              // v1.0.121: bytes must pass the dialog's PDF header gate.
+              return Uint8List.fromList('%PDF-1.7 checked'.codeUnits);
             },
             saveFn: (bytes) async => false,
             resolveDir: () async => tmp,
@@ -506,7 +508,7 @@ void main() {
       expect(saved, isFalse);
       final file = File('${tmp.path}/checked.pdf');
       expect(file.existsSync(), isTrue);
-      expect(file.readAsBytesSync(), [4, 5, 6]);
+      expect(file.readAsBytesSync(), '%PDF-1.7 checked'.codeUnits);
       await _flush(tester);
     });
 
@@ -534,6 +536,56 @@ void main() {
           await PublicDownloads.saveToPublicDownloads(
               Uint8List.fromList([1]), 'a.pdf'),
           isFalse);
+      // v1.0.121: non-Android also yields no URI and refuses to open.
+      expect(
+          await PublicDownloads.saveToPublicDownloadsUri(
+              Uint8List.fromList([1]), 'a.pdf'),
+          isNull);
+      PublicDownloads.openInvoker = (args) async => true;
+      expect(
+          await PublicDownloads.openDownloadedFile(
+              'content://dl/1', 'application/pdf'),
+          isFalse);
+
+      // v1.0.121 URI variant: answers the string result, nothing else.
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      PublicDownloads.channelInvoker = (args) async => 'content://dl/9';
+      expect(
+          await PublicDownloads.saveToPublicDownloadsUri(
+              Uint8List.fromList([1]), 'a.pdf'),
+          'content://dl/9');
+      PublicDownloads.channelInvoker = (args) async => true;
+      expect(
+          await PublicDownloads.saveToPublicDownloadsUri(
+              Uint8List.fromList([1]), 'a.pdf'),
+          isNull);
+      PublicDownloads.channelInvoker = (args) async => null;
+      expect(
+          await PublicDownloads.saveToPublicDownloadsUri(
+              Uint8List.fromList([1]), 'a.pdf'),
+          isNull);
+
+      // v1.0.121 open: true only when the native side answers true.
+      PublicDownloads.openInvoker = (args) async => true;
+      expect(
+          await PublicDownloads.openDownloadedFile(
+              'content://dl/9', 'application/pdf'),
+          isTrue);
+      PublicDownloads.openInvoker = (args) async => false;
+      expect(
+          await PublicDownloads.openDownloadedFile(
+              'content://dl/9', 'application/pdf'),
+          isFalse);
+      PublicDownloads.openInvoker =
+          (args) async => throw Exception('no viewer');
+      expect(
+          await PublicDownloads.openDownloadedFile(
+              'content://dl/9', 'application/pdf'),
+          isFalse);
+
+      PublicDownloads.channelInvoker = null;
+      PublicDownloads.openInvoker = null;
+      debugDefaultTargetPlatformOverride = null;
     });
   });
 }

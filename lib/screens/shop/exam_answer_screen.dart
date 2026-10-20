@@ -25,6 +25,27 @@ import '../../widgets/request_info_row.dart';
 import '../../widgets/request_section_card.dart';
 import '../../widgets/syllabus_entrance.dart';
 
+/// Save filename for a downloaded checked-answer PDF (v1.0.121),
+/// derived from the exam set TITLE — never from the raw answer doc
+/// id: that id contains a literal space and is extremely long, and
+/// phone PDF viewers opening the file from the Downloads folder
+/// choked on the name ("invalid format"). Sanitizing keeps ASCII
+/// letters/digits, collapses every other run of characters into a
+/// single '-', trims edge dashes, and caps the title part at 48
+/// chars; a title with nothing keepable falls back to a fixed name.
+String checkedAnswerFileName(String examSetTitle) {
+  var sanitized = examSetTitle
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
+  if (sanitized.length > 48) {
+    sanitized = sanitized.substring(0, 48).replaceAll(RegExp(r'-+$'), '');
+  }
+  return sanitized.isEmpty
+      ? 'checked-answer-sheet.pdf'
+      : 'checked-answer-$sanitized.pdf';
+}
+
 const int _answerEditWindowMs = 60 * 60 * 1000;
 
 /// Time left in the 1-hour edit window (zero once it has expired).
@@ -116,7 +137,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   /// Downloads folder (no share sheet). Progress shows in an AppModalShell
   /// popup; on completion the popup closes and a toast confirms. Empty URL
   /// keeps the graceful "no file attached" popup.
-  void _downloadCheckedPdf(String url) {
+  void _downloadCheckedPdf(String url, String examSetTitle) {
     if (url.isEmpty) {
       _showPdfDialog(
           AppLanguage.tr('Checked PDF', 'जाँचिएको PDF'), '');
@@ -127,7 +148,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       context: context,
       builder: (ctx) => PdfDownloadDialog(
         url: url,
-        fileName: 'checked-answer-${widget.id}.pdf',
+        fileName: checkedAnswerFileName(examSetTitle),
         // onDone kept for the legacy path; onSaved reports WHERE the file
         // landed (v1.0.120): the toast may only claim "Downloads" when
         // the MediaStore save into the real public folder succeeded —
@@ -691,7 +712,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: () => _downloadCheckedPdf(url),
+                onTap: () => _downloadCheckedPdf(
+                    url, a['examSetTitle']?.toString() ?? ''),
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(14),

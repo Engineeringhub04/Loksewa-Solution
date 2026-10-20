@@ -19,28 +19,80 @@ class PublicDownloads {
   static const MethodChannel _channel =
       MethodChannel('loksewa_solution/media');
 
-  /// Test seam: replaces the platform-channel call.
+  /// Test seam: replaces the platform-channel save call.
   @visibleForTesting
   static Future<Object?> Function(Map<String, dynamic> args)? channelInvoker;
 
-  static Future<bool> saveToPublicDownloads(
+  /// Test seam: replaces the platform-channel open call. Kept separate
+  /// from [channelInvoker] because the native method name differs
+  /// ('openDownloadedFile') and the save seam's existing tests must
+  /// keep their exact behavior.
+  @visibleForTesting
+  static Future<Object?> Function(Map<String, dynamic> args)? openInvoker;
+
+  /// The one raw save call behind both public save variants. Answers
+  /// whatever the native side answered — the content URI string on
+  /// success, null when the device is below API 29, the insert was
+  /// refused, the platform is not Android, or the call failed.
+  static Future<Object?> _saveRaw(
     Uint8List bytes,
-    String fileName, {
-    String mimeType = 'application/pdf',
-  }) async {
-    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    String fileName,
+    String mimeType,
+  ) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return null;
     try {
       final args = <String, dynamic>{
         'bytes': bytes,
         'fileName': fileName,
         'mimeType': mimeType,
       };
-      final result = channelInvoker != null
+      return channelInvoker != null
           ? await channelInvoker!(args)
           : await _channel.invokeMethod<Object?>('saveToDownloads', args);
-      // The native side answers the content URI on success, null when
-      // the device is below API 29 or the insert was refused.
-      return result != null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> saveToPublicDownloads(
+    Uint8List bytes,
+    String fileName, {
+    String mimeType = 'application/pdf',
+  }) async {
+    // The native side answers the content URI on success, null when
+    // the device is below API 29 or the insert was refused.
+    return await _saveRaw(bytes, fileName, mimeType) != null;
+  }
+
+  /// Same save as [saveToPublicDownloads] but answers the saved file's
+  /// content URI (v1.0.121) — the download-complete notification uses
+  /// it as its tap payload so tapping opens THIS saved file. Null when
+  /// the save did not land in the public Downloads folder.
+  static Future<String?> saveToPublicDownloadsUri(
+    Uint8List bytes,
+    String fileName, {
+    String mimeType = 'application/pdf',
+  }) async {
+    final result = await _saveRaw(bytes, fileName, mimeType);
+    return result is String ? result : null;
+  }
+
+  /// Opens a file previously saved into the public Downloads folder
+  /// (v1.0.121), via the native 'openDownloadedFile' channel method —
+  /// an ACTION_VIEW intent with a read grant on the content URI.
+  /// True only when the native side actually launched a viewer.
+  /// Never throws.
+  static Future<bool> openDownloadedFile(String uri, String mimeType) async {
+    if (defaultTargetPlatform != TargetPlatform.android) return false;
+    try {
+      final args = <String, dynamic>{
+        'uri': uri,
+        'mimeType': mimeType,
+      };
+      final result = openInvoker != null
+          ? await openInvoker!(args)
+          : await _channel.invokeMethod<Object?>('openDownloadedFile', args);
+      return result == true;
     } catch (_) {
       return false;
     }

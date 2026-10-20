@@ -29,6 +29,8 @@ import java.io.File
 ///   folder (API 29+; no storage permission needed). Answers the content
 ///   URI string on success, null below API 29 so Dart can fall back to
 ///   its app-folder write.
+/// - "openDownloadedFile": ACTION_VIEW on a Downloads content URI (the
+///   download-complete notification's tap target) with a read grant.
 /// Both pickers return the image downscaled to ≤1600px as JPEG bytes (or null
 /// when the user cancels); openUrl answers true on success.
 class MainActivity : FlutterActivity() {
@@ -119,6 +121,26 @@ class MainActivity : FlutterActivity() {
                                     saveToPublicDownloads(bytes, fileName, mimeType))
                             } catch (e: Exception) {
                                 result.error("SAVE_FAILED", e.message, null)
+                            }
+                        }
+                    }
+                    "openDownloadedFile" -> {
+                        val uri = call.argument<String>("uri")
+                        val mimeType = call.argument<String>("mimeType")
+                            ?: "application/pdf"
+                        if (uri.isNullOrBlank()) {
+                            result.error("BAD_ARGS", "Missing uri argument", null)
+                        } else {
+                            try {
+                                val intent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(Uri.parse(uri), mimeType)
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                startActivity(intent)
+                                result.success(true)
+                            } catch (e: Exception) {
+                                result.error("OPEN_FAILED", e.message, null)
                             }
                         }
                     }

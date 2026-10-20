@@ -55,6 +55,17 @@ Future<void> _pumpUntil(
   }
 }
 
+/// PDF-shaped fake bytes (v1.0.121): the dialog refuses to save
+/// anything without the '%PDF-' magic, so success-path fakes must
+/// carry the header.
+Uint8List pdfBytes(int length) {
+  final header = '%PDF-1.7\n'.codeUnits;
+  return Uint8List.fromList([
+    ...header,
+    ...List.generate(length - header.length, (i) => i % 256),
+  ]);
+}
+
 void main() {
   group('downloadPdfBytes', () {
     test('returns full bytes with byte-counted progress', () async {
@@ -89,7 +100,7 @@ void main() {
     testWidgets('downloads, saves to dir and calls onDone',
         (tester) async {
       _stubMediaSave(tester);
-      final bytes = Uint8List.fromList(List.generate(50, (i) => i));
+      final bytes = pdfBytes(50);
       final tmp = Directory.systemTemp.createTempSync('pdfdlg');
       var done = false;
       var progressCalls = 0;
@@ -143,7 +154,7 @@ void main() {
         attempts++;
         if (attempts == 1) throw Exception('boom');
         onProgress(10, 10);
-        return Uint8List.fromList([1, 2, 3]);
+        return pdfBytes(12);
       }
 
       await tester.pumpWidget(MaterialApp(

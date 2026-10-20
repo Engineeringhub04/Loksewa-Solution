@@ -29,7 +29,10 @@ const int pdfDownloadNotificationId = 778899;
 /// channel failure) it falls back to that app-folder write, and
 /// [onSaved] reports which happened so the caller's message stays
 /// honest. On Android the progress also mirrors into a system
-/// notification (progress bar → "Download complete").
+/// notification (first post + completion alert with sound/heads-up,
+/// silent progress ticks between — v1.0.121). Bytes that fail the
+/// [looksLikePdf] sanity check are never saved; they surface as a
+/// failed download instead.
 ///
 /// Cancellation: closing the popup disposes the dialog, which aborts the
 /// in-flight request and discards the partial download.
@@ -71,6 +74,29 @@ class PdfDownloadDialog extends StatefulWidget {
 
   @override
   State<PdfDownloadDialog> createState() => _PdfDownloadDialogState();
+}
+
+/// Sanity check for downloaded bytes (v1.0.121): a real PDF carries
+/// the '%PDF-' magic within its first 1024 bytes (the spec tolerates
+/// leading junk before the header). HTML error pages served with a
+/// 200 status, empty bodies, and other non-PDF payloads fail — the
+/// dialog treats them as a failed download and saves NOTHING, instead
+/// of landing a corrupt file in the user's Downloads folder (the
+/// phone viewer then reports it as "invalid format").
+bool looksLikePdf(Uint8List bytes) {
+  const magic = [0x25, 0x50, 0x44, 0x46, 0x2D]; // %PDF-
+  final limit = bytes.length < 1024 ? bytes.length : 1024;
+  for (var i = 0; i + magic.length <= limit; i++) {
+    var match = true;
+    for (var j = 0; j < magic.length; j++) {
+      if (bytes[i + j] != magic[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
 }
 
 /// Downloads [url] with byte-counted progress callbacks. Only the connection
@@ -174,8 +200,11 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
     return downloadPdfBytes(url, onProgress, client: _client);
   }
 
-  Future<bool> _defaultSave(Uint8List bytes) =>
-      PublicDownloads.saveToPublicDownloads(bytes, widget.fileName);
+  /// Default save: the URI-returning public-Downloads variant, so the
+  /// completion notification can carry the saved file's content URI
+  /// as its tap payload (v1.0.121).
+  Future<String?> _defaultSaveUri(Uint8List bytes) =>
+      PublicDownloads.saveToPublicDownloadsUri(bytes, widget.fileName);
 
   /// Mirrors byte progress into the Android notification, throttled:
   /// determinate progress posts only when the integer percent changes,
@@ -204,13 +233,16 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
     ));
   }
 
-  void _settleNotification(bool success) {
+  void _settleNotification(bool success,
+      {bool toDownloads = true, String? openUri}) {
     if (!widget.notifyProgress) return;
     _notifySettled = true;
     unawaited(PushNotificationService.finishDownloadNotification(
       id: pdfDownloadNotificationId,
       fileName: widget.fileName,
       success: success,
+      toDownloads: toDownloads,
+      openUri: success ? openUri : null,
     ));
   }
 
@@ -237,9 +269,29 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
         },
       );
       if (_cancelled || !mounted) return;
+      // v1.0.121: never save bytes that are not a PDF (e.g. an HTML
+      // error page behind a 200) — a corrupt file in the public
+      // Downloads folder is what the phone viewer calls "invalid
+      // format". Treat it exactly like a failed download.
+      if (!looksLikePdf(bytes)) {
+        _settleNotification(false);
+        setState(() => _error = 'download');
+        return;
+      }
       // Save: real public Downloads first (MediaStore channel); the
-      // app-folder write is only the fallback.
-      final savedPublic = await (widget.saveFn ?? _defaultSave)(bytes);
+      // app-folder write is only the fallback. The default save also
+      // returns the saved file's content URI for the completion
+      // notification's tap-to-open payload; the saveFn test seam keeps
+      // its bool shape (no URI — the notification then has no payload).
+      final bool savedPublic;
+      final String? savedUri;
+      if (widget.saveFn != null) {
+        savedPublic = await widget.saveFn!(bytes);
+        savedUri = null;
+      } else {
+        savedUri = await _defaultSaveUri(bytes);
+        savedPublic = savedUri != null;
+      }
       if (_cancelled || !mounted) return;
       if (!savedPublic) {
         final dir = await (widget.resolveDir ?? resolveDownloadDir)();
@@ -250,7 +302,7 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
         file.writeAsBytesSync(bytes, flush: true);
       }
       if (_cancelled || !mounted) return;
-      _settleNotification(true);
+      _settleNotification(true, toDownloads: savedPublic, openUri: savedUri);
       if (widget.onSaved != null) {
         widget.onSaved!(savedPublic);
       } else {

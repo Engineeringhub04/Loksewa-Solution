@@ -388,7 +388,7 @@ class _ExamTabState extends State<ExamTab> {
           '/pdf/${set.id}?uri=${Uri.encodeComponent(pdfUrl)}'
           '&title=${Uri.encodeComponent(set.title)}'
           '&examSetId=${set.id}'
-          '&allowUpload=${section?.kind == 'theory' ? '1' : '0'}'
+          '&allowUpload=${set.contentType == 'pdf' ? '1' : '0'}'
           '&sectionName=${Uri.encodeComponent(section?.displayName(nepali) ?? '')}',
         );
       } else {

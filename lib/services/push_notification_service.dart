@@ -161,19 +161,24 @@ class PushNotificationService {
           (message.messageId?.hashCode ?? DateTime.now().millisecondsSinceEpoch)
               .abs() %
               0x7fffffff;
-      const androidDetails = AndroidNotificationDetails(
+      final androidDetails = AndroidNotificationDetails(
         _fgChannelId,
         _fgChannelName,
         channelDescription: 'Notifications received while the app is open',
         importance: Importance.max,
         priority: Priority.high,
+        // Always carry an expanded (BigText) view so foreground
+        // notifications can be expanded in the tray, like system ones.
+        styleInformation: BigTextStyleInformation(
+          content.body,
+          contentTitle: content.title,
+        ),
       );
       await _localNotifications.show(
         id: id,
         title: content.title,
         body: content.body,
-        notificationDetails:
-            const NotificationDetails(android: androidDetails),
+        notificationDetails: NotificationDetails(android: androidDetails),
         payload: encodeTapPayload(message.data),
       );
     } catch (_) {}

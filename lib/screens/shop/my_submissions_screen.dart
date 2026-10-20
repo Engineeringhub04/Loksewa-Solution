@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
@@ -62,6 +63,29 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
       }
       mine.sort((a, b) => _millis(b['createdAt'])
           .compareTo(_millis(a['createdAt'])));
+      // Older submissions saved blank course/subcourse names (copied from
+      // the set doc, which only carries IDs) — resolve them from the parent
+      // exam set, one set-doc load per unique set. Best-effort: failures
+      // leave the names blank and the card falls back to '—'.
+      final setCache = <String, Map<String, dynamic>?>{};
+      for (var i = 0; i < mine.length; i++) {
+        final doc = mine[i];
+        final blank = (doc['courseName'] ?? '').toString().trim().isEmpty ||
+            (doc['subcourseName'] ?? '').toString().trim().isEmpty;
+        if (!blank) continue;
+        final names = await resolveAnswerDisplayNames(doc,
+            nepali: AppLanguage.isNepali, examSetCache: setCache);
+        final merged = Map<String, dynamic>.from(doc);
+        if ((merged['courseName'] ?? '').toString().trim().isEmpty &&
+            names.courseName.isNotEmpty) {
+          merged['courseName'] = names.courseName;
+        }
+        if ((merged['subcourseName'] ?? '').toString().trim().isEmpty &&
+            names.subcourseName.isNotEmpty) {
+          merged['subcourseName'] = names.subcourseName;
+        }
+        mine[i] = merged;
+      }
       if (!mounted) return;
       setState(() {
         _items = mine;
@@ -116,7 +140,8 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
       body: Column(
         children: [
           SubpageHeader(
-              title: AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू')),
+              title: AppLanguage.tr(
+                  'My Answer Submissions', 'मेरा उत्तर पेशहरू')),
           Expanded(
             child: _loading
                 ? PreloadingWidget(
@@ -232,7 +257,8 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            AppLanguage.tr('My Submissions', 'मेरा उत्तरहरू'),
+                            AppLanguage.tr('My Answer Submissions',
+                                'मेरा उत्तर पेशहरू'),
                             style: const TextStyle(
                               fontSize: 17,
                               fontWeight: FontWeight.bold,
@@ -422,20 +448,20 @@ class _SubmissionCardState extends State<_SubmissionCard> {
       onTapCancel: () => setState(() => _pressed = false),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: _pressed ? tone.withValues(alpha: tint) : pal.surface,
           border: Border.all(
               color: _pressed
                   ? tone.withValues(alpha: dark ? 0.35 : 0.25)
                   : pal.border,
-              width: 0.75),
-          borderRadius: BorderRadius.circular(20),
+              width: 0.5),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.06),
-              blurRadius: 3,
-              offset: const Offset(0, 1),
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
@@ -444,8 +470,8 @@ class _SubmissionCardState extends State<_SubmissionCard> {
             Row(
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 46,
+                  height: 46,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(14),
                     gradient: LinearGradient(
@@ -471,7 +497,7 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                     color: tone,
                   ),
                 ),
-                const SizedBox(width: 11),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -484,7 +510,7 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 15,
+                          fontSize: 15.5,
                           fontWeight: FontWeight.bold,
                           color: pal.textPrimary,
                         ),
@@ -495,7 +521,7 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            fontSize: 12, color: pal.textSecondary),
+                            fontSize: 12.5, color: pal.textSecondary),
                       ),
                     ],
                   ),

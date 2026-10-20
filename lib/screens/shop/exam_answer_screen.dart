@@ -1,9 +1,10 @@
 // Exam answer detail ("My Answer Sheet").
-// Mirrors app/exam-answer/[id].tsx. When reviewed: a gradient result card
-// (score / full marks, Passed / Not Passed), the teacher's note card
-// (theme surface + border, tinted icon badge — NOT a hard-coded light-blue
-// card, so it stays readable in dark theme), "Download Checked PDF" and
-// "View Submitted PDF" buttons. When pending: a muted preview card with a
+// Mirrors app/exam-answer/[id].tsx. When reviewed and published: a gradient
+// result card (score / full marks, Passed / Not Passed), the teacher's note
+// section card, a "View Checked PDF" button with a download icon tile, and
+// "View Submitted PDF". When reviewed but rejected (admin saved a
+// rejectionReason): no result card — a Reason card carries the admin's
+// reason + message instead. When pending: a premium preview card with a
 // Pending Review badge and — inside the 1-hour edit window — an Edit /
 // Re-upload button routing to /exam-answer/upload?editId=<id>.
 import 'dart:async';
@@ -12,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
@@ -19,6 +21,8 @@ import '../../widgets/preloading.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/pdf_download_dialog.dart';
+import '../../widgets/request_info_row.dart';
+import '../../widgets/request_section_card.dart';
 import '../../widgets/syllabus_entrance.dart';
 
 const int _answerEditWindowMs = 60 * 60 * 1000;
@@ -52,8 +56,29 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
 
   Future<Map<String, dynamic>?> _load() async {
     final token = await AuthService.getValidIdToken();
-    return FirestoreRest.getDocument('app_exam_answers/${widget.id}',
+    final doc = await FirestoreRest.getDocument(
+        'app_exam_answers/${widget.id}',
         idToken: token);
+    if (doc == null) return null;
+    // Older submissions never saved the course/subcourse/section names
+    // (the set doc they were copied from only carries IDs) — resolve the
+    // blanks from the parent exam set so the header, pending card and
+    // info card show real names. Best-effort, display only.
+    final names = await resolveAnswerDisplayNames(doc,
+        nepali: AppLanguage.isNepali);
+    if (names.isComplete) return doc;
+    final merged = Map<String, dynamic>.from(doc);
+    void fill(String key, String value) {
+      if ((merged[key] ?? '').toString().trim().isEmpty &&
+          value.isNotEmpty) {
+        merged[key] = value;
+      }
+    }
+
+    fill('courseName', names.courseName);
+    fill('subcourseName', names.subcourseName);
+    fill('sectionName', names.sectionName);
+    return merged;
   }
 
   /// The edit section stays visible (button + countdown) for pending answers
@@ -128,6 +153,24 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     ).toString());
   }
 
+  /// "View Checked PDF": the teacher's checked copy in the same in-app pdfx
+  /// viewer as the submitted PDF.
+  void _viewCheckedPdf(String url, String examTitle) {
+    if (url.isEmpty) {
+      _showPdfDialog(
+          AppLanguage.tr('Checked PDF', 'जाँचिएको PDF'), '');
+      return;
+    }
+    final title = examTitle.isNotEmpty
+        ? examTitle
+        : AppLanguage.tr('Checked PDF', 'जाँचिएको PDF');
+    context.push(Uri(
+      path:
+          '/pdf/${Uri.encodeComponent('exam-answer-checked-${widget.id}')}',
+      queryParameters: {'uri': url, 'title': title},
+    ).toString());
+  }
+
   void _showPdfDialog(String title, String url) {
     AppModalShell.show(
       context: context,
@@ -173,15 +216,44 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     );
   }
 
+  /// Back (the header button and system back share this): pop when a
+  /// real stack exists below; when this page IS the whole stack (a
+  /// landing that built no stack underneath), fall back to the flow's
+  /// parent — My Submissions over the tabs shell — instead of letting
+  /// the system close the app silently. That is the same stack the
+  /// splash builds for notification taps (details -> list -> home) and
+  /// the rule behind the checkout completion fix (checkout_screen.dart):
+  /// a flow page is never left as the root route.
+  void _handleBack() {
+    if (!mounted) return;
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/');
+      context.push('/exam-answer/my-submissions');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final pal = ExpoPalette.of(context);
-    return Scaffold(
+    // Routes below this page can never change while it is mounted, so
+    // this stays stable for the page's lifetime: the back veto is armed
+    // ONLY when the page is the root; with a real stack below, back
+    // behaves exactly as before.
+    final isRoot = !context.canPop();
+    return PopScope(
+      canPop: !isRoot,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && isRoot) _handleBack();
+      },
+      child: Scaffold(
       backgroundColor: pal.background,
       body: Column(
         children: [
           SubpageHeader(
-              title: AppLanguage.tr('My Answer Sheet', 'मेरो उत्तरपुस्तिका')),
+              title: AppLanguage.tr('My Answer Sheet', 'मेरो उत्तरपुस्तिका'),
+              onBackPress: _handleBack),
           Expanded(
             child: FutureBuilder<Map<String, dynamic>?>(
               future: _future,
@@ -213,6 +285,15 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                           style: TextStyle(color: pal.textSecondary)));
                 }
                 final reviewed = a['status']?.toString() == 'reviewed';
+                // Rejected at the grading desk: reviewed, but the admin
+                // saved a rejection reason instead of a result (passed
+                // stays null). The page shows a Reason card, never the
+                // Passed/Not Passed result card.
+                final rejected = reviewed &&
+                    (a['rejectionReason']?.toString().trim().isNotEmpty ??
+                        false);
+                final checkedUrl =
+                    a['checkedPdfUrl']?.toString() ?? '';
                 return SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
                   child: Column(
@@ -241,32 +322,28 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                       const SizedBox(height: 16),
                       if (reviewed) ...[
                         SyllabusEntrance(
-                            delayMs: 0, child: _resultCard(a)),
+                            delayMs: 0,
+                            child: rejected
+                                ? _reasonCard(pal, a)
+                                : _resultCard(a)),
                         const SizedBox(height: 16),
                         if ((a['reviewNote']?.toString() ?? '').isNotEmpty) ...[
                           SyllabusEntrance(
                               delayMs: 80,
                               child: _noteCard(pal, a,
-                                  a['passed'] == true)),
+                                  tone: rejected
+                                      ? pal.primary
+                                      : (a['passed'] == true
+                                          ? pal.success
+                                          : pal.danger))),
                           const SizedBox(height: 16),
                         ],
-                        SyllabusEntrance(
-                          delayMs: 140,
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                                backgroundColor: pal.primary,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    vertical: 14)),
-                            icon: const Icon(Icons.download),
-                            label: Text(AppLanguage.tr(
-                                'Download Checked PDF',
-                                'जाँचिएको PDF डाउनलोड गर्नुहोस्')),
-                            onPressed: () => _downloadCheckedPdf(
-                                a['checkedPdfUrl']?.toString() ?? ''),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
+                        if (checkedUrl.isNotEmpty) ...[
+                          SyllabusEntrance(
+                              delayMs: 140,
+                              child: _checkedPdfRow(pal, a)),
+                          const SizedBox(height: 8),
+                        ],
                         SyllabusEntrance(
                           delayMs: 200,
                           child: OutlinedButton.icon(
@@ -298,7 +375,12 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                         const SizedBox(height: 16),
                         SyllabusEntrance(
                           delayMs: 140,
-                          child: OutlinedButton.icon(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: pal.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14)),
                             icon: const Icon(Icons.visibility),
                             label: Text(AppLanguage.tr(
                                 'View Submitted PDF',
@@ -379,6 +461,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -387,6 +470,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   Widget _statusTimeline(ExpoPalette pal, Map<String, dynamic> a) {
     final reviewed = a['status']?.toString() == 'reviewed';
     final passed = a['passed'] == true;
+    final rejected = reviewed &&
+        (a['rejectionReason']?.toString().trim().isNotEmpty ?? false);
     final dark = Theme.of(context).brightness == Brightness.dark;
 
     String fmt(dynamic raw) {
@@ -444,9 +529,15 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
         subtitle: !reviewed
             ? AppLanguage.tr(
                 'Waiting for review.', 'समीक्षाको प्रतीक्षामा।')
-            : (fmt(a['reviewedAt']).isNotEmpty
-                ? '${_num(a['score'])}/${_num(a['fullMarks'])} · ${fmt(a['reviewedAt'])}'
-                : '${_num(a['score'])}/${_num(a['fullMarks'])}'),
+            : rejected
+                // Rejected answers carry no score — date only.
+                ? (fmt(a['reviewedAt']).isNotEmpty
+                    ? fmt(a['reviewedAt'])
+                    : AppLanguage.tr(
+                        'Checked by our team.', 'हाम्रो टोलीले जाँच्यो।'))
+                : (fmt(a['reviewedAt']).isNotEmpty
+                    ? '${_num(a['score'])}/${_num(a['fullMarks'])} · ${fmt(a['reviewedAt'])}'
+                    : '${_num(a['score'])}/${_num(a['fullMarks'])}'),
       ),
     ];
 
@@ -560,83 +651,122 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     );
   }
 
-  /// Teacher's note — theme surface + hairline border (mirrors the React
-  /// noteCard), icon badge tinted with the pass/fail result color, primary
-  /// heading and secondary body text. Never a hard-coded light-blue card.
-  Widget _noteCard(
-      ExpoPalette pal, Map<String, dynamic> a, bool passed) {
-    final resultColor = passed ? pal.success : pal.danger;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: pal.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: pal.border, width: 0.75),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: resultColor.withValues(alpha: 0.10),
-                ),
-                child: Icon(Icons.chat_bubble_outline,
-                    size: 16, color: resultColor),
-              ),
-              const SizedBox(width: 8),
-              Text(AppLanguage.tr("Teacher's Note", 'शिक्षकको टिप्पणी'),
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: pal.textPrimary)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(a['reviewNote'].toString(),
+  /// Rejected outcome — a "Reason" label over a premium section card whose
+  /// title is the admin's rejection reason and whose body is the admin's
+  /// message to the student (the reason itself when no message was saved).
+  /// Replaces the result card entirely: a rejected answer has no score.
+  Widget _reasonCard(ExpoPalette pal, Map<String, dynamic> a) {
+    final reason = (a['rejectionReason']?.toString() ?? '').trim();
+    final message = (a['adminMessage']?.toString() ?? '').trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(AppLanguage.tr('Reason', 'कारण'),
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: pal.textPrimary)),
+        const SizedBox(height: 8),
+        RequestSectionCard(
+          icon: Icons.report_problem_outlined,
+          tone: pal.danger,
+          title: reason,
+          child: Text(message.isNotEmpty ? message : reason,
               style: TextStyle(
                   fontSize: 13, color: pal.textSecondary, height: 1.55)),
+        ),
+      ],
+    );
+  }
+
+  /// Checked-PDF actions: a full-width filled "View Checked PDF" button plus
+  /// a square download tile beside it (the byte-counted Downloads flow).
+  /// Rendered only when the teacher actually attached a checked PDF.
+  Widget _checkedPdfRow(ExpoPalette pal, Map<String, dynamic> a) {
+    final url = a['checkedPdfUrl']?.toString() ?? '';
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: pal.primary,
+                  foregroundColor: Colors.white,
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 14)),
+              icon: const Icon(Icons.visibility),
+              label: Text(AppLanguage.tr(
+                  'View Checked PDF', 'जाँचिएको PDF हेर्नुहोस्')),
+              onPressed: () => _viewCheckedPdf(
+                  url, a['examSetTitle']?.toString() ?? ''),
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 52,
+            child: Material(
+              color: pal.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(14),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () => _downloadCheckedPdf(url),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: pal.primary.withValues(alpha: 0.35),
+                        width: 0.75),
+                  ),
+                  child: Icon(Icons.download_rounded,
+                      size: 22, color: pal.primary),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// Pending state — theme surface card with the exam title, course line
-  /// and an amber Pending Review badge (mirrors the React mutedCard).
+  /// Teacher's note — premium section card (shared RequestSectionCard, like
+  /// the subscription detail page): icon tile tinted with the outcome tone
+  /// (pass green / fail red / rejected primary) and the note as body text.
+  Widget _noteCard(ExpoPalette pal, Map<String, dynamic> a,
+      {required Color tone}) {
+    return RequestSectionCard(
+      icon: Icons.chat_bubble_outline,
+      tone: tone,
+      title: AppLanguage.tr("Teacher's Note", 'शिक्षकको टिप्पणी'),
+      child: Text(a['reviewNote'].toString(),
+          style: TextStyle(
+              fontSize: 13, color: pal.textSecondary, height: 1.55)),
+    );
+  }
+
+  /// Pending state — premium section card (RequestSectionCard family) with
+  /// the exam title as the card title, the course line and an amber
+  /// Pending Review pill.
   Widget _pendingCard(ExpoPalette pal, Map<String, dynamic> a) {
     final courseLine = [
       (a['courseName'] ?? '').toString(),
       (a['subcourseName'] ?? '').toString()
     ].where((s) => s.isNotEmpty).join(' · ');
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: pal.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: pal.border, width: 0.75),
-      ),
+    return RequestSectionCard(
+      icon: Icons.hourglass_top_outlined,
+      tone: pal.warning,
+      title: ((a['examSetTitle'] ?? '').toString().isNotEmpty)
+          ? a['examSetTitle'].toString()
+          : AppLanguage.tr('Theory Answer', 'थ्योरी उत्तर'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-              ((a['examSetTitle'] ?? '').toString().isNotEmpty)
-                  ? a['examSetTitle'].toString()
-                  : AppLanguage.tr('Theory Answer', 'थ्योरी उत्तर'),
-              style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.bold,
-                  color: pal.textPrimary)),
           if (courseLine.isNotEmpty) ...[
-            const SizedBox(height: 4),
             Text(courseLine,
                 style:
                     TextStyle(fontSize: 13, color: pal.textSecondary)),
+            const SizedBox(height: 10),
           ],
-          const SizedBox(height: 10),
           Container(
             padding:
                 const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
@@ -665,34 +795,51 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     );
   }
 
-  Widget _metaCard(ExpoPalette pal, Map<String, dynamic> a) => Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: pal.surface,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: pal.border, width: 0.75),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(AppLanguage.tr('Submission info', 'पेश गरिएको जानकारी'),
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: pal.textPrimary)),
-            const SizedBox(height: 8),
-            _kv(pal, AppLanguage.tr('Student', 'विद्यार्थी'),
-                a['studentName']?.toString() ?? '—'),
-            _kv(pal, AppLanguage.tr('Status', 'स्थिति'),
-                a['status']?.toString() ?? '—'),
-            _kv(pal, AppLanguage.tr('Submitted', 'पेश गरिएको'),
-                _fmtDate(a['createdAt'])),
-            if ((a['message']?.toString() ?? '').isNotEmpty)
-              _kv(pal, AppLanguage.tr('Message', 'सन्देश'),
-                  a['message'].toString()),
-          ],
-        ),
-      );
+  /// Submission info — Payment Summary pattern (subscription detail page):
+  /// a RequestSectionCard of RequestInfoRows (icon + bold fixed-width label
+  /// + regular-weight value, hairline dividers).
+  Widget _metaCard(ExpoPalette pal, Map<String, dynamic> a) {
+    final status = (a['status']?.toString() ?? '').trim();
+    final statusLabel = status.isEmpty
+        ? '—'
+        : '${status[0].toUpperCase()}${status.substring(1)}';
+    final hasMessage = (a['message']?.toString() ?? '').trim().isNotEmpty;
+    return RequestSectionCard(
+      icon: Icons.fact_check_outlined,
+      tone: pal.primary,
+      title: AppLanguage.tr('Submission Info', 'पेश गरिएको जानकारी'),
+      child: Column(
+        children: [
+          RequestInfoRow(
+            icon: Icons.person_outline,
+            label: AppLanguage.tr('Student', 'विद्यार्थी'),
+            value: Text((a['studentName']?.toString() ?? '').isNotEmpty
+                ? a['studentName'].toString()
+                : '—'),
+          ),
+          RequestInfoRow(
+            icon: Icons.info_outline,
+            label: AppLanguage.tr('Status', 'स्थिति'),
+            value: Text(statusLabel),
+          ),
+          RequestInfoRow(
+            icon: Icons.calendar_today_outlined,
+            label: AppLanguage.tr('Submitted', 'पेश गरिएको'),
+            value: Text(_fmtDate(a['createdAt'])),
+            last: !hasMessage,
+          ),
+          if (hasMessage)
+            RequestInfoRow(
+              icon: Icons.chat_bubble_outline,
+              label: AppLanguage.tr('Message', 'सन्देश'),
+              stacked: true,
+              last: true,
+              value: Text(a['message'].toString()),
+            ),
+        ],
+      ),
+    );
+  }
 
   /// Help card (mirrors the React helpCard): contact-our-team line plus a
   /// Contact Us button.
@@ -717,22 +864,6 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
               label: Text(AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्')),
               onPressed: () => context.push('/contact-us'),
             ),
-          ],
-        ),
-      );
-
-  Widget _kv(ExpoPalette pal, String k, String v) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text(k, style: TextStyle(color: pal.textSecondary)),
-            Flexible(
-                child: Text(v,
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: pal.textPrimary))),
           ],
         ),
       );
@@ -773,7 +904,7 @@ class _AnswerTimelineStepData {
 
 /// One row of the answer-journey timeline: glowing status dot on a vertical
 /// rail with a connector, content card to the right. The active step's dot
-/// breathes (finite, settles at rest).
+/// breathes continuously (see [_PulsingDot]).
 class _AnswerTimelineStep extends StatelessWidget {
   final _AnswerTimelineStepData data;
   final bool isLast;
@@ -884,7 +1015,8 @@ class _AnswerTimelineStep extends StatelessWidget {
   }
 
   Widget _dot(bool active) {
-    final dot = Container(
+    if (active) return _PulsingDot(tone: data.tone, icon: data.icon);
+    return Container(
       width: 34,
       height: 34,
       decoration: BoxDecoration(
@@ -893,28 +1025,68 @@ class _AnswerTimelineStep extends StatelessWidget {
             alpha: data.state == _StepState.locked ? 0.10 : 0.16),
         border: Border.all(
             color: data.tone.withValues(alpha: 0.45), width: 1.5),
-        boxShadow: active
-            ? [
-                BoxShadow(
-                  color: data.tone.withValues(alpha: 0.5),
-                  blurRadius: 12,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
       ),
       child: Icon(data.icon, size: 17, color: data.tone),
     );
-    if (!active) return dot;
-    // The live step breathes: one finite 1.6s pulse that settles at rest.
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: const Duration(milliseconds: 1600),
-      builder: (context, t, child) {
-        final s = 1 + 0.08 * (1 - t) * (t < 0.5 ? t * 2 : (1 - t) * 2);
-        return Transform.scale(scale: s, child: child);
+  }
+}
+
+/// The timeline's live-step dot: a continuously breathing glow — the halo
+/// (shadow blur/spread/alpha) and a gentle 1.0↔1.12 scale pulse on a
+/// ~1.4s repeat-reverse loop, so a pending answer always reads as "in
+/// progress" instead of settling static after one pulse.
+class _PulsingDot extends StatefulWidget {
+  final Color tone;
+  final IconData icon;
+
+  const _PulsingDot({required this.tone, required this.icon});
+
+  @override
+  State<_PulsingDot> createState() => _PulsingDotState();
+}
+
+class _PulsingDotState extends State<_PulsingDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = widget.tone;
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        final t = Curves.easeInOut.transform(_ctrl.value);
+        return Transform.scale(
+          scale: 1 + 0.12 * t,
+          child: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: tone.withValues(alpha: 0.16),
+              border: Border.all(
+                  color: tone.withValues(alpha: 0.45), width: 1.5),
+              boxShadow: [
+                BoxShadow(
+                  color: tone.withValues(alpha: 0.35 + 0.25 * t),
+                  blurRadius: 10 + 8 * t,
+                  spreadRadius: 0.5 + 1.5 * t,
+                ),
+              ],
+            ),
+            child: Icon(widget.icon, size: 17, color: tone),
+          ),
+        );
       },
-      child: dot,
     );
   }
 }

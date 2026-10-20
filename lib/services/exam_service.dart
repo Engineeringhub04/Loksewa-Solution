@@ -1283,6 +1283,166 @@ Future<List<ExamAnswer>> fetchAllExamAnswers() async {
   return answers;
 }
 
+/// Display names for an exam answer (course / subcourse / section), resolved
+/// from the parent exam set's IDs. Answer docs submitted before the names
+/// were saved on the doc itself carry blank `courseName` / `subcourseName` /
+/// `sectionName` (the raw `app_exam_sets` doc only stores IDs), so screens
+/// resolve the missing names on read via [resolveAnswerDisplayNames].
+class AnswerDisplayNames {
+  final String courseName;
+  final String subcourseName;
+  final String sectionName;
+
+  const AnswerDisplayNames({
+    this.courseName = '',
+    this.subcourseName = '',
+    this.sectionName = '',
+  });
+
+  bool get isComplete =>
+      courseName.isNotEmpty &&
+      subcourseName.isNotEmpty &&
+      sectionName.isNotEmpty;
+}
+
+/// Session cache for the sections list used by [resolveAnswerDisplayNames]
+/// (section names change rarely; re-listing per answer would be wasteful).
+Future<List<ExamSection>>? _answerNameSectionsFuture;
+
+Future<List<ExamSection>> _sectionsForNameResolution(String token) {
+  final cached = _answerNameSectionsFuture;
+  if (cached != null) return cached;
+  final future = () async {
+    final docs = await FirestoreRest.listDocuments('app_exam_sections',
+        idToken: token, pageSize: 200);
+    return docs.map(ExamSection.fromMap).toList();
+  }();
+  _answerNameSectionsFuture = future;
+  // A failed list must not poison the session — allow a later retry.
+  future.then((_) {}, onError: (_) {
+    if (identical(_answerNameSectionsFuture, future)) {
+      _answerNameSectionsFuture = null;
+    }
+  });
+  return future;
+}
+
+/// Resolves the display names for an answer doc, keeping any names already
+/// stored on the doc and filling the blanks from the exam set's IDs:
+/// course/subcourse names from `app_courses` (mirrors fetchUserCourseInfo —
+/// `name`, falling back to `nameNe`; subcourse from the course's
+/// `subcourses` subcollection with the legacy flat `app_subcourses`
+/// fallback) and the section's display name from the `app_exam_sections`
+/// list (legacy section ids normalised first).
+///
+/// Best-effort by contract: every lookup failure is swallowed and the
+/// affected name stays blank — this must NEVER block a submission or a
+/// screen. [examSet] seeds an already-loaded set doc; [examSetCache]
+/// (keyed by exam set id) lets a screen load each set doc only once.
+Future<AnswerDisplayNames> resolveAnswerDisplayNames(
+  Map<String, dynamic> answer, {
+  bool nepali = false,
+  Map<String, dynamic>? examSet,
+  Map<String, Map<String, dynamic>?>? examSetCache,
+}) async {
+  String stored(String key) => (answer[key] ?? '').toString().trim();
+  var courseName = stored('courseName');
+  var subcourseName = stored('subcourseName');
+  var sectionName = stored('sectionName');
+  if (courseName.isNotEmpty &&
+      subcourseName.isNotEmpty &&
+      sectionName.isNotEmpty) {
+    return AnswerDisplayNames(
+      courseName: courseName,
+      subcourseName: subcourseName,
+      sectionName: sectionName,
+    );
+  }
+  try {
+    final token = await AuthService.getValidIdToken();
+    var courseId = stored('courseId');
+    var subcourseId = stored('subcourseId');
+    var sectionId = '';
+
+    // The parent exam-set doc carries the IDs (and may carry names itself
+    // on future sets — prefer those when present).
+    var setDoc = examSet;
+    final setId = stored('examSetId');
+    if (setDoc == null && setId.isNotEmpty) {
+      if (examSetCache != null && examSetCache.containsKey(setId)) {
+        setDoc = examSetCache[setId];
+      } else {
+        try {
+          setDoc = await FirestoreRest.getDocument('app_exam_sets/$setId',
+              idToken: token);
+        } catch (_) {
+          // Best-effort: names stay blank.
+        }
+        examSetCache?[setId] = setDoc;
+      }
+    }
+    if (setDoc != null) {
+      String fromSet(String key) => (setDoc![key] ?? '').toString().trim();
+      if (courseId.isEmpty) courseId = fromSet('courseId');
+      if (subcourseId.isEmpty) subcourseId = fromSet('subcourseId');
+      sectionId = fromSet('sectionId');
+      if (courseName.isEmpty) courseName = fromSet('courseName');
+      if (subcourseName.isEmpty) subcourseName = fromSet('subcourseName');
+      if (sectionName.isEmpty) sectionName = fromSet('sectionName');
+    }
+
+    if (courseName.isEmpty && courseId.isNotEmpty) {
+      try {
+        final c = await FirestoreRest.getDocument('app_courses/$courseId',
+            idToken: token);
+        courseName =
+            ((c?['name'] ?? c?['nameNe']) as String? ?? '').trim();
+      } catch (_) {}
+    }
+    if (subcourseName.isEmpty && subcourseId.isNotEmpty) {
+      if (courseId.isNotEmpty) {
+        try {
+          final sc = await FirestoreRest.getDocument(
+              'app_courses/$courseId/subcourses/$subcourseId',
+              idToken: token);
+          subcourseName =
+              ((sc?['name'] ?? sc?['nameNe']) as String? ?? '').trim();
+        } catch (_) {}
+      }
+      if (subcourseName.isEmpty) {
+        // Legacy fallback: flat `app_subcourses` collection.
+        try {
+          final legacy = await FirestoreRest.getDocument(
+              'app_subcourses/$subcourseId',
+              idToken: token);
+          subcourseName =
+              ((legacy?['name'] ?? legacy?['nameNe']) as String? ?? '')
+                  .trim();
+        } catch (_) {}
+      }
+    }
+    if (sectionName.isEmpty && sectionId.isNotEmpty) {
+      try {
+        final sections = await _sectionsForNameResolution(token);
+        final wanted = normalizeExamSectionId(sectionId);
+        for (final s in sections) {
+          if (normalizeExamSectionId(s.id) == wanted) {
+            sectionName = s.displayName(nepali);
+            break;
+          }
+        }
+      } catch (_) {}
+    }
+  } catch (_) {
+    // Best-effort: whatever was resolved (possibly nothing) stands.
+  }
+  return AnswerDisplayNames(
+    courseName: courseName,
+    subcourseName: subcourseName,
+    sectionName: sectionName,
+  );
+}
+
 const _examAnswerWebhookUrl = 'https://script.google.com/macros/s/AKfycbzBvEYD5q7hbqApGLrdeKlNoJmlyNdbs4VgA7vTaqY4lrCySIaX39xXXMM-UnrCxJeo/exec';
 
 /// Notifies the admin (via Discord) whenever a student submits a theory

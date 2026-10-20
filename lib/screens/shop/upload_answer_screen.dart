@@ -41,6 +41,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   String? _editId;
   String? _examSetId;
   Map<String, dynamic>? _examSet;
+
+  /// Edit mode only: the answer doc as loaded, so a re-submit can backfill
+  /// the display names (course/subcourse/section) that older submissions
+  /// never saved.
+  Map<String, dynamic>? _existingAnswer;
   bool _done = false;
   String? _doneId;
 
@@ -68,8 +73,35 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   @override
   void initState() {
     super.initState();
+    // Live submit-button gating: re-render as the fields change.
+    _nameCtrl.addListener(_onFormChanged);
+    _msgCtrl.addListener(_onFormChanged);
+  }
+
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // _init reads GoRouterState (an inherited widget), which is only safe
+    // from didChangeDependencies onward — not synchronously in initState.
+    if (_started) return;
+    _started = true;
     _init();
   }
+
+  void _onFormChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// The submit button is only live once every required field is complete:
+  /// a non-empty name, an answer PDF that finished uploading, and a
+  /// non-empty message for the teacher.
+  bool get _canSubmit =>
+      _nameCtrl.text.trim().isNotEmpty &&
+      !_picking &&
+      (_previewUrl?.isNotEmpty ?? false) &&
+      _msgCtrl.text.trim().isNotEmpty;
 
   @override
   void dispose() {
@@ -162,6 +194,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         final a = await FirestoreRest.getDocument(
             'app_exam_answers/$_editId',
             idToken: token);
+        _existingAnswer = a;
         _msgCtrl.text = a?['message']?.toString() ?? '';
         _previewUrl = a?['pdfUrl']?.toString();
         _nameCtrl.text = a?['studentName']?.toString() ?? _nameCtrl.text;
@@ -192,8 +225,10 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           }
         }
         if (existingId != null) {
-          // Duplicate guard: route to the existing submission instead.
-          if (mounted) context.go('/exam-answer/$existingId');
+          // Duplicate guard: route to the existing submission instead —
+          // via the stack-preserving landing (a bare go() would leave
+          // the answer page as the root and Back would close the app).
+          if (mounted) _landOnAnswerPage('/exam-answer/$existingId');
           return;
         }
       }
@@ -228,6 +263,14 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           ToastVariant.error);
       return false;
     }
+    if (_msgCtrl.text.trim().isEmpty) {
+      showToast(
+          context,
+          AppLanguage.tr('Please write a message for the teacher.',
+              'कृपया शिक्षकका लागि सन्देश लेख्नुहोस्।'),
+          ToastVariant.error);
+      return false;
+    }
     return true;
   }
 
@@ -259,20 +302,54 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
       final uid = user?.uid ?? '';
       if (_editId != null && _editId!.isNotEmpty) {
         // Edit mode: update pdfUrl + message only (React: updateMyExamAnswer).
+        final patch = <String, dynamic>{
+          'studentName': _nameCtrl.text.trim(),
+          'pdfUrl': _previewUrl,
+          'message': _msgCtrl.text.trim(),
+          'updatedAt': DateTime.now().toIso8601String(),
+        };
+        // Backfill the display names ONLY when the stored doc never saved
+        // them (older submissions copied them from the set doc, which only
+        // carries IDs) and resolution actually found them. Best-effort: a
+        // failed lookup simply leaves the doc as it was.
+        final existing = _existingAnswer;
+        if (existing != null) {
+          final names = await resolveAnswerDisplayNames(existing);
+          void backfill(String key, String resolved) {
+            final current = (existing[key] ?? '').toString().trim();
+            if (current.isEmpty && resolved.isNotEmpty) {
+              patch[key] = resolved;
+            }
+          }
+
+          backfill('courseName', names.courseName);
+          backfill('subcourseName', names.subcourseName);
+          backfill('sectionName', names.sectionName);
+        }
         await FirestoreRest.setDocument(
           'app_exam_answers/$_editId',
-          {
-            'studentName': _nameCtrl.text.trim(),
-            'pdfUrl': _previewUrl,
-            'message': _msgCtrl.text.trim(),
-            'updatedAt': DateTime.now().toIso8601String(),
-          },
+          patch,
           merge: true,
           idToken: token,
         );
         _doneId = _editId;
       } else {
         final id = '${uid}_${_examSetId}_${DateTime.now().millisecondsSinceEpoch}';
+        // The raw set doc only carries IDs — resolve the human-readable
+        // course/subcourse/section names from them so the answer doc (and
+        // every list/detail that reads it) shows real names. Best-effort:
+        // resolution failures fall back to '' and never block the submit.
+        final names = await resolveAnswerDisplayNames(
+          {
+            'courseId': _examSet?['courseId'],
+            'subcourseId': _examSet?['subcourseId'],
+            'examSetId': _examSetId,
+            'courseName': _examSet?['courseName'],
+            'subcourseName': _examSet?['subcourseName'],
+            'sectionName': _examSet?['sectionName'],
+          },
+          examSet: _examSet,
+        );
         await FirestoreRest.setDocument(
           'app_exam_answers/$id',
           {
@@ -282,12 +359,12 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             'photoURL': null,
             'email': user?.email,
             'courseId': _examSet?['courseId'],
-            'courseName': _examSet?['courseName'],
+            'courseName': names.courseName,
             'subcourseId': _examSet?['subcourseId'],
-            'subcourseName': _examSet?['subcourseName'],
+            'subcourseName': names.subcourseName,
             'examSetId': _examSetId,
             'examSetTitle': _examSet?['title'],
-            'sectionName': _examSet?['sectionName'],
+            'sectionName': names.sectionName,
             'message': _msgCtrl.text.trim(),
             'pdfUrl': _previewUrl,
             'checkedPdfUrl': '',
@@ -366,6 +443,42 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
     }
   }
 
+  /// Completion navigation — mirrors the checkout completion fix
+  /// (checkout_screen.dart): NEVER context.go() straight to the
+  /// destination — go() wipes the whole stack and leaves the destination
+  /// as the root route, so Back there closes the app with no exit
+  /// confirmation. Instead pop back toward the tabs shell ('/'),
+  /// preserving what is underneath, then push the destination on top:
+  /// Tabs -> destination, so Back lands on the hub this flow started
+  /// from, and Back again there gets the shell's exit confirmation
+  /// (tabs_screen.dart). While [_done], this screen's own PopScope
+  /// vetoes the pops (and when this screen IS the whole stack there is
+  /// nothing to pop) — then build the stack the way the splash's
+  /// deep-link landing does: go('/') first, destination pushed on top.
+  void _landOnAnswerPage(String location) {
+    _redirectTimer?.cancel();
+    if (!mounted) return;
+    final router = GoRouter.of(context);
+    var guard = 0;
+    while (guard++ < 8 &&
+        router.routerDelegate.currentConfiguration.last.matchedLocation !=
+            '/' &&
+        context.canPop()) {
+      final before =
+          router.routerDelegate.currentConfiguration.last.matchedLocation;
+      context.pop();
+      if (router.routerDelegate.currentConfiguration.last.matchedLocation ==
+          before) {
+        break; // pop vetoed — fall through to the stack rebuild below
+      }
+    }
+    if (router.routerDelegate.currentConfiguration.last.matchedLocation !=
+        '/') {
+      context.go('/');
+    }
+    if (mounted) context.push(location);
+  }
+
   /// Success landed: modern success screen + 3s auto-redirect to
   /// My Answer Sheets. Back (header + device) also routes there.
   void _onSubmitSuccess() {
@@ -383,7 +496,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
       }
       if (_redirectSecs <= 1) {
         t.cancel();
-        context.go('/exam-answer/my-submissions');
+        _landOnAnswerPage('/exam-answer/my-submissions');
       } else {
         setState(() => _redirectSecs--);
       }
@@ -425,7 +538,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
       canPop: !_done,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop && _done && mounted) {
-          context.go('/exam-answer/my-submissions');
+          _landOnAnswerPage('/exam-answer/my-submissions');
         }
       },
       child: _buildScaffold(isEdit),
@@ -741,8 +854,8 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             minLines: 3,
             decoration: _fieldDecoration(
                 pal,
-                AppLanguage.tr('Message for the teacher (optional)',
-                    'शिक्षकका लागि सन्देश (वैकल्पिक)'),
+                AppLanguage.tr('Message for the teacher *',
+                    'शिक्षकका लागि सन्देश *'),
                 icon: Icons.message_outlined),
           ),
         ],
@@ -909,24 +1022,27 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
 
   /// Gradient submit button — opens the confirm popup (standing
   /// popup-action pattern); the popup's own Submit button carries the
-  /// loading state while the write runs.
+  /// loading state while the write runs. The button stays greyed and
+  /// untappable until every required field is complete ([_canSubmit]).
   Widget _submitButton(ExpoPalette pal, bool isEdit) {
-    final label = AppLanguage.tr(isEdit ? 'Save Changes' : 'Submit',
-        isEdit ? 'परिवर्तन बचत गर्नुहोस्' : 'पेश गर्नुहोस्');
+    final label = AppLanguage.tr(isEdit ? 'Update Data' : 'Submit',
+        isEdit ? 'डाटा अपडेट गर्नुहोस्' : 'पेश गर्नुहोस्');
+    final enabled = _canSubmit && !_submitting && !_done;
+    final greyed = _submitting || !enabled;
     return GestureDetector(
-      onTap: _submitting || _done ? null : () => _confirmSubmit(pal, isEdit),
+      onTap: enabled ? () => _confirmSubmit(pal, isEdit) : null,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: _submitting
+            colors: greyed
                 ? [pal.textDisabled, pal.textDisabled]
                 : [pal.primary, const Color(0xFF1E40AF)],
           ),
           borderRadius: BorderRadius.circular(16),
-          boxShadow: _submitting
+          boxShadow: greyed
               ? null
               : [
                   BoxShadow(
@@ -1069,7 +1185,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
               child: GestureDetector(
                 onTap: () {
                   _redirectTimer?.cancel();
-                  context.go('/exam-answer/my-submissions');
+                  _landOnAnswerPage('/exam-answer/my-submissions');
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(
@@ -1222,7 +1338,8 @@ class _SubmitConfirmContentState extends State<_SubmitConfirmContent> {
                           strokeWidth: 2, color: Colors.white),
                     )
                   : Text(widget.isEdit
-                      ? AppLanguage.tr('Save', 'बचत गर्नुहोस्')
+                      ? AppLanguage.tr(
+                          'Update Data', 'डाटा अपडेट गर्नुहोस्')
                       : AppLanguage.tr('Submit', 'पेश गर्नुहोस्')),
             ),
           ),

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
 import 'package:loksewa_solution/widgets/gateway_popups.dart';
@@ -95,6 +96,56 @@ int? parseIosMajorVersion(String osVersion) {
   return match == null ? null : int.tryParse(match.group(1)!);
 }
 
+/// Probe offsets (seconds after the webview's URL becomes stable on an
+/// eSewa host) for one blank-page liveness window. The ladder is
+/// front-loaded so a page that CAN render is revealed within seconds;
+/// the blank verdict still waits for the full window (see
+/// [esewaLivenessOutcome]).
+const List<int> esewaLivenessProbeOffsetsSecs = <int>[3, 6, 10, 14];
+
+/// What one fired probe slot concluded about the page's DOM.
+enum EsewaProbeSlot { alive, blank, inconclusive }
+
+/// Maps a raw probe result to its slot: a missing/unparseable result is
+/// inconclusive (an eval failure is NEVER evidence of a blank page); an
+/// empty DOM is blank; anything else means the SPA rendered — alive.
+EsewaProbeSlot esewaSlotFor(EsewaProbeResult? probe) {
+  if (probe == null) return EsewaProbeSlot.inconclusive;
+  return probe.looksBlank ? EsewaProbeSlot.blank : EsewaProbeSlot.alive;
+}
+
+/// The liveness window's possible end states (see [esewaLivenessOutcome]).
+enum EsewaLivenessOutcome { pending, alive, blank, undecided }
+
+/// Decides a liveness window's outcome from its probe slots (in firing
+/// order):
+/// - [EsewaLivenessOutcome.alive] as soon as ANY slot saw real content;
+/// - [EsewaLivenessOutcome.blank] only when the window is COMPLETE
+///   (every offset in [esewaLivenessProbeOffsetsSecs] has fired) and the
+///   last two parseable slots are both blank — inconclusive slots carry
+///   no DOM measurement, so the last two MEASURED states decide;
+/// - [EsewaLivenessOutcome.undecided] when a complete window produced
+///   fewer than two blank measurements (no verdict — reveal the page
+///   rather than trapping the user behind the connecting overlay);
+/// - [EsewaLivenessOutcome.pending] while slots remain.
+EsewaLivenessOutcome esewaLivenessOutcome(List<EsewaProbeSlot> slots) {
+  if (slots.contains(EsewaProbeSlot.alive)) {
+    return EsewaLivenessOutcome.alive;
+  }
+  if (slots.length < esewaLivenessProbeOffsetsSecs.length) {
+    return EsewaLivenessOutcome.pending;
+  }
+  final measured = slots
+      .where((s) => s != EsewaProbeSlot.inconclusive)
+      .toList(growable: false);
+  if (measured.length >= 2 &&
+      measured[measured.length - 1] == EsewaProbeSlot.blank &&
+      measured[measured.length - 2] == EsewaProbeSlot.blank) {
+    return EsewaLivenessOutcome.blank;
+  }
+  return EsewaLivenessOutcome.undecided;
+}
+
 /// In-app eSewa payment page — everything stays inside the app, never
 /// opens Chrome. Auto-POSTs the worker-signed form fields to eSewa and
 /// intercepts the success/failure redirects configured in the worker.
@@ -134,13 +185,31 @@ class EsewaWebViewScreen extends StatefulWidget {
   State<EsewaWebViewScreen> createState() => _EsewaWebViewScreenState();
 }
 
-class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
+class _EsewaWebViewScreenState extends State<EsewaWebViewScreen>
+    with SingleTickerProviderStateMixin {
   static const _successPrefix = 'https://kbr.com.np/payments/esewa/success';
   static const _failurePrefix = 'https://kbr.com.np/payments/esewa/failure';
 
-  bool _loadingPage = true;
   bool _done = false;
   Timer? _redirectTimer;
+
+  /// "Connecting to eSewa" overlay state. The overlay is mounted from
+  /// screen open and stays FULLY VISIBLE until the liveness probes
+  /// decide the page's fate (alive → fade out and reveal the page;
+  /// blank → fade out as the unsupported panel fades in) — the raw,
+  /// potentially white webview is never exposed while the verdict is
+  /// pending. [_overlayOpaque] is the AnimatedOpacity target; when the
+  /// fade-out completes, the overlay unmounts ([_overlayInTree] false).
+  bool _overlayInTree = true;
+  bool _overlayOpaque = true;
+
+  /// Blank-panel entrance animation (fade + slight scale/slide-up,
+  /// app-modal-like), started when the blank verdict fires.
+  late final AnimationController _panelAnim;
+  late final Animation<double> _panelFade;
+  late final Animation<double> _panelScale;
+  late final Animation<Offset> _panelSlide;
+  late final Animation<double> _panelIconScale;
 
   /// webview_flutter controller. The eSewa form is loaded from the
   /// worker-served HTTPS URL (real navigation — the proven iOS pattern);
@@ -177,10 +246,15 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   /// silently renders nothing on old WebKit (iOS 15 — proven on-device:
   /// mobile Safari on the same phone is also white, so no app-side
   /// loading change can fix it). After the webview commits to an eSewa
-  /// host, probes at +8s and +14s check the page's own DOM; both blank =
-  /// verdict → the unsupported panel replaces the eternal white screen.
-  /// Platform-agnostic: also catches eSewa downtime on Android.
+  /// host, probes on the [esewaLivenessProbeOffsetsSecs] ladder check the
+  /// page's own DOM; [esewaLivenessOutcome] turns them into a verdict —
+  /// alive reveals the page, blank swaps the eternal white screen for
+  /// the unsupported panel. Platform-agnostic: also catches eSewa
+  /// downtime on Android.
   Timer? _livenessTimer;
+
+  /// Slot results of the current liveness window, in firing order.
+  List<EsewaProbeSlot> _livenessSlots = <EsewaProbeSlot>[];
 
   /// Generation counter: any navigation / retry / finish invalidates
   /// pending probe timers — they abort instead of firing late.
@@ -207,6 +281,19 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   @override
   void initState() {
     super.initState();
+    _panelAnim = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 380));
+    _panelFade = CurvedAnimation(parent: _panelAnim, curve: Curves.easeOut);
+    _panelScale = Tween<double>(begin: 0.96, end: 1).animate(
+        CurvedAnimation(parent: _panelAnim, curve: Curves.easeOutCubic));
+    _panelSlide = Tween<Offset>(
+            begin: const Offset(0, 0.05), end: Offset.zero)
+        .animate(
+            CurvedAnimation(parent: _panelAnim, curve: Curves.easeOutCubic));
+    _panelIconScale = Tween<double>(begin: 0.6, end: 1).animate(
+        CurvedAnimation(
+            parent: _panelAnim,
+            curve: const Interval(0, 0.65, curve: Curves.easeOutBack)));
     // NOTE: no navigation delegate here — on iOS/WKWebView the delegate's
     // asynchronous decidePolicyFor round-trip breaks the auto-submit form
     // POST's body (eSewa answers with an HTTP error page: silent white
@@ -235,6 +322,7 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   Future<void> _loadForm() async {
     _watchdogTimer?.cancel();
     if (mounted) setState(() => _showContinue = false);
+    _showOverlay();
     final formUrl = widget.formUrl;
     if (formUrl != null && formUrl.isNotEmpty) {
       String token = '';
@@ -253,6 +341,34 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
       await _controller.loadHtmlString(_autoPostHtml);
     }
     _armWatchdog();
+  }
+
+  /// Brings the "Connecting to eSewa" overlay back (retry / Continue
+  /// reloads). No-op when it is already fully visible.
+  void _showOverlay() {
+    if (_overlayInTree && _overlayOpaque) return;
+    if (!mounted) return;
+    setState(() {
+      _overlayInTree = true;
+      _overlayOpaque = true;
+    });
+  }
+
+  /// Fades the connecting overlay out over 300ms; the overlay unmounts
+  /// when the fade completes (see [_onOverlayFadeEnd]). No-op when it is
+  /// already fading or gone.
+  void _fadeOutOverlay() {
+    if (!_overlayInTree || !_overlayOpaque || !mounted) return;
+    setState(() => _overlayOpaque = false);
+  }
+
+  /// AnimatedOpacity completion hook: unmounts the overlay after a
+  /// fade-OUT. Also fires after a fade-IN (retry) — the [_overlayOpaque]
+  /// guard keeps the overlay mounted then.
+  void _onOverlayFadeEnd() {
+    if (mounted && _overlayInTree && !_overlayOpaque) {
+      setState(() => _overlayInTree = false);
+    }
   }
 
   /// True when [host] is eSewa itself (live / sandbox subdomains).
@@ -306,7 +422,6 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
       NavigationDelegate(
         onNavigationRequest: _onNavigationRequest,
         onPageStarted: (url) {
-          if (mounted) setState(() => _loadingPage = true);
           // A fresh navigation on eSewa's pages restarts the liveness
           // window — the new page gets its own full blank-check budget.
           if (_livenessEligible(url) && url != _livenessUrl) {
@@ -314,15 +429,11 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
             _startLivenessWatch();
           }
         },
-        onPageFinished: (_) {
-          if (mounted) setState(() => _loadingPage = false);
-        },
         onWebResourceError: (error) {
           // iOS diagnostics: surface the failing URL + description so
           // a future on-device test can report exactly what failed.
           debugPrint('[EsewaWebView] load error: ${error.description} '
               '(url: ${error.url})');
-          if (mounted) setState(() => _loadingPage = false);
         },
         onHttpError: (error) {
           // An HTTP error status (e.g. eSewa rejecting a request) renders
@@ -333,11 +444,16 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
         },
       ),
     );
-    // The committed eSewa page loaded before the delegate existed, so no
-    // onPageFinished will fire for it — drop the loading overlay now.
-    if (mounted && !_done) setState(() => _loadingPage = false);
+    // Reaching eSewa retires the watchdog's Continue recovery if it was
+    // showing. The connecting overlay is NOT dropped here: it stays up
+    // until the liveness probes decide whether this page actually
+    // rendered (see _runProbeSlot) — dropping it on arrival is what
+    // used to expose seconds of raw white on unsupported devices.
+    if (mounted && !_done && _showContinue) {
+      setState(() => _showContinue = false);
+    }
     // The webview has committed to an eSewa host — start watching for
-    // the silent-blank case (see _livenessProbe).
+    // the silent-blank case (see _runProbeSlot).
     _startLivenessWatch();
   }
 
@@ -357,10 +473,8 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
       if (!_hasReachedEsewa(url)) {
         debugPrint('[EsewaWebView] watchdog: eSewa page not reached '
             '(currentUrl: $url) — showing Continue.');
-        setState(() {
-          _loadingPage = false;
-          _showContinue = true;
-        });
+        setState(() => _showContinue = true);
+        _fadeOutOverlay();
       }
     });
   }
@@ -395,23 +509,36 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   }
 
   /// (Re)starts a liveness window for the page the webview is now on:
-  /// probes at ~+8s and ~+14s. Any navigation to a new URL, retry, or
-  /// finish restarts/stops it via [_livenessGen].
+  /// probe slots on the [esewaLivenessProbeOffsetsSecs] ladder. Any
+  /// navigation to a new URL, retry, or finish restarts/stops it via
+  /// [_livenessGen].
   void _startLivenessWatch() {
     if (_done || _pageAlive || _blankPanel) return;
     final gen = ++_livenessGen;
     _livenessTimer?.cancel();
-    _livenessTimer = Timer(const Duration(seconds: 8),
-        () => _livenessProbe(gen, second: false, firstBlank: false));
+    _livenessSlots = <EsewaProbeSlot>[];
+    _scheduleProbe(gen);
   }
 
-  /// One liveness probe. A verdict needs BOTH probes of a window to see
-  /// an empty DOM at a stable eSewa URL ([firstBlank] carries the first
-  /// probe's result); a single alive result marks the page alive for
-  /// good; an inconclusive probe just ends the window quietly (never a
-  /// verdict).
-  Future<void> _livenessProbe(int gen,
-      {required bool second, required bool firstBlank}) async {
+  /// Schedules the next probe slot of the window owned by [gen] at its
+  /// offset in [esewaLivenessProbeOffsetsSecs] (offsets are absolute
+  /// from the window start, so consecutive delays are the differences).
+  void _scheduleProbe(int gen) {
+    final fired = _livenessSlots.length;
+    if (fired >= esewaLivenessProbeOffsetsSecs.length) return;
+    final at = esewaLivenessProbeOffsetsSecs[fired];
+    final prev = fired == 0 ? 0 : esewaLivenessProbeOffsetsSecs[fired - 1];
+    _livenessTimer =
+        Timer(Duration(seconds: at - prev), () => _runProbeSlot(gen));
+  }
+
+  /// One liveness probe slot. Evaluates the page's DOM, records the
+  /// slot, and applies [esewaLivenessOutcome]: alive fades the
+  /// connecting overlay out and reveals the page for good; a blank
+  /// verdict swaps the overlay for the unsupported panel; an undecided
+  /// window reveals whatever is there (never trap the user behind the
+  /// overlay); pending schedules the next slot.
+  Future<void> _runProbeSlot(int gen) async {
     if (gen != _livenessGen || _done || !mounted ||
         _pageAlive || _blankPanel) {
       return;
@@ -441,44 +568,41 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
       probe = null;
     }
     if (gen != _livenessGen || _done || !mounted) return;
-    if (probe == null) {
-      debugPrint('[EsewaWebView] probe inconclusive '
-          '(check ${second ? 2 : 1}) — no verdict.');
-      if (!second) {
-        _livenessTimer = Timer(const Duration(seconds: 6),
-            () => _livenessProbe(gen, second: true, firstBlank: false));
-      }
-      return;
+    final slot = esewaSlotFor(probe);
+    _livenessSlots = <EsewaProbeSlot>[..._livenessSlots, slot];
+    debugPrint('[EsewaWebView] probe ${_livenessSlots.length}/'
+        '${esewaLivenessProbeOffsetsSecs.length}: ${slot.name}'
+        '${probe == null ? '' : ' (text=${probe.textLength} '
+            'interactive=${probe.interactiveCount})'} url=$url');
+    switch (esewaLivenessOutcome(_livenessSlots)) {
+      case EsewaLivenessOutcome.alive:
+        _pageAlive = true;
+        debugPrint('[EsewaWebView] page alive — revealing payment page.');
+        _fadeOutOverlay();
+      case EsewaLivenessOutcome.blank:
+        _showBlankPanel();
+      case EsewaLivenessOutcome.undecided:
+        debugPrint('[EsewaWebView] liveness window ended without a '
+            'verdict — revealing page.');
+        _fadeOutOverlay();
+      case EsewaLivenessOutcome.pending:
+        _scheduleProbe(gen);
     }
-    if (!probe.looksBlank) {
-      _pageAlive = true;
-      debugPrint('[EsewaWebView] page alive: text=${probe.textLength} '
-          'interactive=${probe.interactiveCount}');
-      return;
-    }
-    debugPrint('[EsewaWebView] probe blank (check ${second ? 2 : 1}): '
-        'text=${probe.textLength} interactive=${probe.interactiveCount} '
-        'url=$url');
-    if (!second) {
-      _livenessTimer = Timer(const Duration(seconds: 6),
-          () => _livenessProbe(gen, second: true, firstBlank: true));
-      return;
-    }
-    if (!firstBlank) {
-      // Only ONE actual empty-DOM result in this window (the first probe
-      // was inconclusive) — that never counts as a verdict.
-      debugPrint('[EsewaWebView] single blank result only — no verdict.');
-      return;
-    }
-    // Both probes blank at a stable eSewa URL — the page cannot render
-    // here. Show the unsupported panel instead of an eternal white screen.
-    debugPrint('[EsewaWebView] blank verdict — showing unsupported panel '
-        '(url: $url)');
+  }
+
+  /// Blank verdict: fade the connecting overlay out while the
+  /// unsupported panel animates in over the (eternally white) webview.
+  /// The webview stays mounted underneath; only the panel's or the
+  /// header's actions can leave this state.
+  void _showBlankPanel() {
+    if (!mounted || _done || _blankPanel) return;
+    debugPrint('[EsewaWebView] blank verdict — showing unsupported panel.');
     setState(() {
       _blankPanel = true;
-      _loadingPage = false;
       _showContinue = false;
     });
+    _fadeOutOverlay();
+    _panelAnim.forward(from: 0);
   }
 
   /// 'Try Again' on the blank panel: reload the page and run a fresh
@@ -486,10 +610,9 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   /// unsupported device simply earns the panel again).
   Future<void> _retryFromBlankPanel() async {
     if (_done || !mounted) return;
-    setState(() {
-      _blankPanel = false;
-      _loadingPage = true;
-    });
+    setState(() => _blankPanel = false);
+    _panelAnim.reset();
+    _showOverlay();
     _livenessUrl = null;
     try {
       await _controller.reload();
@@ -520,6 +643,7 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
     _watchdogTimer?.cancel();
     _delegatePollTimer?.cancel();
     _stopLiveness();
+    _panelAnim.dispose();
     super.dispose();
   }
 
@@ -696,6 +820,158 @@ $inputs
     return NavigationDecision.navigate;
   }
 
+  /// The unsupported panel shown on a blank verdict: a theme-aware card
+  /// (surface, radius 20, subtle border/shadow) that fades and gently
+  /// scales/slides in as the connecting overlay fades out. Same copy as
+  /// before — the polish is purely presentational.
+  Widget _buildBlankPanel(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Positioned.fill(
+      child: FadeTransition(
+        opacity: _panelFade,
+        child: Container(
+          color: const Color(0xFF0B0F1A),
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+              child: SlideTransition(
+                position: _panelSlide,
+                child: ScaleTransition(
+                  scale: _panelScale,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(24),
+                    decoration: BoxDecoration(
+                      color: palette.surface,
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: palette.border),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.35),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        ScaleTransition(
+                          scale: _panelIconScale,
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color:
+                                  palette.warning.withValues(alpha: 0.15),
+                              border: Border.all(
+                                  color: palette.warning
+                                      .withValues(alpha: 0.4)),
+                            ),
+                            child: Icon(Icons.warning_amber_rounded,
+                                size: 38, color: palette.warning),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Text(
+                          AppLanguage.tr("Payment page couldn't load",
+                              'भुक्तानी पेज लोड हुन सकेन'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          _blankKind == EsewaBlankKind.oldSystem
+                              ? AppLanguage.tr(
+                                  "This device's system can't display eSewa's payment page. Please pay with Khalti or QR, or use a newer device.",
+                                  'यो डिभाइसको प्रणालीले eSewa को भुक्तानी पेज देखाउन सक्दैन। कृपया Khalti वा QR बाट भुक्तानी गर्नुहोस्, वा नयाँ डिभाइस प्रयोग गर्नुहोस्।')
+                              : AppLanguage.tr(
+                                  'The payment page failed to load. Check your connection.',
+                                  'भुक्तानी पेज लोड हुन सकेन। आफ्नो इन्टरनेट जडान जाँच गर्नुहोस्।'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: 14,
+                              height: 1.45),
+                        ),
+                        const SizedBox(height: 14),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.check_circle_rounded,
+                                size: 15, color: palette.success),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                AppLanguage.tr(
+                                  'No payment was made — nothing was charged.',
+                                  'कुनै भुक्तानी भएन — केही शुल्क लागेन।',
+                                ),
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            // Same exit as the cancel-confirm's confirm:
+                            // unawaited worker cancel + 'cancelled'
+                            // result → checkout shows its single end
+                            // toast. No second confirm popup — picking
+                            // another method IS the decision.
+                            onPressed: _cancelAndFinish,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: palette.primary,
+                              foregroundColor: Colors.white,
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                            child: Text(AppLanguage.tr(
+                                'Choose Another Method',
+                                'अर्को विधि छान्नुहोस्')),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _retryFromBlankPanel,
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: Text(AppLanguage.tr(
+                                'Try Again', 'पुनः प्रयास गर्नुहोस्')),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: palette.textPrimary,
+                              side: BorderSide(color: palette.border),
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     // The gateway page starts BELOW the curved header (small gap, no
@@ -731,14 +1007,19 @@ $inputs
             bottom: 0,
             child: WebViewWidget(controller: _controller),
           ),
-          if (_loadingPage)
+          if (_overlayInTree)
             Positioned.fill(
-              child: Container(
-                color: const Color(0xFF0B0F1A),
-                child: Center(
-                  child: PreloadingWidget(
-                    label: AppLanguage.tr(
-                        'Connecting to eSewa…', 'eSewa मा जडान हुँदैछ…'),
+              child: AnimatedOpacity(
+                opacity: _overlayOpaque ? 1 : 0,
+                duration: const Duration(milliseconds: 300),
+                onEnd: _onOverlayFadeEnd,
+                child: Container(
+                  color: const Color(0xFF0B0F1A),
+                  child: Center(
+                    child: PreloadingWidget(
+                      label: AppLanguage.tr(
+                          'Connecting to eSewa…', 'eSewa मा जडान हुँदैछ…'),
+                    ),
                   ),
                 ),
               ),
@@ -770,10 +1051,9 @@ $inputs
                         ),
                         const SizedBox(height: 16),
                         FilledButton(
-                          onPressed: () {
-                            setState(() => _loadingPage = true);
-                            _loadForm();
-                          },
+                          // _loadForm hides this recovery and brings the
+                          // connecting overlay back on its own.
+                          onPressed: _loadForm,
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF60BB46),
                             foregroundColor: Colors.white,
@@ -790,111 +1070,9 @@ $inputs
               ),
             ),
           // Blank verdict: eSewa's page cannot render on this device —
-          // cover the (eternally white) webview with a graceful panel.
-          // The webview stays mounted underneath; only the panel's or
-          // the header's actions can leave this state.
-          if (_blankPanel && !_done)
-            Positioned.fill(
-              child: Container(
-                color: const Color(0xFF0B0F1A),
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 28),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 72,
-                          height: 72,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color:
-                                Colors.amber.withValues(alpha: 0.16),
-                            border: Border.all(
-                                color:
-                                    Colors.amber.withValues(alpha: 0.45)),
-                          ),
-                          child: const Icon(
-                              Icons.warning_amber_rounded,
-                              size: 36,
-                              color: Colors.amber),
-                        ),
-                        const SizedBox(height: 18),
-                        Text(
-                          AppLanguage.tr("Payment page couldn't load",
-                              'भुक्तानी पेज लोड हुन सकेन'),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          _blankKind == EsewaBlankKind.oldSystem
-                              ? AppLanguage.tr(
-                                  "This device's system can't display eSewa's payment page. Please pay with Khalti or QR, or use a newer device.",
-                                  'यो डिभाइसको प्रणालीले eSewa को भुक्तानी पेज देखाउन सक्दैन। कृपया Khalti वा QR बाट भुक्तानी गर्नुहोस्, वा नयाँ डिभाइस प्रयोग गर्नुहोस्।')
-                              : AppLanguage.tr(
-                                  'The payment page failed to load. Check your connection.',
-                                  'भुक्तानी पेज लोड हुन सकेन। आफ्नो इन्टरनेट जडान जाँच गर्नुहोस्।'),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              color: Color(0xFFCBD5E1), fontSize: 14),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          AppLanguage.tr(
-                            'No payment was made — nothing was charged.',
-                            'कुनै भुक्तानी भएन — केही शुल्क लागेन।',
-                          ),
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                              color: Color(0xFF94A3B8), fontSize: 13),
-                        ),
-                        const SizedBox(height: 24),
-                        SizedBox(
-                          width: double.infinity,
-                          child: FilledButton(
-                            // Same exit as the cancel-confirm's confirm:
-                            // unawaited worker cancel + 'cancelled'
-                            // result → checkout shows its single end
-                            // toast. No second confirm popup — picking
-                            // another method IS the decision.
-                            onPressed: _cancelAndFinish,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: const Color(0xFF2563EB),
-                              foregroundColor: Colors.white,
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: Text(AppLanguage.tr(
-                                'Choose Another Method',
-                                'अर्को विधि छान्नुहोस्')),
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            onPressed: _retryFromBlankPanel,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFE2E8F0),
-                              side: const BorderSide(
-                                  color: Color(0xFF475569)),
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
-                            ),
-                            child: Text(AppLanguage.tr(
-                                'Try Again', 'पुनः प्रयास गर्नुहोस्')),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
+          // cover the (eternally white) webview with the animated
+          // unsupported panel (see _buildBlankPanel).
+          if (_blankPanel && !_done) _buildBlankPanel(context),
           // Curved header overlaid on top of everything — always visible,
           // never hidden behind the loading state.
           Positioned(

@@ -97,4 +97,77 @@ void main() {
       expect(parseIosMajorVersion('Version (Build)'), isNull);
     });
   });
+
+  group('esewaSlotFor', () {
+    EsewaProbeResult probe(int text, int interactive) => EsewaProbeResult(
+        readyState: 'complete',
+        textLength: text,
+        interactiveCount: interactive);
+
+    test('a failed eval (null probe) is inconclusive, never blank', () {
+      expect(esewaSlotFor(null), EsewaProbeSlot.inconclusive);
+    });
+
+    test('an empty DOM is blank', () {
+      expect(esewaSlotFor(probe(0, 0)), EsewaProbeSlot.blank);
+      expect(esewaSlotFor(probe(19, 2)), EsewaProbeSlot.blank);
+    });
+
+    test('a rendered DOM is alive', () {
+      expect(esewaSlotFor(probe(150, 7)), EsewaProbeSlot.alive);
+      expect(esewaSlotFor(probe(0, 3)), EsewaProbeSlot.alive);
+    });
+  });
+
+  group('esewaLivenessOutcome', () {
+    const a = EsewaProbeSlot.alive;
+    const b = EsewaProbeSlot.blank;
+    const i = EsewaProbeSlot.inconclusive;
+
+    test('probe schedule is the fast 3/6/10/14 ladder', () {
+      expect(esewaLivenessProbeOffsetsSecs, [3, 6, 10, 14]);
+    });
+
+    test('alive on ANY single probe, even mid-window', () {
+      expect(esewaLivenessOutcome([a]), EsewaLivenessOutcome.alive);
+      expect(esewaLivenessOutcome([i, a]), EsewaLivenessOutcome.alive);
+      expect(esewaLivenessOutcome([b, b, a]), EsewaLivenessOutcome.alive);
+      expect(esewaLivenessOutcome([b, i, b, a]), EsewaLivenessOutcome.alive);
+    });
+
+    test('pending while the window is incomplete — two blanks are '
+        'not yet a verdict', () {
+      expect(esewaLivenessOutcome([]), EsewaLivenessOutcome.pending);
+      expect(esewaLivenessOutcome([b]), EsewaLivenessOutcome.pending);
+      expect(esewaLivenessOutcome([b, b]), EsewaLivenessOutcome.pending);
+      expect(esewaLivenessOutcome([b, i, b]), EsewaLivenessOutcome.pending);
+      expect(esewaLivenessOutcome([i, i, i]), EsewaLivenessOutcome.pending);
+    });
+
+    test('blank verdict when a complete window ends on the last two '
+        'consecutive blanks', () {
+      expect(
+          esewaLivenessOutcome([b, b, b, b]), EsewaLivenessOutcome.blank);
+      expect(
+          esewaLivenessOutcome([i, b, b, b]), EsewaLivenessOutcome.blank);
+      expect(
+          esewaLivenessOutcome([b, i, b, b]), EsewaLivenessOutcome.blank);
+      // Inconclusive slots carry no DOM measurement — the last two
+      // MEASURED states decide.
+      expect(
+          esewaLivenessOutcome([b, b, i, i]), EsewaLivenessOutcome.blank);
+      expect(
+          esewaLivenessOutcome([b, i, i, b]), EsewaLivenessOutcome.blank);
+    });
+
+    test('undecided when a complete window measured fewer than two '
+        'blank states', () {
+      expect(esewaLivenessOutcome([i, i, i, i]),
+          EsewaLivenessOutcome.undecided);
+      expect(esewaLivenessOutcome([b, i, i, i]),
+          EsewaLivenessOutcome.undecided);
+      expect(esewaLivenessOutcome([i, i, i, b]),
+          EsewaLivenessOutcome.undecided);
+    });
+  });
 }

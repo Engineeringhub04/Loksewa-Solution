@@ -11,6 +11,7 @@ import '../services/app_language.dart';
 import '../services/auth_service.dart';
 import '../services/gateway_payment_service.dart';
 import '../services/profile_service.dart';
+import '../services/purchase_refresh.dart';
 import '../theme/app_theme.dart';
 import 'app_toast.dart';
 import 'gateway_popups.dart';
@@ -100,6 +101,11 @@ class _PaymentProblemSectionState extends State<PaymentProblemSection> {
     setState(() => _checking = false);
     if (res['ok'] == true) {
       await GatewayPaymentService.clearPendingPayment();
+      // A purchase was just verified/activated from this detail page's
+      // recovery path: tell the purchase list and the exam/subject pages to
+      // re-read their data (no manual refresh). Mirrors checkout's
+      // verify-success bump.
+      PurchaseRefreshBus.bump();
       if (widget.purchaseType == 'subscription') {
         // Profile refresh while the verifying popup is still up — the
         // premium pill flips instantly with no blank gap.

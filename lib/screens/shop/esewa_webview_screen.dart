@@ -83,8 +83,24 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   Timer? _watchdogTimer;
   bool _showContinue = false;
 
-  /// Guards the cancel-confirm dialog against stacked back presses.
+  /// Guards the cancel-confirm dialog against stacked back presses —
+  /// true only while [_confirmCancel] is running its flow.
   bool _confirmingCancel = false;
+
+  /// True ONLY while the cancel-confirm dialog route is actually on
+  /// screen. Cleared the moment [showCancelPaymentConfirm]'s future
+  /// completes (the dialog pops itself with the result). [_finish] and
+  /// [_expire] use this to decide whether a dismiss-pop is safe — keying
+  /// it off [_confirmingCancel] used to misfire onto the page itself.
+  bool _cancelDialogOpen = false;
+
+  /// iOS/WKWebView quirk: webview_flutter answers every navigation
+  /// decision asynchronously, which breaks the auto-submit form POST's
+  /// body — so the delegate must NOT be installed while the form posts.
+  /// The delegate (success/failure interception) is attached only AFTER
+  /// the webview commits to an eSewa host, detected by the poll below.
+  Timer? _delegatePollTimer;
+  bool _delegateAttached = false;
 
   /// UX-only purchase countdown (the worker sweep is the source of truth
   /// for expiry — it also covers the app-closed case).
@@ -95,31 +111,19 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
   @override
   void initState() {
     super.initState();
+    // NOTE: no navigation delegate here — on iOS/WKWebView the delegate's
+    // asynchronous decidePolicyFor round-trip breaks the auto-submit form
+    // POST's body (eSewa answers with an HTTP error page: silent white
+    // screen). The delegate is attached later, only once the webview has
+    // committed to an eSewa host (see _startDelegatePoll).
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF0B0F1A))
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: _onNavigationRequest,
-          onPageStarted: (_) {
-            if (mounted) setState(() => _loadingPage = true);
-          },
-          onPageFinished: (_) {
-            if (mounted) setState(() => _loadingPage = false);
-          },
-          onWebResourceError: (error) {
-            // iOS diagnostics: surface the failing URL + description so
-            // a future on-device test can report exactly what failed.
-            debugPrint('[EsewaWebView] load error: ${error.description} '
-                '(url: ${error.url})');
-            if (mounted) setState(() => _loadingPage = false);
-          },
-        ),
-      )
       ..setOnConsoleMessage((message) {
         debugPrint('[EsewaWebView] console: ${message.message}');
       });
     _loadForm();
+    _startDelegatePoll();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted || _done) return;
       if (_remainingSecs <= 1) {
@@ -155,7 +159,84 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
     _armWatchdog();
   }
 
-  /// If the eSewa host is not reached within 10s, offer a manual
+  /// True when [host] is eSewa itself (live / sandbox subdomains).
+  static bool _isEsewaHost(String host) =>
+      host == 'esewa.com.np' || host.endsWith('.esewa.com.np');
+
+  /// "Reached" = the webview committed to an eSewa host AND is not still
+  /// sitting on the raw form-submit endpoint (an error page committed
+  /// there is exactly the silent-white case) nor on the worker origin.
+  bool _hasReachedEsewa(String? url) {
+    if (url == null) return false;
+    final uri = Uri.tryParse(url);
+    if (uri == null || !_isEsewaHost(uri.host)) return false;
+    if (uri.path == '/api/epay/main/v2/form') return false;
+    return true;
+  }
+
+  /// Polls [WebViewController.currentUrl] until the webview commits to
+  /// an eSewa host, then attaches the navigation delegate (see initState
+  /// note). The success/failure redirect only happens after the user
+  /// finishes paying, long after arrival — late attachment cannot miss
+  /// it. Runs at most once per screen.
+  void _startDelegatePoll() {
+    if (_delegateAttached || (_delegatePollTimer?.isActive ?? false)) return;
+    _delegatePollTimer = Timer.periodic(const Duration(milliseconds: 500),
+        (_) async {
+      if (!mounted || _done || _delegateAttached) {
+        _delegatePollTimer?.cancel();
+        return;
+      }
+      String? url;
+      try {
+        url = await _controller.currentUrl();
+      } catch (_) {
+        url = null;
+      }
+      if (!mounted || _done || _delegateAttached) return;
+      final uri = url == null ? null : Uri.tryParse(url);
+      if (uri == null || !_isEsewaHost(uri.host)) return;
+      _attachNavigationDelegate();
+    });
+  }
+
+  /// Installs the navigation delegate (success/failure interception) —
+  /// called exactly once, after the form POST has safely committed.
+  void _attachNavigationDelegate() {
+    if (_delegateAttached) return;
+    _delegateAttached = true;
+    _delegatePollTimer?.cancel();
+    _controller.setNavigationDelegate(
+      NavigationDelegate(
+        onNavigationRequest: _onNavigationRequest,
+        onPageStarted: (_) {
+          if (mounted) setState(() => _loadingPage = true);
+        },
+        onPageFinished: (_) {
+          if (mounted) setState(() => _loadingPage = false);
+        },
+        onWebResourceError: (error) {
+          // iOS diagnostics: surface the failing URL + description so
+          // a future on-device test can report exactly what failed.
+          debugPrint('[EsewaWebView] load error: ${error.description} '
+              '(url: ${error.url})');
+          if (mounted) setState(() => _loadingPage = false);
+        },
+        onHttpError: (error) {
+          // An HTTP error status (e.g. eSewa rejecting a request) renders
+          // as a silent white page otherwise — log it so a future
+          // on-device test can report exactly what failed.
+          debugPrint('[EsewaWebView] http error '
+              '${error.response?.statusCode} ${error.request?.uri}');
+        },
+      ),
+    );
+    // The committed eSewa page loaded before the delegate existed, so no
+    // onPageFinished will fire for it — drop the loading overlay now.
+    if (mounted && !_done) setState(() => _loadingPage = false);
+  }
+
+  /// If the eSewa payment page was not reached within 10s, offer a manual
   /// "Continue" recovery instead of a permanent white screen.
   void _armWatchdog() {
     _watchdogTimer?.cancel();
@@ -168,8 +249,8 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
         url = null;
       }
       if (!mounted || _done) return;
-      if (url == null || !url.contains('esewa.com')) {
-        debugPrint('[EsewaWebView] watchdog: eSewa host not reached '
+      if (!_hasReachedEsewa(url)) {
+        debugPrint('[EsewaWebView] watchdog: eSewa page not reached '
             '(currentUrl: $url) — showing Continue.');
         setState(() {
           _loadingPage = false;
@@ -184,6 +265,7 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
     _redirectTimer?.cancel();
     _countdownTimer?.cancel();
     _watchdogTimer?.cancel();
+    _delegatePollTimer?.cancel();
     super.dispose();
   }
 
@@ -195,18 +277,25 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen> {
     _countdownTimer?.cancel();
     _redirectTimer?.cancel();
     _watchdogTimer?.cancel();
+    _delegatePollTimer?.cancel();
     await GatewayPaymentService.cancelPayment(
       gateway: widget.gateway,
       transactionUuid: widget.transactionUuid,
       purchaseType: widget.purchaseType,
     );
     if (!mounted) return;
-    // Dismiss the cancel-confirm dialog first if it is open (see _finish).
-    if (_confirmingCancel) Navigator.of(context).pop();
-    // Lift the back-veto (canPop follows _done), then pop post-frame.
+    // Dismiss the cancel-confirm dialog ONLY if it is genuinely open
+    // right now — a stale flag here would pop the page itself.
+    if (_cancelDialogOpen) {
+      _cancelDialogOpen = false;
+      Navigator.of(context).pop();
+    }
+    // Lift the back-veto (canPop follows _done), then pop post-frame —
+    // but only while this page is still the top route, so a stale
+    // callback can never pop another page.
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
         Navigator.of(context).pop(const EsewaWebResult(status: 'expired'));
       }
     });
@@ -248,16 +337,24 @@ $inputs
     _countdownTimer?.cancel();
     _redirectTimer?.cancel();
     _watchdogTimer?.cancel();
-    // If the cancel-confirm dialog is open, dismiss it first so the
-    // result pop below removes the page and not the dialog (the dialog
-    // is a separate route — the page's PopScope does not veto its pop).
-    if (_confirmingCancel) Navigator.of(context).pop();
+    _delegatePollTimer?.cancel();
+    // Dismiss the cancel-confirm dialog ONLY if it is genuinely open
+    // right now: the dialog is a separate route (the page's PopScope
+    // does not veto its pop), and an extra pop here would remove the
+    // page itself with a null result.
+    if (_cancelDialogOpen) {
+      _cancelDialogOpen = false;
+      Navigator.of(context).pop();
+    }
     // Lift the back-veto (canPop follows _done) so the result pop below
     // is not blocked, then pop after the PopScope rebuilds — an
-    // immediate pop would still be vetoed.
+    // immediate pop would still be vetoed. Guarded by isCurrent so a
+    // stale callback can never pop a different page.
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) Navigator.of(context).pop(r);
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop(r);
+      }
     });
   }
 
@@ -270,17 +367,24 @@ $inputs
     if (_done || _confirmingCancel || !mounted) return;
     _confirmingCancel = true;
     try {
+      _cancelDialogOpen = true;
       final confirmed = await showCancelPaymentConfirm(context);
+      // The dialog popped itself with its result — it is NO LONGER open,
+      // so _finish must not dismiss-pop anything: its single result pop
+      // below is the only pop on this path.
+      _cancelDialogOpen = false;
       if (!mounted || _done) return;
       if (confirmed) {
-        // Best-effort server cancel first (never throws), then report
-        // 'cancelled'. The checkout also fires its own best-effort cancel
-        // on this result — the worker treats the duplicate as not_found.
-        await GatewayPaymentService.cancelPayment(
+        // Fire-and-forget server cancel (mirrors the Khalti path) so the
+        // page closes immediately instead of pausing on the gateway page
+        // for the network round-trip. Checkout issues its own cancel when
+        // it receives the 'cancelled' result — the worker is idempotent
+        // and treats the duplicate as not_found.
+        unawaited(GatewayPaymentService.cancelPayment(
           gateway: widget.gateway,
           transactionUuid: widget.transactionUuid,
           purchaseType: widget.purchaseType,
-        );
+        ));
         _finish(const EsewaWebResult(status: 'cancelled'));
       }
     } finally {

@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
+import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/image_viewer.dart';
@@ -57,6 +58,11 @@ class _SubscriptionExamPurchaseScreenState
   String? _origScreenshotUrl;
   int _nowMs = DateTime.now().millisecondsSinceEpoch;
   Timer? _ticker;
+  // Pending-status live poll (same pattern as subscription_detail_screen):
+  // while the record is still pending, re-read the doc every 5 seconds so
+  // an admin approval or a verification lands without a manual refresh.
+  Timer? _liveTimer;
+  static const _liveInterval = Duration(seconds: 5);
 
   String _t(String en, String ne) => AppLanguage.tr(en, ne);
 
@@ -76,11 +82,13 @@ class _SubscriptionExamPurchaseScreenState
         setState(() => _nowMs = DateTime.now().millisecondsSinceEpoch);
       }
     });
+    _startLiveUpdates();
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
+    _liveTimer?.cancel();
     _refCtrl.removeListener(_onEditFieldChanged);
     _msgCtrl.removeListener(_onEditFieldChanged);
     _refCtrl.dispose();
@@ -141,6 +149,79 @@ class _SubscriptionExamPurchaseScreenState
         _error = e;
       });
     }
+  }
+
+  void _startLiveUpdates() {
+    _liveTimer?.cancel();
+    _liveTimer = Timer.periodic(_liveInterval, (_) => _pollRecord());
+  }
+
+  /// One quiet re-read of the doc. Never shows the loading spinner and
+  /// never touches the edit form — it only swaps the record when something
+  /// actually changed. Skipped while the user is editing or saving, so a
+  /// background change can't clobber the form mid-edit (the post-save
+  /// _load picks it up instead). The poll stops once the status leaves
+  /// 'pending' — after that nothing can change anymore.
+  Future<void> _pollRecord() async {
+    if (!mounted || _editing || _saving) return;
+    final cur = _record;
+    if (cur == null) {
+      // Initial load still in flight (or failed) — leave the timer alone.
+      return;
+    }
+    if (cur.status != 'pending') {
+      _liveTimer?.cancel();
+      return;
+    }
+    try {
+      final record = await fetchExamPurchaseById(widget.id);
+      if (!mounted || record == null) return;
+      if (_sameRecord(_record, record)) return;
+      final flipped = record.status != 'pending';
+      setState(() {
+        _record = record;
+        if (record.status != 'pending') {
+          _title = record.examTitle.isNotEmpty
+              ? record.examTitle
+              : _t('Exam Details', 'परीक्षा विवरण');
+        }
+        if (!_editing) {
+          _refCtrl.text = record.transactionRef ?? '';
+          _msgCtrl.text = record.customerMessage ?? '';
+          _screenshotUrl =
+              record.screenshotUrl.isNotEmpty ? record.screenshotUrl : null;
+          _screenshotBytes = null;
+        }
+      });
+      if (flipped) {
+        // Status left pending (admin approval / verification) — tell the
+        // exam tab and subject pages to re-read their data, no manual
+        // refresh, and stop watching this record.
+        PurchaseRefreshBus.bump();
+        _liveTimer?.cancel();
+      }
+    } catch (_) {
+      // Transient network error — the next tick retries; never break the
+      // screen over a background refresh.
+    }
+  }
+
+  /// Field-by-field comparison of everything this screen renders.
+  bool _sameRecord(ExamPurchaseRecord? a, ExamPurchaseRecord b) {
+    if (a == null) return false;
+    return a.status == b.status &&
+        a.gatewayStatus == b.gatewayStatus &&
+        a.failureReason == b.failureReason &&
+        a.transactionRef == b.transactionRef &&
+        a.screenshotUrl == b.screenshotUrl &&
+        a.customerMessage == b.customerMessage &&
+        a.adminMessage == b.adminMessage &&
+        a.rejectionReason == b.rejectionReason &&
+        a.reviewedAt == b.reviewedAt &&
+        a.verifiedBy == b.verifiedBy &&
+        a.platform == b.platform &&
+        a.amount == b.amount &&
+        a.examTitle == b.examTitle;
   }
 
   void _handleBack() {

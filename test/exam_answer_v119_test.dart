@@ -257,7 +257,10 @@ void main() {
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(tester, find.text('Reason'));
 
-      expect(find.text('Answer sheet is unreadable'), findsOneWidget);
+      // v1.0.120: the reason shows twice — the Rejected crown's
+      // subtitle and the Reason card's title below it.
+      expect(find.text('Answer sheet is unreadable'), findsWidgets);
+      expect(find.text('Rejected'), findsOneWidget);
       expect(find.text('Please re-upload a clearer scan.'), findsOneWidget);
       expect(find.text('Passed'), findsNothing);
       expect(find.text('Not Passed'), findsNothing);
@@ -297,10 +300,16 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       _routes = {
         'app_exam_answers/a1': _doc('app_exam_answers/a1', {
+          // v1.0.120: edit mode is gated (owner + pending + inside the
+          // 1-hour window + edit unused) — the fixture must qualify.
+          'uid': 'u1',
           'studentName': 'Ram Bahadur',
           'pdfUrl': 'https://example.com/a.pdf',
           'message': '',
           'status': 'pending',
+          'createdAt': DateTime.now()
+              .subtract(const Duration(minutes: 5))
+              .toIso8601String(),
         }),
       };
       _mockFirestore();

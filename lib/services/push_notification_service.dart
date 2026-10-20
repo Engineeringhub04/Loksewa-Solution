@@ -37,6 +37,11 @@ class PushNotificationService {
   static const _fgChannelId = 'loksewa_foreground';
   static const _fgChannelName = 'Loksewa Notifications';
 
+  /// Android channel for download progress (v1.0.120) — low importance
+  /// and silent: it re-posts on every percent tick.
+  static const _dlChannelId = 'downloads';
+  static const _dlChannelName = 'Downloads';
+
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   static bool _localNotificationsReady = false;
@@ -137,10 +142,18 @@ class PushNotificationService {
         description: 'Notifications received while the app is open',
         importance: Importance.max,
       );
-      await _localNotifications
+      final androidPlugin = _localNotifications
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(channel);
+              AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.createNotificationChannel(channel);
+      await androidPlugin?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _dlChannelId,
+          _dlChannelName,
+          description: 'File download progress',
+          importance: Importance.low,
+        ),
+      );
       _localNotificationsReady = true;
     } catch (_) {
       // Foreground tray is a nice-to-have — never break startup.
@@ -181,6 +194,86 @@ class PushNotificationService {
         notificationDetails: NotificationDetails(android: androidDetails),
         payload: encodeTapPayload(message.data),
       );
+    } catch (_) {}
+  }
+
+  /// Shows/updates the Android download-progress notification under a
+  /// stable [id] (v1.0.120): an ongoing, silent, low-importance progress
+  /// bar mirroring an in-app download. [percent] null → indeterminate.
+  /// Android only — iOS has no progress notifications, so this is a
+  /// no-op there. Best-effort: never throws.
+  static Future<void> showDownloadProgress({
+    required int id,
+    required String fileName,
+    required int? percent,
+  }) async {
+    try {
+      if (!Platform.isAndroid) return;
+      if (!_localNotificationsReady) await _initLocalNotifications();
+      if (!_localNotificationsReady) return;
+      final pct = percent?.clamp(0, 100);
+      final androidDetails = AndroidNotificationDetails(
+        _dlChannelId,
+        _dlChannelName,
+        channelDescription: 'File download progress',
+        importance: Importance.low,
+        priority: Priority.low,
+        showProgress: true,
+        maxProgress: 100,
+        progress: pct ?? 0,
+        indeterminate: pct == null,
+        ongoing: true,
+        onlyAlertOnce: true,
+        playSound: false,
+        enableVibration: false,
+      );
+      await _localNotifications.show(
+        id: id,
+        title: 'Downloading PDF',
+        body: pct == null ? fileName : '$fileName · $pct%',
+        notificationDetails: NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
+
+  /// Settles a download-progress notification (same [id]) into its
+  /// final, dismissible state: "Download complete" / "Download failed".
+  static Future<void> finishDownloadNotification({
+    required int id,
+    required String fileName,
+    required bool success,
+  }) async {
+    try {
+      if (!Platform.isAndroid) return;
+      if (!_localNotificationsReady) await _initLocalNotifications();
+      if (!_localNotificationsReady) return;
+      const androidDetails = AndroidNotificationDetails(
+        _dlChannelId,
+        _dlChannelName,
+        channelDescription: 'File download progress',
+        importance: Importance.low,
+        priority: Priority.low,
+        showProgress: false,
+        ongoing: false,
+        onlyAlertOnce: true,
+        playSound: false,
+        enableVibration: false,
+      );
+      await _localNotifications.show(
+        id: id,
+        title: success ? 'Download complete' : 'Download failed',
+        body: fileName,
+        notificationDetails:
+            const NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
+  }
+
+  /// Dismisses a download-progress notification (user cancelled).
+  static Future<void> cancelDownloadNotification({required int id}) async {
+    try {
+      if (!Platform.isAndroid) return;
+      await _localNotifications.cancel(id: id);
     } catch (_) {}
   }
 

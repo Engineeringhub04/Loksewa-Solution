@@ -27,6 +27,26 @@ import '../../widgets/syllabus_entrance.dart';
 
 const int _answerEditWindowMs = 60 * 60 * 1000;
 
+/// Time left in the 1-hour edit window (zero once it has expired).
+Duration _editRemainingFor(Map<String, dynamic> a) {
+  final created = DateTime.tryParse(a['createdAt']?.toString() ?? '');
+  if (created == null) return Duration.zero;
+  final elapsed = DateTime.now().difference(created);
+  const window = Duration(milliseconds: _answerEditWindowMs);
+  return elapsed >= window ? Duration.zero : window - elapsed;
+}
+
+/// One edit only (v1.0.120): a successful edit stamps `editUsedAt` on the
+/// doc; once present, the edit allowance is spent even inside the window.
+bool _editUsedFor(Map<String, dynamic> a) =>
+    (a['editUsedAt']?.toString().trim().isNotEmpty ?? false);
+
+String _editCountdownTextFor(Duration remaining) {
+  final m = remaining.inMinutes;
+  final s = remaining.inSeconds % 60;
+  return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+}
+
 class ExamAnswerScreen extends StatefulWidget {
   final String id;
   const ExamAnswerScreen({super.key, required this.id});
@@ -36,49 +56,52 @@ class ExamAnswerScreen extends StatefulWidget {
 }
 
 class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
+  // v1.0.120 render-first: this future used to include display-name
+  // resolution, so NOTHING painted until the slowest lookup finished.
+  // Now it completes with the raw doc the moment it arrives; the names
+  // resolve in the background and patch in via [_patched] (the builder
+  // below prefers it over the future's raw doc). The old whole-page
+  // 1-second setState countdown timer is gone too — the edit countdown
+  // ticks inside its own widget (_EditCountdownSection).
   late final Future<Map<String, dynamic>?> _future = _load();
-  Timer? _countdownTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    // Ticks the edit-window countdown on the re-upload button.
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _countdownTimer?.cancel();
-    super.dispose();
-  }
+  Map<String, dynamic>? _patched;
 
   Future<Map<String, dynamic>?> _load() async {
     final token = await AuthService.getValidIdToken();
     final doc = await FirestoreRest.getDocument(
         'app_exam_answers/${widget.id}',
         idToken: token);
-    if (doc == null) return null;
-    // Older submissions never saved the course/subcourse/section names
-    // (the set doc they were copied from only carries IDs) — resolve the
-    // blanks from the parent exam set so the header, pending card and
-    // info card show real names. Best-effort, display only.
-    final names = await resolveAnswerDisplayNames(doc,
-        nepali: AppLanguage.isNepali);
-    if (names.isComplete) return doc;
-    final merged = Map<String, dynamic>.from(doc);
-    void fill(String key, String value) {
-      if ((merged[key] ?? '').toString().trim().isEmpty &&
-          value.isNotEmpty) {
-        merged[key] = value;
-      }
-    }
+    if (doc != null) _resolveNamesInBackground(doc);
+    return doc;
+  }
 
-    fill('courseName', names.courseName);
-    fill('subcourseName', names.subcourseName);
-    fill('sectionName', names.sectionName);
-    return merged;
+  /// Older submissions never saved the course/subcourse/section names
+  /// (the set doc they were copied from only carries IDs) — resolve the
+  /// blanks from the parent exam set and patch them into the visible doc
+  /// so the header, pending card and info card show real names.
+  /// Best-effort, display only; the page is already on screen.
+  Future<void> _resolveNamesInBackground(Map<String, dynamic> doc) async {
+    try {
+      final names = await resolveAnswerDisplayNames(doc,
+          nepali: AppLanguage.isNepali);
+      if (!mounted) return;
+      var changed = false;
+      final merged = Map<String, dynamic>.from(doc);
+      void fill(String key, String value) {
+        if ((merged[key] ?? '').toString().trim().isEmpty &&
+            value.isNotEmpty) {
+          merged[key] = value;
+          changed = true;
+        }
+      }
+
+      fill('courseName', names.courseName);
+      fill('subcourseName', names.subcourseName);
+      fill('sectionName', names.sectionName);
+      if (changed) setState(() => _patched = merged);
+    } catch (_) {
+      // Best-effort: stored names (or blanks) stand.
+    }
   }
 
   /// The edit section stays visible (button + countdown) for pending answers
@@ -87,21 +110,6 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   bool _editSectionVisible(Map<String, dynamic> a) {
     if (a['status']?.toString() != 'pending') return false;
     return DateTime.tryParse(a['createdAt']?.toString() ?? '') != null;
-  }
-
-  Duration _editRemaining(Map<String, dynamic> a) {
-    final created =
-        DateTime.tryParse(a['createdAt']?.toString() ?? '');
-    if (created == null) return Duration.zero;
-    final elapsed = DateTime.now().difference(created);
-    final window = Duration(milliseconds: _answerEditWindowMs);
-    return elapsed >= window ? Duration.zero : window - elapsed;
-  }
-
-  String _editCountdownText(Duration remaining) {
-    final m = remaining.inMinutes;
-    final s = remaining.inSeconds % 60;
-    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
   }
 
   /// "Download Checked PDF": real byte-counted download into the phone's
@@ -120,19 +128,29 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       builder: (ctx) => PdfDownloadDialog(
         url: url,
         fileName: 'checked-answer-${widget.id}.pdf',
-        onDone: () {
-          Navigator.of(ctx).pop();
-          if (mounted) {
-            showToast(
-                outer,
-                AppLanguage.tr(
-                    'PDF saved to Downloads', 'PDF डाउनलोड्समा सेभ भयो'),
-                ToastVariant.success);
-          }
-        },
+        // onDone kept for the legacy path; onSaved reports WHERE the file
+        // landed (v1.0.120): the toast may only claim "Downloads" when
+        // the MediaStore save into the real public folder succeeded —
+        // the private-dir fallback gets a neutral message.
+        onDone: () => _onCheckedPdfSaved(ctx, outer, toDownloads: true),
+        onSaved: (toDownloads) =>
+            _onCheckedPdfSaved(ctx, outer, toDownloads: toDownloads),
         onClose: () => Navigator.of(ctx).pop(),
       ),
     );
+  }
+
+  void _onCheckedPdfSaved(BuildContext dialogCtx, BuildContext outer,
+      {required bool toDownloads}) {
+    Navigator.of(dialogCtx).pop();
+    if (!mounted) return;
+    showToast(
+        outer,
+        toDownloads
+            ? AppLanguage.tr(
+                'PDF saved to Downloads', 'PDF डाउनलोड्समा सेभ भयो')
+            : AppLanguage.tr('PDF saved', 'PDF सेभ भयो'),
+        ToastVariant.success);
   }
 
   /// "View Submitted PDF": opens the same in-app pdfx viewer the Syllabus
@@ -276,7 +294,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                               style:
                                   TextStyle(color: pal.textSecondary))));
                 }
-                final a = snap.data;
+                final a = _patched ?? snap.data;
                 if (a == null) {
                   return Center(
                       child: Text(
@@ -324,7 +342,15 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                         SyllabusEntrance(
                             delayMs: 0,
                             child: rejected
-                                ? _reasonCard(pal, a)
+                                ? Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      _rejectedCrown(a),
+                                      const SizedBox(height: 16),
+                                      _reasonCard(pal, a),
+                                    ],
+                                  )
                                 : _resultCard(a)),
                         const SizedBox(height: 16),
                         if ((a['reviewNote']?.toString() ?? '').isNotEmpty) ...[
@@ -359,7 +385,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                       ] else ...[
                         SyllabusEntrance(
                             delayMs: 0,
-                            child: _pendingCard(pal, a)),
+                            child: _pendingCrown(pal, a)),
                         const SizedBox(height: 12),
                         SyllabusEntrance(
                           delayMs: 80,
@@ -392,58 +418,13 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                         ),
                         if (_editSectionVisible(a)) ...[
                           const SizedBox(height: 8),
-                          Builder(builder: (context) {
-                            final remaining = _editRemaining(a);
-                            final active = remaining > Duration.zero;
-                            return SyllabusEntrance(
-                              delayMs: 200,
-                              child: ElevatedButton.icon(
-                                style: ElevatedButton.styleFrom(
-                                    backgroundColor: active
-                                        ? AppColors.accent
-                                        : pal.textSecondary
-                                            .withValues(alpha: 0.25),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 14)),
-                                icon: const Icon(Icons.edit),
-                                label: Text(active
-                                    ? AppLanguage.tr(
-                                        'Edit / Re-upload Answer · ${_editCountdownText(remaining)}',
-                                        'उत्तर सम्पादन / पुनः अपलोड · ${_editCountdownText(remaining)}')
-                                    : AppLanguage.tr(
-                                        'Edit / Re-upload Answer',
-                                        'उत्तर सम्पादन / पुनः अपलोड')),
-                                onPressed: active
-                                    ? () => context.push(
-                                        '/exam-answer/upload?editId=${widget.id}')
-                                    : null,
-                              ),
-                            );
-                          }),
-                          SyllabusEntrance(
-                            delayMs: 260,
-                            child: Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Builder(builder: (context) {
-                                final remaining = _editRemaining(a);
-                                final active =
-                                    remaining > Duration.zero;
-                                return Text(
-                                  active
-                                      ? AppLanguage.tr(
-                                          'You can edit your submission for the next ${_editCountdownText(remaining)}.',
-                                          'तपाईंले अर्को ${_editCountdownText(remaining)} सम्म आफ्नो उत्तर सम्पादन गर्न सक्नुहुन्छ।')
-                                      : AppLanguage.tr(
-                                          'The 1-hour edit window has expired.',
-                                          '१ घण्टाको सम्पादन समय सकिएको छ।'),
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                      color: pal.textSecondary,
-                                      fontSize: 13),
-                                );
-                              }),
-                            ),
+                          // Self-ticking (F6): the countdown rebuilds
+                          // ONLY this section every second, not the page.
+                          _EditCountdownSection(
+                            answer: a,
+                            pal: pal,
+                            onEdit: () => context.push(
+                                '/exam-answer/upload?editId=${widget.id}'),
                           ),
                         ],
                       ],
@@ -673,7 +654,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
           title: reason,
           child: Text(message.isNotEmpty ? message : reason,
               style: TextStyle(
-                  fontSize: 13, color: pal.textSecondary, height: 1.55)),
+                  fontSize: 13, color: pal.textPrimary, height: 1.55)),
         ),
       ],
     );
@@ -740,56 +721,131 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       title: AppLanguage.tr("Teacher's Note", 'शिक्षकको टिप्पणी'),
       child: Text(a['reviewNote'].toString(),
           style: TextStyle(
-              fontSize: 13, color: pal.textSecondary, height: 1.55)),
+              fontSize: 13, color: pal.textPrimary, height: 1.55)),
     );
   }
 
-  /// Pending state — premium section card (RequestSectionCard family) with
-  /// the exam title as the card title, the course line and an amber
-  /// Pending Review pill.
-  Widget _pendingCard(ExpoPalette pal, Map<String, dynamic> a) {
+  /// Rejected outcome crown (v1.0.120) — the same gradient hero the
+  /// published result card gives Passed/Not Passed, so a rejection reads
+  /// as a first-class outcome too: red gradient (the failed card's own
+  /// red.shade700 → red.shade400 family — chosen over the shared
+  /// request-crown hexes so it matches _resultCard exactly), warning
+  /// tile, big "Rejected" word and the admin's reason as the subtitle.
+  /// The Reason label + card below it carries the full message.
+  Widget _rejectedCrown(Map<String, dynamic> a) {
+    final reason = (a['rejectionReason']?.toString() ?? '').trim();
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: [
+          Colors.red.shade700,
+          Colors.red.shade400,
+        ], begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.22),
+            ),
+            child: const Icon(
+              Icons.report_problem_outlined,
+              size: 26,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(AppLanguage.tr('Rejected', 'अस्वीकृत'),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold)),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              reason,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Pending state crown (v1.0.120) — replaces the old flat section
+  /// card with the same gradient-hero family as the result card: the
+  /// shared request-crown 'pending' amber (0xFFB45309 → 0xFFD97706),
+  /// hourglass tile, big "Pending Review" word, and the exam/course
+  /// line as the subtitle. The breathing timeline above it is separate
+  /// and unchanged.
+  Widget _pendingCrown(ExpoPalette pal, Map<String, dynamic> a) {
+    final title = ((a['examSetTitle'] ?? '').toString().isNotEmpty)
+        ? a['examSetTitle'].toString()
+        : '';
     final courseLine = [
       (a['courseName'] ?? '').toString(),
       (a['subcourseName'] ?? '').toString()
     ].where((s) => s.isNotEmpty).join(' · ');
-    return RequestSectionCard(
-      icon: Icons.hourglass_top_outlined,
-      tone: pal.warning,
-      title: ((a['examSetTitle'] ?? '').toString().isNotEmpty)
-          ? a['examSetTitle'].toString()
-          : AppLanguage.tr('Theory Answer', 'थ्योरी उत्तर'),
+    final subtitle = [title, courseLine]
+        .where((s) => s.isNotEmpty)
+        .join(' · ');
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+            colors: [Color(0xFFB45309), Color(0xFFD97706)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (courseLine.isNotEmpty) ...[
-            Text(courseLine,
-                style:
-                    TextStyle(fontSize: 13, color: pal.textSecondary)),
-            const SizedBox(height: 10),
-          ],
           Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
-              color: pal.warning.withValues(alpha: 0.13),
-              borderRadius: BorderRadius.circular(999),
+              shape: BoxShape.circle,
+              color: Colors.white.withValues(alpha: 0.22),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.schedule_outlined,
-                    size: 14, color: pal.warning),
-                const SizedBox(width: 6),
-                Text(
-                    AppLanguage.tr(
-                        'Pending Review', 'समीक्षा बाँकी'),
-                    style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: pal.warning)),
-              ],
+            child: const Icon(
+              Icons.hourglass_top_outlined,
+              size: 26,
+              color: Colors.white,
             ),
           ),
+          const SizedBox(height: 12),
+          Text(AppLanguage.tr('Pending Review', 'समीक्षा बाँकी'),
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold)),
+          if (subtitle.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70),
+            ),
+          ],
         ],
       ),
     );
@@ -881,6 +937,103 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
     return '${dt.day} ${m[dt.month - 1]} ${dt.year}';
+  }
+}
+
+/// The pending state's edit affordance: button + caption. Owns its own
+/// 1-second ticker so ONLY this section rebuilds as the countdown runs
+/// (v1.0.120 F6 — the page used to setState wholesale every second).
+///
+/// One-edit rule (v1.0.120): the button is live only while time remains
+/// AND the one allowed edit has not been used (`editUsedAt` stamp). A
+/// spent edit shows the same greyed button as an expired window, with
+/// the "already used" caption — regardless of any time left.
+class _EditCountdownSection extends StatefulWidget {
+  final Map<String, dynamic> answer;
+  final ExpoPalette pal;
+  final VoidCallback onEdit;
+
+  const _EditCountdownSection({
+    required this.answer,
+    required this.pal,
+    required this.onEdit,
+  });
+
+  @override
+  State<_EditCountdownSection> createState() =>
+      _EditCountdownSectionState();
+}
+
+class _EditCountdownSectionState extends State<_EditCountdownSection> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final pal = widget.pal;
+    final a = widget.answer;
+    final remaining = _editRemainingFor(a);
+    final used = _editUsedFor(a);
+    final active = remaining > Duration.zero && !used;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SyllabusEntrance(
+          delayMs: 200,
+          child: ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: active
+                    ? AppColors.accent
+                    : pal.textSecondary.withValues(alpha: 0.25),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            icon: const Icon(Icons.edit),
+            label: Text(active
+                ? AppLanguage.tr(
+                    'Edit / Re-upload Answer · ${_editCountdownTextFor(remaining)}',
+                    'उत्तर सम्पादन / पुनः अपलोड · ${_editCountdownTextFor(remaining)}')
+                : AppLanguage.tr(
+                    'Edit / Re-upload Answer',
+                    'उत्तर सम्पादन / पुनः अपलोड')),
+            onPressed: active ? widget.onEdit : null,
+          ),
+        ),
+        SyllabusEntrance(
+          delayMs: 260,
+          child: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              used
+                  ? AppLanguage.tr(
+                      'You have already used your one edit for this submission.',
+                      'तपाईंले यस उत्तरको एक पटकको सम्पादन प्रयोग गरिसक्नुभयो।')
+                  : active
+                      ? AppLanguage.tr(
+                          'You can edit your submission for the next ${_editCountdownTextFor(remaining)}. You can edit only once.',
+                          'तपाईंले अर्को ${_editCountdownTextFor(remaining)} सम्म आफ्नो उत्तर सम्पादन गर्न सक्नुहुन्छ। सम्पादन एक पटक मात्र गर्न सकिन्छ।')
+                      : AppLanguage.tr(
+                          'The 1-hour edit window has expired.',
+                          '१ घण्टाको सम्पादन समय सकिएको छ।'),
+              textAlign: TextAlign.center,
+              style: TextStyle(color: pal.textSecondary, fontSize: 13),
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }
 

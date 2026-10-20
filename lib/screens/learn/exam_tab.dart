@@ -982,7 +982,6 @@ class _ExamCard extends StatelessWidget {
     final state = entry.state;
     final isPdf = set.contentType == 'pdf';
     final isSubmitted = isPdf && entry.answer != null;
-    final answerStatus = entry.answer?.status;
 
     // ---- primary button ----
     late final String primaryLabel;
@@ -1119,7 +1118,7 @@ class _ExamCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (submitted) _submittedBadge(answerStatus),
+                if (submitted) _submittedBadge(entry.answer),
               ],
             ),
             const SizedBox(height: 10),
@@ -1361,9 +1360,12 @@ class _ExamCard extends StatelessWidget {
     return '$date $time';
   }
 
-  Widget _submittedBadge(String? status) {
-    final reviewed = status == 'reviewed';
-    final color = reviewed ? _green : _amber;
+  Widget _submittedBadge(ExamAnswer? answer) {
+    final reviewed = answer?.status == 'reviewed';
+    // Rejected at the grading desk (reviewed + a saved rejection reason)
+    // gets its own danger badge — a plain "Reviewed" hid the outcome.
+    final rejected = answer?.isRejected ?? false;
+    final color = rejected ? _red : (reviewed ? _green : _amber);
     return Container(
       padding:
           const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1375,15 +1377,21 @@ class _ExamCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            reviewed ? Icons.done_all_outlined : Icons.access_time,
+            rejected
+                ? Icons.cancel_outlined
+                : reviewed
+                    ? Icons.done_all_outlined
+                    : Icons.access_time,
             size: 12,
             color: color,
           ),
           const SizedBox(width: 4),
           Text(
-            reviewed
-                ? AppLanguage.tr('Reviewed', 'समीक्षा भयो')
-                : AppLanguage.tr('Pending', 'पेन्डिङ'),
+            rejected
+                ? AppLanguage.tr('Rejected', 'अस्वीकृत')
+                : reviewed
+                    ? AppLanguage.tr('Reviewed', 'समीक्षा भयो')
+                    : AppLanguage.tr('Pending', 'पेन्डिङ'),
             style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.bold,

@@ -33,6 +33,41 @@ class UploadAnswerScreen extends StatefulWidget {
   State<UploadAnswerScreen> createState() => _UploadAnswerScreenState();
 }
 
+/// Edit window for a submitted answer — mirrors `_answerEditWindowMs`
+/// on the detail page (exam_answer_screen.dart).
+const int _editWindowMs = 60 * 60 * 1000;
+
+/// Why an answer doc may NOT be opened in edit mode (null = allowed).
+/// Mirrors the detail page's edit-button rules: the owner's own doc,
+/// still pending, inside the 1-hour window, and the one allowed edit
+/// (v1.0.120 `editUsedAt` stamp) unused. Edit mode used to load with no
+/// checks at all — this is the gate `_init` applies before the form.
+String? examAnswerEditBlockMessage(Map<String, dynamic>? a, String uid) {
+  if (a == null || (a['uid']?.toString() ?? '') != uid) {
+    return AppLanguage.tr(
+        'This answer sheet could not be opened for editing.',
+        'यो उत्तरपत्र सम्पादनका लागि खोल्न सकिएन।');
+  }
+  if (a['status']?.toString() != 'pending') {
+    return AppLanguage.tr(
+        'This submission has already been reviewed, so it can no longer be edited.',
+        'यो उत्तर समीक्षा भइसकेको छ, त्यसैले अब सम्पादन गर्न मिल्दैन।');
+  }
+  if ((a['editUsedAt']?.toString().trim().isNotEmpty ?? false)) {
+    return AppLanguage.tr(
+        'You have already used your one edit for this submission.',
+        'तपाईंले यस उत्तरको एक पटकको सम्पादन प्रयोग गरिसक्नुभयो।');
+  }
+  final created = DateTime.tryParse(a['createdAt']?.toString() ?? '');
+  if (created == null ||
+      DateTime.now().difference(created) >=
+          const Duration(milliseconds: _editWindowMs)) {
+    return AppLanguage.tr('The 1-hour edit window has expired.',
+        '१ घण्टाको सम्पादन समय सकिएको छ।');
+  }
+  return null;
+}
+
 class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   final _nameCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
@@ -46,6 +81,15 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   /// the display names (course/subcourse/section) that older submissions
   /// never saved.
   Map<String, dynamic>? _existingAnswer;
+
+  /// Edit mode only: set when the one-edit gate refuses this doc — the
+  /// form is replaced by a blocked view carrying this message.
+  String? _editBlockedMessage;
+
+  /// New mode only: true while the duplicate scan is still running. The
+  /// form renders before the scan finishes (v1.0.120 render-first); only
+  /// the Submit button waits for the scan to clear.
+  bool _duplicateCheckPending = false;
   bool _done = false;
   String? _doneId;
 
@@ -100,6 +144,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   bool get _canSubmit =>
       _nameCtrl.text.trim().isNotEmpty &&
       !_picking &&
+      !_duplicateCheckPending &&
       (_previewUrl?.isNotEmpty ?? false) &&
       _msgCtrl.text.trim().isNotEmpty;
 
@@ -195,6 +240,15 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             'app_exam_answers/$_editId',
             idToken: token);
         _existingAnswer = a;
+        // One-edit gate (v1.0.120): owner + still pending + inside the
+        // 1-hour window + the one edit unused. A blocked doc never
+        // reaches the form — the blocked view explains why.
+        final blocked =
+            examAnswerEditBlockMessage(a, user?.uid ?? '');
+        if (blocked != null) {
+          _editBlockedMessage = blocked;
+          return;
+        }
         _msgCtrl.text = a?['message']?.toString() ?? '';
         _previewUrl = a?['pdfUrl']?.toString();
         _nameCtrl.text = a?['studentName']?.toString() ?? _nameCtrl.text;
@@ -202,35 +256,23 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         // Duplicate guard via the per-user index: rules deny LIST queries
         // on app_exam_answers for non-admins, so resolve the user's answer
         // IDs from their own doc and getDocument each.
-        _examSet = await FirestoreRest.getDocument('app_exam_sets/$_examSetId',
-            idToken: token);
-        final userDoc = await FirestoreRest.getDocument('users/${user?.uid}',
-            idToken: token);
+        // v1.0.120: the set doc and the user doc are independent — load
+        // them together; the form then renders immediately and the
+        // duplicate scan runs concurrently, gating only Submit.
+        final results = await Future.wait([
+          FirestoreRest.getDocument('app_exam_sets/$_examSetId',
+              idToken: token),
+          FirestoreRest.getDocument('users/${user?.uid}',
+              idToken: token),
+        ]);
+        _examSet = results[0];
+        final userDoc = results[1];
         final ids = <String>[
           for (final e in (userDoc?['examAnswerIds'] as List? ?? []))
             e.toString(),
         ];
-        String? existingId;
-        for (final aid in ids) {
-          try {
-            final d = await FirestoreRest.getDocument('app_exam_answers/$aid',
-                idToken: token);
-            if (d != null &&
-                d['examSetId']?.toString() == _examSetId) {
-              existingId = aid;
-              break;
-            }
-          } catch (_) {
-            // Skip docs that fail to load.
-          }
-        }
-        if (existingId != null) {
-          // Duplicate guard: route to the existing submission instead —
-          // via the stack-preserving landing (a bare go() would leave
-          // the answer page as the root and Back would close the app).
-          if (mounted) _landOnAnswerPage('/exam-answer/$existingId');
-          return;
-        }
+        _duplicateCheckPending = true;
+        unawaited(_runDuplicateScan(ids, token));
       }
     } catch (_) {
       if (mounted) {
@@ -242,6 +284,43 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
       }
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// The duplicate guard, run concurrently with the form (v1.0.120):
+  /// the user's answer docs are fetched IN PARALLEL; when one matches
+  /// this exam set, the student is routed to that existing submission
+  /// (via the stack-preserving landing — a bare go() would leave the
+  /// answer page as the root and Back would close the app). Otherwise
+  /// the scan simply clears and Submit unlocks.
+  Future<void> _runDuplicateScan(List<String> ids, String token) async {
+    try {
+      final docs = await Future.wait([
+        for (final aid in ids)
+          () async {
+            try {
+              return await FirestoreRest.getDocument(
+                  'app_exam_answers/$aid',
+                  idToken: token);
+            } catch (_) {
+              // Skip docs that fail to load.
+              return null;
+            }
+          }(),
+      ]);
+      if (!mounted) return;
+      for (var i = 0; i < ids.length; i++) {
+        final d = docs[i];
+        if (d != null && d['examSetId']?.toString() == _examSetId) {
+          _landOnAnswerPage('/exam-answer/${ids[i]}');
+          return;
+        }
+      }
+      if (mounted) setState(() => _duplicateCheckPending = false);
+    } catch (_) {
+      // Fail open, like the old per-doc skip: a scan error must not
+      // lock the student out of submitting.
+      if (mounted) setState(() => _duplicateCheckPending = false);
     }
   }
 
@@ -307,6 +386,10 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           'pdfUrl': _previewUrl,
           'message': _msgCtrl.text.trim(),
           'updatedAt': DateTime.now().toIso8601String(),
+          // One-edit rule (v1.0.120): this stamp spends the single
+          // allowed edit — the detail page, this screen's edit gate and
+          // the Firestore rule all read it.
+          'editUsedAt': DateTime.now().toIso8601String(),
         };
         // Backfill the display names ONLY when the stored doc never saved
         // them (older submissions copied them from the set doc, which only
@@ -566,7 +649,9 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                   )
                 : _done
                     ? _success(pal, isEdit)
-                    : Column(
+                    : _editBlockedMessage != null
+                        ? _editBlockedView(pal)
+                        : Column(
                         children: [
                           Expanded(
                             child: SingleChildScrollView(
@@ -594,11 +679,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                                   Text(
                                     AppLanguage.tr(
                                         isEdit
-                                            ? 'Editing is only possible within 1 hour of your original submission.'
-                                            : 'You can re-upload or edit this submission for 1 hour after submitting. Only one submission is allowed per paper.',
+                                            ? 'Editing is only possible within 1 hour of your original submission, and only once.'
+                                            : 'You can re-upload or edit this submission for 1 hour after submitting, and only once. Only one submission is allowed per paper.',
                                         isEdit
-                                            ? 'सम्पादन मूल पेश गरेको १ घण्टाभित्र मात्र सम्भव छ।'
-                                            : 'पेश गरेको १ घण्टाभित्र तपाईंले यो उत्तर पुनः अपलोड वा सम्पादन गर्न सक्नुहुन्छ। प्रति पेपर एउटा मात्र उत्तर पेश गर्न मिल्छ।'),
+                                            ? 'सम्पादन मूल पेश गरेको १ घण्टाभित्र मात्र सम्भव छ, र त्यो पनि एक पटक मात्र।'
+                                            : 'पेश गरेको १ घण्टाभित्र तपाईंले यो उत्तर पुनः अपलोड वा सम्पादन गर्न सक्नुहुन्छ, र त्यो पनि एक पटक मात्र। प्रति पेपर एउटा मात्र उत्तर पेश गर्न मिल्छ।'),
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                         fontSize: 12,
@@ -618,6 +703,38 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
                             _previewPanel(pal),
                         ],
                       ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Edit mode refused by the one-edit gate: an explanation plus the
+  /// way back to the student's submissions (stack-preserving landing).
+  Widget _editBlockedView(ExpoPalette pal) {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Icon(Icons.block_outlined, size: 44, color: pal.textSecondary),
+          const SizedBox(height: 14),
+          Text(
+            _editBlockedMessage!,
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: pal.textPrimary),
+          ),
+          const SizedBox(height: 18),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: pal.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14)),
+            onPressed: () =>
+                _landOnAnswerPage('/exam-answer/my-submissions'),
+            child: Text(AppLanguage.tr(
+                'View My Answer Sheets', 'मेरो उत्तरपुस्तिका हेर्नुहोस्')),
           ),
         ],
       ),
@@ -1304,8 +1421,8 @@ class _SubmitConfirmContentState extends State<_SubmitConfirmContent> {
           const SizedBox(height: 12),
           Text(
             AppLanguage.tr(
-                'Once submitted, you can edit it for 1 hour.',
-                'एक पटक पेश गरेपछि, १ घण्टासम्म सम्पादन गर्न सक्नुहुन्छ।'),
+                'Once submitted, you can edit it once within 1 hour.',
+                'एक पटक पेश गरेपछि, १ घण्टाभित्र एक पटक सम्पादन गर्न सक्नुहुन्छ।'),
             textAlign: TextAlign.center,
             style:
                 const TextStyle(fontSize: 12, color: Color(0xFF64748B)),

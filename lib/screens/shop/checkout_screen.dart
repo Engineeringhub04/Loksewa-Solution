@@ -32,7 +32,6 @@ import 'package:khalti_checkout_flutter/khalti_checkout_flutter.dart';
 // ignore: implementation_imports
 import 'package:khalti_checkout_flutter/src/widget/khalti_webview.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
@@ -42,6 +41,7 @@ import 'package:loksewa_solution/services/exam_purchases.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
+import 'package:loksewa_solution/services/public_downloads.dart';
 import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -1172,22 +1172,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           .get(Uri.parse(qrUrl))
           .timeout(const Duration(seconds: 30));
       if (res.statusCode != 200) throw Exception('QR download failed');
-      // Same convention as the Keep Notes backup export: Downloads folder
-      // (app documents fallback), then the share sheet so the file can be
-      // saved to the gallery from there.
-      Directory? dir;
-      try {
-        dir = await getDownloadsDirectory();
-      } catch (_) {
-        dir = null;
+      // v1.0.120: straight into the REAL public Downloads folder via
+      // the MediaStore channel — no more save-then-share-sheet chain
+      // (the old path_provider dir is app-private, so the file never
+      // showed in Downloads and the share sheet confused "saved" with
+      // "shared"). The app-folder write remains as the fallback, and
+      // the toast names Downloads only when it truly landed there.
+      final savedPublic = await PublicDownloads.saveToPublicDownloads(
+        res.bodyBytes,
+        _qrDownloadName,
+        mimeType: 'image/png',
+      );
+      if (!savedPublic) {
+        Directory? dir;
+        try {
+          dir = await getDownloadsDirectory();
+        } catch (_) {
+          dir = null;
+        }
+        dir ??= await getApplicationDocumentsDirectory();
+        final file = File('${dir.path}/$_qrDownloadName');
+        await file.writeAsBytes(res.bodyBytes);
       }
-      dir ??= await getApplicationDocumentsDirectory();
-      final file = File('${dir.path}/$_qrDownloadName');
-      await file.writeAsBytes(res.bodyBytes);
-      await Share.shareXFiles([XFile(file.path)], text: _qrDownloadName);
       if (mounted) {
-        showToast(context,
-            AppLanguage.tr('QR code saved', 'QR कोड सुरक्षित गरियो'),
+        showToast(
+            context,
+            savedPublic
+                ? AppLanguage.tr(
+                    'QR code saved to Downloads', 'QR कोड डाउनलोड्समा सेभ भयो')
+                : AppLanguage.tr('QR code saved', 'QR कोड सुरक्षित गरियो'),
             ToastVariant.success);
       }
     } catch (_) {

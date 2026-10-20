@@ -51,22 +51,41 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
       final ids = <String>[
         for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
       ];
-      final mine = <Map<String, dynamic>>[];
-      for (final aid in ids) {
-        try {
-          final doc = await FirestoreRest.getDocument('app_exam_answers/$aid',
-              idToken: idToken);
-          if (doc != null) mine.add(doc);
-        } catch (_) {
-          // Skip docs that fail to load; never crash the whole list.
-        }
-      }
+      // v1.0.120: the answer docs are fetched IN PARALLEL — the old
+      // one-at-a-time loop made the list wait for a full round trip per
+      // submission before anything could render.
+      final fetched = await Future.wait([
+        for (final aid in ids)
+          () async {
+            try {
+              return await FirestoreRest.getDocument(
+                  'app_exam_answers/$aid',
+                  idToken: idToken);
+            } catch (_) {
+              // Skip docs that fail to load; never crash the whole list.
+              return null;
+            }
+          }(),
+      ]);
+      final mine = <Map<String, dynamic>>[
+        for (final doc in fetched)
+          if (doc != null) doc,
+      ];
       mine.sort((a, b) => _millis(b['createdAt'])
           .compareTo(_millis(a['createdAt'])));
+      if (!mounted) return;
+      // Render FIRST with the names already stored on the docs (v1.0.120):
+      // the list paints as soon as the answers arrive instead of waiting
+      // for every missing name to resolve.
+      setState(() {
+        _items = mine;
+        _loading = false;
+      });
       // Older submissions saved blank course/subcourse names (copied from
       // the set doc, which only carries IDs) — resolve them from the parent
-      // exam set, one set-doc load per unique set. Best-effort: failures
-      // leave the names blank and the card falls back to '—'.
+      // exam set, one set-doc load per unique set, and patch each card in
+      // as its names land. Best-effort: failures leave the names blank
+      // and the card falls back to '—'.
       final setCache = <String, Map<String, dynamic>?>{};
       for (var i = 0; i < mine.length; i++) {
         final doc = mine[i];
@@ -75,6 +94,10 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
         if (!blank) continue;
         final names = await resolveAnswerDisplayNames(doc,
             nepali: AppLanguage.isNepali, examSetCache: setCache);
+        if (!mounted) return;
+        if (names.courseName.isEmpty && names.subcourseName.isEmpty) {
+          continue;
+        }
         final merged = Map<String, dynamic>.from(doc);
         if ((merged['courseName'] ?? '').toString().trim().isEmpty &&
             names.courseName.isNotEmpty) {
@@ -85,12 +108,9 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
           merged['subcourseName'] = names.subcourseName;
         }
         mine[i] = merged;
+        // Patch the visible list (same order — resolution never re-sorts).
+        setState(() => _items = List.of(mine));
       }
-      if (!mounted) return;
-      setState(() {
-        _items = mine;
-        _loading = false;
-      });
     } catch (_) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -431,6 +451,12 @@ class _SubmissionCardState extends State<_SubmissionCard> {
     final pal = widget.pal;
     final a = widget.answer;
     final reviewed = a['status']?.toString() == 'reviewed';
+    // Rejected at the grading desk: reviewed, but the admin saved a
+    // rejection reason instead of a result (passed stays null). Same
+    // test as the detail page — the card shows the reason, never a
+    // "Not passed" verdict or a score.
+    final rejected = reviewed &&
+        (a['rejectionReason']?.toString().trim().isNotEmpty ?? false);
     final passed = a['passed'] == true;
     final tone =
         reviewed ? (passed ? pal.success : pal.danger) : pal.warning;
@@ -539,12 +565,14 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                     runSpacing: 6,
                     children: [
                       StatusPill(
-                        label: reviewed
-                            ? (passed
-                                ? AppLanguage.tr('Passed', 'उत्तीर्ण')
-                                : AppLanguage.tr(
-                                    'Not passed', 'अनुत्तीर्ण'))
-                            : AppLanguage.tr('Pending', 'बाँकी'),
+                        label: rejected
+                            ? (a['rejectionReason']?.toString().trim() ?? '')
+                            : reviewed
+                                ? (passed
+                                    ? AppLanguage.tr('Passed', 'उत्तीर्ण')
+                                    : AppLanguage.tr(
+                                        'Not passed', 'अनुत्तीर्ण'))
+                                : AppLanguage.tr('Pending', 'बाँकी'),
                         color: tone,
                         icon: reviewed
                             ? (passed
@@ -552,7 +580,8 @@ class _SubmissionCardState extends State<_SubmissionCard> {
                                 : Icons.cancel_outlined)
                             : Icons.schedule_outlined,
                       ),
-                      if (reviewed)
+                      // A rejected answer has no score to show.
+                      if (reviewed && !rejected)
                         StatusPill(
                           label:
                               '${_num(a['score'])}/${_num(a['fullMarks'])}',

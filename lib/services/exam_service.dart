@@ -6,6 +6,7 @@
 /// is needed. All functions take the raw Firestore fields and parse defensively.
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:http/http.dart' as http;
@@ -33,6 +34,23 @@ class MissingIndexException implements Exception {
 class ExamRest {
   static String get _base =>
       'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
+
+  /// ONE shared client (v1.0.120), same reasoning as FirestoreRest: the
+  /// top-level `http.get/post` helpers spin up a one-shot client per call
+  /// and pay a fresh TLS handshake every time. Zone-aware cache: a
+  /// client created inside a test's `http.runWithClient` zone stays
+  /// bound to that zone's mock factory, so the zone is part of the key
+  /// (production = one zone = one client). The Apps Script webhook
+  /// further below deliberately still uses the one-shot top-level call.
+  static http.Client? _sharedClient;
+  static Zone? _sharedClientZone;
+  static http.Client get _http {
+    if (_sharedClient == null || _sharedClientZone != Zone.current) {
+      _sharedClient = http.Client();
+      _sharedClientZone = Zone.current;
+    }
+    return _sharedClient!;
+  }
 
   static Map<String, String> _headers(String idToken) => {
         'Content-Type': 'application/json',
@@ -99,7 +117,7 @@ class ExamRest {
   static Future<Map<String, dynamic>?> getDoc(String path) async {
     final token = await _token();
     final res =
-        await http.get(Uri.parse('$_base/$path'), headers: _headers(token));
+        await _http.get(Uri.parse('$_base/$path'), headers: _headers(token));
     if (res.statusCode == 404) return null;
     if (res.statusCode != 200)
       throw Exception('getDoc $path: ${res.statusCode}');
@@ -113,7 +131,7 @@ class ExamRest {
     int pageSize = 200,
   }) async {
     final token = await _token();
-    final res = await http.get(
+    final res = await _http.get(
       Uri.parse('$_base/$collectionPath?pageSize=$pageSize'),
       headers: _headers(token),
     );
@@ -154,7 +172,7 @@ class ExamRest {
     }
     structured['limit'] = limit;
     final url = parent != null ? '$_base/$parent:runQuery' : '$_base:runQuery';
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse(url),
       headers: _headers(token),
       body: json.encode({'structuredQuery': structured}),
@@ -196,7 +214,7 @@ class ExamRest {
       ],
     };
     if (where != null) structured['where'] = where;
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$_base:runAggregationQuery'),
       headers: _headers(token),
       body: json.encode({
@@ -265,7 +283,7 @@ class ExamRest {
   }) async {
     final token = await _token();
     if (serverTimestampFields.isEmpty) {
-      final res = await http.post(
+      final res = await _http.post(
         Uri.parse('$_base/$collectionPath'),
         headers: _headers(token),
         body:
@@ -299,7 +317,7 @@ class ExamRest {
         },
       ],
     };
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$_base:commit'),
       headers: _headers(token),
       body: json.encode(body),
@@ -329,7 +347,7 @@ class ExamRest {
       {List<String> serverTimestampFields = const []}) async {
     final token = await _token();
     if (serverTimestampFields.isEmpty) {
-      final res = await http.patch(
+      final res = await _http.patch(
         Uri.parse('$_base/$path'),
         headers: _headers(token),
         body:
@@ -345,7 +363,7 @@ class ExamRest {
     for (final f in serverTimestampFields) {
       fields.remove(f);
     }
-    final res = await http.post(
+    final res = await _http.post(
       Uri.parse('$_base:commit'),
       headers: _headers(token),
       body: json.encode({
@@ -1209,6 +1227,11 @@ class ExamAnswer {
   final String pdfUrl;
   final String createdAt; // ISO string
 
+  /// Admin's rejection reason when the grading desk rejected this answer
+  /// (status 'reviewed' + a saved reason, passed stays null). Empty for
+  /// published/pending answers. Powers the Exam tab's Rejected badge.
+  final String rejectionReason;
+
   ExamAnswer({
     required this.id,
     required this.uid,
@@ -1222,6 +1245,7 @@ class ExamAnswer {
     this.message = '',
     this.pdfUrl = '',
     this.createdAt = '',
+    this.rejectionReason = '',
   });
 
   factory ExamAnswer.fromMap(Map<String, dynamic> m) {
@@ -1239,8 +1263,14 @@ class ExamAnswer {
       message: (fields['message'] ?? '').toString(),
       pdfUrl: (fields['pdfUrl'] ?? '').toString(),
       createdAt: (fields['createdAt'] ?? '').toString(),
+      rejectionReason: (fields['rejectionReason'] ?? '').toString(),
     );
   }
+
+  /// True when this answer was rejected at the grading desk (reviewed with
+  /// a saved rejection reason instead of a published result).
+  bool get isRejected =>
+      status == 'reviewed' && rejectionReason.trim().isNotEmpty;
 
   /// Milliseconds since epoch for [createdAt], 0 when unparseable.
   int get createdAtMillis =>
@@ -1260,16 +1290,24 @@ Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
     for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
   ];
   final bySet = <String, ExamAnswer>{};
-  for (final aid in ids) {
-    try {
-      final d = await FirestoreRest.getDocument('app_exam_answers/$aid',
-          idToken: token);
-      if (d == null) continue;
-      final a = ExamAnswer.fromMap(d);
-      if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
-    } catch (_) {
-      // Skip docs that fail to load.
-    }
+  // Fetched in parallel (v1.0.120) — the old one-at-a-time loop made the
+  // Exam tab wait for one round trip per past submission.
+  final docs = await Future.wait([
+    for (final aid in ids)
+      () async {
+        try {
+          return await FirestoreRest.getDocument('app_exam_answers/$aid',
+              idToken: token);
+        } catch (_) {
+          // Skip docs that fail to load.
+          return null;
+        }
+      }(),
+  ]);
+  for (final d in docs) {
+    if (d == null) continue;
+    final a = ExamAnswer.fromMap(d);
+    if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
   }
   return bySet;
 }
@@ -1303,6 +1341,30 @@ class AnswerDisplayNames {
       courseName.isNotEmpty &&
       subcourseName.isNotEmpty &&
       sectionName.isNotEmpty;
+}
+
+/// Session caches for the course/subcourse docs used by
+/// [resolveAnswerDisplayNames] (v1.0.120): a list of answers from the
+/// same course used to re-fetch the identical course/subcourse doc once
+/// per answer. Keyed by doc path; null = not found / failed (cached too —
+/// a missing name must not re-tax every answer in the list).
+final Map<String, Map<String, dynamic>?> _answerNameDocCache = {};
+
+Future<Map<String, dynamic>?> _cachedNameDoc(String path, String token) {
+  final cached = _answerNameDocCache[path];
+  if (cached != null || _answerNameDocCache.containsKey(path)) {
+    return Future.value(cached);
+  }
+  return () async {
+    Map<String, dynamic>? doc;
+    try {
+      doc = await FirestoreRest.getDocument(path, idToken: token);
+    } catch (_) {
+      doc = null;
+    }
+    _answerNameDocCache[path] = doc;
+    return doc;
+  }();
 }
 
 /// Session cache for the sections list used by [resolveAnswerDisplayNames]
@@ -1391,47 +1453,70 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
       if (sectionName.isEmpty) sectionName = fromSet('sectionName');
     }
 
-    if (courseName.isEmpty && courseId.isNotEmpty) {
+    // v1.0.120: the course doc, the subcourse doc and the sections list
+    // are independent once the IDs are known — fetch them CONCURRENTLY
+    // (the old code awaited them one after another) and through the
+    // session caches above, so a list of same-course answers pays for
+    // each lookup only once. The legacy flat-subcourse fallback still
+    // runs afterwards, only when the subcollection lookup found nothing.
+    Future<Map<String, dynamic>?> courseFuture() async {
+      if (courseName.isNotEmpty || courseId.isEmpty) return null;
+      return _cachedNameDoc('app_courses/$courseId', token);
+    }
+
+    Future<Map<String, dynamic>?> subcourseFuture() async {
+      if (subcourseName.isNotEmpty ||
+          subcourseId.isEmpty ||
+          courseId.isEmpty) {
+        return null;
+      }
+      return _cachedNameDoc(
+          'app_courses/$courseId/subcourses/$subcourseId', token);
+    }
+
+    Future<List<ExamSection>?> sectionsFuture() async {
+      if (sectionName.isNotEmpty || sectionId.isEmpty) return null;
       try {
-        final c = await FirestoreRest.getDocument('app_courses/$courseId',
-            idToken: token);
-        courseName =
-            ((c?['name'] ?? c?['nameNe']) as String? ?? '').trim();
-      } catch (_) {}
+        return await _sectionsForNameResolution(token);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    final fetched = await Future.wait(
+        [courseFuture(), subcourseFuture(), sectionsFuture()]);
+    final courseDoc = fetched[0] as Map<String, dynamic>?;
+    final subcourseDoc = fetched[1] as Map<String, dynamic>?;
+    final sections = fetched[2] as List<ExamSection>?;
+
+    if (courseName.isEmpty && courseDoc != null) {
+      courseName =
+          ((courseDoc['name'] ?? courseDoc['nameNe']) as String? ?? '')
+              .trim();
+    }
+    if (subcourseName.isEmpty && subcourseDoc != null) {
+      subcourseName =
+          ((subcourseDoc['name'] ?? subcourseDoc['nameNe']) as String? ??
+                  '')
+              .trim();
     }
     if (subcourseName.isEmpty && subcourseId.isNotEmpty) {
-      if (courseId.isNotEmpty) {
-        try {
-          final sc = await FirestoreRest.getDocument(
-              'app_courses/$courseId/subcourses/$subcourseId',
-              idToken: token);
-          subcourseName =
-              ((sc?['name'] ?? sc?['nameNe']) as String? ?? '').trim();
-        } catch (_) {}
-      }
-      if (subcourseName.isEmpty) {
-        // Legacy fallback: flat `app_subcourses` collection.
-        try {
-          final legacy = await FirestoreRest.getDocument(
-              'app_subcourses/$subcourseId',
-              idToken: token);
-          subcourseName =
-              ((legacy?['name'] ?? legacy?['nameNe']) as String? ?? '')
-                  .trim();
-        } catch (_) {}
+      // Legacy fallback: flat `app_subcourses` collection.
+      final legacy =
+          await _cachedNameDoc('app_subcourses/$subcourseId', token);
+      if (legacy != null) {
+        subcourseName =
+            ((legacy['name'] ?? legacy['nameNe']) as String? ?? '').trim();
       }
     }
-    if (sectionName.isEmpty && sectionId.isNotEmpty) {
-      try {
-        final sections = await _sectionsForNameResolution(token);
-        final wanted = normalizeExamSectionId(sectionId);
-        for (final s in sections) {
-          if (normalizeExamSectionId(s.id) == wanted) {
-            sectionName = s.displayName(nepali);
-            break;
-          }
+    if (sectionName.isEmpty && sections != null && sectionId.isNotEmpty) {
+      final wanted = normalizeExamSectionId(sectionId);
+      for (final s in sections) {
+        if (normalizeExamSectionId(s.id) == wanted) {
+          sectionName = s.displayName(nepali);
+          break;
         }
-      } catch (_) {}
+      }
     }
   } catch (_) {
     // Best-effort: whatever was resolved (possibly nothing) stands.

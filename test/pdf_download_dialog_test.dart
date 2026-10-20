@@ -1,11 +1,23 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:loksewa_solution/widgets/pdf_download_dialog.dart';
+
+/// Stubs the native media channel's saveToDownloads (v1.0.120) to answer
+/// null — "public Downloads unavailable" — so the dialog exercises its
+/// app-folder fallback write, exactly like an old-Android device.
+/// Without a stub the unregistered channel's future never completes
+/// under FakeAsync and the dialog would hang before saving.
+void _stubMediaSave(WidgetTester tester) {
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    const MethodChannel('loksewa_solution/media'),
+    (call) async => null,
+  );
+}
 
 /// Fake HTTP client returning fixed bytes in small chunks with a real
 /// contentLength, so progress callbacks are byte-counted and determinate.
@@ -76,6 +88,7 @@ void main() {
   group('PdfDownloadDialog', () {
     testWidgets('downloads, saves to dir and calls onDone',
         (tester) async {
+      _stubMediaSave(tester);
       final bytes = Uint8List.fromList(List.generate(50, (i) => i));
       final tmp = Directory.systemTemp.createTempSync('pdfdlg');
       var done = false;
@@ -120,6 +133,7 @@ void main() {
     });
 
     testWidgets('shows error with retry on failure', (tester) async {
+      _stubMediaSave(tester);
       var attempts = 0;
       final tmp = Directory.systemTemp.createTempSync('pdfdlg2');
       var done = false;

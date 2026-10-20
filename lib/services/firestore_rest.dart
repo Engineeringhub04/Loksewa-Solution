@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
@@ -22,7 +23,30 @@ class FirestoreRest {  static String get _base =>
   /// Overrides the HTTP client (tests only).
   static void setTestClient(http.Client? client) => _testClient = client;
   static http.Client? _testClient;
-  static http.Client get _client => _testClient ?? http.Client();
+
+  /// ONE shared client for every Firestore call (v1.0.120): a fresh
+  /// `http.Client()` per request paid a full DNS+TCP+TLS handshake every
+  /// time — on slow mobile links that tax multiplied across the app's
+  /// sequential fetch chains. A single long-lived client lets the
+  /// platform keep the connection alive and reuse it.
+  ///
+  /// The cache is ZONE-aware on purpose: `http.runWithClient` (used by
+  /// widget tests) installs its client factory per zone, and a client
+  /// created inside one zone stays bound to that zone's factory — a
+  /// plain static cache would leak the first test's mock into every
+  /// later test. Production runs in a single zone, so this still yields
+  /// exactly one client there.
+  static http.Client? _sharedClient;
+  static Zone? _sharedClientZone;
+  static http.Client get _client {
+    final test = _testClient;
+    if (test != null) return test;
+    if (_sharedClient == null || _sharedClientZone != Zone.current) {
+      _sharedClient = http.Client();
+      _sharedClientZone = Zone.current;
+    }
+    return _sharedClient!;
+  }
 
   static Map<String, String> _headers(String idToken) => {
         'Content-Type': 'application/json',

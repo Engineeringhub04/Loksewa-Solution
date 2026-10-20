@@ -47,6 +47,17 @@ void _stubShare(WidgetTester tester) {
   );
 }
 
+/// Stubs the native media channel's saveToDownloads (v1.0.120) to answer
+/// null — "public Downloads unavailable" — so export uses its app-folder
+/// fallback write, exactly like an old-Android device. Without a stub
+/// the unregistered channel's future never completes under FakeAsync.
+void _stubMediaSave(WidgetTester tester) {
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    const MethodChannel('loksewa_solution/media'),
+    (call) async => null,
+  );
+}
+
 /// Stubs file_picker's `custom` pick to return the file at [path].
 /// FilePicker.platform is `late` and only set by the real plugin registrant,
 /// so widget tests must install a fake (extending via the public constructor
@@ -301,6 +312,7 @@ void main() {
       addTearDown(() => tmp.deleteSync(recursive: true));
       _stubPathProvider(tester, tmp.path);
       _stubShare(tester);
+      _stubMediaSave(tester);
 
       AppLanguage.current.value = AppLanguage.english;
       await _pumpList(tester, store);
@@ -336,6 +348,7 @@ void main() {
       addTearDown(() => tmp.deleteSync(recursive: true));
       _stubPathProvider(tester, tmp.path);
       _stubShare(tester);
+      _stubMediaSave(tester);
 
       AppLanguage.current.value = AppLanguage.nepali;
       await _pumpList(tester, store);

@@ -843,11 +843,21 @@ service cloud.firestore {
         request.resource.data.score == 0 &&
         request.resource.data.passed == false &&
         request.resource.data.reviewedAt == null;
+      // Owner edit (v1.0.120): the app's edit patch writes pdfUrl +
+      // message plus the name fields it backfills, updatedAt, and the
+      // one-edit stamp `editUsedAt`. Exactly ONE owner edit is allowed:
+      // the update may proceed only while the EXISTING doc carries no
+      // editUsedAt yet (`.get(..., null)` — older docs predate the
+      // field). After that single edit the stamp exists and every
+      // further owner update is denied; admins are unaffected.
       allow update: if isAdmin() ||
         (isSignedIn() &&
          resource.data.uid == request.auth.uid &&
          resource.data.status == 'pending' &&
-         changedOnly(['pdfUrl', 'message']));
+         resource.data.get('editUsedAt', null) == null &&
+         changedOnly(['pdfUrl', 'message', 'studentName', 'updatedAt',
+                      'courseName', 'subcourseName', 'sectionName',
+                      'editUsedAt']));
       allow delete: if isAdmin();
     }
 

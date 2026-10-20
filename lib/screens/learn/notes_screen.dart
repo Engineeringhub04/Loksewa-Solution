@@ -5,11 +5,11 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../models/keep_note.dart';
 import '../../services/app_language.dart';
 import '../../services/keep_notes_backup.dart';
+import '../../services/public_downloads.dart';
 import '../../services/keep_notes_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
@@ -169,23 +169,29 @@ class _NotesScreenState extends State<NotesScreen> {
       final bytes = utf8.encode(json.encode(envelope));
       final name = KeepNotesBackup.exportFileName();
 
-      Directory? dir;
-      try {
-        dir = await getDownloadsDirectory();
-      } catch (_) {
-        dir = null;
-      }
-      final docs = await getApplicationDocumentsDirectory();
-      dir ??= Directory(docs.path);
-      final file = File('${dir.path}/$name');
-      file.writeAsBytesSync(bytes);
-
-      // Share sheet so the file can travel phone-to-phone
-      // (WhatsApp / Telegram / Drive to self, then import on the new phone).
-      await Share.shareXFiles(
-        [XFile(file.path)],
-        text: AppLanguage.tr('Keep Notes backup', 'किप नोट्स ब्याकअप'),
+      // v1.0.120: straight into the REAL public Downloads folder via
+      // the MediaStore channel — the export no longer detours through
+      // the share sheet just to "save" (that chain saved into the
+      // app-private folder where the Downloads app never shows it).
+      // The app-folder write remains as the fallback. (Moving the file
+      // to another phone is now the user's own share from Downloads.)
+      final savedPublic = await PublicDownloads.saveToPublicDownloads(
+        bytes,
+        name,
+        mimeType: 'application/json',
       );
+      if (!savedPublic) {
+        Directory? dir;
+        try {
+          dir = await getDownloadsDirectory();
+        } catch (_) {
+          dir = null;
+        }
+        final docs = await getApplicationDocumentsDirectory();
+        dir ??= Directory(docs.path);
+        final file = File('${dir.path}/$name');
+        file.writeAsBytesSync(bytes);
+      }
       _showInfoModal(
         icon: Icons.check_circle_outline,
         iconColor: palette.primary,

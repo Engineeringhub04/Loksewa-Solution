@@ -7,16 +7,29 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import '../services/app_language.dart';
+import '../services/public_downloads.dart';
+import '../services/push_notification_service.dart';
 import 'app_modal_shell.dart';
+
+/// Stable notification id for PDF download progress (v1.0.120) — one
+/// download popup exists at a time, so one id is enough.
+const int pdfDownloadNotificationId = 778899;
 
 /// Byte-counted PDF download with a live progress popup.
 ///
 /// Flow: [PdfDownloadDialog] renders inside an [AppModalShell] popup, starts
 /// downloading [url] immediately, shows real byte-counted progress, saves the
-/// finished file into the phone's Downloads folder (app-documents fallback —
-/// the same convention as the Keep Notes backup export and the checkout QR
-/// download), then calls [onDone] so the caller can close the popup and show
-/// a toast. No share sheet is opened.
+/// finished file, then calls [onDone] so the caller can close the popup and
+/// show a toast. No share sheet is opened.
+///
+/// Saving (v1.0.120): the file goes to the phone's REAL public Downloads
+/// folder through the MediaStore channel ([PublicDownloads]) — the old
+/// path_provider downloads dir is app-private and invisible in the
+/// Downloads app. When the public save is unavailable (old Android,
+/// channel failure) it falls back to that app-folder write, and
+/// [onSaved] reports which happened so the caller's message stays
+/// honest. On Android the progress also mirrors into a system
+/// notification (progress bar → "Download complete").
 ///
 /// Cancellation: closing the popup disposes the dialog, which aborts the
 /// in-flight request and discards the partial download.
@@ -26,11 +39,22 @@ class PdfDownloadDialog extends StatefulWidget {
   final VoidCallback onDone;
   final VoidCallback onClose;
 
+  /// Optional richer completion callback (v1.0.120): receives true when
+  /// the file landed in the public Downloads folder, false when it fell
+  /// back to the app folder. When provided it replaces [onDone].
+  final void Function(bool savedToPublicDownloads)? onSaved;
+
+  /// Mirror progress into the Android download notification.
+  final bool notifyProgress;
+
   /// Test seams: override the network fetch and the destination directory.
   final Future<Uint8List> Function(
       String url, void Function(int received, int? total) onProgress)?
       downloadFn;
   final Future<Directory> Function()? resolveDir;
+
+  /// Test seam: override the public-Downloads save (true = saved there).
+  final Future<bool> Function(Uint8List bytes)? saveFn;
 
   const PdfDownloadDialog({
     super.key,
@@ -38,8 +62,11 @@ class PdfDownloadDialog extends StatefulWidget {
     required this.fileName,
     required this.onDone,
     required this.onClose,
+    this.onSaved,
+    this.notifyProgress = true,
     this.downloadFn,
     this.resolveDir,
+    this.saveFn,
   });
 
   @override
@@ -111,6 +138,15 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   bool _cancelled = false;
   http.Client? _client;
 
+  /// Notification forwarding throttle: last integer percent posted, and
+  /// when the last indeterminate update went out.
+  int? _lastNotifiedPct;
+  DateTime? _lastNotifyAt;
+
+  /// True once the notification reached a final state (complete/failed)
+  /// — dispose() then leaves it alone instead of cancelling it.
+  bool _notifySettled = false;
+
   @override
   void initState() {
     super.initState();
@@ -121,6 +157,12 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   void dispose() {
     // Abort the in-flight request; the guards in _start drop the result.
     _cancelled = true;
+    // A user cancel mid-download dismisses the progress notification;
+    // a settled one (complete/failed) stays in the tray.
+    if (widget.notifyProgress && !_notifySettled) {
+      unawaited(PushNotificationService.cancelDownloadNotification(
+          id: pdfDownloadNotificationId));
+    }
     _client?.close();
     _client = null;
     super.dispose();
@@ -132,18 +174,62 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
     return downloadPdfBytes(url, onProgress, client: _client);
   }
 
+  Future<bool> _defaultSave(Uint8List bytes) =>
+      PublicDownloads.saveToPublicDownloads(bytes, widget.fileName);
+
+  /// Mirrors byte progress into the Android notification, throttled:
+  /// determinate progress posts only when the integer percent changes,
+  /// indeterminate at most twice a second.
+  void _forwardProgress(int received, int? total) {
+    if (!widget.notifyProgress) return;
+    final pct = (total != null && total > 0)
+        ? ((received / total) * 100).floor()
+        : null;
+    final now = DateTime.now();
+    if (pct != null) {
+      if (pct == _lastNotifiedPct) return;
+      _lastNotifiedPct = pct;
+    } else {
+      if (_lastNotifyAt != null &&
+          now.difference(_lastNotifyAt!) <
+              const Duration(milliseconds: 500)) {
+        return;
+      }
+    }
+    _lastNotifyAt = now;
+    unawaited(PushNotificationService.showDownloadProgress(
+      id: pdfDownloadNotificationId,
+      fileName: widget.fileName,
+      percent: pct,
+    ));
+  }
+
+  void _settleNotification(bool success) {
+    if (!widget.notifyProgress) return;
+    _notifySettled = true;
+    unawaited(PushNotificationService.finishDownloadNotification(
+      id: pdfDownloadNotificationId,
+      fileName: widget.fileName,
+      success: success,
+    ));
+  }
+
   Future<void> _start() async {
     setState(() {
       _received = 0;
       _total = null;
       _error = null;
       _cancelled = false;
+      _lastNotifiedPct = null;
+      _lastNotifyAt = null;
+      _notifySettled = false;
     });
     try {
       final bytes = await (widget.downloadFn ?? _defaultDownload)(
         widget.url,
         (received, total) {
           if (!mounted || _cancelled) return;
+          _forwardProgress(received, total);
           setState(() {
             _received = received;
             _total = total;
@@ -151,16 +237,28 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
         },
       );
       if (_cancelled || !mounted) return;
-      final dir = await (widget.resolveDir ?? resolveDownloadDir)();
-      final file = File('${dir.path}/${widget.fileName}');
-      // Sync write: async dart:io writes never complete in the FakeAsync
-      // test zone (same as Directory.create). The buffer is already fully
-      // downloaded at this point, so this is a single fast flush.
-      file.writeAsBytesSync(bytes, flush: true);
+      // Save: real public Downloads first (MediaStore channel); the
+      // app-folder write is only the fallback.
+      final savedPublic = await (widget.saveFn ?? _defaultSave)(bytes);
       if (_cancelled || !mounted) return;
-      widget.onDone();
+      if (!savedPublic) {
+        final dir = await (widget.resolveDir ?? resolveDownloadDir)();
+        final file = File('${dir.path}/${widget.fileName}');
+        // Sync write: async dart:io writes never complete in the FakeAsync
+        // test zone (same as Directory.create). The buffer is already fully
+        // downloaded at this point, so this is a single fast flush.
+        file.writeAsBytesSync(bytes, flush: true);
+      }
+      if (_cancelled || !mounted) return;
+      _settleNotification(true);
+      if (widget.onSaved != null) {
+        widget.onSaved!(savedPublic);
+      } else {
+        widget.onDone();
+      }
     } catch (_) {
       if (_cancelled || !mounted) return;
+      _settleNotification(false);
       setState(() => _error = 'download');
     }
   }

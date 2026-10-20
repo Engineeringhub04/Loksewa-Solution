@@ -25,6 +25,10 @@ import java.io.File
 ///   app cache (no CAMERA permission needed — the camera app writes to our
 ///   URI; the FileProvider is declared in AndroidManifest.xml).
 /// - "openUrl": ACTION_VIEW with the `url` argument string.
+/// - "saveToDownloads": MediaStore insert into the REAL public Downloads
+///   folder (API 29+; no storage permission needed). Answers the content
+///   URI string on success, null below API 29 so Dart can fall back to
+///   its app-folder write.
 /// Both pickers return the image downscaled to ≤1600px as JPEG bytes (or null
 /// when the user cancels); openUrl answers true on success.
 class MainActivity : FlutterActivity() {
@@ -95,6 +99,29 @@ class MainActivity : FlutterActivity() {
                             }
                         }
                     }
+                    "saveToDownloads" -> {
+                        val bytes = call.argument<ByteArray>("bytes")
+                        val fileName = call.argument<String>("fileName")
+                        val mimeType = call.argument<String>("mimeType")
+                            ?: "application/octet-stream"
+                        if (bytes == null || fileName.isNullOrBlank()) {
+                            result.error("BAD_ARGS", "Missing bytes or fileName", null)
+                        } else if (android.os.Build.VERSION.SDK_INT <
+                            android.os.Build.VERSION_CODES.Q
+                        ) {
+                            // MediaStore Downloads needs API 29+ — below
+                            // that, answer null so Dart falls back to its
+                            // app-folder write.
+                            result.success(null)
+                        } else {
+                            try {
+                                result.success(
+                                    saveToPublicDownloads(bytes, fileName, mimeType))
+                            } catch (e: Exception) {
+                                result.error("SAVE_FAILED", e.message, null)
+                            }
+                        }
+                    }
                     else -> result.notImplemented()
                 }
             }
@@ -123,6 +150,46 @@ class MainActivity : FlutterActivity() {
             return
         }
         result?.success(readDownscaledJpeg(uri))
+    }
+
+    /// Writes [bytes] into the public Downloads folder via MediaStore
+    /// (IS_PENDING dance so the file appears atomically). Returns the
+    /// content URI string, or null when the insert was refused. Throws
+    /// on write failure after cleaning up the pending row.
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.Q)
+    private fun saveToPublicDownloads(
+        bytes: ByteArray,
+        fileName: String,
+        mimeType: String,
+    ): String? {
+        val values = android.content.ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, mimeType)
+            put(
+                MediaStore.Downloads.RELATIVE_PATH,
+                android.os.Environment.DIRECTORY_DOWNLOADS,
+            )
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+        val resolver = contentResolver
+        val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            ?: return null
+        try {
+            val stream = resolver.openOutputStream(uri)
+                ?: throw IllegalStateException("Could not open output stream")
+            stream.use { it.write(bytes) }
+            val done = android.content.ContentValues().apply {
+                put(MediaStore.Downloads.IS_PENDING, 0)
+            }
+            resolver.update(uri, done, null, null)
+            return uri.toString()
+        } catch (e: Exception) {
+            try {
+                resolver.delete(uri, null, null)
+            } catch (_: Exception) {
+            }
+            throw e
+        }
     }
 
     private fun readDownscaledJpeg(uri: Uri): ByteArray? {

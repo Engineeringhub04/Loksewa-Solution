@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
 import '../services/app_language.dart';
+import '../services/pdf_source.dart';
 import '../services/public_downloads.dart';
 import '../services/push_notification_service.dart';
 import 'app_modal_shell.dart';
@@ -20,7 +21,10 @@ const int pdfDownloadNotificationId = 778899;
 /// Flow: [PdfDownloadDialog] renders inside an [AppModalShell] popup, starts
 /// downloading [url] immediately, shows real byte-counted progress, saves the
 /// finished file, then calls [onDone] so the caller can close the popup and
-/// show a toast. No share sheet is opened.
+/// show a toast. No share sheet is opened. The fetch walks the in-app
+/// viewer's candidate URLs ([PdfSource.candidateUrls]) so share-style
+/// links (Drive/Dropbox) download the real PDF, not their HTML preview
+/// page (v1.0.122).
 ///
 /// Saving (v1.0.120): the file goes to the phone's REAL public Downloads
 /// folder through the MediaStore channel ([PublicDownloads]) — the old
@@ -82,26 +86,24 @@ class PdfDownloadDialog extends StatefulWidget {
 /// 200 status, empty bodies, and other non-PDF payloads fail — the
 /// dialog treats them as a failed download and saves NOTHING, instead
 /// of landing a corrupt file in the user's Downloads folder (the
-/// phone viewer then reports it as "invalid format").
-bool looksLikePdf(Uint8List bytes) {
-  const magic = [0x25, 0x50, 0x44, 0x46, 0x2D]; // %PDF-
-  final limit = bytes.length < 1024 ? bytes.length : 1024;
-  for (var i = 0; i + magic.length <= limit; i++) {
-    var match = true;
-    for (var j = 0; j < magic.length; j++) {
-      if (bytes[i + j] != magic[j]) {
-        match = false;
-        break;
-      }
-    }
-    if (match) return true;
-  }
-  return false;
-}
+/// phone viewer then reports it as "invalid format"). Delegates to
+/// the single shared implementation in [PdfSource] (v1.0.122).
+bool looksLikePdf(Uint8List bytes) => PdfSource.looksLikePdf(bytes);
 
-/// Downloads [url] with byte-counted progress callbacks. Only the connection
-/// has a hard timeout (30 s); a body stalled with no data for 90 s aborts.
-/// [client] is a test seam (a fresh client is created when omitted).
+/// Downloads the PDF behind [url] with byte-counted progress
+/// callbacks, walking the SAME candidate URLs the in-app viewer uses
+/// ([PdfSource.candidateUrls] — v1.0.122). A share-style link (Google
+/// Drive `/view`, Dropbox) answers a plain GET with an HTTP-200 HTML
+/// page instead of PDF bytes; each candidate is fetched in order and
+/// the first whose bytes pass [looksLikePdf] wins. That is what the
+/// raw single-GET version missed: v1.0.120 saved the HTML page as a
+/// .pdf ("invalid format" in the phone viewer) and the v1.0.121 gate
+/// then rejected it outright ("Download failed"). Non-share URLs
+/// yield exactly one candidate — the URL itself — so they behave
+/// exactly as before. Progress may restart from zero per candidate.
+/// Throws when every candidate fails (transport error, non-200, or
+/// non-PDF bytes). [client] is a test seam (a fresh client is created
+/// when omitted) and is closed when the walk ends.
 Future<Uint8List> downloadPdfBytes(
   String url,
   void Function(int received, int? total) onProgress, {
@@ -109,30 +111,53 @@ Future<Uint8List> downloadPdfBytes(
 }) async {
   final c = client ?? http.Client();
   try {
-    final req = http.Request('GET', Uri.parse(url));
-    final res = await c.send(req).timeout(const Duration(seconds: 30));
-    if (res.statusCode != 200) {
-      throw Exception('download failed (${res.statusCode})');
+    Object? lastError;
+    for (final candidate in PdfSource.candidateUrls(url)) {
+      try {
+        final bytes = await _fetchCandidateBytes(candidate, onProgress,
+            client: c);
+        if (looksLikePdf(bytes)) return bytes;
+        lastError = Exception('not a pdf');
+      } catch (e) {
+        lastError = e;
+      }
     }
-    final chunks = <List<int>>[];
-    var received = 0;
-    await for (final chunk in res.stream.timeout(const Duration(seconds: 90))) {
-      chunks.add(chunk);
-      received += chunk.length;
-      final total = res.contentLength;
-      onProgress(received, (total != null && total > 0) ? total : null);
-    }
-    final out = Uint8List(received);
-    var offset = 0;
-    for (final chunk in chunks) {
-      out.setRange(offset, offset + chunk.length, chunk);
-      offset += chunk.length;
-    }
-    if (out.isEmpty) throw Exception('empty file');
-    return out;
+    throw lastError ?? Exception('download failed');
   } finally {
     c.close();
   }
+}
+
+/// One streamed GET of a single candidate URL with byte-counted
+/// progress. Only the connection has a hard timeout (30 s); a body
+/// stalled with no data for 90 s aborts. Does NOT close [client] —
+/// the candidate walk in [downloadPdfBytes] owns it.
+Future<Uint8List> _fetchCandidateBytes(
+  String url,
+  void Function(int received, int? total) onProgress, {
+  required http.Client client,
+}) async {
+  final req = http.Request('GET', Uri.parse(url));
+  final res = await client.send(req).timeout(const Duration(seconds: 30));
+  if (res.statusCode != 200) {
+    throw Exception('download failed (${res.statusCode})');
+  }
+  final chunks = <List<int>>[];
+  var received = 0;
+  await for (final chunk in res.stream.timeout(const Duration(seconds: 90))) {
+    chunks.add(chunk);
+    received += chunk.length;
+    final total = res.contentLength;
+    onProgress(received, (total != null && total > 0) ? total : null);
+  }
+  final out = Uint8List(received);
+  var offset = 0;
+  for (final chunk in chunks) {
+    out.setRange(offset, offset + chunk.length, chunk);
+    offset += chunk.length;
+  }
+  if (out.isEmpty) throw Exception('empty file');
+  return out;
 }
 
 /// Phone's Downloads folder, falling back to app documents (same convention

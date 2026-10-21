@@ -25,25 +25,38 @@ import '../../widgets/request_info_row.dart';
 import '../../widgets/request_section_card.dart';
 import '../../widgets/syllabus_entrance.dart';
 
-/// Save filename for a downloaded checked-answer PDF (v1.0.121),
-/// derived from the exam set TITLE — never from the raw answer doc
-/// id: that id contains a literal space and is extremely long, and
-/// phone PDF viewers opening the file from the Downloads folder
-/// choked on the name ("invalid format"). Sanitizing keeps ASCII
-/// letters/digits, collapses every other run of characters into a
-/// single '-', trims edge dashes, and caps the title part at 48
-/// chars; a title with nothing keepable falls back to a fixed name.
+/// Save filename for a downloaded checked-answer PDF (v1.0.121;
+/// Title Case + shorter since v1.0.122), derived from the exam set
+/// TITLE — never from the raw answer doc id: that id contains a
+/// literal space and is extremely long, and phone PDF viewers
+/// opening the file from the Downloads folder choked on the name
+/// ("invalid format"). The title is split into ASCII words, each
+/// word is Title-Cased (first letter upper, rest lower), and the
+/// words join with '-'; the title part is capped at 28 chars,
+/// trimming whole words at the boundary (a single over-long first
+/// word is hard-truncated). A title with no ASCII word falls back
+/// to a fixed name. Example: "New Sudurpaschim Theory Model Test"
+/// → 'Checked-Answer-New-Sudurpaschim-Theory.pdf'.
 String checkedAnswerFileName(String examSetTitle) {
-  var sanitized = examSetTitle
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
-  if (sanitized.length > 48) {
-    sanitized = sanitized.substring(0, 48).replaceAll(RegExp(r'-+$'), '');
+  final words = examSetTitle
+      .split(RegExp(r'[^A-Za-z0-9]+'))
+      .where((w) => w.isNotEmpty)
+      .toList();
+  if (words.isEmpty) return 'Checked-Answer-Sheet.pdf';
+  const cap = 28;
+  var titlePart = '';
+  for (final raw in words) {
+    final word = raw[0].toUpperCase() + raw.substring(1).toLowerCase();
+    final next = titlePart.isEmpty ? word : '$titlePart-$word';
+    if (next.length > cap) {
+      // A lone first word longer than the cap has no word boundary
+      // to trim at — hard-truncate it so the name stays bounded.
+      if (titlePart.isEmpty) titlePart = word.substring(0, cap);
+      break;
+    }
+    titlePart = next;
   }
-  return sanitized.isEmpty
-      ? 'checked-answer-sheet.pdf'
-      : 'checked-answer-$sanitized.pdf';
+  return 'Checked-Answer-$titlePart.pdf';
 }
 
 const int _answerEditWindowMs = 60 * 60 * 1000;

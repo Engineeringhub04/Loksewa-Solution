@@ -69,17 +69,27 @@ class PdfSource {
     return [toDirectPdfUrl(trimmed)];
   }
 
-  /// Every PDF begins with the bytes "%PDF-".
+  /// Every PDF carries the bytes "%PDF-" — the spec tolerates leading
+  /// junk before the header, so the magic is searched within the first
+  /// 1024 bytes (single shared implementation since v1.0.122; the
+  /// download dialog delegates here too).
   ///
   /// This is how Google Drive's HTML responses (share-link preview page,
   /// virus-scan interstitial) are detected, so the next candidate URL can
   /// be tried instead of handing HTML to the renderer.
   static bool looksLikePdf(Uint8List bytes) {
-    return bytes.length >= 5 &&
-        bytes[0] == 0x25 && // %
-        bytes[1] == 0x50 && // P
-        bytes[2] == 0x44 && // D
-        bytes[3] == 0x46 && // F
-        bytes[4] == 0x2D; // -
+    const magic = [0x25, 0x50, 0x44, 0x46, 0x2D]; // %PDF-
+    final limit = bytes.length < 1024 ? bytes.length : 1024;
+    for (var i = 0; i + magic.length <= limit; i++) {
+      var match = true;
+      for (var j = 0; j < magic.length; j++) {
+        if (bytes[i + j] != magic[j]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return true;
+    }
+    return false;
   }
 }

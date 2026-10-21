@@ -4,6 +4,7 @@
 // - checkedAnswerFileName: clean short save names from the exam set
 //   title (the v1.0.120 name embedded the raw answer doc id — a
 //   literal space + extreme length that phone viewers rejected).
+//   v1.0.122: Title Case words + a tighter 28-char title cap.
 // - PdfDownloadDialog: non-PDF bytes settle as a FAILED download and
 //   save nothing; a MediaStore content-URI answer counts as a public
 //   save (onSaved(true)) with no app-folder fallback file.
@@ -66,36 +67,56 @@ void main() {
   });
 
   group('checkedAnswerFileName', () {
-    test('sanitizes spaces and punctuation into single dashes', () {
-      expect(
-        checkedAnswerFileName('Civil Sub-Engineer: Theory Desk (Set 1)'),
-        'checked-answer-civil-sub-engineer-theory-desk-set-1.pdf',
-      );
+    test('Title-Cases words and joins them with single dashes', () {
       expect(
         checkedAnswerFileName('Loksewa   Solution___Test'),
-        'checked-answer-loksewa-solution-test.pdf',
+        'Checked-Answer-Loksewa-Solution-Test.pdf',
+      );
+      // Mixed case is normalized to clean Title Case.
+      expect(
+        checkedAnswerFileName('cIVIL sub-ENGINEER'),
+        'Checked-Answer-Civil-Sub-Engineer.pdf',
+      );
+    });
+
+    test('spec example: trailing words trimmed at the cap', () {
+      expect(
+        checkedAnswerFileName('New Sudurpaschim Theory Model Test'),
+        'Checked-Answer-New-Sudurpaschim-Theory.pdf',
+      );
+      expect(
+        checkedAnswerFileName('Civil Sub-Engineer: Theory Desk (Set 1)'),
+        'Checked-Answer-Civil-Sub-Engineer-Theory.pdf',
+      );
+    });
+
+    test('digits are preserved', () {
+      expect(
+        checkedAnswerFileName('Set 1 Paper 2026'),
+        'Checked-Answer-Set-1-Paper-2026.pdf',
       );
     });
 
     test('falls back when nothing keepable remains', () {
-      expect(checkedAnswerFileName(''), 'checked-answer-sheet.pdf');
-      expect(checkedAnswerFileName('   '), 'checked-answer-sheet.pdf');
-      expect(checkedAnswerFileName('!!! ???'), 'checked-answer-sheet.pdf');
+      expect(checkedAnswerFileName(''), 'Checked-Answer-Sheet.pdf');
+      expect(checkedAnswerFileName('   '), 'Checked-Answer-Sheet.pdf');
+      expect(checkedAnswerFileName('!!! ???'), 'Checked-Answer-Sheet.pdf');
       // Non-ASCII-only titles keep nothing ASCII-safe → fallback.
       expect(checkedAnswerFileName('सिविल इन्जिनियर'),
-          'checked-answer-sheet.pdf');
+          'Checked-Answer-Sheet.pdf');
     });
 
-    test('caps the title part at 48 chars with no trailing dash', () {
+    test('caps the title part with word-boundary trimming', () {
+      // A single over-long word has no boundary: hard-truncate at 28.
       expect(
         checkedAnswerFileName('a' * 60),
-        'checked-answer-${'a' * 48}.pdf',
+        'Checked-Answer-A${'a' * 27}.pdf',
       );
-      // The cap lands right after a separator: the dangling dash the
-      // cut leaves behind must be trimmed too.
+      // The next word would cross the cap: it is dropped whole, so
+      // the name never ends mid-word or with a dangling dash.
       expect(
-        checkedAnswerFileName('${'a' * 47} bcdefghij'),
-        'checked-answer-${'a' * 47}.pdf',
+        checkedAnswerFileName('${'a' * 27} bcdefghij'),
+        'Checked-Answer-A${'a' * 26}.pdf',
       );
     });
 
@@ -103,7 +124,7 @@ void main() {
       final name =
           checkedAnswerFileName('iFNwtqjcSKR1xmj6KV 08dg0iLFg2 Set');
       expect(name.contains(' '), isFalse);
-      expect(name, startsWith('checked-answer-'));
+      expect(name, startsWith('Checked-Answer-'));
       expect(name, endsWith('.pdf'));
     });
   });

@@ -252,6 +252,10 @@ class PushNotificationService {
       if (!_localNotificationsReady) await _initLocalNotifications();
       if (!_localNotificationsReady) return;
       final pct = percent?.clamp(0, 100);
+      final body = pct == null ? 'Downloading…' : 'Downloading… $pct%';
+      // Expandable style (v1.0.122): without a styleInformation the
+      // shade shows no expand (⌄) caret on these notifications.
+      final style = BigTextStyleInformation(body);
       // Set.add answers true only the first time the id is seen —
       // that first post is the one that must alert.
       final firstPost = _dlAlertPosted.add(id);
@@ -267,6 +271,7 @@ class PushNotificationService {
               progress: pct ?? 0,
               indeterminate: pct == null,
               ongoing: true,
+              styleInformation: style,
               // NOT onlyAlertOnce: this post has to actually alert.
             )
           : AndroidNotificationDetails(
@@ -283,11 +288,12 @@ class PushNotificationService {
               onlyAlertOnce: true,
               playSound: false,
               enableVibration: false,
+              styleInformation: style,
             );
       await _localNotifications.show(
         id: id,
         title: fileName,
-        body: pct == null ? 'Downloading…' : 'Downloading… $pct%',
+        body: body,
         notificationDetails: NotificationDetails(android: androidDetails),
       );
     } catch (_) {}
@@ -312,7 +318,12 @@ class PushNotificationService {
       if (!Platform.isAndroid) return;
       if (!_localNotificationsReady) await _initLocalNotifications();
       if (!_localNotificationsReady) return;
-      const androidDetails = AndroidNotificationDetails(
+      final body = success
+          ? (toDownloads
+              ? 'Download complete · Saved to Downloads'
+              : 'Download complete')
+          : 'Download failed';
+      final androidDetails = AndroidNotificationDetails(
         _dlAlertChannelId,
         _dlAlertChannelName,
         channelDescription: 'Download start and completion alerts',
@@ -321,17 +332,14 @@ class PushNotificationService {
         showProgress: false,
         ongoing: false,
         autoCancel: true,
+        // Expandable style (v1.0.122) — see showDownloadProgress.
+        styleInformation: BigTextStyleInformation(body),
       );
       await _localNotifications.show(
         id: id,
         title: fileName,
-        body: success
-            ? (toDownloads
-                ? 'Download complete · Saved to Downloads'
-                : 'Download complete')
-            : 'Download failed',
-        notificationDetails:
-            const NotificationDetails(android: androidDetails),
+        body: body,
+        notificationDetails: NotificationDetails(android: androidDetails),
         payload: success ? openUri : null,
       );
     } catch (_) {}

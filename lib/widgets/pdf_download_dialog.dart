@@ -12,8 +12,11 @@ import '../services/public_downloads.dart';
 import '../services/push_notification_service.dart';
 import 'app_modal_shell.dart';
 
-/// Stable notification id for PDF download progress (v1.0.120) — one
-/// download popup exists at a time, so one id is enough.
+/// Stable notification id for PDF download PROGRESS (v1.0.120) — one
+/// download popup exists at a time, so one id is enough. Its pair,
+/// pdfDownloadAlertNotificationId (in push_notification_service.dart),
+/// carries the start + completion alerts on their own channel
+/// (split-id design, v1.0.123).
 const int pdfDownloadNotificationId = 778899;
 
 /// Byte-counted PDF download with a live progress popup.
@@ -32,11 +35,13 @@ const int pdfDownloadNotificationId = 778899;
 /// Downloads app. When the public save is unavailable (old Android,
 /// channel failure) it falls back to that app-folder write, and
 /// [onSaved] reports which happened so the caller's message stays
-/// honest. On Android the progress also mirrors into a system
-/// notification (first post + completion alert with sound/heads-up,
-/// silent progress ticks between — v1.0.121). Bytes that fail the
-/// [looksLikePdf] sanity check are never saved; they surface as a
-/// failed download instead.
+/// honest. On Android the progress also mirrors into system
+/// notifications split by phase (v1.0.123): the progress entry lives
+/// on its own silent id/channel from the first tick, a one-shot start
+/// alert and the completion post ride a separate alert id/channel,
+/// and settling cancels the progress entry so nothing stays stuck at
+/// 100%. Bytes that fail the [looksLikePdf] sanity check are never
+/// saved; they surface as a failed download instead.
 ///
 /// Cancellation: closing the popup disposes the dialog, which aborts the
 /// in-flight request and discards the partial download.

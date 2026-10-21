@@ -1,5 +1,7 @@
-// "My Answer Submissions" — every Theory answer this student has ever
-// uploaded, newest first, with a Pending/Reviewed badge. Tapping one opens its
+// "My Answer Submissions" — the student's Theory answers, newest first,
+// with a Pending/Reviewed badge. One row per exam set (v1.0.125): the
+// LATEST submission represents the set; earlier attempts live in the
+// detail page's Previous Submissions history. Tapping a row opens its
 // details screen (score, reviewer note, edit-window re-upload).
 //
 // Mirrors app/exam-answer/my-submissions.tsx: summary hero band with
@@ -67,12 +69,17 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
             }
           }(),
       ]);
-      final mine = <Map<String, dynamic>>[
+      final all = <Map<String, dynamic>>[
         for (final doc in fetched)
           if (doc != null) doc,
       ];
-      mine.sort((a, b) => _millis(b['createdAt'])
+      all.sort((a, b) => _millis(b['createdAt'])
           .compareTo(_millis(a['createdAt'])));
+      // v1.0.125: ONE row per exam set — the LATEST submission. A
+      // re-applied set used to list every attempt as its own card;
+      // the older ones now live in the detail page's Previous
+      // Submissions history instead.
+      final mine = latestSubmissionsBySet(all);
       if (!mounted) return;
       // Render FIRST with the names already stored on the docs (v1.0.120):
       // the list paints as soon as the answers arrive instead of waiting

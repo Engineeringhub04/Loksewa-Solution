@@ -97,14 +97,18 @@ class AppModalShell extends StatelessWidget {
 
   /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
   /// fade + scale out on pop (200ms) — same duration and same curve in
-  /// both directions so open/close feel identical. Barrier tap dismisses.
+  /// both directions so open/close feel identical. Barrier tap dismisses
+  /// unless [barrierDismissible] is false (v1.0.125: the download popup
+  /// locks its barrier while a download is in progress — Cancel is the
+  /// only way out).
   static Future<T?> show<T>({
     required BuildContext context,
     required WidgetBuilder builder,
+    bool barrierDismissible = true,
   }) {
     return showGeneralDialog<T>(
       context: context,
-      barrierDismissible: true,
+      barrierDismissible: barrierDismissible,
       barrierLabel: 'Dismiss',
       barrierColor: Colors.black54,
       transitionDuration: const Duration(milliseconds: 200),

@@ -850,6 +850,12 @@ service cloud.firestore {
       // editUsedAt yet (`.get(..., null)` — older docs predate the
       // field). After that single edit the stamp exists and every
       // further owner update is denied; admins are unaffected.
+      // Download stamp (v1.0.125): after a SUCCESSFUL checked-PDF
+      // download the app stamps `downloadedDay` + `downloadedAt` for
+      // the daily limit. The checked PDF lives on REVIEWED docs, so
+      // the pending-only edit clause above can never carry the stamp —
+      // the second clause permits the owner to touch EXACTLY those
+      // two fields on their own doc, in any status, and nothing else.
       allow update: if isAdmin() ||
         (isSignedIn() &&
          resource.data.uid == request.auth.uid &&
@@ -857,7 +863,10 @@ service cloud.firestore {
          resource.data.get('editUsedAt', null) == null &&
          changedOnly(['pdfUrl', 'message', 'studentName', 'updatedAt',
                       'courseName', 'subcourseName', 'sectionName',
-                      'editUsedAt']));
+                      'editUsedAt', 'downloadedDay', 'downloadedAt'])) ||
+        (isSignedIn() &&
+         resource.data.uid == request.auth.uid &&
+         changedOnly(['downloadedDay', 'downloadedAt']));
       allow delete: if isAdmin();
     }
 

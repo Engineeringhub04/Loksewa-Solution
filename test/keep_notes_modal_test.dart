@@ -362,9 +362,14 @@ void main() {
       expect(find.byType(SnackBar), findsNothing);
     });
 
-    testWidgets('failure shows the Export-failed modal (no SnackBar)',
+    testWidgets(
+        'failure shows the shared download popup failure state (no SnackBar)',
         (tester) async {
-      // No path_provider / share stubs → MissingPluginException → failure.
+      // No path_provider / media stubs → every save channel misses →
+      // the shared download popup (v1.0.125 local-bytes mode) lands
+      // in its failure state. (Pre-v1.0.125 the export threw into the
+      // "Export failed" info modal; the failure surface is the popup
+      // itself now, like every other download.)
       final tmp =
           Directory.systemTemp.createTempSync('keep_export_fail');
       final store = KeepNotesStore.forTest(tmp);
@@ -376,7 +381,8 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(AppModalShell), findsOneWidget);
-      expect(find.text('Export failed'), findsOneWidget);
+      expect(find.text('Save failed'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
       expect(find.byType(SnackBar), findsNothing);
     });
   });

@@ -265,18 +265,22 @@ class PushNotificationService {
     required bool success,
     required String fileName,
     required bool toDownloads,
+    String? successTitle,
+    String? failureTitle,
+    String? savedLine,
   }) {
     if (!success) {
       return (
-        title: 'Download Failed ❌',
+        title: failureTitle ?? 'Download Failed ❌',
         body: fileName,
         bigText: fileName,
       );
     }
+    final line = savedLine ?? 'Saved to Downloads';
     return (
-      title: 'Download Complete 🎉',
+      title: successTitle ?? 'Download Complete 🎉',
       body: fileName,
-      bigText: toDownloads ? '$fileName\nSaved to Downloads' : fileName,
+      bigText: toDownloads ? '$fileName\n$line' : fileName,
     );
   }
 
@@ -300,13 +304,20 @@ class PushNotificationService {
     required int id,
     required String fileName,
     required int? percent,
+    String? progressLabel,
   }) async {
     try {
       if (!Platform.isAndroid) return;
       if (!_localNotificationsReady) await _initLocalNotifications();
       if (!_localNotificationsReady) return;
       final pct = percent?.clamp(0, 100);
-      final body = downloadProgressBody(percent);
+      // [progressLabel] swaps the "Downloading…" wording for another
+      // context (v1.0.125: the Offline Access save flow posts
+      // "Saving for offline use…" under the feature's name) — the
+      // percent still appends when known.
+      final body = progressLabel == null
+          ? downloadProgressBody(percent)
+          : (pct == null ? progressLabel : '$progressLabel $pct%');
       final progressDetails = AndroidNotificationDetails(
         _dlAlertChannelId,
         _dlAlertChannelName,
@@ -352,6 +363,9 @@ class PushNotificationService {
     required bool success,
     bool toDownloads = true,
     String? openUri,
+    String? successTitle,
+    String? failureTitle,
+    String? savedLine,
   }) async {
     try {
       if (!Platform.isAndroid) return;
@@ -363,6 +377,9 @@ class PushNotificationService {
         success: success,
         fileName: fileName,
         toDownloads: toDownloads,
+        successTitle: successTitle,
+        failureTitle: failureTitle,
+        savedLine: savedLine,
       );
       final androidDetails = AndroidNotificationDetails(
         _dlAlertChannelId,

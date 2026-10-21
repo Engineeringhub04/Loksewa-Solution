@@ -1232,6 +1232,21 @@ class ExamAnswer {
   /// published/pending answers. Powers the Exam tab's Rejected badge.
   final String rejectionReason;
 
+  /// When the grading desk stamped the review (Publish and Reject both
+  /// stamp it; "Other Reason and Save" never does). Empty when the doc
+  /// was never published/rejected or predates the field.
+  final String reviewedAt;
+
+  /// True when this submission is a re-application (v1.0.125): the
+  /// student applied again after a non-published outcome, and the new
+  /// doc points back at the one it replaces via [previousAnswerId].
+  final bool isReapply;
+  final String previousAnswerId;
+
+  /// Kathmandu day (yyyy-MM-dd) of the last SUCCESSFUL checked-PDF
+  /// download (v1.0.125 daily limit stamp). Empty when never downloaded.
+  final String downloadedDay;
+
   ExamAnswer({
     required this.id,
     required this.uid,
@@ -1246,6 +1261,10 @@ class ExamAnswer {
     this.pdfUrl = '',
     this.createdAt = '',
     this.rejectionReason = '',
+    this.reviewedAt = '',
+    this.isReapply = false,
+    this.previousAnswerId = '',
+    this.downloadedDay = '',
   });
 
   factory ExamAnswer.fromMap(Map<String, dynamic> m) {
@@ -1264,6 +1283,10 @@ class ExamAnswer {
       pdfUrl: (fields['pdfUrl'] ?? '').toString(),
       createdAt: (fields['createdAt'] ?? '').toString(),
       rejectionReason: (fields['rejectionReason'] ?? '').toString(),
+      reviewedAt: (fields['reviewedAt'] ?? '').toString(),
+      isReapply: fields['isReapply'] == true,
+      previousAnswerId: (fields['previousAnswerId'] ?? '').toString(),
+      downloadedDay: (fields['downloadedDay'] ?? '').toString(),
     );
   }
 
@@ -1272,9 +1295,127 @@ class ExamAnswer {
   bool get isRejected =>
       status == 'reviewed' && rejectionReason.trim().isNotEmpty;
 
+  /// True when the grading desk PUBLISHED a result for this answer.
+  /// Publish is the only admin flow that stamps `reviewedAt` while
+  /// leaving `rejectionReason` empty: Reject also stamps `reviewedAt`
+  /// but always saves a reason, and "Other Reason and Save" never
+  /// stamps `reviewedAt` at all (v1.0.125 derivation — see
+  /// [examAnswerIsPublished]).
+  bool get isPublished => examAnswerIsPublishedFields(
+        status: status,
+        rejectionReason: rejectionReason,
+        reviewedAt: reviewedAt,
+      );
+
+  /// True when the student may apply again for the same set
+  /// (v1.0.125): the desk has acted on this submission (it is no
+  /// longer pending) but did NOT publish a result — a rejection, or
+  /// an "Other Reason and Save" that closed the request without
+  /// publishing. A request still sitting in the queue (pending) is
+  /// NOT reappliable.
+  bool get isReappliable =>
+      status.isNotEmpty && status != 'pending' && !isPublished;
+
   /// Milliseconds since epoch for [createdAt], 0 when unparseable.
   int get createdAtMillis =>
       DateTime.tryParse(createdAt)?.millisecondsSinceEpoch ?? 0;
+}
+
+/// Published test on raw fields (v1.0.125) — see [ExamAnswer.isPublished]
+/// for why `reviewedAt` is the discriminating stamp.
+bool examAnswerIsPublishedFields({
+  required String status,
+  required String rejectionReason,
+  required String reviewedAt,
+}) =>
+    status == 'reviewed' &&
+    rejectionReason.trim().isEmpty &&
+    reviewedAt.trim().isNotEmpty;
+
+/// Published test for a raw answer doc map (v1.0.125).
+bool examAnswerIsPublished(Map<String, dynamic> a) =>
+    examAnswerIsPublishedFields(
+      status: (a['status'] ?? '').toString(),
+      rejectionReason: (a['rejectionReason'] ?? '').toString(),
+      reviewedAt: (a['reviewedAt'] ?? '').toString(),
+    );
+
+/// Re-appliable test for a raw answer doc map (v1.0.125) — see
+/// [ExamAnswer.isReappliable].
+bool examAnswerIsReappliable(Map<String, dynamic> a) {
+  final status = (a['status'] ?? '').toString();
+  return status.isNotEmpty &&
+      status != 'pending' &&
+      !examAnswerIsPublished(a);
+}
+
+/// Groups [answers] by examSetId, each group sorted newest-first
+/// (v1.0.125: a set can hold several submissions once re-apply
+/// exists). Ties on createdAt keep the later list position first —
+/// the per-user ID index is append-ordered, so later = newer.
+Map<String, List<ExamAnswer>> groupExamAnswersBySet(
+    List<ExamAnswer> answers) {
+  final order = <String, int>{};
+  for (var i = 0; i < answers.length; i++) {
+    order[answers[i].id] = i;
+  }
+  final groups = <String, List<ExamAnswer>>{};
+  for (final a in answers) {
+    if (a.examSetId.isEmpty) continue;
+    (groups[a.examSetId] ??= []).add(a);
+  }
+  for (final g in groups.values) {
+    g.sort((x, y) {
+      final byTime = y.createdAtMillis.compareTo(x.createdAtMillis);
+      return byTime != 0
+          ? byTime
+          : (order[y.id] ?? 0).compareTo(order[x.id] ?? 0);
+    });
+  }
+  return groups;
+}
+
+/// The LATEST submission per examSetId (v1.0.125).
+Map<String, ExamAnswer> latestExamAnswersBySet(List<ExamAnswer> answers) {
+  final groups = groupExamAnswersBySet(answers);
+  return {
+    for (final e in groups.entries)
+      if (e.value.isNotEmpty) e.key: e.value.first,
+  };
+}
+
+/// Raw-map sibling of [latestExamAnswersBySet] for screens that work
+/// with decoded doc maps: ONE doc per examSetId — the newest — in
+/// newest-first order. Docs without an examSetId keep their own row
+/// (keyed by doc id) so nothing silently disappears.
+List<Map<String, dynamic>> latestSubmissionsBySet(
+    List<Map<String, dynamic>> docs) {
+  int millis(Map<String, dynamic> d) {
+    final raw = d['createdAt'];
+    if (raw is DateTime) return raw.millisecondsSinceEpoch;
+    if (raw is num) return raw.toInt();
+    return DateTime.tryParse(raw?.toString() ?? '')?.millisecondsSinceEpoch ??
+        0;
+  }
+
+  final best = <String, (int, int, Map<String, dynamic>)>{};
+  for (var i = 0; i < docs.length; i++) {
+    final d = docs[i];
+    final setId = (d['examSetId'] ?? '').toString();
+    final key = setId.isNotEmpty ? 'set:$setId' : 'doc:${d['id'] ?? i}';
+    final cur = best[key];
+    if (cur == null ||
+        millis(d) > cur.$1 ||
+        (millis(d) == cur.$1 && i > cur.$2)) {
+      best[key] = (millis(d), i, d);
+    }
+  }
+  final rows = best.values.toList()
+    ..sort((a, b) {
+      final byTime = b.$1.compareTo(a.$1);
+      return byTime != 0 ? byTime : b.$2.compareTo(a.$2);
+    });
+  return [for (final r in rows) r.$3];
 }
 
 /// Mirrors fetchMyExamAnswersBySet (examAnswers.ts): the user's own answer
@@ -1289,7 +1430,6 @@ Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
   final ids = <String>[
     for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
   ];
-  final bySet = <String, ExamAnswer>{};
   // Fetched in parallel (v1.0.120) — the old one-at-a-time loop made the
   // Exam tab wait for one round trip per past submission.
   final docs = await Future.wait([
@@ -1304,12 +1444,12 @@ Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
         }
       }(),
   ]);
-  for (final d in docs) {
-    if (d == null) continue;
-    final a = ExamAnswer.fromMap(d);
-    if (a.examSetId.isNotEmpty) bySet[a.examSetId] = a;
-  }
-  return bySet;
+  // v1.0.125: a set can hold SEVERAL submissions (re-apply) — the map
+  // keeps the LATEST one per set (see latestExamAnswersBySet).
+  return latestExamAnswersBySet([
+    for (final d in docs)
+      if (d != null) ExamAnswer.fromMap(d),
+  ]);
 }
 
 /// Mirrors fetchAllExamAnswers (examAnswers.ts) — ADMIN ONLY: every theory
@@ -2117,16 +2257,41 @@ DailyScore scoreDailyTest(DailyTestModel model,
   );
 }
 
-/// Kathmandu date key YYYY-MM-DD (NPT = UTC+5:45).
-/// Uses the server-corrected clock so winding the device clock cannot unlock
-/// future tests — mirrors todayDateKey()/serverNow() in dailyTest.ts.
-String todayDateKey() {
-  final kathmandu =
-      ServerClock.nowUtc().add(const Duration(hours: 5, minutes: 45));
+/// Kathmandu date key YYYY-MM-DD (NPT = UTC+5:45) for any instant.
+/// Pure — unit-testable at the day boundary.
+String kathmanduDayKey(DateTime instant) {
+  final kathmandu = instant.toUtc().add(const Duration(hours: 5, minutes: 45));
   return '${kathmandu.year.toString().padLeft(4, '0')}-'
       '${kathmandu.month.toString().padLeft(2, '0')}-'
       '${kathmandu.day.toString().padLeft(2, '0')}';
 }
+
+/// Kathmandu date key YYYY-MM-DD (NPT = UTC+5:45).
+/// Uses the server-corrected clock so winding the device clock cannot unlock
+/// future tests — mirrors todayDateKey()/serverNow() in dailyTest.ts.
+String todayDateKey() => kathmanduDayKey(ServerClock.nowUtc());
+
+/// SharedPreferences key mirroring a checked-PDF download day for one
+/// answer doc (v1.0.125 daily-limit fallback — see
+/// [checkedDownloadLimitReached]).
+String checkedPdfDownloadDayMirrorKey(String answerId) =>
+    'checked_pdf_downloaded_day_$answerId';
+
+/// Daily download limit for the checked answer PDF (v1.0.125): one
+/// SUCCESSFUL download per Kathmandu day per answer doc. The limit is
+/// reached when EITHER the server stamp (`downloadedDay` on the doc)
+/// OR the on-device mirror says the file was downloaded [today] —
+/// the mirror keeps the limit working on-device until the updated
+/// firebase.rules (which let the owner write the stamp) are
+/// published. Failed/cancelled attempts never stamp, so they never
+/// reach the limit. Pure — unit-testable.
+bool checkedDownloadLimitReached({
+  required String? downloadedDay,
+  required String? mirrorDay,
+  required String today,
+}) =>
+    (downloadedDay != null && downloadedDay == today) ||
+    (mirrorDay != null && mirrorDay == today);
 
 Future<List<DailyTestModel>> fetchDailyTestModels(String subcourseId) async {
   final docs = await ExamRest.runQuery(

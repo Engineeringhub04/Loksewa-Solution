@@ -16,6 +16,7 @@ import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/services/prefs_service.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/app_modal_shell.dart';
@@ -100,13 +101,151 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   late final Future<Map<String, dynamic>?> _future = _load();
   Map<String, dynamic>? _patched;
 
+  /// Re-apply grouping (v1.0.125): the page presents the LATEST
+  /// submission of the anchor's exam set in full; older submissions
+  /// for the same set list in the Previous Submissions history. The
+  /// group loads in the background (the anchor paints first, exactly
+  /// as before) — [_groupLatest] is null until it lands, and the
+  /// anchor doc stands in. [_latestPatched] is the name-resolved
+  /// variant of the group latest, mirroring [_patched] for the anchor.
+  Map<String, dynamic>? _groupLatest;
+  Map<String, dynamic>? _latestPatched;
+  List<Map<String, dynamic>> _previousAnswers = [];
+
+  /// Daily checked-PDF download limit (v1.0.125): true when the
+  /// displayed doc was already downloaded successfully today
+  /// (Kathmandu) — the download tile turns into the green
+  /// download-complete tile that opens the limit popup instead.
+  bool _downloadedToday = false;
+
+  /// The doc the page currently presents in full: the group latest
+  /// once loaded, otherwise the anchor (name-patched when available).
+  Map<String, dynamic>? get _displayed => _groupLatest != null
+      ? (_latestPatched ?? _groupLatest)
+      : _patched;
+
+  String _displayedId(Map<String, dynamic> a) =>
+      (a['id'] ?? widget.id).toString();
+
   Future<Map<String, dynamic>?> _load() async {
     final token = await AuthService.getValidIdToken();
     final doc = await FirestoreRest.getDocument(
         'app_exam_answers/${widget.id}',
         idToken: token);
-    if (doc != null) _resolveNamesInBackground(doc);
+    if (doc != null) {
+      _resolveNamesInBackground(doc);
+      unawaited(_loadGroup(doc));
+      unawaited(_refreshDownloadedToday(doc));
+    }
     return doc;
+  }
+
+  int _millisOf(dynamic raw) {
+    if (raw is DateTime) return raw.millisecondsSinceEpoch;
+    if (raw is num) return raw.toInt();
+    return DateTime.tryParse(raw?.toString() ?? '')?.millisecondsSinceEpoch ??
+        0;
+  }
+
+  /// Loads every submission this student made for the anchor's exam
+  /// set (per-user index + getDocument, like My Submissions) and
+  /// splits it into latest + previous. Best-effort: any failure
+  /// leaves the single-doc view untouched.
+  Future<void> _loadGroup(Map<String, dynamic> anchor) async {
+    try {
+      final setId = (anchor['examSetId'] ?? '').toString();
+      final uid = AuthService.currentUser?.uid;
+      if (setId.isEmpty || uid == null) return;
+      final token = await AuthService.getValidIdToken();
+      final userDoc = await FirestoreRest.getDocument('users/$uid',
+          idToken: token);
+      final ids = <String>[
+        for (final e in (userDoc?['examAnswerIds'] as List? ?? []))
+          e.toString(),
+      ];
+      if (ids.isEmpty) return;
+      final docs = await Future.wait([
+        for (final aid in ids)
+          () async {
+            try {
+              return await FirestoreRest.getDocument(
+                  'app_exam_answers/$aid',
+                  idToken: token);
+            } catch (_) {
+              return null;
+            }
+          }(),
+      ]);
+      final group = <Map<String, dynamic>>[
+        for (final d in docs)
+          if (d != null && d['examSetId']?.toString() == setId) d,
+      ];
+      if (group.isEmpty || !mounted) return;
+      group.sort(
+          (x, y) => _millisOf(y['createdAt']).compareTo(_millisOf(x['createdAt'])));
+      final latest = group.first;
+      setState(() {
+        _groupLatest = latest;
+        _previousAnswers = [for (final d in group.skip(1)) d];
+      });
+      if (_displayedId(latest) != _displayedId(anchor)) {
+        _resolveNamesInBackground(latest, forLatest: true);
+      }
+      unawaited(_refreshDownloadedToday(latest));
+    } catch (_) {
+      // History is best-effort; the anchor view stands.
+    }
+  }
+
+  /// Recomputes the daily-limit state for [doc]: reached when the
+  /// server stamp OR the on-device mirror names today (Kathmandu).
+  Future<void> _refreshDownloadedToday(Map<String, dynamic> doc) async {
+    try {
+      final mirror = await PrefsService.getString(
+          checkedPdfDownloadDayMirrorKey(_displayedId(doc)));
+      if (!mounted) return;
+      final reached = checkedDownloadLimitReached(
+        downloadedDay: doc['downloadedDay']?.toString(),
+        mirrorDay: mirror,
+        today: todayDateKey(),
+      );
+      if (reached != _downloadedToday) {
+        setState(() => _downloadedToday = reached);
+      }
+    } catch (_) {
+      // Limit state is best-effort; the download tile just stays live.
+    }
+  }
+
+  /// Stamps a SUCCESSFUL checked-PDF download (v1.0.125): the local
+  /// mirror lands first (the limit holds on-device even before the
+  /// updated firebase.rules are published), then the server fields
+  /// `downloadedDay`/`downloadedAt` — best-effort, the rules' stamp
+  /// clause permits exactly these two fields for the owner. Failed
+  /// and cancelled downloads never reach this — they stay retryable.
+  Future<void> _stampDownloadedToday(String answerId) async {
+    final today = todayDateKey();
+    try {
+      await PrefsService.setString(
+          checkedPdfDownloadDayMirrorKey(answerId), today);
+    } catch (_) {}
+    if (mounted && !_downloadedToday) {
+      setState(() => _downloadedToday = true);
+    }
+    try {
+      final token = await AuthService.getValidIdToken();
+      await FirestoreRest.updateDocument(
+        'app_exam_answers/$answerId',
+        {
+          'downloadedDay': today,
+          'downloadedAt': DateTime.now().toUtc().toIso8601String(),
+        },
+        idToken: token,
+      );
+    } catch (_) {
+      // Pre-rules-publish the write is denied; the mirror above
+      // already enforces the limit on this device.
+    }
   }
 
   /// Older submissions never saved the course/subcourse/section names
@@ -114,7 +253,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   /// blanks from the parent exam set and patch them into the visible doc
   /// so the header, pending card and info card show real names.
   /// Best-effort, display only; the page is already on screen.
-  Future<void> _resolveNamesInBackground(Map<String, dynamic> doc) async {
+  Future<void> _resolveNamesInBackground(Map<String, dynamic> doc,
+      {bool forLatest = false}) async {
     try {
       final names = await resolveAnswerDisplayNames(doc,
           nepali: AppLanguage.isNepali);
@@ -132,7 +272,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       fill('courseName', names.courseName);
       fill('subcourseName', names.subcourseName);
       fill('sectionName', names.sectionName);
-      if (changed) setState(() => _patched = merged);
+      if (changed) {
+        setState(() => forLatest ? _latestPatched = merged : _patched = merged);
+      }
     } catch (_) {
       // Best-effort: stored names (or blanks) stand.
     }
@@ -150,7 +292,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   /// Downloads folder (no share sheet). Progress shows in an AppModalShell
   /// popup; on completion the popup closes and a toast confirms. Empty URL
   /// keeps the graceful "no file attached" popup.
-  void _downloadCheckedPdf(String url, String examSetTitle) {
+  void _downloadCheckedPdf(
+      String url, String examSetTitle, String answerId) {
     if (url.isEmpty) {
       _showPdfDialog(
           AppLanguage.tr('Checked PDF', 'जाँचिएको PDF'), '');
@@ -159,6 +302,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
     final outer = context;
     AppModalShell.show(
       context: context,
+      // Download lockdown (v1.0.125): no barrier dismissal while the
+      // download runs — the popup's Cancel button is the only exit.
+      barrierDismissible: false,
       builder: (ctx) => PdfDownloadDialog(
         url: url,
         fileName: checkedAnswerFileName(examSetTitle),
@@ -166,18 +312,22 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
         // landed (v1.0.120): the toast may only claim "Downloads" when
         // the MediaStore save into the real public folder succeeded —
         // the private-dir fallback gets a neutral message.
-        onDone: () => _onCheckedPdfSaved(ctx, outer, toDownloads: true),
-        onSaved: (toDownloads) =>
-            _onCheckedPdfSaved(ctx, outer, toDownloads: toDownloads),
+        onDone: () => _onCheckedPdfSaved(ctx, outer,
+            toDownloads: true, answerId: answerId),
+        onSaved: (toDownloads) => _onCheckedPdfSaved(ctx, outer,
+            toDownloads: toDownloads, answerId: answerId),
         onClose: () => Navigator.of(ctx).pop(),
       ),
     );
   }
 
   void _onCheckedPdfSaved(BuildContext dialogCtx, BuildContext outer,
-      {required bool toDownloads}) {
+      {required bool toDownloads, required String answerId}) {
     Navigator.of(dialogCtx).pop();
     if (!mounted) return;
+    // Daily limit (v1.0.125): only a completed save stamps the day —
+    // failed/cancelled downloads never reach this callback.
+    unawaited(_stampDownloadedToday(answerId));
     showToast(
         outer,
         toDownloads
@@ -187,10 +337,99 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
         ToastVariant.success);
   }
 
+  /// Daily-limit popup (v1.0.125): shown instead of downloading when
+  /// this answer's checked PDF was already downloaded today. Shared
+  /// AppModalShell per the global popup rule.
+  void _showDownloadLimitPopup() {
+    final outer = context;
+    AppModalShell.show(
+      context: context,
+      builder: (ctx) => AppModalShell(
+        icon: Container(
+          width: 56,
+          height: 56,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF16A34A).withValues(alpha: 0.12),
+          ),
+          child: const Icon(Icons.download_done_rounded,
+              size: 28, color: Color(0xFF16A34A)),
+        ),
+        tagLabel: AppLanguage.tr('Download', 'डाउनलोड'),
+        tagColor: const Color(0xFF16A34A),
+        accent: const Color(0xFF16A34A),
+        accentMid: const Color(0xFF22C55E),
+        accentLight: const Color(0xFFBBF7D0),
+        title: Text(AppLanguage.tr('Download Complete', 'डाउनलोड पूरा भयो')),
+        body: Text(
+          AppLanguage.tr(
+              'You have already downloaded this checked answer sheet today. Please check your Downloads folder to view it. You can download it again tomorrow. If you did not receive the file, please contact our team.',
+              'तपाईंले आज यो जाँच गरिएको उत्तरपुस्तिका डाउनलोड गरिसक्नुभएको छ। हेर्नका लागि कृपया आफ्नो Downloads फोल्डरमा हेर्नुहोस्। भोलि फेरि डाउनलोड गर्न सक्नुहुन्छ। फाइल प्राप्त भएन भने, कृपया हाम्रो टोलीलाई सम्पर्क गर्नुहोस्।'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+              fontSize: 13,
+              color: Color(0xFF475569),
+              height: 1.55,
+              decoration: TextDecoration.none),
+        ),
+        footer: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1D4ED8),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  if (outer.mounted) outer.push('/contact-us');
+                },
+                child: Text(
+                    AppLanguage.tr('Contact Us', 'सम्पर्क गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 13),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: Text(AppLanguage.tr('I Understand', 'बुझेँ')),
+              ),
+            ),
+          ],
+        ),
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
+  }
+
+  /// Re-Apply (v1.0.125): opens the upload flow in re-apply mode for
+  /// this answer's set — the new submission is stamped as a
+  /// re-application of the displayed (closed) one.
+  void _openReapply(Map<String, dynamic> a) {
+    context.push(
+      '/exam-answer/upload'
+      '?examSetId=${Uri.encodeComponent((a['examSetId'] ?? '').toString())}'
+      '&examSetTitle=${Uri.encodeComponent((a['examSetTitle'] ?? '').toString())}'
+      '&sectionName=${Uri.encodeComponent((a['sectionName'] ?? '').toString())}'
+      '&reapplyFrom=${Uri.encodeComponent(_displayedId(a))}',
+    );
+  }
+
   /// "View Submitted PDF": opens the same in-app pdfx viewer the Syllabus
   /// page and Theory mode use (native rendering, temp-cache download) on a
   /// new full page — no more link-only popup.
-  void _viewSubmittedPdf(String url, String examTitle) {
+  void _viewSubmittedPdf(String url, String examTitle, {String? answerId}) {
     if (url.isEmpty) {
       _showPdfDialog(
           AppLanguage.tr('Submitted PDF', 'पेश गरिएको PDF'), '');
@@ -200,7 +439,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
         ? examTitle
         : AppLanguage.tr('Submitted PDF', 'पेश गरिएको PDF');
     context.push(Uri(
-      path: '/pdf/${Uri.encodeComponent('exam-answer-${widget.id}')}',
+      path:
+          '/pdf/${Uri.encodeComponent('exam-answer-${answerId ?? widget.id}')}',
       queryParameters: {'uri': url, 'title': title},
     ).toString());
   }
@@ -328,7 +568,7 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                               style:
                                   TextStyle(color: pal.textSecondary))));
                 }
-                final a = _patched ?? snap.data;
+                final a = _displayed ?? snap.data;
                 if (a == null) {
                   return Center(
                       child: Text(
@@ -458,13 +698,41 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
                             answer: a,
                             pal: pal,
                             onEdit: () => context.push(
-                                '/exam-answer/upload?editId=${widget.id}'),
+                                '/exam-answer/upload?editId=${_displayedId(a)}'),
                           ),
                         ],
+                      ],
+                      // Re-Apply (v1.0.125): the desk closed this
+                      // submission without publishing (rejected, or
+                      // "Other Reason and Save") — the student gets a
+                      // way back in right here too, not only on the
+                      // Exam tab card.
+                      if (examAnswerIsReappliable(a)) ...[
+                        const SizedBox(height: 16),
+                        SyllabusEntrance(
+                          delayMs: 230,
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: pal.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 14)),
+                            icon: const Icon(Icons.replay_rounded),
+                            label: Text(AppLanguage.tr(
+                                'Re-Apply', 'फेरि आवेदन दिनुहोस्')),
+                            onPressed: () => _openReapply(a),
+                          ),
+                        ),
                       ],
                       const SizedBox(height: 16),
                       SyllabusEntrance(
                           delayMs: 260, child: _metaCard(pal, a)),
+                      if (_previousAnswers.isNotEmpty) ...[
+                        const SizedBox(height: 16),
+                        SyllabusEntrance(
+                            delayMs: 290,
+                            child: _previousSubmissionsCard(pal)),
+                      ],
                       const SizedBox(height: 16),
                       SyllabusEntrance(
                           delayMs: 320, child: _helpCard(pal)),
@@ -718,24 +986,40 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
             ),
           ),
           const SizedBox(width: 10),
+          // Daily-limit tile (v1.0.125): once today's download is
+          // spent, the tile turns into the GREEN download-complete
+          // tile — tapping it explains the limit instead of
+          // downloading again. Next Kathmandu day it reverts.
           SizedBox(
             width: 52,
             child: Material(
-              color: pal.primary.withValues(alpha: 0.12),
+              color: _downloadedToday
+                  ? pal.success.withValues(alpha: 0.14)
+                  : pal.primary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: () => _downloadCheckedPdf(
-                    url, a['examSetTitle']?.toString() ?? ''),
+                onTap: _downloadedToday
+                    ? _showDownloadLimitPopup
+                    : () => _downloadCheckedPdf(url,
+                        a['examSetTitle']?.toString() ?? '',
+                        _displayedId(a)),
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(
-                        color: pal.primary.withValues(alpha: 0.35),
+                        color: _downloadedToday
+                            ? pal.success.withValues(alpha: 0.45)
+                            : pal.primary.withValues(alpha: 0.35),
                         width: 0.75),
                   ),
-                  child: Icon(Icons.download_rounded,
-                      size: 22, color: pal.primary),
+                  child: Icon(
+                      _downloadedToday
+                          ? Icons.download_done_rounded
+                          : Icons.download_rounded,
+                      size: 22,
+                      color:
+                          _downloadedToday ? pal.success : pal.primary),
                 ),
               ),
             ),
@@ -879,6 +1163,111 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
               subtitle,
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Previous Submissions (v1.0.125): the older attempts for this
+  /// set, newest first, folded under the latest one — date, outcome,
+  /// the desk's note/reason, and the student's own submitted PDF.
+  /// Strictly read-only: no edit, delete, or re-apply from history.
+  Widget _previousSubmissionsCard(ExpoPalette pal) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(AppLanguage.tr('Previous Submissions', 'अघिल्ला आवेदनहरू'),
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: pal.textPrimary)),
+        const SizedBox(height: 8),
+        for (var i = 0; i < _previousAnswers.length; i++) ...[
+          if (i > 0) const SizedBox(height: 10),
+          _previousEntry(pal, _previousAnswers[i]),
+        ],
+      ],
+    );
+  }
+
+  Widget _previousEntry(ExpoPalette pal, Map<String, dynamic> p) {
+    final rejected = examAnswerIsReappliable(p) &&
+        (p['rejectionReason']?.toString().trim().isNotEmpty ?? false);
+    final published = examAnswerIsPublished(p);
+    final reason = (p['rejectionReason']?.toString() ?? '').trim();
+    final note = (p['reviewNote']?.toString() ?? '').trim();
+    final message = (p['adminMessage']?.toString() ?? '').trim();
+    final pdfUrl = (p['pdfUrl'] ?? '').toString();
+    final outcomeLabel = rejected
+        ? AppLanguage.tr('Rejected', 'अस्वीकृत')
+        : published
+            ? AppLanguage.tr('Result Published', 'नतिजा प्रकाशित')
+            : ((p['status']?.toString() ?? '').isNotEmpty
+                ? '${p['status'].toString()[0].toUpperCase()}${p['status'].toString().substring(1)}'
+                : '—');
+    final outcomeColor =
+        rejected ? pal.danger : (published ? pal.success : pal.warning);
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: pal.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: pal.border, width: 0.75),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.history_rounded, size: 16, color: outcomeColor),
+              const SizedBox(width: 6),
+              Text(outcomeLabel,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                      color: outcomeColor)),
+              const Spacer(),
+              Text(_fmtDate(p['createdAt']),
+                  style:
+                      TextStyle(fontSize: 12, color: pal.textSecondary)),
+            ],
+          ),
+          if (rejected && reason.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(reason,
+                style: TextStyle(
+                    fontSize: 13, color: pal.textPrimary, height: 1.5)),
+          ],
+          if (note.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(note,
+                style: TextStyle(
+                    fontSize: 13, color: pal.textPrimary, height: 1.5)),
+          ] else if (message.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(message,
+                style: TextStyle(
+                    fontSize: 13, color: pal.textPrimary, height: 1.5)),
+          ],
+          if (pdfUrl.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                icon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+                label: Text(AppLanguage.tr(
+                    'View Submitted PDF', 'पेश गरिएको PDF हेर्नुहोस्')),
+                onPressed: () => _viewSubmittedPdf(pdfUrl,
+                    (p['examSetTitle'] ?? '').toString(),
+                    answerId: (p['id'] ?? '').toString()),
+              ),
             ),
           ],
         ],

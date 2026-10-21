@@ -47,8 +47,35 @@ const int pdfDownloadNotificationId = 778899;
 ///
 /// Cancellation: closing the popup disposes the dialog, which aborts the
 /// in-flight request and discards the partial download.
+///
+/// Lockdown (v1.0.125): while a download is IN PROGRESS the popup can
+/// be left ONLY through its Cancel button — the shell's X is hidden,
+/// a [PopScope] vetoes the Android back button, and callers present
+/// the dialog with `barrierDismissible: false` so barrier taps do
+/// nothing. Once the download settles (complete/failed state) normal
+/// dismissal returns.
+///
+/// Generalized modes (v1.0.125) — exactly one byte source per dialog:
+/// - `url` + [validatePdf] (the original checked-answer flow),
+/// - `url` + `validatePdf: false` — any file (checkout QR image),
+/// - [localBytes] — bytes already in memory (notes backup export),
+/// - [taskFn] — a custom job that does its own storage (Offline
+///   Access snapshot); the dialog only mirrors its progress into the
+///   popup + notification and reports success/failure.
 class PdfDownloadDialog extends StatefulWidget {
-  final String url;
+  /// Remote byte source (null in local-bytes / task mode).
+  final String? url;
+
+  /// In-memory byte source (notes backup export): no network at all.
+  final Uint8List? localBytes;
+
+  /// Custom job mode (Offline Access): runs the job with a progress
+  /// reporter and a cancellation probe; true = success. The job owns
+  /// its storage — the dialog performs no save of its own.
+  final Future<bool> Function(
+      void Function(int received, int? total) onProgress,
+      bool Function() isCancelled)? taskFn;
+
   final String fileName;
   final VoidCallback onDone;
   final VoidCallback onClose;
@@ -61,6 +88,36 @@ class PdfDownloadDialog extends StatefulWidget {
   /// Mirror progress into the Android download notification.
   final bool notifyProgress;
 
+  /// Keep the '%PDF-' sanity gate on the downloaded bytes (PDF mode).
+  /// Generic modes pass false — any non-empty body is acceptable.
+  final bool validatePdf;
+
+  /// MIME type for the public-Downloads save.
+  final String mimeType;
+
+  /// Copy overrides (EN/NE pairs, resolved via AppLanguage at build).
+  /// Defaults reproduce the checked-answer PDF wording.
+  final String? tagEn;
+  final String? tagNe;
+  final String? busyTitleEn;
+  final String? busyTitleNe;
+  final String? failedTitleEn;
+  final String? failedTitleNe;
+  final String? errorEn;
+  final String? errorNe;
+
+  /// Busy-state header icon (the failure state always uses the error
+  /// icon).
+  final IconData busyIcon;
+
+  /// Notification wording overrides (notifications are English-only):
+  /// the progress body label, the completion titles, and the
+  /// "where it landed" line under the file name.
+  final String? notifyProgressLabel;
+  final String? notifySuccessTitle;
+  final String? notifyFailureTitle;
+  final String? notifySavedLine;
+
   /// Test seams: override the network fetch and the destination directory.
   final Future<Uint8List> Function(
       String url, void Function(int received, int? total) onProgress)?
@@ -72,12 +129,29 @@ class PdfDownloadDialog extends StatefulWidget {
 
   const PdfDownloadDialog({
     super.key,
-    required this.url,
+    this.url,
+    this.localBytes,
+    this.taskFn,
     required this.fileName,
     required this.onDone,
     required this.onClose,
     this.onSaved,
     this.notifyProgress = true,
+    this.validatePdf = true,
+    this.mimeType = 'application/pdf',
+    this.tagEn,
+    this.tagNe,
+    this.busyTitleEn,
+    this.busyTitleNe,
+    this.failedTitleEn,
+    this.failedTitleNe,
+    this.errorEn,
+    this.errorNe,
+    this.busyIcon = Icons.download,
+    this.notifyProgressLabel,
+    this.notifySuccessTitle,
+    this.notifyFailureTitle,
+    this.notifySavedLine,
     this.downloadFn,
     this.resolveDir,
     this.saveFn,
@@ -130,6 +204,26 @@ Future<Uint8List> downloadPdfBytes(
       }
     }
     throw lastError ?? Exception('download failed');
+  } finally {
+    c.close();
+  }
+}
+
+/// Downloads the raw bytes behind [url] with byte-counted progress
+/// — the generic (non-PDF) sibling of [downloadPdfBytes] (v1.0.125):
+/// a single streamed GET of the URL itself, no candidate walk and NO
+/// '%PDF-' gate, so images (checkout QR) and other files download
+/// exactly as served. Throws on transport error, non-200, or an
+/// empty body. [client] is a test seam (a fresh client is created
+/// when omitted) and is closed when the fetch ends.
+Future<Uint8List> downloadRawBytes(
+  String url,
+  void Function(int received, int? total) onProgress, {
+  http.Client? client,
+}) async {
+  final c = client ?? http.Client();
+  try {
+    return await _fetchCandidateBytes(url, onProgress, client: c);
   } finally {
     c.close();
   }
@@ -205,10 +299,23 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   /// — dispose() then leaves it alone instead of cancelling it.
   bool _notifySettled = false;
 
+  /// True once the download reached a final state (saved, or the
+  /// failure view is up). Gates the popup lockdown: while false, the
+  /// X is hidden and the back button is vetoed — Cancel is the only
+  /// way out (v1.0.125).
+  bool _settled = false;
+
   @override
   void initState() {
     super.initState();
-    _start();
+    // Start AFTER the first frame (v1.0.125): a task-mode job may
+    // setState on its owner's screen (the Offline Access save does,
+    // for its progress state) — illegal during this route's
+    // mount/build phase, where initState runs. The Retry button calls
+    // _start directly (event-handler context, no deferral needed).
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _start();
+    });
   }
 
   @override
@@ -232,11 +339,20 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
     return downloadPdfBytes(url, onProgress, client: _client);
   }
 
+  /// Generic-mode default fetch: the raw bytes as served, no
+  /// candidate walk, no PDF gate (v1.0.125).
+  Future<Uint8List> _defaultRawDownload(
+      String url, void Function(int received, int? total) onProgress) {
+    _client = http.Client();
+    return downloadRawBytes(url, onProgress, client: _client);
+  }
+
   /// Default save: the URI-returning public-Downloads variant, so the
   /// completion notification can carry the saved file's content URI
   /// as its tap payload (v1.0.121).
   Future<String?> _defaultSaveUri(Uint8List bytes) =>
-      PublicDownloads.saveToPublicDownloadsUri(bytes, widget.fileName);
+      PublicDownloads.saveToPublicDownloadsUri(bytes, widget.fileName,
+          mimeType: widget.mimeType);
 
   /// Mirrors byte progress into the Android notification, throttled:
   /// determinate progress posts only when the integer percent changes,
@@ -262,6 +378,7 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
       id: pdfDownloadNotificationId,
       fileName: widget.fileName,
       percent: pct,
+      progressLabel: widget.notifyProgressLabel,
     ));
   }
 
@@ -275,7 +392,38 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
       success: success,
       toDownloads: toDownloads,
       openUri: success ? openUri : null,
+      successTitle: widget.notifySuccessTitle,
+      failureTitle: widget.notifyFailureTitle,
+      savedLine: widget.notifySavedLine,
     ));
+  }
+
+  /// Shared byte-progress sink: mirrors into the notification
+  /// (throttled) and the popup's bar.
+  void _onProgress(int received, int? total) {
+    if (!mounted || _cancelled) return;
+    _forwardProgress(received, total);
+    setState(() {
+      _received = received;
+      _total = total;
+    });
+  }
+
+  void _fail() {
+    _settleNotification(false);
+    setState(() {
+      _settled = true;
+      _error = 'download';
+    });
+  }
+
+  void _succeed(bool savedPublic) {
+    setState(() => _settled = true);
+    if (widget.onSaved != null) {
+      widget.onSaved!(savedPublic);
+    } else {
+      widget.onDone();
+    }
   }
 
   Future<void> _start() async {
@@ -287,27 +435,42 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
       _lastNotifiedPct = null;
       _lastNotifyAt = null;
       _notifySettled = false;
+      _settled = false;
     });
     try {
-      final bytes = await (widget.downloadFn ?? _defaultDownload)(
-        widget.url,
-        (received, total) {
-          if (!mounted || _cancelled) return;
-          _forwardProgress(received, total);
-          setState(() {
-            _received = received;
-            _total = total;
-          });
-        },
-      );
+      // Task mode (Offline Access): the job owns its storage; the
+      // dialog only mirrors progress and reports the outcome.
+      if (widget.taskFn != null) {
+        final ok = await widget.taskFn!(_onProgress, () => _cancelled);
+        if (_cancelled || !mounted) return;
+        if (!ok) {
+          _fail();
+          return;
+        }
+        _settleNotification(true, toDownloads: true);
+        _succeed(true);
+        return;
+      }
+      final Uint8List bytes;
+      if (widget.localBytes != null) {
+        // Local-bytes mode (notes backup): nothing to fetch — report
+        // the full size once so the bar/notification show a completed
+        // transfer, then go straight to the save.
+        bytes = widget.localBytes!;
+        _onProgress(bytes.length, bytes.length);
+      } else {
+        final fetch = widget.downloadFn ??
+            (widget.validatePdf ? _defaultDownload : _defaultRawDownload);
+        bytes = await fetch(widget.url ?? '', _onProgress);
+      }
       if (_cancelled || !mounted) return;
       // v1.0.121: never save bytes that are not a PDF (e.g. an HTML
       // error page behind a 200) — a corrupt file in the public
       // Downloads folder is what the phone viewer calls "invalid
-      // format". Treat it exactly like a failed download.
-      if (!looksLikePdf(bytes)) {
-        _settleNotification(false);
-        setState(() => _error = 'download');
+      // format". Treat it exactly like a failed download. Generic
+      // modes (validatePdf false) accept the bytes as served.
+      if (widget.validatePdf && !looksLikePdf(bytes)) {
+        _fail();
         return;
       }
       // Save: real public Downloads first (MediaStore channel); the
@@ -335,15 +498,10 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
       }
       if (_cancelled || !mounted) return;
       _settleNotification(true, toDownloads: savedPublic, openUri: savedUri);
-      if (widget.onSaved != null) {
-        widget.onSaved!(savedPublic);
-      } else {
-        widget.onDone();
-      }
+      _succeed(savedPublic);
     } catch (_) {
       if (_cancelled || !mounted) return;
-      _settleNotification(false);
-      setState(() => _error = 'download');
+      _fail();
     }
   }
 
@@ -351,7 +509,13 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   Widget build(BuildContext context) {
     final failed = _error != null;
     // The shell's body region is white in both themes — use fixed ink colors.
-    return AppModalShell(
+    // Lockdown (v1.0.125): while the download is in progress the X is
+    // hidden (onClose null) and PopScope vetoes the Android back
+    // button — the Cancel button is the only exit. Once settled, both
+    // return to normal.
+    return PopScope(
+      canPop: _settled,
+      child: AppModalShell(
       icon: Container(
         width: 56,
         height: 56,
@@ -363,19 +527,31 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
               .withValues(alpha: 0.12),
         ),
         child: Icon(
-          failed ? Icons.error_outline : Icons.download,
+          failed ? Icons.error_outline : widget.busyIcon,
           size: 28,
           color:
               failed ? const Color(0xFFDC2626) : const Color(0xFF1D4ED8),
         ),
       ),
-      tagLabel: AppLanguage.tr('Answer Sheet', 'उत्तरपुस्तिका'),
+      tagLabel: AppLanguage.tr(
+          widget.tagEn ?? 'Answer Sheet', widget.tagNe ?? 'उत्तरपुस्तिका'),
       title: Text(failed
-          ? AppLanguage.tr('Download failed', 'डाउनलोड असफल भयो')
-          : AppLanguage.tr('Downloading PDF', 'PDF डाउनलोड हुँदैछ')),
+          ? AppLanguage.tr(widget.failedTitleEn ?? 'Download failed',
+              widget.failedTitleNe ?? 'डाउनलोड असफल भयो')
+          : AppLanguage.tr(
+              widget.busyTitleEn ??
+                  (widget.validatePdf
+                      ? 'Downloading PDF'
+                      : 'Downloading File'),
+              widget.busyTitleNe ??
+                  (widget.validatePdf
+                      ? 'PDF डाउनलोड हुँदैछ'
+                      : 'फाइल डाउनलोड हुँदैछ'))),
       body: failed ? _errorBody() : _progressBody(),
       footer: failed ? _errorFooter() : _progressFooter(),
-      onClose: widget.onClose,
+      // In progress: NO X — Cancel is the only exit (v1.0.125).
+      onClose: _settled ? widget.onClose : null,
+      ),
     );
   }
 
@@ -439,8 +615,10 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   Widget _errorBody() {
     return Text(
       AppLanguage.tr(
-          'Could not download the file. Please check your connection and try again.',
-          'फाइल डाउनलोड हुन सकेन। कृपया आफ्नो इन्टरनेट जाँचेर पुनः प्रयास गर्नुहोस्।'),
+          widget.errorEn ??
+              'Could not download the file. Please check your connection and try again.',
+          widget.errorNe ??
+              'फाइल डाउनलोड हुन सकेन। कृपया आफ्नो इन्टरनेट जाँचेर पुनः प्रयास गर्नुहोस्।'),
       textAlign: TextAlign.center,
       style: const TextStyle(fontSize: 13, color: Color(0xFF475569)),
     );

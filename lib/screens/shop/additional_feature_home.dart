@@ -7,7 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
+
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import '../../widgets/app_modal_shell.dart';
+import '../../widgets/pdf_download_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -35,8 +38,9 @@ import '../../widgets/preloading.dart';
 /// - per-topic percent = min(100, round(attempted / questionCount * 100))
 /// - overall percent = QUESTIONCOUNT-WEIGHTED mean of topic percents
 /// - the header ALWAYS shows `widget.reactSubtitle`, never the page doc title
-/// - offline button has 3 states: "Offline Access" (never downloaded) /
-///   "Saved" (downloaded, snapshot current — disabled) /
+/// - offline button states: "Offline Access" (never downloaded) /
+///   HIDDEN once saved (v1.0.125 — it used to stay as a disabled
+///   "Saved") / "Update available" (downloaded, page doc newer)
 ///   "Update available" (downloaded, page doc newer — re-downloads)
 /// - topic cards show the Nepali title big, English title small
 class AdditionalFeatureHomeScreen extends StatefulWidget {
@@ -259,11 +263,59 @@ class _AdditionalFeatureHomeScreenState
     return v;
   }
 
-  /// Downloads every topic's question bank AND persists the offline snapshot
-  /// to local files (page.json + banks/<topicId>.json), then records the
-  /// complete flag, date, and page updateTime in prefs.
-  Future<void> _downloadOffline() async {
+  /// Offline Access entry (v1.0.125): the save runs inside the SAME
+  /// shared popup as the file downloads — same look, same unified
+  /// notification — but with OFFLINE-SAVE context copy (this is not a
+  /// file download: nothing lands in the phone's Downloads folder;
+  /// the snapshot stays in the app's offline storage exactly as
+  /// before). No daily limit here.
+  void _openOfflineSave(String featureTitle) {
     if (_downloading || _topics.isEmpty) return;
+    final outer = context;
+    AppModalShell.show(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PdfDownloadDialog(
+        fileName: featureTitle,
+        taskFn: _runOfflineSave,
+        validatePdf: false,
+        tagEn: 'Offline Access',
+        tagNe: 'अफलाइन पहुँच',
+        busyTitleEn: 'Saving for Offline Use',
+        busyTitleNe: 'अफलाइनका लागि सेभ हुँदैछ',
+        failedTitleEn: 'Offline Save Failed',
+        failedTitleNe: 'अफलाइन सेभ असफल भयो',
+        errorEn:
+            'Could not save the questions for offline use. Please check your connection and try again.',
+        errorNe:
+            'अफलाइन प्रयोगका लागि प्रश्नहरू सेभ हुन सकेन। कृपया आफ्नो इन्टरनेट जाँचेर पुनः प्रयास गर्नुहोस्।',
+        busyIcon: Icons.offline_pin_outlined,
+        notifyProgressLabel: 'Saving for offline use…',
+        notifySuccessTitle: 'Saved for Offline Use',
+        notifyFailureTitle: 'Offline Save Failed ❌',
+        notifySavedLine: 'Saved on this phone for offline use',
+        onSaved: (_) {
+          Navigator.of(ctx).pop();
+          if (!outer.mounted) return;
+          showToast(outer, 'All topics saved for offline access.',
+              ToastVariant.success);
+        },
+        onDone: () {},
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
+  }
+
+  /// Downloads every topic's question bank AND persists the offline
+  /// snapshot to local files (page.json + banks/<topicId>.json), then
+  /// records the complete flag, date, and page updateTime in prefs.
+  /// Runs as the shared download popup's task: reports per-topic
+  /// progress, honors cancellation between topics (an aborted run
+  /// stamps NOTHING), and answers success/failure for the popup.
+  Future<bool> _runOfflineSave(
+    void Function(int received, int? total) onProgress,
+    bool Function() isCancelled,
+  ) async {
     setState(() => _downloading = true);
     try {
       final idToken = await AuthService.getValidIdToken();
@@ -275,7 +327,9 @@ class _AdditionalFeatureHomeScreenState
       }
       final banksDir =
           Directory('${dir.path}/banks')..createSync(recursive: true);
+      var done = 0;
       for (final t in _topics) {
+        if (isCancelled()) return false;
         final docId = '${_fid}__all__all__${t.topicId}';
         final bank = await FirestoreRest.getDocument(
           'app_additional_feature_question_banks/$docId',
@@ -285,7 +339,10 @@ class _AdditionalFeatureHomeScreenState
           File('${banksDir.path}/${t.topicId}.json')
               .writeAsStringSync(json.encode(_jsonSafe(bank)));
         }
+        done++;
+        onProgress(done, _topics.length);
       }
+      if (isCancelled()) return false;
       final updateTime = page?['__updateTime']?.toString() ?? '';
       await PrefsService.setString('af_offline_${_fid}_complete', 'true');
       await PrefsService.setString(
@@ -299,14 +356,10 @@ class _AdditionalFeatureHomeScreenState
           _offlineComplete = true;
           _updateAvailable = false;
         });
-        showToast(context, 'All topics saved for offline access.',
-            ToastVariant.success);
       }
+      return true;
     } catch (e) {
-      if (mounted) {
-        showToast(context, 'Offline download failed. Please try again.',
-            ToastVariant.error);
-      }
+      return false;
     } finally {
       if (mounted) setState(() => _downloading = false);
     }
@@ -549,6 +602,10 @@ class _AdditionalFeatureHomeScreenState
                   AlwaysStoppedAnimation<Color>(success),
             ),
           ),
+          // v1.0.125: once saved (and no update pending) the button
+          // DISAPPEARS entirely — it returns only as "Update
+          // available" when the page doc moves ahead of the snapshot.
+          if (!saved) ...[
           const SizedBox(height: 17),
           SizedBox(
             width: double.infinity,
@@ -557,7 +614,7 @@ class _AdditionalFeatureHomeScreenState
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
-                onTap: tappable ? _downloadOffline : null,
+                onTap: tappable ? () => _openOfflineSave(titleEn) : null,
                 child: Container(
                   constraints:
                       const BoxConstraints(minHeight: 47),
@@ -616,6 +673,7 @@ class _AdditionalFeatureHomeScreenState
               ),
             ),
           ),
+          ],
         ],
       ),
     );
@@ -663,7 +721,9 @@ class _AdditionalFeatureHomeScreenState
             child: Text(
               updateReady
                   ? 'New questions available \u2014 tap Update to get the latest questions.'
-                  : 'Tap Offline Access to save all questions on your phone for offline use.',
+                  : _offlineComplete
+                      ? 'All questions are saved on your phone for offline use.'
+                      : 'Tap Offline Access to save all questions on your phone for offline use.',
               style: TextStyle(
                   fontSize: 12,
                   height: 19 / 12,

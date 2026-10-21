@@ -351,6 +351,24 @@ class _ExamTabState extends State<ExamTab> {
     }
   }
 
+  /// Re-Apply (v1.0.125): the latest submission for this set was
+  /// closed WITHOUT a published result (rejected, or "Other Reason
+  /// and Save") — open the upload flow in re-apply mode so the new
+  /// submission is stamped as a re-application of the closed one.
+  void _onReapplyPress(_CardEntry entry) {
+    final answer = entry.answer;
+    if (answer == null) return;
+    final nepali = AppLanguage.isNepali;
+    final section = _activeSection;
+    context.push(
+      '/exam-answer/upload'
+      '?examSetId=${Uri.encodeComponent(entry.set.id)}'
+      '&examSetTitle=${Uri.encodeComponent(entry.set.title)}'
+      '&sectionName=${Uri.encodeComponent(section?.displayName(nepali) ?? '')}'
+      '&reapplyFrom=${Uri.encodeComponent(answer.id)}',
+    );
+  }
+
   void _onPrimaryPress(_CardEntry entry) {
     final set = entry.set;
     if (entry.state == ExamCardState.locked) {
@@ -793,6 +811,7 @@ class _ExamTabState extends State<ExamTab> {
                           _countdownLabel(e.set.startTime, DateTime.now()),
                       onRulesPress: () => _openRules(e.set, _RulesMode.info),
                       onPrimaryPress: () => _onPrimaryPress(e),
+                      onReapplyPress: () => _onReapplyPress(e),
                       onRankingPress: () =>
                           context.push('/exam/${e.set.id}/ranking'),
                     ),
@@ -938,6 +957,7 @@ class _ExamCard extends StatelessWidget {
   final VoidCallback onRulesPress;
   final VoidCallback onPrimaryPress;
   final VoidCallback onRankingPress;
+  final VoidCallback onReapplyPress;
 
   const _ExamCard({
     required this.entry,
@@ -947,6 +967,7 @@ class _ExamCard extends StatelessWidget {
     required this.onRulesPress,
     required this.onPrimaryPress,
     required this.onRankingPress,
+    required this.onReapplyPress,
   });
 
   static const _green = Color(0xFF16A34A);
@@ -1258,15 +1279,28 @@ class _ExamCard extends StatelessWidget {
                   ],
                 ),
               ),
-            // Actions.
+            // Actions. v1.0.125: when the latest submission is
+            // reappliable (closed without a published result), the
+            // LEFT button becomes Re-Apply — the student's way back
+            // in; View Details (primary) still opens the closed
+            // submission.
             Row(
               children: [
-                _secondaryButton(
-                  context,
-                  icon: Icons.info_outline,
-                  label: AppLanguage.tr('Rules', 'नियमहरू'),
-                  onTap: onRulesPress,
-                ),
+                if (isSubmitted && entry.answer!.isReappliable)
+                  _secondaryButton(
+                    context,
+                    icon: Icons.replay_rounded,
+                    label: AppLanguage.tr(
+                        'Re-Apply', 'फेरि आवेदन दिनुहोस्'),
+                    onTap: onReapplyPress,
+                  )
+                else
+                  _secondaryButton(
+                    context,
+                    icon: Icons.info_outline,
+                    label: AppLanguage.tr('Rules', 'नियमहरू'),
+                    onTap: onRulesPress,
+                  ),
                 if (state == ExamCardState.rejoin) ...[
                   const SizedBox(width: 8),
                   _secondaryButton(

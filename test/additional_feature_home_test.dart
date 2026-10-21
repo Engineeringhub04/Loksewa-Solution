@@ -13,7 +13,9 @@ import 'package:loksewa_solution/screens/shop/additional_feature_home.dart';
 /// - updateTime comparison (pure function unit tests)
 /// - topic list renders plain title strings (regression: no "Instance of"
 ///   pill, no per-character stacks)
-/// - offline button 3 states (never downloaded / saved / update available)
+/// - offline button states (never downloaded / saved -> button HIDDEN
+///   since v1.0.125 / update available); the save itself runs through
+///   the shared download popup (task mode)
 /// - offline download persists page.json + banks/<topicId>.json to the
 ///   app-documents dir (path_provider stubbed INSIDE testWidgets per
 ///   AGENTS.md), and records the updateTime pref
@@ -341,13 +343,19 @@ void main() {
       expect(prefs.getString('af_offline_gk_date'), isNotNull);
       expect(
           prefs.getString('af_offline_gk_update_time'), _newUpdate);
-      // Button flips to the disabled Saved state.
-      expect(find.text('Saved'), findsOneWidget);
+      // v1.0.125: once saved, the button DISAPPEARS (no disabled
+      // "Saved" state anymore) and the info strip confirms the save.
+      expect(find.text('Saved'), findsNothing);
       expect(find.text('Offline Access'), findsNothing);
+      expect(
+          find.text(
+              'All questions are saved on your phone for offline use.'),
+          findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('state (b): downloaded + current -> Saved, disabled',
+    testWidgets(
+        'state (b): downloaded + current -> button hidden, nothing tappable',
         (WidgetTester tester) async {
       final docsDir =
           Directory.systemTemp.createTempSync('af_home_saved_');
@@ -363,21 +371,16 @@ void main() {
           _mockHttp(pageUpdateTime: _newUpdate, bankRequests: bankRequests);
       await _pumpHome(tester, client);
 
-      expect(find.text('Saved'), findsOneWidget);
+      // No save button in any state label; the info strip carries the
+      // saved confirmation instead.
+      expect(find.text('Saved'), findsNothing);
       expect(find.text('Offline Access'), findsNothing);
       expect(find.text('Update available'), findsNothing);
       expect(
           find.text(
-              'Tap Offline Access to save all questions on your phone for offline use.'),
+              'All questions are saved on your phone for offline use.'),
           findsOneWidget);
-
-      // Tapping the disabled Saved button must not download anything.
-      await http.runWithClient(() async {
-        await tester.tap(find.text('Saved'));
-        await _settleDownload(tester, client);
-      }, () => client);
       expect(bankRequests, isEmpty);
-      expect(find.text('Saved'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -418,13 +421,17 @@ void main() {
           prefs.getString('af_offline_gk_update_time'), _newUpdate);
       final pageFile = File('${docsDir.path}/af_offline/gk/page.json');
       expect(pageFile.existsSync(), isTrue);
-      // Back to Saved; banner cleared.
-      expect(find.text('Saved'), findsOneWidget);
+      // v1.0.125: back to saved -> button hidden again; banner cleared.
+      expect(find.text('Saved'), findsNothing);
       expect(find.text('Update available'), findsNothing);
       expect(
           find.text(
               'New questions available \u2014 tap Update to get the latest questions.'),
           findsNothing);
+      expect(
+          find.text(
+              'All questions are saved on your phone for offline use.'),
+          findsOneWidget);
       expect(tester.takeException(), isNull);
     });
 
@@ -443,7 +450,9 @@ void main() {
       await _pumpHome(
           tester, _mockHttp(pageUpdateTime: _newUpdate, bankRequests: bankRequests));
 
-      expect(find.text('Saved'), findsOneWidget);
+      // Saved on an old install: button hidden (v1.0.125), and still
+      // no phantom "update available" without a stored updateTime.
+      expect(find.text('Saved'), findsNothing);
       expect(find.text('Update available'), findsNothing);
       expect(tester.takeException(), isNull);
     });

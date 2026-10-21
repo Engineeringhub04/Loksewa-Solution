@@ -1,18 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:path_provider/path_provider.dart';
+
 
 import '../../models/keep_note.dart';
 import '../../services/app_language.dart';
 import '../../services/keep_notes_backup.dart';
-import '../../services/public_downloads.dart';
+
 import '../../services/keep_notes_store.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/pdf_download_dialog.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/trash_icon.dart';
@@ -163,44 +165,13 @@ class _NotesScreenState extends State<NotesScreen> {
 
   Future<void> _exportBackup() async {
     final palette = ExpoPalette.of(context);
+    final Uint8List bytes;
+    final String name;
     try {
       final notes = _store.loadAll();
       final envelope = KeepNotesBackup.buildEnvelope(notes);
-      final bytes = utf8.encode(json.encode(envelope));
-      final name = KeepNotesBackup.exportFileName();
-
-      // v1.0.120: straight into the REAL public Downloads folder via
-      // the MediaStore channel — the export no longer detours through
-      // the share sheet just to "save" (that chain saved into the
-      // app-private folder where the Downloads app never shows it).
-      // The app-folder write remains as the fallback. (Moving the file
-      // to another phone is now the user's own share from Downloads.)
-      final savedPublic = await PublicDownloads.saveToPublicDownloads(
-        bytes,
-        name,
-        mimeType: 'application/json',
-      );
-      if (!savedPublic) {
-        Directory? dir;
-        try {
-          dir = await getDownloadsDirectory();
-        } catch (_) {
-          dir = null;
-        }
-        final docs = await getApplicationDocumentsDirectory();
-        dir ??= Directory(docs.path);
-        final file = File('${dir.path}/$name');
-        file.writeAsBytesSync(bytes);
-      }
-      _showInfoModal(
-        icon: Icons.check_circle_outline,
-        iconColor: palette.primary,
-        title: AppLanguage.tr('Backup saved', 'ब्याकअप सेभ भयो'),
-        body: AppLanguage.tr(
-          'Your backup file was saved to the Downloads folder.',
-          'तपाईंको ब्याकअप फाइल डाउनलोड्स फोल्डरमा सेभ भयो।',
-        ),
-      );
+      bytes = utf8.encode(json.encode(envelope));
+      name = KeepNotesBackup.exportFileName();
     } catch (_) {
       _showInfoModal(
         icon: Icons.error_outline,
@@ -211,7 +182,47 @@ class _NotesScreenState extends State<NotesScreen> {
           'ब्याकअप फाइल सेभ गर्न सकिएन। कृपया पुनः प्रयास गर्नुहोस्।',
         ),
       );
+      return;
     }
+    // v1.0.125: the save runs through the SAME shared download popup
+    // as the checked PDF / checkout QR — local-bytes mode (the JSON
+    // envelope is already in memory; no network). The popup saves
+    // straight into the REAL public Downloads folder via the
+    // MediaStore channel with the app-folder write as its fallback,
+    // and mirrors the unified download notification. Success lands
+    // back here for the usual confirmation modal.
+    AppModalShell.show(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PdfDownloadDialog(
+        localBytes: bytes,
+        fileName: name,
+        validatePdf: false,
+        mimeType: 'application/json',
+        tagEn: 'Notes Backup',
+        tagNe: 'नोट्स ब्याकअप',
+        busyTitleEn: 'Saving Backup',
+        busyTitleNe: 'ब्याकअप सेभ हुँदैछ',
+        failedTitleEn: 'Save failed',
+        failedTitleNe: 'सेभ असफल भयो',
+        busyIcon: Icons.backup_outlined,
+        onSaved: (_) {
+          Navigator.of(ctx).pop();
+          if (!mounted) return;
+          _showInfoModal(
+            icon: Icons.check_circle_outline,
+            iconColor: palette.primary,
+            title: AppLanguage.tr('Backup saved', 'ब्याकअप सेभ भयो'),
+            body: AppLanguage.tr(
+              'Your backup file was saved to the Downloads folder.',
+              'तपाईंको ब्याकअप फाइल डाउनलोड्स फोल्डरमा सेभ भयो।',
+            ),
+          );
+        },
+        onDone: () {},
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
   }
 
   Future<void> _importBackup() async {

@@ -19,19 +19,19 @@
 // Writes mirror submitPayment / submitExamPurchase / submitContentPurchase
 // exactly (via the existing services), then route to the detail screen.
 import 'dart:async';
-import 'dart:io';
+
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import 'package:http/http.dart' as http;
+
 import 'package:khalti_checkout_flutter/khalti_checkout_flutter.dart';
 // Direct src import (the widget is not re-exported): we push the SDK's
 // own page ourselves so the route can carry our PopScope back-veto.
 // No SDK source is modified.
 // ignore: implementation_imports
 import 'package:khalti_checkout_flutter/src/widget/khalti_webview.dart';
-import 'package:path_provider/path_provider.dart';
+
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
@@ -41,7 +41,7 @@ import 'package:loksewa_solution/services/exam_purchases.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
-import 'package:loksewa_solution/services/public_downloads.dart';
+
 import 'package:loksewa_solution/services/purchase_refresh.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -50,6 +50,7 @@ import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/gateway_popups.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
+import '../../widgets/pdf_download_dialog.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
@@ -205,7 +206,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   _AppliedCoupon? _couponApplied;
   String? _couponError;
   bool _validatingCoupon = false;
-  bool _downloadingQr = false;
   bool _paying = false; // gateway flow in progress (prevents double-taps)
 
   /// Transaction id of the in-flight gateway payment (for exit-cancel).
@@ -1157,7 +1157,14 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   // ------------------------------------------------------------------ QR
 
-  Future<void> _handleDownloadQr(String qrUrl) async {
+  /// QR download (v1.0.125): the SAME shared download flow as the
+  /// checked answer PDF — progress popup (Cancel-only while running)
+  /// + unified notification + straight into the REAL public Downloads
+  /// folder via the MediaStore channel (the app-folder write remains
+  /// the dialog's fallback, and the toast names Downloads only when
+  /// the file truly landed there). Generic mode: no '%PDF-' gate, the
+  /// PNG is saved as served.
+  void _handleDownloadQr(String qrUrl) {
     if (qrUrl.isEmpty) {
       showToast(
           context,
@@ -1166,54 +1173,36 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
           ToastVariant.info);
       return;
     }
-    setState(() => _downloadingQr = true);
-    try {
-      final res = await http
-          .get(Uri.parse(qrUrl))
-          .timeout(const Duration(seconds: 30));
-      if (res.statusCode != 200) throw Exception('QR download failed');
-      // v1.0.120: straight into the REAL public Downloads folder via
-      // the MediaStore channel — no more save-then-share-sheet chain
-      // (the old path_provider dir is app-private, so the file never
-      // showed in Downloads and the share sheet confused "saved" with
-      // "shared"). The app-folder write remains as the fallback, and
-      // the toast names Downloads only when it truly landed there.
-      final savedPublic = await PublicDownloads.saveToPublicDownloads(
-        res.bodyBytes,
-        _qrDownloadName,
+    final outer = context;
+    AppModalShell.show(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PdfDownloadDialog(
+        url: qrUrl,
+        fileName: _qrDownloadName,
+        validatePdf: false,
         mimeType: 'image/png',
-      );
-      if (!savedPublic) {
-        Directory? dir;
-        try {
-          dir = await getDownloadsDirectory();
-        } catch (_) {
-          dir = null;
-        }
-        dir ??= await getApplicationDocumentsDirectory();
-        final file = File('${dir.path}/$_qrDownloadName');
-        await file.writeAsBytes(res.bodyBytes);
-      }
-      if (mounted) {
-        showToast(
-            context,
-            savedPublic
-                ? AppLanguage.tr(
-                    'QR code saved to Downloads', 'QR कोड डाउनलोड्समा सेभ भयो')
-                : AppLanguage.tr('QR code saved', 'QR कोड सुरक्षित गरियो'),
-            ToastVariant.success);
-      }
-    } catch (_) {
-      if (mounted) {
-        showToast(
-            context,
-            AppLanguage.tr('Could not download the QR code.',
-                'QR कोड डाउनलोड गर्न सकिएन।'),
-            ToastVariant.error);
-      }
-    } finally {
-      if (mounted) setState(() => _downloadingQr = false);
-    }
+        tagEn: 'Payment QR',
+        tagNe: 'भुक्तानी QR',
+        busyTitleEn: 'Downloading QR Code',
+        busyTitleNe: 'QR कोड डाउनलोड हुँदैछ',
+        busyIcon: Icons.qr_code_2_outlined,
+        onSaved: (toDownloads) {
+          Navigator.of(ctx).pop();
+          if (!outer.mounted) return;
+          showToast(
+              outer,
+              toDownloads
+                  ? AppLanguage.tr('QR code saved to Downloads',
+                      'QR कोड डाउनलोड्समा सेभ भयो')
+                  : AppLanguage.tr(
+                      'QR code saved', 'QR कोड सुरक्षित गरियो'),
+              ToastVariant.success);
+        },
+        onDone: () {},
+        onClose: () => Navigator.of(ctx).pop(),
+      ),
+    );
   }
 
   Future<void> _handleCopyBankField(String value) async {
@@ -2315,20 +2304,13 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
-                  onPressed: _downloadingQr
-                      ? null
-                      : () => _handleDownloadQr(qrUrl),
-                  icon: Icon(_downloadingQr
-                      ? Icons.cloud_download_outlined
-                      : Icons.download_outlined,
+                  onPressed: () => _handleDownloadQr(qrUrl),
+                  icon: Icon(Icons.download_outlined,
                       size: 16,
                       color: pal.primary),
                   label: Text(
-                    _downloadingQr
-                        ? AppLanguage.tr(
-                            'Downloading…', 'डाउनलोड हुँदैछ…')
-                        : AppLanguage.tr(
-                            'Download QR', 'QR डाउनलोड गर्नुहोस्'),
+                    AppLanguage.tr(
+                        'Download QR', 'QR डाउनलोड गर्नुहोस्'),
                     style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,

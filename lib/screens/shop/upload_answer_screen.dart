@@ -93,6 +93,15 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   bool _done = false;
   String? _doneId;
 
+  /// Re-apply mode (v1.0.125): the id of the closed (rejected /
+  /// other-saved, never published) submission this new application
+  /// replaces, from the `reapplyFrom` query param. When the duplicate
+  /// scan's latest match IS this doc, submitting is allowed and the
+  /// new doc is stamped `isReapply` + `previousAnswerId` (recorded in
+  /// [_previousAnswerId] once the scan confirms it).
+  String? _reapplyFromId;
+  String? _previousAnswerId;
+
   // Answer PDF — picked from the device, uploaded to Cloudinary the moment
   // it's picked (React parity), preview renders the picked bytes directly.
   String? _pickedName;
@@ -231,6 +240,7 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
     final qp = GoRouterState.of(context).uri.queryParameters;
     _editId = qp['editId'];
     _examSetId = qp['examSetId'];
+    _reapplyFromId = qp['reapplyFrom'];
     try {
       final token = await AuthService.getValidIdToken();
       final user = AuthService.currentUser;
@@ -293,6 +303,13 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   /// (via the stack-preserving landing — a bare go() would leave the
   /// answer page as the root and Back would close the app). Otherwise
   /// the scan simply clears and Submit unlocks.
+  ///
+  /// v1.0.125: with re-apply, a set can hold several submissions — the
+  /// scan judges the LATEST match. When the screen was opened in
+  /// re-apply mode (`reapplyFrom`) and the latest match IS that closed
+  /// submission, the scan clears instead and the submit stamps the
+  /// new doc as a re-application of it. A newer live submission (the
+  /// student already re-applied) still routes to its page.
   Future<void> _runDuplicateScan(List<String> ids, String token) async {
     try {
       final docs = await Future.wait([
@@ -309,12 +326,33 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           }(),
       ]);
       if (!mounted) return;
+      String? latestId;
+      var latestMillis = -1;
       for (var i = 0; i < ids.length; i++) {
         final d = docs[i];
-        if (d != null && d['examSetId']?.toString() == _examSetId) {
-          _landOnAnswerPage('/exam-answer/${ids[i]}');
+        if (d == null || d['examSetId']?.toString() != _examSetId) {
+          continue;
+        }
+        final millis =
+            DateTime.tryParse(d['createdAt']?.toString() ?? '')
+                    ?.millisecondsSinceEpoch ??
+                0;
+        // ids are append-ordered: on equal timestamps the later id wins.
+        if (millis >= latestMillis) {
+          latestMillis = millis;
+          latestId = ids[i];
+        }
+      }
+      if (latestId != null) {
+        if (_reapplyFromId != null &&
+            _reapplyFromId!.isNotEmpty &&
+            latestId == _reapplyFromId) {
+          _previousAnswerId = _reapplyFromId;
+          if (mounted) setState(() => _duplicateCheckPending = false);
           return;
         }
+        _landOnAnswerPage('/exam-answer/$latestId');
+        return;
       }
       if (mounted) setState(() => _duplicateCheckPending = false);
     } catch (_) {
@@ -458,6 +496,14 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
             'reviewNote': '',
             'createdAt': DateTime.now().toIso8601String(),
             'reviewedAt': null,
+            // Re-apply stamp (v1.0.125): only a submission created
+            // from the Re-Apply flow carries these — the admin desk
+            // badges it "Re-Apply Request" and the doc chain stays
+            // auditable. First submissions omit both fields.
+            if (_previousAnswerId != null) ...{
+              'isReapply': true,
+              'previousAnswerId': _previousAnswerId,
+            },
           },
           idToken: token,
         );

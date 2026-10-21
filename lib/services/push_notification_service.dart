@@ -27,13 +27,13 @@ import 'public_downloads.dart';
 @pragma('vm:entry-point')
 Future<void> _fcmBackgroundHandler(RemoteMessage message) async {}
 
-/// Notification id for download ALERTS (v1.0.123) — the pair of
-/// pdfDownloadNotificationId (778899, declared in
-/// pdf_download_dialog.dart), which carries the silent progress entry
-/// on the low channel. This id lives ONLY on the high-importance
-/// alert channel: it posts the one-shot start alert when a download
-/// begins, and the completion post replaces it when the download
-/// settles.
+/// Notification id for the download COMPLETION post (v1.0.123; unified
+/// design v1.0.124) — the pair of pdfDownloadNotificationId (778899,
+/// declared in pdf_download_dialog.dart), which carries the progress
+/// entry. This id is touched ONLY when a download settles: the
+/// progress id is cancelled first, then the completion posts here as
+/// a genuine FIRST presentation (sound + heads-up) for small and
+/// large files alike.
 const int pdfDownloadAlertNotificationId = 778900;
 
 class PushNotificationService {
@@ -49,28 +49,28 @@ class PushNotificationService {
   static const _fgChannelName = 'Loksewa Notifications';
 
   /// Android channel for download progress (v1.0.120) — low importance
-  /// and silent: it re-posts on every percent tick. Since v1.0.123 the
-  /// progress notification lives ONLY on this channel, under its own id
-  /// (pdfDownloadNotificationId) — it never hops channels.
+  /// and silent. KEPT registered for compatibility: entries posted by
+  /// app versions up to v1.0.123 referenced it. Since v1.0.124 the
+  /// dialog download flow no longer posts here — progress rides the
+  /// alert channel below with onlyAlertOnce instead.
   static const _dlChannelId = 'downloads';
   static const _dlChannelName = 'Downloads';
 
-  /// Android channel for download ALERTS (v1.0.121) — high importance
-  /// with the default sound. Since v1.0.123 only the alert notification
-  /// (pdfDownloadAlertNotificationId) rides it: the one-shot START alert
-  /// when a download begins and the COMPLETION post when it settles.
-  /// v1.0.121–v1.0.122 instead switched ONE id between this channel and
-  /// the low channel above; Android locks/groups a notification by
+  /// Android channel for download notifications (v1.0.121) — high
+  /// importance with the default sound. Since v1.0.124 BOTH download
+  /// posts ride it: the progress entry (pdfDownloadNotificationId,
+  /// onlyAlertOnce — first post alerts, ticks stay quiet) and the
+  /// completion post (pdfDownloadAlertNotificationId, posted only at
+  /// settle after the progress id is cancelled, so it presents
+  /// fresh). v1.0.121–v1.0.122 switched ONE id between this channel
+  /// and the low channel; Android locks/groups a notification by
   /// channel unpredictably in that setup, trapping the entry in the
-  /// shade's SILENT section and swallowing the start alert — hence the
-  /// split into two ids, one per channel.
+  /// shade's SILENT section. v1.0.123 split the phases across two ids
+  /// but ALSO posted a one-shot start alert on the completion id, so
+  /// large downloads showed two entries and the completion post read
+  /// as a quiet UPDATE of the start alert — hence the unified design.
   static const _dlAlertChannelId = 'download_alerts';
   static const _dlAlertChannelName = 'Download Alerts';
-
-  /// Progress ids whose one-shot START alert already went out for the
-  /// running download. Cleared when the download settles or is
-  /// cancelled, so the next download alerts again.
-  static final Set<int> _dlAlertPosted = <int>{};
 
   static final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
@@ -198,7 +198,7 @@ class PushNotificationService {
         const AndroidNotificationChannel(
           _dlAlertChannelId,
           _dlAlertChannelName,
-          description: 'Download start and completion alerts',
+          description: 'Download progress and completion alerts',
           importance: Importance.high,
         ),
       );
@@ -281,17 +281,21 @@ class PushNotificationService {
   }
 
   /// Shows/updates the Android download-progress notification under
-  /// the progress [id] (v1.0.120; split-id design v1.0.123). The
-  /// progress entry lives ONLY on the low, silent channel — the file
-  /// name is the title, the body reads "Downloading… {pct}%"
-  /// ([percent] null → indeterminate) — and is visible in the shade
-  /// from the first tick. On the FIRST call of a download it ALSO
-  /// posts the one-shot START alert under
-  /// [pdfDownloadAlertNotificationId] on the high-importance alert
-  /// channel (sound + heads-up, like a normal notification) so the
-  /// download start is actually noticed; the two ids never switch
-  /// channels. Android only — iOS has no progress notifications, so
-  /// this is a no-op there. Best-effort: never throws.
+  /// the progress [id] (v1.0.120; unified design v1.0.124). ONE entry
+  /// lives alongside the download popup: it posts on the
+  /// high-importance alert channel with onlyAlertOnce — the FIRST
+  /// post of a download alerts (sound + heads-up, like a normal
+  /// notification) and every later tick of the same id quietly
+  /// updates the bar/"Downloading… {pct}%" body ([percent] null →
+  /// indeterminate). The file name is the title; the entry is visible
+  /// in the shade from the first tick. No separate start alert is
+  /// posted (v1.0.123 posted one on the completion id, which made
+  /// large downloads show two entries and turned the later
+  /// completion post into a quiet update). Because settle/cancel
+  /// cancels this id, the next download's first post is a fresh
+  /// notification and alerts again. Android only — iOS has no
+  /// progress notifications, so this is a no-op there. Best-effort:
+  /// never throws.
   static Future<void> showDownloadProgress({
     required int id,
     required String fileName,
@@ -303,25 +307,21 @@ class PushNotificationService {
       if (!_localNotificationsReady) return;
       final pct = percent?.clamp(0, 100);
       final body = downloadProgressBody(percent);
-      // Expandable style (v1.0.122): without a styleInformation the
-      // shade shows no expand (⌄) caret on these notifications.
-      final style = BigTextStyleInformation(body);
-      // Progress post — ALWAYS the low channel, under the progress id.
       final progressDetails = AndroidNotificationDetails(
-        _dlChannelId,
-        _dlChannelName,
-        channelDescription: 'File download progress',
-        importance: Importance.low,
-        priority: Priority.low,
+        _dlAlertChannelId,
+        _dlAlertChannelName,
+        channelDescription: 'Download progress and completion alerts',
+        importance: Importance.high,
+        priority: Priority.high,
         showProgress: true,
         maxProgress: 100,
         progress: pct ?? 0,
         indeterminate: pct == null,
         ongoing: true,
         onlyAlertOnce: true,
-        playSound: false,
-        enableVibration: false,
-        styleInformation: style,
+        // Expandable style (v1.0.122): without a styleInformation the
+        // shade shows no expand (⌄) caret on these notifications.
+        styleInformation: BigTextStyleInformation(body),
       );
       await _localNotifications.show(
         id: id,
@@ -329,45 +329,23 @@ class PushNotificationService {
         body: body,
         notificationDetails: NotificationDetails(android: progressDetails),
       );
-      // Set.add answers true only the first time the progress id is
-      // seen for this download — that first call ALSO fires the
-      // one-shot start alert on the alert id / alert channel.
-      if (_dlAlertPosted.add(id)) {
-        const startBody = 'Downloading…';
-        const alertDetails = AndroidNotificationDetails(
-          _dlAlertChannelId,
-          _dlAlertChannelName,
-          channelDescription: 'Download start and completion alerts',
-          importance: Importance.high,
-          priority: Priority.high,
-          showProgress: false,
-          ongoing: false,
-          autoCancel: true,
-          styleInformation: BigTextStyleInformation(startBody),
-          // NOT onlyAlertOnce: this post has to actually alert.
-        );
-        await _localNotifications.show(
-          id: pdfDownloadAlertNotificationId,
-          title: fileName,
-          body: startBody,
-          notificationDetails:
-              const NotificationDetails(android: alertDetails),
-        );
-      }
     } catch (_) {}
   }
 
-  /// Settles a download (v1.0.120; split-id design + title copy
-  /// v1.0.123). FIRST cancels the progress entry under [id] so nothing
+  /// Settles a download (v1.0.120; title copy v1.0.123; unified design
+  /// v1.0.124). FIRST cancels the progress entry under [id] so nothing
   /// can stay stuck at "Downloading… 100%" in the shade (the v1.0.122
   /// single-id design's completion post could fail to replace it),
-  /// THEN posts the completion on the alert id
-  /// ([pdfDownloadAlertNotificationId]), replacing the start alert:
-  /// title "Download Complete 🎉" / "Download Failed ❌", body = the
-  /// file name (see [downloadCompletionCopy]). Arrives like a normal
-  /// notification, with sound + heads-up. When [openUri] is given (the
-  /// saved file's content URI) it becomes the tap payload; the tap
-  /// opens that very file.
+  /// THEN posts the completion on the completion id
+  /// ([pdfDownloadAlertNotificationId]): title "Download Complete 🎉"
+  /// / "Download Failed ❌", body = the file name (see
+  /// [downloadCompletionCopy]). The completion id is never touched
+  /// during the download, so this post is a genuine FIRST
+  /// presentation — it arrives like a normal notification, with sound
+  /// + heads-up, for small and large files alike (v1.0.123's start
+  /// alert pre-posted this id, demoting the completion to a quiet
+  /// update). When [openUri] is given (the saved file's content URI)
+  /// it becomes the tap payload; the tap opens that very file.
   static Future<void> finishDownloadNotification({
     required int id,
     required String fileName,
@@ -375,7 +353,6 @@ class PushNotificationService {
     bool toDownloads = true,
     String? openUri,
   }) async {
-    _dlAlertPosted.remove(id);
     try {
       if (!Platform.isAndroid) return;
       if (!_localNotificationsReady) await _initLocalNotifications();
@@ -390,7 +367,7 @@ class PushNotificationService {
       final androidDetails = AndroidNotificationDetails(
         _dlAlertChannelId,
         _dlAlertChannelName,
-        channelDescription: 'Download start and completion alerts',
+        channelDescription: 'Download progress and completion alerts',
         importance: Importance.high,
         priority: Priority.high,
         showProgress: false,
@@ -410,10 +387,9 @@ class PushNotificationService {
   }
 
   /// Dismisses a download's notifications (user cancelled): BOTH the
-  /// progress entry under [id] and the start alert under
+  /// progress entry under [id] and any completion entry under
   /// [pdfDownloadAlertNotificationId] (v1.0.123).
   static Future<void> cancelDownloadNotification({required int id}) async {
-    _dlAlertPosted.remove(id);
     try {
       if (!Platform.isAndroid) return;
       await _localNotifications.cancel(id: id);

@@ -32,3 +32,13 @@
 ### NOTE-4 — Website Platform Field
 - Website signup le `users/{uid}` ma `platform: 'Website'` lekhne (app le `'app'` lekhchha — aile subscriptions ma chha, users ma pani)
 - Admin website ko **Users page** ma `platform` column dekhaune (App / Website badge)
+
+### NOTE-5 — Exam Section Description (नेपाली) App Display
+Admin website ko Exam Sections edit page ma aba **Description (नेपाली)** field pani chha — English description bata auto-convert bhayera `app_exam_sections/{id}` doc ma `descriptionNe` field ma save hunchha. Tara **app le aile `descriptionNe` padhdai padaina** — student lai sadhai English `description` matra dekhauchha. (Exam Set ko `titleNe` jastai: field admin ma store matra hunchha, app display pachi ko kaam.)
+
+**App ma garnu parne (pachi, ahile hoina):**
+- `lib/services/exam_service.dart` ko ExamSection model ma `descriptionNe` parse garne (name ma jastai: `descriptionNe: (fields['descriptionNe'] ?? '').toString()`)
+- `lib/screens/learn/exam_tab.dart` ma section description render garda language anusar chhanne: Nepali mode + `descriptionNe` khali chhaina bhane `descriptionNe`, natra `description` — name ko lagi bhayeko pick pattern (`nepali && nameNe.isNotEmpty ? nameNe : nameEn`) jastai
+- Test: Nepali language ma section description Nepali mai dekhine, English ma English; `descriptionNe` nabhayeko purano section ma duwai ma English fallback
+
+**Timing:** Arko app update round sangai (admin tira ready chha — field ra converter duwai live)

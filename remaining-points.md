@@ -56,3 +56,19 @@ App ko `saveExamAttempt()` (`lib/services/exam_service.dart`) le public row `app
 **Sambandhit tayari — ✅ Done (2026-10-23):** admin-side correction (tracker, editor, delete, Bato A) sakiyo; `firebase.rules` ma admin lai `app_exam_rankings` create/update/delete permission disakiyo — user le rules file console ma publish garnu baki chha.
 
 **Timing:** pachi ko app update round ma (ahile hoina) — user, 2026-10-23
+
+### NOTE-9 — Exam Provinces Course/Subcourse Scope (App Side)
+Admin panel le `app_exam_provinces` doc haru ma **courseIds / subcourseIds** array field thapdai chha (khali = All — sabai course ma lagu). Provinces haru data batai course anusar ko hudainan, tesaile app le pani province list lai selected course/subcourse anusar scope garnu parchha — aile app le gardaina.
+
+**Aile ko awastha (code check, 2026-10-24):**
+- `ExamProvince` (`lib/services/exam_service.dart`) le id, nameEn, nameNe, order matra parse garchha — **courseIds/subcourseIds parse nai gardaina**.
+- `fetchExamProvinces()` le kunai scope parameter lidaina — sabai province fetch garera order anusar sort matra garchha. `exam_tab.dart` le pani teslai scope nadii bolauchha ra province pill haru sabai dekhauchha, selected course junsukai hos.
+
+**Fix (pachi ko app round ma):**
+- `ExamProvince` le **courseIds/subcourseIds** pani parse garne (ExamSection ko jasto `_strList`/`ids` pattern).
+- `fetchExamProvinces({courseId, subcourseId})` scope parameter line, `ExamSection.inScope()` jastai filter garne: scope list khali/absent bhaye **All** — sadhai dekhine; list bhaye tesma selected course/subcourse parne province matra dekhine.
+- `exam_tab.dart` le sections lai gareko jasto selected courseId/subcourseId pass garne (aile bare call chha).
+
+**Pahile nai bhayeko — feri nagarne:** Sections ko scope pura chha — `ExamSection` le courseIds/subcourseIds parse garchha, `inScope()` (khali list = applies) chha, `fetchExamSections(courseId:, subcourseId:)` le filter garchha, ra exam_tab le selected course/subcourse pass pani garchha. Sections ma kei garnu pardaina, provinces matra baki ho.
+
+**Timing:** pachi ko app update round ma (ahile hoina) — user, 2026-10-24

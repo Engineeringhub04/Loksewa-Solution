@@ -40,3 +40,18 @@ Rules card ko `icon` naam anusar harek card ma farak (realistic) icon dekhaune. 
 - **App side — baki (pachi ko APK round ma):** rules dialog le harek card ko aafno icon naam anusar dekhauune — aile app le naam lai bewasta garchha ra sabai card ma fixed shield icon dekhauchha. Flutter ma Ionicons-style icon font/package bundle garne, wa naam → Material icon map (prayog ma bhayeka naam haru cover garne); naam namile / invalid bhaye shield nai fallback.
 
 **Timing:** app side pachi ko app update round ma (ahile hoina) — user, 2026-10-23
+
+### NOTE-8 — Exam Rankings App-Side Scope Fields
+App ko `saveExamAttempt()` (`lib/services/exam_service.dart`) le public row `app_exam_rankings` ma yita field lekhchha: examSetId, courseId, subcourseId, uid, name, photoURL, isPro, score, timeTakenSeconds, createdAt. Tara ExamSet sangai bhayeka **provinceId, sectionId, contentType** lekhdaaina — tesaile app bata aayeka row haru ma admin ko Province/Section filter, tracker ra Model Type column le kaam gardaina (data nai hudaina).
+
+**Fix (pachi ko app round ma):**
+- `saveExamAttempt()` le ExamSet bata **provinceId, sectionId, contentType** pani ranking row ma save garne (set nai source of truth ho).
+- Tespachhi app-created row haru ma pani admin filter/tracker/Model Type sabai kaam garchha.
+
+**Tyo nabhayesamma (admin side bata sambodhan):**
+- Admin panel ma **"Seed Scope Data"** button chha — existing row haru ko exam set bata yahi 3 field backfill garchha.
+- Yo NOTE ko app fix ship bhayepachhi seed button hataune.
+
+**Sambandhit tayari — ✅ Done (2026-10-23):** admin-side correction (tracker, editor, delete, Bato A) sakiyo; `firebase.rules` ma admin lai `app_exam_rankings` create/update/delete permission disakiyo — user le rules file console ma publish garnu baki chha.
+
+**Timing:** pachi ko app update round ma (ahile hoina) — user, 2026-10-23

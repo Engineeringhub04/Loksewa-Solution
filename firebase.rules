@@ -823,13 +823,14 @@ service cloud.firestore {
     }
     match /app_exam_rankings/{docId} {
       allow read: if isSignedIn();
-      allow create: if isSignedIn() &&
+      allow create: if isAdmin() ||
+        (isSignedIn() &&
         request.resource.data.uid == request.auth.uid &&
         request.resource.data.score is number &&
         request.resource.data.timeTakenSeconds is number &&
         request.resource.data.score >= 0 &&
-        request.resource.data.timeTakenSeconds >= 0;
-      allow update: if false;
+        request.resource.data.timeTakenSeconds >= 0);
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
 

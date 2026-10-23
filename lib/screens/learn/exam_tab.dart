@@ -298,19 +298,22 @@ class _ExamTabState extends State<ExamTab> {
         premium: _premiumActive(profile),
       );
       _sectionCache[key] = cache;
-      // Warm the rules session-cache for the visible sets' province combos
-      // (capped): the first Rules popup then opens instantly, zero reads.
-      final provincesToWarm = <String>{};
+      // Warm the rules session-cache for the visible sets' own contexts
+      // (capped, deduped): the first Rules popup then opens instantly,
+      // zero reads. The engine fetches the rules collection once and
+      // matches locally, so warming is one shared list read at most.
+      final warmedKeys = <String>{};
       for (final s in sets) {
-        if (provincesToWarm.length >= 3) break;
-        final p = s.provinceId;
-        if (p.isNotEmpty) provincesToWarm.add(p);
-      }
-      for (final p in provincesToWarm) {
+        if (warmedKeys.length >= 6) break;
+        final key =
+            '${s.courseId}|${s.subcourseId}|${s.provinceId}|${s.sectionId}|${s.contentType}';
+        if (!warmedKeys.add(key)) continue;
         prefetchExamRules(
-          subcourseId: subcourseId,
-          provinceId: p,
-          sectionId: sectionId,
+          courseId: s.courseId,
+          subcourseId: s.subcourseId,
+          provinceId: s.provinceId,
+          sectionId: s.sectionId,
+          contentType: s.contentType,
         );
       }
       // The user may have switched section/province mid-fetch — only apply
@@ -829,6 +832,7 @@ class _ExamTabState extends State<ExamTab> {
   Widget _sectionBanner(ExamSection section) {
     final accent = Color(section.colorValue);
     final nepali = AppLanguage.isNepali;
+    final description = section.displayDescription(nepali);
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -858,10 +862,10 @@ class _ExamTabState extends State<ExamTab> {
               ),
             ],
           ),
-          if (section.description.isNotEmpty) ...[
+          if (description.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(
-              section.description,
+              description,
               style: TextStyle(
                 fontSize: 13,
                 height: 19 / 13,
@@ -1621,13 +1625,16 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
   @override
   void initState() {
     super.initState();
-    // Session-cached: first open per (subcourse, province, section) fetches
-    // (1-4 reads), every later open returns instantly with zero reads.
-    // _loadSection also prefetches, so this is usually a cache hit.
+    // Session-cached: first open per set context matches against the
+    // rules collection (fetched once per session), every later open
+    // returns instantly with zero reads. _loadSection also prefetches,
+    // so this is usually a cache hit.
     fetchExamRulesCached(
+      courseId: widget.set.courseId,
       subcourseId: widget.set.subcourseId,
       provinceId: widget.set.provinceId,
       sectionId: widget.set.sectionId,
+      contentType: widget.set.contentType,
     ).then((r) {
       if (mounted) setState(() => _rules = r);
     }).catchError((_) {
@@ -1645,6 +1652,7 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     const accent = Color(0xFF2563EB);
+    final nepali = AppLanguage.isNepali;
     final rules = _rules;
     return AppModalShell(
       // Compact card: smaller than the daily-limit popup (maxWidth 300,
@@ -1763,7 +1771,7 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                       const SizedBox(width: 7),
                                       Expanded(
                                         child: Text(
-                                          rules[i].title,
+                                          rules[i].displayTitle(nepali),
                                           style: const TextStyle(
                                             fontWeight:
                                                 FontWeight.bold,
@@ -1777,7 +1785,7 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    rules[i].description,
+                                    rules[i].displayDescription(nepali),
                                     style: const TextStyle(
                                       fontSize: 11.5,
                                       height: 17 / 11.5,

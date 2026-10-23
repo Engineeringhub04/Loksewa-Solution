@@ -737,15 +737,33 @@ class ExamRule {
   final String icon;
   final String title;
   final String description;
+  final String titleNe;
+  final String descriptionNe;
 
-  ExamRule(
-      {required this.icon, required this.title, required this.description});
+  ExamRule({
+    required this.icon,
+    required this.title,
+    required this.description,
+    this.titleNe = '',
+    this.descriptionNe = '',
+  });
 
   factory ExamRule.fromMap(Map<String, dynamic> m) => ExamRule(
         icon: _str(m['icon']),
         title: _str(m['title']),
         description: _str(m['description']),
+        titleNe: _str(m['titleNe']),
+        descriptionNe: _str(m['descriptionNe']),
       );
+
+  /// Card title in the current app language (NOTE-6): NE text when the
+  /// app is in Nepali and the card carries one, EN otherwise.
+  String displayTitle(bool nepali) =>
+      nepali && titleNe.isNotEmpty ? titleNe : title;
+
+  /// Card description in the current app language (NOTE-6).
+  String displayDescription(bool nepali) =>
+      nepali && descriptionNe.isNotEmpty ? descriptionNe : description;
 }
 
 class ScoreBreakdown {
@@ -865,6 +883,7 @@ class ExamSection {
   final String nameEn;
   final String nameNe;
   final String description;
+  final String descriptionNe;
   final String kind; // 'mcq' | 'theory' | 'mixed'
   final int colorValue; // ARGB, parsed from the doc's hex color string
   final int order;
@@ -876,6 +895,7 @@ class ExamSection {
     required this.nameEn,
     required this.nameNe,
     required this.description,
+    this.descriptionNe = '',
     required this.kind,
     required this.colorValue,
     required this.order,
@@ -886,6 +906,13 @@ class ExamSection {
   /// Display name in the current app language (React: language === 'ne' ? nameNe : nameEn).
   String displayName(bool nepali) =>
       nepali && nameNe.isNotEmpty ? nameNe : nameEn;
+
+  /// Description in the current app language (NOTE-5): NE mode prefers
+  /// [descriptionNe], EN mode prefers [description]; whichever is picked
+  /// falls back to the other language when its own text is empty.
+  String displayDescription(bool nepali) => nepali
+      ? (descriptionNe.isNotEmpty ? descriptionNe : description)
+      : (description.isNotEmpty ? description : descriptionNe);
 
   factory ExamSection.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
@@ -909,6 +936,7 @@ class ExamSection {
       nameEn: (fields['nameEn'] ?? fields['name'] ?? '').toString(),
       nameNe: (fields['nameNe'] ?? '').toString(),
       description: (fields['description'] ?? '').toString(),
+      descriptionNe: (fields['descriptionNe'] ?? '').toString(),
       kind: kind,
       colorValue: colorValue,
       order: ord,
@@ -1072,89 +1100,213 @@ Future<ExamSet?> fetchExamSet(String setId) async {
   return doc == null ? null : ExamSet.fromMap(doc);
 }
 
-/// Builds the doc-id fallback chain for exam rules
-/// (React: examHub.fetchExamRules).
-List<String> examRuleCandidateIds({
+/// Normalizes ONE scope dimension of an exam-rules doc (NOTE-6). The
+/// current shape stores scope as ARRAY fields (`courseIds`, …); legacy
+/// docs carry a single string (`courseId`, …). An array field wins when
+/// present; otherwise a non-empty legacy string becomes a one-element
+/// list and ''/null/missing becomes [] — an empty list means the doc
+/// applies to ALL values of that dimension.
+List<String> normalizeExamRuleScope(dynamic arrayValue, dynamic legacyValue) {
+  if (arrayValue is List) {
+    return arrayValue
+        .map((e) => e.toString().trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+  final legacy = legacyValue?.toString().trim() ?? '';
+  return legacy.isEmpty ? const [] : [legacy];
+}
+
+/// One parsed `app_exam_rules` doc: its normalized scope (empty list =
+/// All for that dimension) plus the rule cards it serves.
+class ExamRuleDoc {
+  final String id;
+  final List<String> courseIds;
+  final List<String> subcourseIds;
+  final List<String> provinceIds;
+  final List<String> sectionIds;
+  final List<String> contentTypes;
+  final List<ExamRule> rules;
+
+  ExamRuleDoc({
+    required this.id,
+    required this.courseIds,
+    required this.subcourseIds,
+    required this.provinceIds,
+    required this.sectionIds,
+    required this.contentTypes,
+    required this.rules,
+  });
+
+  factory ExamRuleDoc.fromMap(Map<String, dynamic> doc) {
+    final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
+    final raw = fields['rules'];
+    final List<ExamRule> cards;
+    if (raw is List) {
+      cards = raw
+          .whereType<Map>()
+          .map((m) => ExamRule.fromMap(Map<String, dynamic>.from(m)))
+          .toList();
+    } else {
+      // Legacy shape: the doc itself is a single rule card.
+      cards = [ExamRule.fromMap(fields)];
+    }
+    return ExamRuleDoc(
+      id: (doc['id'] ?? fields['id'] ?? '').toString(),
+      courseIds: normalizeExamRuleScope(fields['courseIds'], fields['courseId']),
+      subcourseIds:
+          normalizeExamRuleScope(fields['subcourseIds'], fields['subcourseId']),
+      provinceIds:
+          normalizeExamRuleScope(fields['provinceIds'], fields['provinceId']),
+      sectionIds:
+          normalizeExamRuleScope(fields['sectionIds'], fields['sectionId']),
+      contentTypes:
+          normalizeExamRuleScope(fields['contentTypes'], fields['contentType']),
+      rules: cards,
+    );
+  }
+
+  static bool _dimensionMatches(List<String> scope, String? value) =>
+      scope.isEmpty ||
+      (value != null && value.isNotEmpty && scope.contains(value));
+
+  /// True when this doc applies to a set with the given context: every
+  /// dimension is either unconstrained (All) or lists the set's value.
+  bool matches({
+    String? courseId,
+    String? subcourseId,
+    String? provinceId,
+    String? sectionId,
+    String? contentType,
+  }) =>
+      _dimensionMatches(courseIds, courseId) &&
+      _dimensionMatches(subcourseIds, subcourseId) &&
+      _dimensionMatches(provinceIds, provinceId) &&
+      _dimensionMatches(sectionIds, sectionId) &&
+      _dimensionMatches(contentTypes, contentType);
+
+  /// Weighted specificity: subcourse 16 > course 8 > province 4 >
+  /// section 2 > contentType 1, one weight per constrained dimension.
+  int get specificityScore =>
+      (subcourseIds.isNotEmpty ? 16 : 0) +
+      (courseIds.isNotEmpty ? 8 : 0) +
+      (provinceIds.isNotEmpty ? 4 : 0) +
+      (sectionIds.isNotEmpty ? 2 : 0) +
+      (contentTypes.isNotEmpty ? 1 : 0);
+
+  /// How many dimensions this doc constrains (score tie-break).
+  int get constrainedCount =>
+      (subcourseIds.isNotEmpty ? 1 : 0) +
+      (courseIds.isNotEmpty ? 1 : 0) +
+      (provinceIds.isNotEmpty ? 1 : 0) +
+      (sectionIds.isNotEmpty ? 1 : 0) +
+      (contentTypes.isNotEmpty ? 1 : 0);
+}
+
+/// Picks the rules doc that serves a set (NOTE-6 field matching): among
+/// the docs whose scope matches the set's context, the MOST SPECIFIC
+/// wins — higher [ExamRuleDoc.specificityScore] first, then more
+/// constrained dimensions, then doc id ascending so the outcome is
+/// deterministic. Null when nothing matches.
+ExamRuleDoc? pickExamRuleDoc(
+  List<ExamRuleDoc> docs, {
+  String? courseId,
   String? subcourseId,
   String? provinceId,
   String? sectionId,
+  String? contentType,
 }) {
-  final candidates = <String>[];
-  if (subcourseId != null &&
-      subcourseId.isNotEmpty &&
-      provinceId != null &&
-      provinceId.isNotEmpty &&
-      sectionId != null &&
-      sectionId.isNotEmpty) {
-    candidates.add('${subcourseId}__${provinceId}__${sectionId}');
+  ExamRuleDoc? best;
+  for (final doc in docs) {
+    if (!doc.matches(
+      courseId: courseId,
+      subcourseId: subcourseId,
+      provinceId: provinceId,
+      sectionId: sectionId,
+      contentType: contentType,
+    )) {
+      continue;
+    }
+    if (best == null ||
+        doc.specificityScore > best.specificityScore ||
+        (doc.specificityScore == best.specificityScore &&
+            doc.constrainedCount > best.constrainedCount) ||
+        (doc.specificityScore == best.specificityScore &&
+            doc.constrainedCount == best.constrainedCount &&
+            doc.id.compareTo(best.id) < 0)) {
+      best = doc;
+    }
   }
-  if (subcourseId != null &&
-      subcourseId.isNotEmpty &&
-      sectionId != null &&
-      sectionId.isNotEmpty) {
-    candidates.add('${subcourseId}__${sectionId}');
-  }
-  if (sectionId != null && sectionId.isNotEmpty) {
-    candidates.add('default__${sectionId}');
-  }
-  candidates.add('default');
-  return candidates;
+  return best;
 }
 
-/// Loads exam rules via the doc-ID fallback chain — mirrors
-/// examHub.fetchExamRules. First existing candidate wins.
+/// Session cache of every parsed rules doc — the field-matching engine
+/// reads the whole (small) collection ONCE per app session, then matches
+/// locally with zero further Firestore reads.
+List<ExamRuleDoc>? _examRuleDocsCache;
+
+Future<List<ExamRuleDoc>> _loadExamRuleDocs() async {
+  final hit = _examRuleDocsCache;
+  if (hit != null) return hit;
+  final raw = await ExamRest.listDocs('app_exam_rules');
+  final docs = raw.map(ExamRuleDoc.fromMap).toList();
+  _examRuleDocsCache = docs;
+  return docs;
+}
+
+/// Loads the exam rules for a set via field matching (NOTE-6): the
+/// most specifically scoped `app_exam_rules` doc whose scope fields
+/// match the set's context serves its cards. Empty when no doc matches.
 Future<List<ExamRule>> fetchExamRules({
   String? courseId,
   String? subcourseId,
   String? provinceId,
   String? sectionId,
+  String? contentType,
 }) async {
-  for (final id in examRuleCandidateIds(
+  final docs = await _loadExamRuleDocs();
+  final winner = pickExamRuleDoc(
+    docs,
+    courseId: courseId,
     subcourseId: subcourseId,
     provinceId: provinceId,
     sectionId: sectionId,
-  )) {
-    final doc = await ExamRest.getDoc('app_exam_rules/$id');
-    if (doc != null) {
-      final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
-      final raw = fields['rules'];
-      if (raw is List) {
-        return raw
-            .whereType<Map<String, dynamic>>()
-            .map(ExamRule.fromMap)
-            .toList();
-      }
-      return [ExamRule.fromMap(doc)];
-    }
-  }
-  return const [];
+    contentType: contentType,
+  );
+  return winner?.rules ?? const [];
 }
 
-/// In-memory session cache for exam rules. Rules practically never change
-/// for a live set, so one fetch per (subcourse, province, section) per app
+/// In-memory session cache for matched exam rules. Rules practically
+/// never change for a live set, so one match per set context per app
 /// session is enough — every later Rules popup opens instantly with ZERO
 /// Firestore reads. Pull-to-refresh / app start clears it (fresh fetch).
 final Map<String, List<ExamRule>> _examRulesCache = {};
 
 String _examRulesCacheKey({
+  String? courseId,
   String? subcourseId,
   String? provinceId,
   String? sectionId,
+  String? contentType,
 }) =>
-    '${subcourseId ?? ''}|${provinceId ?? ''}|${sectionId ?? ''}';
+    '${courseId ?? ''}|${subcourseId ?? ''}|${provinceId ?? ''}|${sectionId ?? ''}|${contentType ?? ''}';
 
 /// Cached variant of [fetchExamRules]: cache hit returns instantly with no
-/// reads; miss fetches once and populates the cache.
+/// reads; miss matches once (against the session-cached doc list) and
+/// populates the cache.
 Future<List<ExamRule>> fetchExamRulesCached({
   String? courseId,
   String? subcourseId,
   String? provinceId,
   String? sectionId,
+  String? contentType,
 }) async {
   final key = _examRulesCacheKey(
+    courseId: courseId,
     subcourseId: subcourseId,
     provinceId: provinceId,
     sectionId: sectionId,
+    contentType: contentType,
   );
   final hit = _examRulesCache[key];
   if (hit != null) return hit;
@@ -1163,6 +1315,7 @@ Future<List<ExamRule>> fetchExamRulesCached({
     subcourseId: subcourseId,
     provinceId: provinceId,
     sectionId: sectionId,
+    contentType: contentType,
   );
   _examRulesCache[key] = rules;
   return rules;
@@ -1175,18 +1328,24 @@ void prefetchExamRules({
   String? subcourseId,
   String? provinceId,
   String? sectionId,
+  String? contentType,
 }) {
   fetchExamRulesCached(
     courseId: courseId,
     subcourseId: subcourseId,
     provinceId: provinceId,
     sectionId: sectionId,
+    contentType: contentType,
   ).catchError((_) => const <ExamRule>[]);
 }
 
-/// Drops the rules session cache — full refresh (pull-to-refresh, app
-/// start) re-fetches fresh rules on next open.
-void clearExamRulesCache() => _examRulesCache.clear();
+/// Drops the rules session caches (matched results AND the parsed doc
+/// list) — full refresh (pull-to-refresh, app start) re-fetches fresh
+/// rules on next open.
+void clearExamRulesCache() {
+  _examRulesCache.clear();
+  _examRuleDocsCache = null;
+}
 
 /// Lists every exam attempt of a user across all sets (the whole
 /// `users/{uid}/exam_attempts` subcollection, newest attempt first).

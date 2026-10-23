@@ -48,9 +48,10 @@ App ko `saveExamAttempt()` (`lib/services/exam_service.dart`) le public row `app
 - `saveExamAttempt()` le ExamSet bata **provinceId, sectionId, contentType** pani ranking row ma save garne (set nai source of truth ho).
 - Tespachhi app-created row haru ma pani admin filter/tracker/Model Type sabai kaam garchha.
 
-**Tyo nabhayesamma (admin side bata sambodhan):**
-- Admin panel ma **"Seed Scope Data"** button chha — existing row haru ko exam set bata yahi 3 field backfill garchha.
-- Yo NOTE ko app fix ship bhayepachhi seed button hataune.
+**Admin side bata sambodhan — ✅ Sakiyo (2026-10-24):**
+- Admin panel ko temporary **"Seed Scope Data"** button le 2026-10-24 ma existing row haru ko exam set bata yahi 3 field backfill garyo, ra **"Delete Unset Data"** button le delete bhaisakeka exam set tira gaayeka (set nai nabhayeka) row haru safa garyo.
+- Cleanup sakiyepachhi user ko decision anusar **dubai button tei din hataiyo** — yo NOTE ko app fix ship hunu aghi nai (user le rankings test app side bata garchha).
+- Tara yo NOTE ko app fix ajhai baki chha: tyo nabhayesamma app bata **naya** aayeka ranking row haru ma feri provinceId, sectionId, contentType hudaina — tee row haru admin ko Province/Section filter, tracker ra Model Type column ma pardainan. Yo user le bujhera swikaareko chha.
 
 **Sambandhit tayari — ✅ Done (2026-10-23):** admin-side correction (tracker, editor, delete, Bato A) sakiyo; `firebase.rules` ma admin lai `app_exam_rankings` create/update/delete permission disakiyo — user le rules file console ma publish garnu baki chha.
 

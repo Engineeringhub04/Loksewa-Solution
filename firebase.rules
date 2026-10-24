@@ -233,7 +233,8 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create, update: if isAdmin() &&
         request.resource.data.keys().hasOnly([
-          'name', 'course', 'subcourse', 'pro', 'price', 'order'
+          'name', 'nameNe', 'course', 'subcourse', 'pro', 'price', 'order',
+          'createdAt', 'updatedAt'
         ]);
       allow delete: if isAdmin();
     }

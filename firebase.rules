@@ -682,6 +682,13 @@ service cloud.firestore {
         allow write: if isAdmin();
       }
     }
+    // Admin panel Sub Courses page runs a collection group query over ALL
+    // subcourses subcollections. A concrete-path match does NOT authorize a
+    // collection group query — only a {path=**} match does.
+    match /{path=**}/subcourses/{subcourseId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
     match /app_categories/{docId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

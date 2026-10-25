@@ -72,3 +72,16 @@ Admin panel le `app_exam_provinces` doc haru ma **courseIds / subcourseIds** arr
 **Pahile nai bhayeko — feri nagarne:** Sections ko scope pura chha — `ExamSection` le courseIds/subcourseIds parse garchha, `inScope()` (khali list = applies) chha, `fetchExamSections(courseId:, subcourseId:)` le filter garchha, ra exam_tab le selected course/subcourse pass pani garchha. Sections ma kei garnu pardaina, provinces matra baki ho.
 
 **Timing:** pachi ko app update round ma (ahile hoina) — user, 2026-10-24
+
+### NOTE-10 — Payment App-Open (Wallet App Cha Bhane SDK Method, Natra Aile Kai Web)
+User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment garda **phone ma wallet app (eSewa/Khalti) already installed cha bhane sidhai tyo app khulera payment hos**, chhaina bhane **aile kai WebView web flow** hos.
+
+**Pahile verify garnu parne (implement bhanda agadi, yo kram ma):**
+- **Khalti:** Khalti ko Flutter SDK config ma `openInKhalti` flag cha ("WebView kholne ki Khalti app ma kholne" bhanne chhanchha) — test build ma user ko phone ma sachchai app khulchha ki khuldaina + tes pachhi pani worker lookup verify ustai chalna paryo, check garne.
+- **eSewa:** pub.dev ko `esewa_flutter` package **WebView matra** ho (ePay v2 form) — tyo app-open ko praman HO hoina. eSewa ko native SDK wa checkout deep-link bata app khulchha ki khuldaina, kun SDK ho pahile chhutyaaune — user le kun app ma eSewa khuleko dekheko ho tyo bata suru garne.
+
+**Badli nahune:**
+- Worker-side verify sadhai ustai: `POST /payments/init` + `/payments/verify` — app-open le checkout khulne tarika matra badalchha, bharosa ko nirnaya kahile badlidaina.
+- Android pahile; iOS chhuttai test (purano iOS ma web fallback ko seto hune purano tathya ajhai lagu).
+
+**Timing:** mathi ko verify sakiyepachhi matra implement; ahile note matra — user, 2026-10-25

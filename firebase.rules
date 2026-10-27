@@ -1140,6 +1140,48 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // ────────────────────────────────────────────────────────────────────
+    // DATA TRANSFER — TEMPORARY (added 2026-10-28 for the Firebase ->
+    // Cloudflare D1 copy): the admin panel's Data Transfer page reads every
+    // collection with the admin login, so the server-only / closed
+    // collections below grant ADMIN-ONLY read here. Nothing else changes:
+    // writes stay exactly as closed as before and non-admin users gain
+    // nothing. DELETE THIS WHOLE BLOCK after the data transfer is finished.
+    // ────────────────────────────────────────────────────────────────────
+    match /app_payments/{docId} {
+      allow read: if isAdmin();
+    }
+    match /app_password_reset_tokens/{t} {
+      allow read: if isAdmin();
+    }
+    match /app_coupon_usages/{usageId} {
+      allow read: if isAdmin();
+    }
+    match /app_subscription_settings/{docId} {
+      allow read: if isAdmin();
+    }
+    match /app_plans/{docId} {
+      allow read: if isAdmin();
+    }
+    match /app_question_of_the_day/{docId} {
+      allow read: if isAdmin();
+    }
+    match /app_links/{docId} {
+      allow read: if isAdmin();
+    }
+    match /app_onboarding/{docId} {
+      allow read: if isAdmin();
+    }
+    match /notices/{docId} {
+      allow read: if isAdmin();
+    }
+    match /discussion_comments/{docId} {
+      allow read: if isAdmin();
+    }
+    match /discussion_replies/{docId} {
+      allow read: if isAdmin();
+    }
+
     // Default deny-all: any collection not explicitly listed above is closed.
     match /{document=**} {
       allow read, write: if false;

@@ -76,18 +76,16 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await PrefsService.setString(
-      PrefsService.sessionKey,
+      CfApi.sessionPrefsKey,
       json.encode({
         'user': {
           'uid': 'u1',
           'email': 'a@b.c',
-          'displayName': 'Test',
+          'name': 'Test',
           'photoURL': null,
         },
-        'idToken': 'test-id-token',
+        'accessToken': 'test-access-token',
         'refreshToken': 'ref',
-        'expiresAt':
-            DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
       }),
     );
     await AuthService.peekSavedSession();

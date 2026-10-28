@@ -114,21 +114,19 @@ void main() {
   group('ReportService history → POST /reports shape', () {
     test('problem report sends content fields only (reporter server-side)',
         () async {
-      // Seed the mirrored Firebase session so AuthService.currentUser
+      // Seed the CF session so AuthService.currentUser
       // exists (the history write requires a signed-in user).
       await PrefsService.setString(
-        PrefsService.sessionKey,
+        CfApi.sessionPrefsKey,
         json.encode({
           'user': {
             'uid': 'u1',
             'email': 'a@b.c',
-            'displayName': 'Test User',
+            'name': 'Test User',
             'photoURL': null,
           },
-          'idToken': 'test-id-token',
+          'accessToken': 'test-access-token',
           'refreshToken': 'ref',
-          'expiresAt':
-              DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
         }),
       );
       await AuthService.peekSavedSession();

@@ -15,8 +15,8 @@ import 'package:loksewa_solution/screens/learn/subject_units_screen.dart';
 // against layout errors.
 void main() {
   // Pumps the screen and advances until the backend calls settle.
-  // With no session, getValidIdToken() returns '' immediately and the
-  // Firestore REST calls fail fast (401) -> the error branch renders.
+  // With no session, the backend calls fail fast -> the error branch
+  // renders.
   Future<void> settleBackend(WidgetTester tester) async {
     for (var i = 0; i < 30; i++) {
       await tester.pump(const Duration(milliseconds: 500));

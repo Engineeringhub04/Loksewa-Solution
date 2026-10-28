@@ -9,7 +9,6 @@ import 'package:loksewa_solution/services/course_setup_gate.dart';
 import 'package:loksewa_solution/services/device_session_service.dart';
 import 'package:loksewa_solution/widgets/device_session_dialogs.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/widgets/auth/auth_buttons.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
 import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
@@ -176,26 +175,10 @@ class _SignupScreenState extends State<SignupScreen>
         _password.text,
         name: _name.text.trim(),
       );
-      // Mirror registerWithEmail: store the display name on the user document.
-      try {
-        final idToken = await AuthService.getValidIdToken();
-        await FirestoreRest.setDocument(
-          'users/${user.uid}',
-          {
-            // Profile reads 'name' — writing only 'displayName' left the
-            // profile name blank after signup (user had to edit manually).
-            'name': _name.text.trim(),
-            'displayName': _name.text.trim(),
-            'email': user.email ?? email,
-            // NOTE 2 — every new account is a plain user.
-            'role': 'user',
-            // NOTE 3 — marks the account as created from the app.
-            'platform': 'App',
-          },
-          idToken: idToken,
-          merge: true,
-        );
-      } catch (_) {}
+      // Phase-7: NO Firestore mirror write — the worker's signup creates
+      // the users row server-side with name, displayName, email,
+      // role 'user' and platform 'App' (verified in worker createAccount),
+      // so the profile name is populated from the moment of signup.
       if (!mounted) return;
       showAuthToast(context, 'Account created successfully');
       await _afterSignIn(user.uid);
@@ -261,25 +244,10 @@ class _SignupScreenState extends State<SignupScreen>
         googlePhotoUrl: account.photoUrl,
       );
       if (!mounted) return;
-      // Mirror the email-signup user document (merge — never clobbers).
-      // NOTE 2: role 'user'. NOTE 3: platform 'App'.
-      try {
-        final token = await AuthService.getValidIdToken();
-        final displayName =
-            (account.displayName ?? result.user.displayName ?? '').trim();
-        await FirestoreRest.setDocument(
-          'users/${result.user.uid}',
-          {
-            if (displayName.isNotEmpty) 'name': displayName,
-            if (displayName.isNotEmpty) 'displayName': displayName,
-            'email': result.user.email ?? account.email,
-            'role': 'user',
-            'platform': 'App',
-          },
-          idToken: token,
-          merge: true,
-        );
-      } catch (_) {}
+      // Phase-7: NO Firestore mirror write — the worker's Google sign-in
+      // creates the users row server-side on first sight with the Google
+      // name/photo, email, role 'user' and platform 'App' (verified in
+      // worker createAccount), exactly like the email-signup row.
       if (!mounted) return;
       showAuthToast(context, 'Google account signed in successfully');
       // Google on the signup screen can be a new OR an existing account:

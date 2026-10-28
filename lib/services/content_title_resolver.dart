@@ -30,12 +30,13 @@ import 'package:loksewa_solution/services/exam_service.dart';
 /// Production single-doc fetcher.
 ///
 /// Phase-5: `app_subjects_details/{id}` goes through the Phase-1
-/// GET /subjects/:id endpoint. The other single-doc reads
+/// GET /subjects/details/:id endpoint. The other single-doc reads
 /// (`app_subjects_units_details/{id}`, `app_subjects_unit-chapters_details/
 /// {id}`) have NO by-id endpoint equivalent — the API exposes only
-/// subject-scoped lists (/subjects/units, /subjects/chapters), and
-/// gateway purchase records often lack a subjectId to scope with — so
-/// those stay on [ExamRest.getDoc].
+/// subject-scoped lists (/subjects/units, /subjects/chapters) — so a
+/// bare path stays on [ExamRest.getDoc]. When [_resolve] knows the
+/// subject, it consults those scoped lists FIRST (Phase-6) and only
+/// falls back to this fetcher on a miss.
 Future<Map<String, dynamic>?> defaultContentDocFetcher(String path) {
   const subjectPrefix = 'app_subjects_details/';
   if (path.startsWith(subjectPrefix)) {
@@ -46,11 +47,9 @@ Future<Map<String, dynamic>?> defaultContentDocFetcher(String path) {
   return ExamRest.getDoc(path);
 }
 
-typedef ContentDocFetcher = Future<Map<String, dynamic>?> Function(
-    String path);
-typedef ContentDocsLister = Future<List<Map<String, dynamic>>> Function(
-    String collection,
-    {int pageSize});
+typedef ContentDocFetcher = Future<Map<String, dynamic>?> Function(String path);
+typedef ContentDocsLister = Future<List<Map<String, dynamic>>>
+    Function(String collection, {int pageSize});
 
 /// The three names a composed title is built from (any may be missing).
 class ContentDisplayNames {
@@ -155,9 +154,10 @@ Future<ContentDisplayNames> resolveContentDisplayNames(
   ContentDocsLister? listDocs,
 }) {
   final fetch = getDoc ?? defaultContentDocFetcher;
-  // The collection scan (subjects slug fallback) stays on ExamRest:
-  // GET /subjects returns top-level course rows, not the subjects-details
-  // corpus this scan matches slugs against.
+  // The collection scan (subjects slug fallback) defaults to ExamRest:
+  // there is no global subjects-details list endpoint. When the id
+  // carries its scope, _subjectNameBySlug scans the scope's catalogue
+  // through the API instead (Phase-6).
   final list = listDocs ?? ExamRest.listDocs;
   final key = '${record.id}__${AppLanguage.current.value}';
   return _namesCache.putIfAbsent(key, () => _resolve(record, fetch, list));
@@ -170,6 +170,24 @@ Future<ContentDisplayNames> resolveContentDisplayNames(
 Future<String?> _subjectNameBySlug(ContentDocsLister list, String id) async {
   final slug = id.split('__').lastWhere((p) => p.isNotEmpty, orElse: () => '');
   if (slug.isEmpty) return null;
+  // Phase-6: a full deterministic doc id (course__subcourse__subject…)
+  // carries its scope — scan that scope's subject catalogue through the
+  // API (same suffix match) instead of the Firestore corpus.
+  final segments = id.split('__').where((p) => p.isNotEmpty).toList();
+  if (segments.length >= 3) {
+    try {
+      final rows = await CfApi.getSubjectsList(
+          courseId: segments[0], subcourseId: segments[1]);
+      for (final d in rows) {
+        if ('${d['id'] ?? ''}'.endsWith('__$slug')) {
+          final name = contentDocDisplayName(d);
+          if (name != null) return name;
+        }
+      }
+    } catch (_) {
+      // Fail-soft — fall through to the corpus scan below.
+    }
+  }
   try {
     final docs = await list('app_subjects_details', pageSize: 300);
     for (final d in docs) {
@@ -202,6 +220,45 @@ Future<ContentDisplayNames> _resolve(
     }
   }
 
+  // Phase-6: when the subject is known, the Phase-1 subject-scoped
+  // lists answer by-id lookups without Firestore — their entries carry
+  // the same fields the resolver reads (name/nameNe, subjectId, unitId,
+  // unit/unitNameNe). A miss (unknown subject, unpublished entry, API
+  // error) returns null and the caller falls back to the by-id fetch,
+  // so resolution results are unchanged.
+  Future<Map<String, dynamic>?> cfUnitDoc(
+      String subjectId, String unitId) async {
+    try {
+      final units = await CfApi.getSubjectUnits(subjectId);
+      for (final u in units) {
+        if ('${u['id'] ?? ''}' == unitId) return u;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>?> cfChapterDoc(
+      String subjectId, String chapterId) async {
+    try {
+      final chapters = await CfApi.getSubjectChapters(subjectId);
+      for (final c in chapters) {
+        if ('${c['id'] ?? ''}' == chapterId) return c;
+      }
+      final units = await CfApi.getSubjectUnits(subjectId);
+      for (final u in units) {
+        final nested = u['chapters'];
+        if (nested is List) {
+          for (final c in nested) {
+            if (c is Map && '${c['id'] ?? ''}' == chapterId) {
+              return Map<String, dynamic>.from(c);
+            }
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<String?> subjectNameFor(String id) async {
     final doc = await safeGet('app_subjects_details/$id');
     return contentDocDisplayName(doc) ?? _subjectNameBySlug(list, id);
@@ -213,24 +270,33 @@ Future<ContentDisplayNames> _resolve(
         ownName = await subjectNameFor(record.contentId);
         break;
       case 'unit':
-        final doc =
-            await safeGet('app_subjects_units_details/${record.contentId}');
+        Map<String, dynamic>? doc;
+        if (subjectId != null) {
+          doc = await cfUnitDoc(subjectId, record.contentId);
+        }
+        doc ??= await safeGet('app_subjects_units_details/${record.contentId}');
         ownName = contentDocDisplayName(doc);
         subjectId ??= _nonEmpty(doc?['subjectId']);
         break;
       case 'chapter':
       default:
-        // Which chapter collection holds the doc? The record's unitId
+        // Scoped API lookup first when the subject is known; on a miss,
+        // which chapter collection holds the doc? The record's unitId
         // decides when present; gateway records store none, so try the
         // unit-chapters collection first, then the unit-less one.
         Map<String, dynamic>? doc;
-        final collections = <String>[
-          'app_subjects_unit-chapters_details',
-          if (unitId == null) 'app_subjects_chapter_details',
-        ];
-        for (final col in collections) {
-          doc = await safeGet('$col/${record.contentId}');
-          if (doc != null) break;
+        if (subjectId != null) {
+          doc = await cfChapterDoc(subjectId, record.contentId);
+        }
+        if (doc == null) {
+          final collections = <String>[
+            'app_subjects_unit-chapters_details',
+            if (unitId == null) 'app_subjects_chapter_details',
+          ];
+          for (final col in collections) {
+            doc = await safeGet('$col/${record.contentId}');
+            if (doc != null) break;
+          }
         }
         ownName = contentDocDisplayName(doc);
         if (doc != null) {
@@ -240,8 +306,13 @@ Future<ContentDisplayNames> _resolve(
           subjectId ??= _nonEmpty(doc['subjectId']);
           unitName = _unitNameFromChapterDoc(doc);
           if (unitName == null && unitId != null) {
-            final unitDoc =
-                await safeGet('app_subjects_units_details/$unitId');
+            // The subject is known by here (from the record or the
+            // chapter doc itself), so the scoped list gets first try.
+            Map<String, dynamic>? unitDoc;
+            if (subjectId != null) {
+              unitDoc = await cfUnitDoc(subjectId, unitId);
+            }
+            unitDoc ??= await safeGet('app_subjects_units_details/$unitId');
             unitName = contentDocDisplayName(unitDoc);
           }
         }

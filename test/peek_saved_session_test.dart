@@ -4,67 +4,87 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 
-/// peekSavedSession: the splash's cold-start session read. A saved session on
-/// disk means the user is logged in — this read NEVER wipes, so a link tap
-/// (or any cold start) can never log the user out. No network is touched;
-/// the token refresh happens lazily via getValidIdToken.
+/// peekSavedSession: the splash's cold-start session read. A saved CF
+/// session on disk means the user is logged in — this read NEVER wipes, so
+/// a link tap (or any cold start) can never log the user out. No network
+/// is touched; the CfApi layer refreshes the access token lazily on its
+/// next authenticated call.
+///
+/// Phase-7: the Cloudflare session is the ONLY session. The retired
+/// pre-Phase-7 legacy blob (PrefsService.sessionKey) no longer counts as
+/// a login on its own.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   SharedPreferences.setMockInitialValues({});
 
-  Map<String, dynamic> sessionJson({bool expired = true}) => {
+  Map<String, dynamic> sessionJson() => {
         'user': {
           'uid': 'u1',
           'email': 'a@b.c',
-          'displayName': 'Test',
+          'name': 'Test',
           'photoURL': null,
         },
-        'idToken': 'tok',
+        'accessToken': 'tok',
         'refreshToken': 'ref',
-        'expiresAt': (expired
-                ? DateTime.now().subtract(const Duration(hours: 2))
-                : DateTime.now().add(const Duration(hours: 1)))
-            .toIso8601String(),
       };
 
   test('returns the saved user without touching the network', () async {
     // PrefsService caches its instance, so seed via its own write path.
     await PrefsService.setString(
-        PrefsService.sessionKey, json.encode(sessionJson()));
+        CfApi.sessionPrefsKey, json.encode(sessionJson()));
     final user = await AuthService.peekSavedSession();
     expect(user?.uid, 'u1');
-    // Installed in memory so getValidIdToken retries the refresh itself
-    // instead of sending API requests with an empty token.
+    expect(user?.displayName, 'Test');
+    // Installed in memory so the app is signed in from the first frame.
     expect(AuthService.currentUser?.uid, 'u1');
   });
 
   test('returns null when nothing was saved', () async {
-    await PrefsService.remove(PrefsService.sessionKey);
+    await PrefsService.remove(CfApi.sessionPrefsKey);
+    expect(await AuthService.peekSavedSession(), isNull);
+  });
+
+  test('a legacy-only blob no longer counts as a session', () async {
+    await PrefsService.remove(CfApi.sessionPrefsKey);
+    await PrefsService.setString(
+        PrefsService.sessionKey,
+        json.encode({
+          'user': {
+            'uid': 'legacy-u',
+            'email': 'a@b.c',
+            'displayName': 'Legacy',
+            'photoURL': null,
+          },
+          'idToken': 'tok',
+          'refreshToken': 'ref',
+          'expiresAt':
+              DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
+        }));
     expect(await AuthService.peekSavedSession(), isNull);
   });
 
   test('returns null on a corrupt blob and never throws', () async {
-    await PrefsService.setString(PrefsService.sessionKey, 'not-json{{{');
+    await PrefsService.setString(CfApi.sessionPrefsKey, 'not-json{{{');
     expect(await AuthService.peekSavedSession(), isNull);
   });
 
-  test('never deletes the saved blob — not even when it is corrupt', () async {
+  test('never deletes the saved blob — not even when it is corrupt',
+      () async {
     // Regression: the splash must never wipe the session. A corrupt blob
     // returns null but stays on disk for inspection/repair.
-    await PrefsService.setString(PrefsService.sessionKey, 'not-json{{{');
+    await PrefsService.setString(CfApi.sessionPrefsKey, 'not-json{{{');
     await AuthService.peekSavedSession();
-    expect(await PrefsService.getString(PrefsService.sessionKey),
-        'not-json{{{');
+    expect(await PrefsService.getString(CfApi.sessionPrefsKey), 'not-json{{{');
   });
 
-  test('never deletes the saved blob for an expired session', () async {
+  test('never modifies the saved blob on a successful peek', () async {
     await PrefsService.setString(
-        PrefsService.sessionKey, json.encode(sessionJson(expired: true)));
-    final before =
-        await PrefsService.getString(PrefsService.sessionKey);
+        CfApi.sessionPrefsKey, json.encode(sessionJson()));
+    final before = await PrefsService.getString(CfApi.sessionPrefsKey);
     await AuthService.peekSavedSession();
-    expect(await PrefsService.getString(PrefsService.sessionKey), before);
+    expect(await PrefsService.getString(CfApi.sessionPrefsKey), before);
   });
 }

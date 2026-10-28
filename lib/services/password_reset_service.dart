@@ -4,28 +4,19 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
-/// Worker-backed password-reset flow.
+/// Worker-backed password-reset LINK flow (deep links only).
 ///
-/// POSTs the user's email to the loksewa-push-worker
-/// (`/request-password-reset`). The worker rate-limits requests (one per
-/// day per email), reads its SMTP provider key from Firestore, and sends
-/// the reset link `https://kbr.com.np/auth/reset-password?token=...`
-/// (the token is a one-time 64-hex string minted by the worker, NOT a
-/// Firebase oobCode).
+/// A reset link `https://kbr.com.np/auth/reset-password?token=...` (the
+/// token is a one-time 64-hex string minted by the worker, NOT a Firebase
+/// oobCode) is validated with [validateToken] and completed with
+/// [completeReset] against the loksewa-push-worker. Both calls are
+/// awaited by their callers (the deep-link routing matrix and the reset
+/// form) and map transport failures to a result value — never throw.
 ///
-/// The worker ALWAYS answers HTTP 200 with `{ok: bool, reason?: string}`:
-/// - `{ok: true}` — the reset email was queued/sent.
-/// - `{ok: false, reason: "rate_limited"}` — one link already requested
-///   today; the previously sent link stays valid for 10 minutes.
-/// - `{ok: false, reason: "no_provider"}` — the email provider is not
-///   configured on the worker yet.
-/// - `{ok: false, reason: "invalid_email"}` — the email failed validation.
-/// - `{ok: false, reason: "account_not_found"}` — no account uses this email.
-///
-/// Unlike [AdminNotifyService] the request call is NOT fire-and-forget:
-/// the forgot-password screen needs the result to decide what to show, so
-/// it awaits it and maps transport failures to [PasswordResetResult.failed].
-/// The same applies to [completeReset], which the reset form awaits.
+/// The in-app forgot-password flow does NOT mint these links anymore:
+/// it uses the Cloudflare code flow (`AuthService.requestResetCode`).
+/// The old `requestReset` half was removed in Phase-6 (0 callers); this
+/// service remains only for links already in users' inboxes.
 class PasswordResetService {
   /// Base URL of the push worker. Defined ONCE here (see also
   /// AdminNotifyService._workerBase — same worker, different endpoint).
@@ -40,32 +31,6 @@ class PasswordResetService {
 
   /// Overrides the HTTP client (tests only).
   static void setTestClient(http.Client? client) => _testClient = client;
-
-  /// Requests a password-reset email for [email].
-  /// Never throws — transport/parse failures map to [PasswordResetResult.failed].
-  static Future<PasswordResetResult> requestReset(String email) async {
-    final client = _testClient ?? http.Client();
-    try {
-      final res = await client
-          .post(
-            Uri.parse('$_workerBase/request-password-reset'),
-            headers: {'Content-Type': 'application/json'},
-            body: json.encode({'email': email}),
-          )
-          .timeout(_timeout);
-      final data = json.decode(res.body) as Map<String, dynamic>;
-      if (data['ok'] == true) return PasswordResetResult.sent;
-      return switch (data['reason']) {
-        'rate_limited' => PasswordResetResult.rateLimited,
-        'no_provider' => PasswordResetResult.noProvider,
-        'invalid_email' => PasswordResetResult.invalidEmail,
-        'account_not_found' => PasswordResetResult.accountNotFound,
-        _ => PasswordResetResult.failed,
-      };
-    } catch (_) {
-      return PasswordResetResult.failed;
-    }
-  }
 
   /// Completes a password reset with the one-time [token] from the reset
   /// link. POSTs to the worker (`/complete-password-reset`); the worker
@@ -129,30 +94,6 @@ class PasswordResetService {
       return TokenValidationResult.networkError;
     }
   }
-}
-
-/// Outcome of [PasswordResetService.requestReset].
-enum PasswordResetResult {
-  /// The reset email was queued/sent — show the "check your email" UI.
-  sent,
-
-  /// One link was already requested today — show the in-page
-  /// already-requested banner (NOT a popup).
-  rateLimited,
-
-  /// The worker has no email provider configured — show the in-page
-  /// service-unavailable banner.
-  noProvider,
-
-  /// The email failed the worker's validation.
-  invalidEmail,
-
-  /// The worker has no account for this email — show the in-page
-  /// "no account found" banner (NOT a popup).
-  accountNotFound,
-
-  /// Transport error, non-JSON answer, or unknown reason.
-  failed,
 }
 
 /// Outcome of [PasswordResetService.validateToken].

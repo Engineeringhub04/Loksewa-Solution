@@ -73,9 +73,10 @@ class _SplashScreenState extends State<SplashScreen> {
 
     // The splash NEVER wipes the session. A saved session on disk means the
     // user is logged in — route accordingly and let the API layer refresh
-    // the token lazily via getValidIdToken. A link tap (or any cold start)
-    // can therefore never log the user out: the worst case is a failed
-    // refresh surfacing as an API error later, never a silent logout.
+    // the CF access token lazily on its next call. A link tap (or any cold
+    // start) can therefore never log the user out: the worst case is a
+    // failed refresh surfacing as an API error later, never a silent
+    // logout.
     var user = await AuthService.peekSavedSession();
 
     // Password-reset App Link (cold start): the router boots every cold start

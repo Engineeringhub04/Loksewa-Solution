@@ -1,15 +1,16 @@
 import 'dart:io';
 
 import 'auth_service.dart';
-import 'firestore_rest.dart';
+import 'cf_api.dart';
 
 /// Server-corrected clock — mirrors serverNow()/noteServerTime() in
 /// firestoreRest.ts from the Expo app.
 ///
-/// Every Firestore REST response carries a `Date` header with the server's
-/// time; [updateFromHttpDate] (called from [FirestoreRest]'s response path)
-/// records the skew between that and the device clock. [nowUtc] is the device
-/// clock corrected by that skew, so winding the phone clock cannot unlock
+/// Every HTTP response carries a `Date` header with the server's time;
+/// [updateFromHttpDate] (called from the response paths of [CfApi] and,
+/// for the remaining mirror traffic, [FirestoreRest]) records the skew
+/// between that and the device clock. [nowUtc] is the device clock
+/// corrected by that skew, so winding the phone clock cannot unlock
 /// future-dated content (e.g. tomorrow's daily test). Never throws.
 class ServerClock {
   static Duration _offset = Duration.zero;
@@ -32,10 +33,10 @@ class ServerClock {
   /// server-observed skew (zero until the first response arrives).
   static DateTime nowUtc() => DateTime.now().toUtc().add(_offset);
 
-  /// Refresh the skew when it is older than 10 minutes. Does one cheap read
-  /// (the current user's own profile doc); the response `Date` header
-  /// refreshes the offset through the hook. Silent when signed out or the
-  /// read fails — [nowUtc] then falls back to the device clock.
+  /// Refresh the skew when it is older than 10 minutes. Does one cheap
+  /// Cloudflare read (GET /config); the response `Date` header refreshes
+  /// the offset through the hook in [CfApi]. Silent when signed out or
+  /// the read fails — [nowUtc] then falls back to the device clock.
   static Future<void> ensureSynced() async {
     final last = _lastSync;
     if (last != null &&
@@ -45,7 +46,7 @@ class ServerClock {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) return;
     try {
-      await FirestoreRest.getDocument('users/$uid');
+      await CfApi.getConfig();
     } catch (_) {
       // Offline or transient failure — keep the previous offset.
     }

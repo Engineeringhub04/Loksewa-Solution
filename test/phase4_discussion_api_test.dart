@@ -29,21 +29,19 @@ void main() {
       accessToken: 'acc-1',
       refreshToken: 'ref-1',
     ));
-    // Seed the mirrored Firebase session so AuthService.currentUser
+    // Seed the CF session so AuthService.currentUser
     // exists (reaction + report paths require a signed-in user).
     await PrefsService.setString(
-      PrefsService.sessionKey,
+      CfApi.sessionPrefsKey,
       json.encode({
         'user': {
           'uid': 'u1',
           'email': 'a@b.c',
-          'displayName': 'Test User',
+          'name': 'Test User',
           'photoURL': null,
         },
-        'idToken': 'test-id-token',
+        'accessToken': 'test-access-token',
         'refreshToken': 'ref',
-        'expiresAt':
-            DateTime.now().add(const Duration(hours: 1)).toIso8601String(),
       }),
     );
     await AuthService.peekSavedSession();

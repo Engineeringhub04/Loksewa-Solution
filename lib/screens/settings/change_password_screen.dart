@@ -16,10 +16,10 @@ import '../../widgets/subpage_header.dart';
 /// Security Settings → Change Password.
 ///
 /// Old / New / Confirm fields (obscured, FloatingLabelField style like the
-/// auth screens). Old-password verification re-authenticates with Identity
-/// Toolkit `accounts:signInWithPassword`; the fresh idToken from that step
-/// is then used for `accounts:update` with the new password. The stored
-/// session is never touched.
+/// auth screens). The change runs as a single POST /auth/change-password
+/// on the loksewa-api (Phase-3): the worker verifies the old password
+/// against the CF account and revokes the user's other sessions. The
+/// stored session is never touched.
 ///
 /// Validations (inline errors, EN + NE):
 /// - old empty → prompt; wrong → "Old password is incorrect."

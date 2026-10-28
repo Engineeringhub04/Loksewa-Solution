@@ -69,7 +69,16 @@ class ExamRest {
         if (idToken.isNotEmpty) 'Authorization': 'Bearer $idToken',
       };
 
-  static Future<String> _token() => AuthService.getValidIdToken();
+  /// Phase-7: the Firebase Auth mirror is retired, so there is NO token
+  /// anymore — the few leftover ExamRest consumers (mock/live deep links,
+  /// SubjectQuiz's empty questions corpus, the title resolver's unscoped
+  /// fallbacks) run unauthenticated and FAIL SOFT below: an auth refusal
+  /// (401/403) reads as null/empty instead of throwing, exactly like a
+  /// missing document.
+  static Future<String> _token() async => '';
+
+  static bool _isAuthRefusal(int statusCode) =>
+      statusCode == 401 || statusCode == 403;
 
   static dynamic decode(dynamic v) {
     if (v is! Map<String, dynamic>) return v;
@@ -131,6 +140,7 @@ class ExamRest {
     final res =
         await _http.get(Uri.parse('$_base/$path'), headers: _headers(token));
     if (res.statusCode == 404) return null;
+    if (_isAuthRefusal(res.statusCode)) return null; // Phase-7 fail-soft
     if (res.statusCode != 200)
       throw Exception('getDoc $path: ${res.statusCode}');
     return _docToMap(json.decode(res.body) as Map<String, dynamic>);
@@ -147,6 +157,7 @@ class ExamRest {
       Uri.parse('$_base/$collectionPath?pageSize=$pageSize'),
       headers: _headers(token),
     );
+    if (_isAuthRefusal(res.statusCode)) return []; // Phase-7 fail-soft
     if (res.statusCode != 200) {
       throw Exception('listDocs $collectionPath: ${res.statusCode}');
     }
@@ -190,6 +201,7 @@ class ExamRest {
       body: json.encode({'structuredQuery': structured}),
     );
     if (res.statusCode != 200) {
+      if (_isAuthRefusal(res.statusCode)) return []; // Phase-7 fail-soft
       if (_isMissingIndex(res.statusCode, res.body)) {
         throw MissingIndexException('runQuery $collectionId: ${res.body}');
       }
@@ -209,47 +221,6 @@ class ExamRest {
     if (statusCode != 400) return false;
     return body.contains('FAILED_PRECONDITION') ||
         body.contains('requires an index');
-  }
-
-  /// Count aggregation over a structured query — used for rank computation
-  /// without reading every document. Billed ~1 read per 1000 index entries
-  /// matched. Throws [MissingIndexException] when the composite index
-  /// backing the query does not exist yet.
-  static Future<int> runCount(
-    String collectionId, {
-    Map<String, dynamic>? where,
-  }) async {
-    final token = await _token();
-    final structured = <String, dynamic>{
-      'from': [
-        {'collectionId': collectionId}
-      ],
-    };
-    if (where != null) structured['where'] = where;
-    final res = await _http.post(
-      Uri.parse('$_base:runAggregationQuery'),
-      headers: _headers(token),
-      body: json.encode({
-        'structuredQuery': structured,
-        'aggregations': [
-          {
-            'alias': 'cnt',
-            'count': <String, dynamic>{},
-          }
-        ],
-      }),
-    );
-    if (res.statusCode != 200) {
-      if (_isMissingIndex(res.statusCode, res.body)) {
-        throw MissingIndexException('runCount $collectionId: ${res.body}');
-      }
-      throw Exception('runCount $collectionId: ${res.statusCode} ${res.body}');
-    }
-    final list = json.decode(res.body) as List? ?? [];
-    if (list.isEmpty) return 0;
-    final agg =
-        ((list.first as Map)['result'] as Map?)?['aggregateFields']?['cnt'];
-    return int.tryParse('${agg?['integerValue'] ?? 0}') ?? 0;
   }
 
   /// Operator aliases are normalized: '==' → 'EQUAL', '!=' → 'NOT_EQUAL',
@@ -301,6 +272,7 @@ class ExamRest {
         body:
             json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
       );
+      if (_isAuthRefusal(res.statusCode)) return ''; // Phase-7 fail-soft
       if (res.statusCode != 200) {
         throw Exception(
             'createDoc $collectionPath: ${res.statusCode} ${res.body}');
@@ -334,6 +306,7 @@ class ExamRest {
       headers: _headers(token),
       body: json.encode(body),
     );
+    if (_isAuthRefusal(res.statusCode)) return ''; // Phase-7 fail-soft
     if (res.statusCode != 200) {
       throw Exception(
           'createDoc $collectionPath: ${res.statusCode} ${res.body}');
@@ -348,55 +321,6 @@ class ExamRest {
     const chars =
         'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
     return List.generate(20, (_) => chars[_rand.nextInt(chars.length)]).join();
-  }
-
-  /// Full-document PATCH write (no update mask).
-  ///
-  /// [serverTimestampFields] lists field paths set to the real Firestore
-  /// server time (REQUEST_TIME) via a `:commit` update transform — mirrors
-  /// `serverTimestamp()` in the React code.
-  static Future<void> setDoc(String path, Map<String, dynamic> data,
-      {List<String> serverTimestampFields = const []}) async {
-    final token = await _token();
-    if (serverTimestampFields.isEmpty) {
-      final res = await _http.patch(
-        Uri.parse('$_base/$path'),
-        headers: _headers(token),
-        body:
-            json.encode({'fields': data.map((k, v) => MapEntry(k, encode(v)))}),
-      );
-      if (res.statusCode != 200) {
-        throw Exception('setDoc $path: ${res.statusCode} ${res.body}');
-      }
-      return;
-    }
-    final fields = Map<String, dynamic>.fromEntries(
-        data.entries.map((e) => MapEntry(e.key, encode(e.value))));
-    for (final f in serverTimestampFields) {
-      fields.remove(f);
-    }
-    final res = await _http.post(
-      Uri.parse('$_base:commit'),
-      headers: _headers(token),
-      body: json.encode({
-        'writes': [
-          {
-            'update': {
-              'name':
-                  'projects/${AppConfig.firebaseProjectId}/databases/(default)/documents/$path',
-              'fields': fields,
-            },
-            'updateTransforms': [
-              for (final f in serverTimestampFields)
-                {'fieldPath': f, 'setToServerValue': 'REQUEST_TIME'},
-            ],
-          },
-        ],
-      }),
-    );
-    if (res.statusCode != 200) {
-      throw Exception('setDoc $path: ${res.statusCode} ${res.body}');
-    }
   }
 
   static String? get uid => AuthService.currentUser?.uid;
@@ -789,34 +713,31 @@ class ExamSet {
     final rawSubIds = _strList(m['subcourseIds']);
     final rawCourseIds = _strList(m['courseIds']);
     return ExamSet(
-        id: _str(m['id']),
-        courseId: _str(m['courseId']),
-        subcourseId: _str(m['subcourseId']),
-        courseIds:
-            rawCourseIds.isNotEmpty ? rawCourseIds : [_str(m['courseId'])]
-              ..removeWhere((e) => e.isEmpty),
-        subcourseIds:
-            rawSubIds.isNotEmpty ? rawSubIds : [_str(m['subcourseId'])]
-              ..removeWhere((e) => e.isEmpty),
-        provinceId: _str(m['provinceId']),
-        sectionId: normalizeExamSectionId(rawSection),
-        isPublished: _bool(m['isPublished'], true),
-        title: _str(m['title']),
-        price: _dbl(m['price']),
-        currency: _str(m['currency'], 'NPR'),
-        startTime: _dt(m['startTime']),
-        totalQuestions: _num(m['totalQuestions']),
-        durationMinutes: _num(m['durationMinutes'], 60),
-        passPercent: _num(m['passPercent'], 40),
-        accessType: _str(m['accessType'], 'free'),
-        difficulty: _str(m['difficulty'], 'medium'),
-        contentType: _str(m['contentType'], 'mcq'),
-        pdfUrl: m['pdfUrl'] is String ? m['pdfUrl'] as String : null,
-        questions: ((m['questions'] as List?) ?? [])
-            .map(
-                (q) => ExamQuestion.fromMap((q as Map).cast<String, dynamic>()))
-            .toList(),
-      );
+      id: _str(m['id']),
+      courseId: _str(m['courseId']),
+      subcourseId: _str(m['subcourseId']),
+      courseIds: rawCourseIds.isNotEmpty ? rawCourseIds : [_str(m['courseId'])]
+        ..removeWhere((e) => e.isEmpty),
+      subcourseIds: rawSubIds.isNotEmpty ? rawSubIds : [_str(m['subcourseId'])]
+        ..removeWhere((e) => e.isEmpty),
+      provinceId: _str(m['provinceId']),
+      sectionId: normalizeExamSectionId(rawSection),
+      isPublished: _bool(m['isPublished'], true),
+      title: _str(m['title']),
+      price: _dbl(m['price']),
+      currency: _str(m['currency'], 'NPR'),
+      startTime: _dt(m['startTime']),
+      totalQuestions: _num(m['totalQuestions']),
+      durationMinutes: _num(m['durationMinutes'], 60),
+      passPercent: _num(m['passPercent'], 40),
+      accessType: _str(m['accessType'], 'free'),
+      difficulty: _str(m['difficulty'], 'medium'),
+      contentType: _str(m['contentType'], 'mcq'),
+      pdfUrl: m['pdfUrl'] is String ? m['pdfUrl'] as String : null,
+      questions: ((m['questions'] as List?) ?? [])
+          .map((q) => ExamQuestion.fromMap((q as Map).cast<String, dynamic>()))
+          .toList(),
+    );
   }
 
   bool get isPro => accessType == 'pro';
@@ -1042,7 +963,8 @@ ExamCardState resolveExamCardState({
     return hasPendingPurchase ? ExamCardState.pending : ExamCardState.locked;
   }
   final start = set.startTime;
-  if (start == null) return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
+  if (start == null)
+    return hasAttempted ? ExamCardState.rejoin : ExamCardState.ready;
   if (now.isBefore(start.subtract(cardRevealLead))) return ExamCardState.hidden;
   if (now.isBefore(start)) return ExamCardState.countdown;
   final end = liveWindowEnd(set);
@@ -1090,20 +1012,17 @@ class ExamSection {
 
   factory ExamSection.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
-    List<String> ids(dynamic v) => v is List
-        ? v.map((e) => e.toString()).toList()
-        : <String>[];
+    List<String> ids(dynamic v) =>
+        v is List ? v.map((e) => e.toString()).toList() : <String>[];
     int ord = 0;
     final raw = fields['order'];
     if (raw is num) ord = raw.toInt();
     final rawKind = (fields['kind'] ?? 'mcq').toString();
-    final kind =
-        rawKind == 'theory' || rawKind == 'mixed' ? rawKind : 'mcq';
+    final kind = rawKind == 'theory' || rawKind == 'mixed' ? rawKind : 'mcq';
     int colorValue = 0xFF2563EB;
     final rawColor = (fields['color'] ?? '').toString();
     if (RegExp(r'^#?[0-9a-fA-F]{6}$').hasMatch(rawColor)) {
-      colorValue =
-          int.parse('FF${rawColor.replaceFirst('#', '')}', radix: 16);
+      colorValue = int.parse('FF${rawColor.replaceFirst('#', '')}', radix: 16);
     }
     return ExamSection(
       id: (doc['id'] ?? fields['id'] ?? '').toString(),
@@ -1180,9 +1099,8 @@ class ExamProvince {
 
   factory ExamProvince.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
-    List<String> ids(dynamic v) => v is List
-        ? v.map((e) => e.toString()).toList()
-        : <String>[];
+    List<String> ids(dynamic v) =>
+        v is List ? v.map((e) => e.toString()).toList() : <String>[];
     int ord = 0;
     final raw = fields['order'];
     if (raw is num) ord = raw.toInt();
@@ -1255,9 +1173,7 @@ String normalizeExamSectionId(String raw) {
 /// shows every province's sets).
 bool examSetVisible(ExamSet s, {String? sectionId, String? provinceId}) {
   if (!s.isPublished) return false;
-  if (sectionId != null &&
-      sectionId.isNotEmpty &&
-      s.sectionId != sectionId) {
+  if (sectionId != null && sectionId.isNotEmpty && s.sectionId != sectionId) {
     return false;
   }
   if (provinceId != null &&
@@ -1286,8 +1202,8 @@ Future<List<ExamSet>> fetchExamSets({
   final sets = rows
       .map((r) => _cfDateField(r, 'startTime'))
       .map(ExamSet.fromMap)
-      .where((s) => examSetVisible(s,
-          sectionId: sectionId, provinceId: provinceId))
+      .where((s) =>
+          examSetVisible(s, sectionId: sectionId, provinceId: provinceId))
       .toList()
     ..sort((a, b) {
       // startTime desc, nulls last (React order).
@@ -1302,9 +1218,7 @@ Future<List<ExamSet>> fetchExamSets({
 /// Phase-2: GET /exam/sets/:id (null on 404, like the Firestore read).
 Future<ExamSet?> fetchExamSet(String setId) async {
   final row = await CfApi.getExamSetRow(setId);
-  return row == null
-      ? null
-      : ExamSet.fromMap(_cfDateField(row, 'startTime'));
+  return row == null ? null : ExamSet.fromMap(_cfDateField(row, 'startTime'));
 }
 
 /// Normalizes ONE scope dimension of an exam-rules doc (NOTE-6). The
@@ -1360,7 +1274,8 @@ class ExamRuleDoc {
     }
     return ExamRuleDoc(
       id: (doc['id'] ?? fields['id'] ?? '').toString(),
-      courseIds: normalizeExamRuleScope(fields['courseIds'], fields['courseId']),
+      courseIds:
+          normalizeExamRuleScope(fields['courseIds'], fields['courseId']),
       subcourseIds:
           normalizeExamRuleScope(fields['subcourseIds'], fields['subcourseId']),
       provinceIds:
@@ -1717,17 +1632,14 @@ bool examAnswerIsPublished(Map<String, dynamic> a) =>
 /// [ExamAnswer.isReappliable].
 bool examAnswerIsReappliable(Map<String, dynamic> a) {
   final status = (a['status'] ?? '').toString();
-  return status.isNotEmpty &&
-      status != 'pending' &&
-      !examAnswerIsPublished(a);
+  return status.isNotEmpty && status != 'pending' && !examAnswerIsPublished(a);
 }
 
 /// Groups [answers] by examSetId, each group sorted newest-first
 /// (v1.0.125: a set can hold several submissions once re-apply
 /// exists). Ties on createdAt keep the later list position first —
 /// the per-user ID index is append-ordered, so later = newer.
-Map<String, List<ExamAnswer>> groupExamAnswersBySet(
-    List<ExamAnswer> answers) {
+Map<String, List<ExamAnswer>> groupExamAnswersBySet(List<ExamAnswer> answers) {
   final order = <String, int>{};
   for (var i = 0; i < answers.length; i++) {
     order[answers[i].id] = i;
@@ -1907,8 +1819,7 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
         // ExamSection.displayName lookup: NE name in Nepali mode when
         // the worker provides one.
         final ne = fromMeta('sectionNameNe');
-        sectionName =
-            nepali && ne.isNotEmpty ? ne : fromMeta('sectionName');
+        sectionName = nepali && ne.isNotEmpty ? ne : fromMeta('sectionName');
       }
     }
   } catch (_) {
@@ -1921,7 +1832,8 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
   );
 }
 
-const _examAnswerWebhookUrl = 'https://script.google.com/macros/s/AKfycbzBvEYD5q7hbqApGLrdeKlNoJmlyNdbs4VgA7vTaqY4lrCySIaX39xXXMM-UnrCxJeo/exec';
+const _examAnswerWebhookUrl =
+    'https://script.google.com/macros/s/AKfycbzBvEYD5q7hbqApGLrdeKlNoJmlyNdbs4VgA7vTaqY4lrCySIaX39xXXMM-UnrCxJeo/exec';
 
 /// Notifies the admin (via Discord) whenever a student submits a theory
 /// answer — mirrors examAnswerNotify.ts: POSTs to the small Apps Script web
@@ -2629,9 +2541,8 @@ Future<String> saveDailyTestResult({
     rethrow;
   }
   final nested = body['row'] ?? body['result'];
-  final id = body['id'] ??
-      body['resultId'] ??
-      (nested is Map ? nested['id'] : null);
+  final id =
+      body['id'] ?? body['resultId'] ?? (nested is Map ? nested['id'] : null);
   return (id ?? '').toString();
 }
 
@@ -2926,7 +2837,10 @@ Map<String, dynamic> _cfChapterEntry(Map<String, dynamic> raw,
     {required bool withProgress}) {
   final shaped = _subjectChapterFromDoc(raw);
   if (!withProgress) return shaped;
-  return {...shaped, 'progress': _cfProgress(raw['progress'], '${shaped['id']}')};
+  return {
+    ...shaped,
+    'progress': _cfProgress(raw['progress'], '${shaped['id']}')
+  };
 }
 
 /// One unit entry from a /subjects/units payload — the shape
@@ -2955,9 +2869,8 @@ Future<List<Map<String, dynamic>>> fetchSubjectChapters(
       () async {
     final rows = await CfApi.getSubjectChapters(subjectId,
         courseId: course, subcourseId: subcourse);
-    final out = rows
-        .map((r) => _cfChapterEntry(r, withProgress: false))
-        .toList();
+    final out =
+        rows.map((r) => _cfChapterEntry(r, withProgress: false)).toList();
     out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
     return out;
   });
@@ -2972,8 +2885,7 @@ Future<List<Map<String, dynamic>>> fetchSubjectChaptersWithProgress(
     String course, String subcourse, String subjectId, String? uid) async {
   final rows = await CfApi.getSubjectChapters(subjectId,
       courseId: course, subcourseId: subcourse);
-  final out =
-      rows.map((r) => _cfChapterEntry(r, withProgress: true)).toList();
+  final out = rows.map((r) => _cfChapterEntry(r, withProgress: true)).toList();
   out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
   return out;
 }
@@ -2984,8 +2896,7 @@ Future<List<Map<String, dynamic>>> fetchSubjectChaptersWithProgress(
 Future<List<Map<String, dynamic>>> fetchSubjectUnits(
     String course, String subcourse, String subjectId) {
   final logical = canonicalCatalogSlug(subjectId);
-  return _cachedOrInFlight('units:${course}__${subcourse}__$logical',
-      () async {
+  return _cachedOrInFlight('units:${course}__${subcourse}__$logical', () async {
     final rows = await CfApi.getSubjectUnits(subjectId,
         courseId: course, subcourseId: subcourse);
     final out = rows.map(_cfUnitEntry).toList();
@@ -3013,8 +2924,7 @@ Future<List<Map<String, dynamic>>> fetchUnitChapters(
       if (chapters is! List) return <Map<String, dynamic>>[];
       final out = chapters
           .whereType<Map>()
-          .map((c) => _cfChapterEntry(
-              Map<String, dynamic>.from(c),
+          .map((c) => _cfChapterEntry(Map<String, dynamic>.from(c),
               withProgress: false))
           .toList();
       out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
@@ -3105,7 +3015,9 @@ Future<Map<String, dynamic>?> fetchLearningProgress(
       : (completed ? 100 : 0);
   return {
     ...p,
-    'subjectId': p['subjectId'] ?? chapter['subjectId'] ?? _canonicalLearningId(subjectId),
+    'subjectId': p['subjectId'] ??
+        chapter['subjectId'] ??
+        _canonicalLearningId(subjectId),
     'chapterId': p['chapterId'],
     'unitId': p['unitId'] ?? chapter['unitId'],
     'attempted': attempted,
@@ -3227,8 +3139,7 @@ Future<List<Map<String, dynamic>>> fetchMyContentPurchases(String uid) async {
   // for signature parity). Newest first, exactly as the query version.
   final docs = await CfApi.getMyContentPurchases();
   return docs.map((d) {
-    final ts =
-        CfJson.asDateTime(d['createdAt'])?.millisecondsSinceEpoch ?? 0;
+    final ts = CfJson.asDateTime(d['createdAt'])?.millisecondsSinceEpoch ?? 0;
     return {...d, '_ts': ts};
   }).toList()
     ..sort((a, b) => (b['_ts'] as int).compareTo(a['_ts'] as int));
@@ -4178,40 +4089,6 @@ String qotdEn(String v) {
   final p = v.split('||');
   final en = p[0].trim();
   return en.isNotEmpty ? en : v.trim();
-}
-
-/// Legacy helpers kept for existing callers.
-Future<QotdQuestion?> fetchTodayQuestion(
-    String courseId, String subcourseId) async {
-  final docId = '${todayDateKey()}__${courseId}__${subcourseId}';
-  final doc =
-      await ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null);
-  if (doc == null || doc['isPublished'] == false) return null;
-  return QotdQuestion.normalized(doc, docId, null);
-}
-
-Future<QotdResult?> fetchQotdResult(String uid, String attemptId) async {
-  final doc = await ExamRest.getDoc('users/$uid/questionofdata/$attemptId')
-      .catchError((_) => null);
-  return doc == null ? null : QotdResult.fromMap(doc);
-}
-
-Future<QotdSummary> fetchQotdSummary(String uid) async {
-  final doc = await ExamRest.getDoc('users/$uid/questionofdata/summary')
-      .catchError((_) => null);
-  return QotdSummary.fromMap(doc ?? {});
-}
-
-/// Saves an answer + rolls it into the summary; returns the updated summary.
-Future<QotdSummary> answerQotd({
-  required String uid,
-  required String attemptId,
-  required QotdQuestion question,
-  required String selectedOptionId,
-}) async {
-  final prior = await fetchQotdSummary(uid);
-  final saved = await submitQotdAnswer(uid, question, selectedOptionId, prior);
-  return saved.summary;
 }
 
 // ---------------------------------------------------------------------------

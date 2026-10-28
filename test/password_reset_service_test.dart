@@ -6,69 +6,12 @@ import 'package:http/testing.dart';
 import 'package:loksewa_solution/services/password_reset_service.dart';
 
 void main() {
-  const workerBase = 'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+  const workerBase =
+      'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
 
   tearDown(() {
     // Never leak a mock client into another test.
     PasswordResetService.setTestClient(null);
-  });
-
-  test('POSTs {email} to /request-password-reset as JSON', () async {
-    Uri? seenUrl;
-    Map<String, String>? seenHeaders;
-    Map<String, dynamic>? seenBody;
-    PasswordResetService.setTestClient(
-      MockClient((request) async {
-        seenUrl = request.url;
-        seenHeaders = request.headers;
-        seenBody = jsonDecode(request.body) as Map<String, dynamic>;
-        return http.Response('{"ok":true}', 200);
-      }),
-    );
-
-    final result =
-        await PasswordResetService.requestReset('user@example.com');
-
-    expect(result, PasswordResetResult.sent);
-    expect(seenUrl.toString(), '$workerBase/request-password-reset');
-    expect(seenHeaders!['Content-Type'], 'application/json');
-    expect(seenBody, {'email': 'user@example.com'});
-  });
-
-  test('maps ok:false reasons to the matching result', () async {
-    final cases = {
-      'rate_limited': PasswordResetResult.rateLimited,
-      'no_provider': PasswordResetResult.noProvider,
-      'invalid_email': PasswordResetResult.invalidEmail,
-      'account_not_found': PasswordResetResult.accountNotFound,
-      'something_else': PasswordResetResult.failed,
-    };
-    for (final entry in cases.entries) {
-      PasswordResetService.setTestClient(
-        MockClient((_) async =>
-            http.Response('{"ok":false,"reason":"${entry.key}"}', 200)),
-      );
-      expect(
-        await PasswordResetService.requestReset('user@example.com'),
-        entry.value,
-        reason: 'reason=${entry.key}',
-      );
-    }
-  });
-
-  test('maps transport failures and bad JSON to failed (never throws)',
-      () async {
-    PasswordResetService.setTestClient(
-      MockClient((_) async => throw http.ClientException('offline')),
-    );
-    expect(await PasswordResetService.requestReset('user@example.com'),
-        PasswordResetResult.failed);
-
-    PasswordResetService.setTestClient(
-      MockClient((_) async => http.Response('not json', 200)),
-    );
-    expect(await PasswordResetService.requestReset('user@example.com'),
-        PasswordResetResult.failed);
   });
 
   group('completeReset', () {
@@ -86,8 +29,8 @@ void main() {
         }),
       );
 
-      final result = await PasswordResetService.completeReset(
-          'tok123', 'newpass1');
+      final result =
+          await PasswordResetService.completeReset('tok123', 'newpass1');
 
       expect(result, PasswordResetCompleteResult.success);
       expect(seenUrl.toString(), '$workerBase/complete-password-reset');
@@ -163,8 +106,8 @@ void main() {
       };
       for (final entry in cases.entries) {
         PasswordResetService.setTestClient(
-          MockClient((_) async => http.Response(
-              '{"valid":false,"reason":"${entry.key}"}', 200)),
+          MockClient((_) async =>
+              http.Response('{"valid":false,"reason":"${entry.key}"}', 200)),
         );
         expect(
           await PasswordResetService.validateToken('tok123'),

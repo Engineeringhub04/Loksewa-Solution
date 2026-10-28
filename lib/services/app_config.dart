@@ -21,7 +21,4 @@ class AppConfig {
 
   static String get firestoreBase =>
       'https://firestore.googleapis.com/v1/projects/$firebaseProjectId/databases/(default)/documents';
-
-  static String get identityToolkitBase =>
-      'https://identitytoolkit.googleapis.com/v1';
 }

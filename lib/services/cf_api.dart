@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'prefs_service.dart';
+import 'server_clock.dart';
 
 /// Cloudflare backend client (worker `loksewa-api`) — Round-1 migration.
 ///
@@ -134,7 +135,8 @@ class CfJson {
     if (v is num) {
       // Seconds vs milliseconds: Firestore seconds are ~1.7e9, ms ~1.7e12.
       final n = v.toInt();
-      return DateTime.fromMillisecondsSinceEpoch(n < 100000000000 ? n * 1000 : n);
+      return DateTime.fromMillisecondsSinceEpoch(
+          n < 100000000000 ? n * 1000 : n);
     }
     if (v is String) {
       final d = DateTime.tryParse(v);
@@ -156,8 +158,7 @@ class CfJson {
 }
 
 class CfApi {
-  static const baseUrl =
-      'https://loksewa-api.loksewa-solution-api.workers.dev';
+  static const baseUrl = 'https://loksewa-api.loksewa-solution-api.workers.dev';
   static const sessionPrefsKey = 'cf_session';
   static const _timeout = Duration(seconds: 15);
 
@@ -286,6 +287,11 @@ class CfApi {
     } catch (e) {
       throw CfNetworkError(e);
     }
+    // Phase-6: every API response carries the server's Date header — feed
+    // it to ServerClock (before any status handling, exactly like the
+    // FirestoreRest hooks did) so the clock skew stays fresh from CF
+    // traffic alone.
+    ServerClock.updateFromHttpDate(res.headers['date']);
     dynamic decoded;
     if (res.body.isNotEmpty) {
       try {
@@ -465,7 +471,8 @@ class CfApi {
     required String code,
     required String newPassword,
   }) async {
-    final body = await _request('POST', '/auth/claim/verify', auth: false,
+    final body = await _request('POST', '/auth/claim/verify',
+        auth: false,
         body: {'email': email, 'code': code, 'newPassword': newPassword});
     final result = _authResult(body);
     await storeAuthResult(result);
@@ -484,7 +491,8 @@ class CfApi {
     required String code,
     required String newPassword,
   }) async {
-    await _request('POST', '/auth/reset/verify', auth: false,
+    await _request('POST', '/auth/reset/verify',
+        auth: false,
         body: {'email': email, 'code': code, 'newPassword': newPassword});
   }
 
@@ -496,8 +504,8 @@ class CfApi {
 
   /// Whether [deviceId] is the account's active device (Bearer).
   static Future<bool> sessionCheck(String deviceId) async {
-    final body = await _request('GET',
-        '/auth/session/check?deviceId=${Uri.encodeComponent(deviceId)}');
+    final body = await _request(
+        'GET', '/auth/session/check?deviceId=${Uri.encodeComponent(deviceId)}');
     return CfJson.asBool(_asMap(body)['active']);
   }
 
@@ -519,8 +527,11 @@ class CfApi {
   }
 
   /// Course + subcourse rows for the setup screen / name resolution.
-  static Future<({List<Map<String, dynamic>> courses, List<Map<String, dynamic>> subcourses})>
-      getCourses() async {
+  static Future<
+      ({
+        List<Map<String, dynamic>> courses,
+        List<Map<String, dynamic>> subcourses
+      })> getCourses() async {
     final body = await _request('GET', '/courses');
     return (
       courses: _rows(body, ['courses']),
@@ -571,8 +582,8 @@ class CfApi {
       for (final row in body.whereType<Map>()) {
         final id = row['id'] ?? row['setId'] ?? row['examSetId'];
         if (id != null) {
-          out['$id'] =
-              CfJson.asInt(row['durationMinutes'] ?? row['duration'], fallback: 60);
+          out['$id'] = CfJson.asInt(row['durationMinutes'] ?? row['duration'],
+              fallback: 60);
         }
       }
       return out;
@@ -658,7 +669,10 @@ class CfApi {
     }
     final q = Uri(queryParameters: params).query;
     final body = await _request('GET', '/gorkhapatra?$q');
-    return (rows: _rows(body, ['rows', 'posts', 'items', 'data']), body: _asMap(body));
+    return (
+      rows: _rows(body, ['rows', 'posts', 'items', 'data']),
+      body: _asMap(body)
+    );
   }
 
   /// One Gorkhapatra post by slug. Null when missing.
@@ -830,11 +844,8 @@ class CfApi {
   // ----------------------------------------------------------- leaderboard
   /// Leaderboard rows for a subcourse + the caller's own row (when the
   /// worker includes it).
-  static Future<
-      ({
-        List<Map<String, dynamic>> rows,
-        Map<String, dynamic>? own
-      })> getLeaderboard({
+  static Future<({List<Map<String, dynamic>> rows, Map<String, dynamic>? own})>
+      getLeaderboard({
     required String courseId,
     required String subcourseId,
   }) async {
@@ -966,8 +977,8 @@ class CfApi {
   /// callers keep the client comparator as a safety net.
   static Future<List<Map<String, dynamic>>> getExamRankings(
       String setId) async {
-    final body = await _request(
-        'GET', '/exam/rankings/${Uri.encodeComponent(setId)}');
+    final body =
+        await _request('GET', '/exam/rankings/${Uri.encodeComponent(setId)}');
     return _rows(body, ['rows', 'rankings', 'items', 'data']);
   }
 
@@ -1047,8 +1058,7 @@ class CfApi {
   /// Returns the raw body (carries the new result id).
   static Future<Map<String, dynamic>> postDailyTestResult(
       Map<String, dynamic> payload) async {
-    final body =
-        await _request('POST', '/daily-test/results', body: payload);
+    final body = await _request('POST', '/daily-test/results', body: payload);
     return _asMap(body);
   }
 
@@ -1230,8 +1240,8 @@ class CfApi {
 
   static Future<void> approveAdminPurchase(String kind, String id,
       {String? adminMessage}) async {
-    await _request('POST',
-        '/admin/purchases/$kind/${Uri.encodeComponent(id)}/approve',
+    await _request(
+        'POST', '/admin/purchases/$kind/${Uri.encodeComponent(id)}/approve',
         body: {
           if (adminMessage != null) 'adminMessage': adminMessage,
         });
@@ -1239,8 +1249,8 @@ class CfApi {
 
   static Future<void> rejectAdminPurchase(String kind, String id,
       {String? adminMessage, String? rejectionReason}) async {
-    await _request('POST',
-        '/admin/purchases/$kind/${Uri.encodeComponent(id)}/reject',
+    await _request(
+        'POST', '/admin/purchases/$kind/${Uri.encodeComponent(id)}/reject',
         body: {
           if (adminMessage != null) 'adminMessage': adminMessage,
           if (rejectionReason != null) 'rejectionReason': rejectionReason,
@@ -1328,8 +1338,7 @@ class CfApi {
 
   /// Admin pin/unpin.
   static Future<void> pinDiscussion(String id, bool isPinned) async {
-    await _request('POST',
-        '/discussions/${Uri.encodeComponent(id)}/pin',
+    await _request('POST', '/discussions/${Uri.encodeComponent(id)}/pin',
         body: {'isPinned': isPinned});
   }
 
@@ -1390,12 +1399,11 @@ class CfApi {
     required String targetId,
     required String discussionId,
   }) async {
-    final body = await _request('POST', '/discussions/reactions/toggle',
-        body: {
-          'targetType': targetType,
-          'targetId': targetId,
-          'discussionId': discussionId,
-        });
+    final body = await _request('POST', '/discussions/reactions/toggle', body: {
+      'targetType': targetType,
+      'targetId': targetId,
+      'discussionId': discussionId,
+    });
     final m = _asMap(body);
     return (
       liked: CfJson.asBool(m['liked']),
@@ -1408,12 +1416,11 @@ class CfApi {
   static Future<Set<String>> getDiscussionReactionState(
       List<({String type, String id})> targets) async {
     if (targets.isEmpty) return <String>{};
-    final body = await _request('POST', '/discussions/reactions/state',
-        body: {
-          'targets': [
-            for (final t in targets) {'type': t.type, 'id': t.id},
-          ],
-        });
+    final body = await _request('POST', '/discussions/reactions/state', body: {
+      'targets': [
+        for (final t in targets) {'type': t.type, 'id': t.id},
+      ],
+    });
     final m = _asMap(body);
     final liked = m['liked'];
     if (liked is List) return liked.map((e) => '$e').toSet();
@@ -1525,8 +1532,7 @@ class CfApi {
   /// [kind] is 'exam' | 'content'.
   static Future<void> patchPurchase(
       String kind, String id, Map<String, dynamic> fields) async {
-    await _request('PATCH',
-        '/purchases/$kind/${Uri.encodeComponent(id)}',
+    await _request('PATCH', '/purchases/$kind/${Uri.encodeComponent(id)}',
         body: fields);
   }
 

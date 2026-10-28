@@ -7,6 +7,7 @@ import 'package:loksewa_solution/screens/auth/forgot_password_screen.dart';
 import 'package:loksewa_solution/screens/auth/reset_password_screen.dart';
 import 'package:loksewa_solution/screens/auth/signup_screen.dart';
 import 'package:loksewa_solution/screens/login_screen.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/password_reset_service.dart';
 import 'package:loksewa_solution/widgets/auth/auth_header.dart';
 import 'package:loksewa_solution/widgets/auth/auth_screen_layout.dart';
@@ -182,7 +183,7 @@ void main() {
         _findAssetImage('assets/images/auth_illust_reset.png'),
         findsOneWidget,
       );
-      expect(find.text('Send Reset Link'), findsOneWidget);
+      expect(find.text('Send Code'), findsOneWidget);
     });
 
     testWidgets('reset-password shows the reset illustration',
@@ -201,11 +202,13 @@ void main() {
     tearDown(() {
       // Never leak a mock client into another test.
       PasswordResetService.setTestClient(null);
+      CfApi.setTestClient(null);
     });
 
-    testWidgets('forgot-password success hides the illustration',
+    testWidgets('forgot-password code step hides the illustration',
         (tester) async {
-      PasswordResetService.setTestClient(
+      // Round-1: the forgot flow is code-based — mock the CF worker.
+      CfApi.setTestClient(
         MockClient((request) async => http.Response('{"ok":true}', 200)),
       );
       await _pumpApp(tester, '/forgot-password');
@@ -219,13 +222,13 @@ void main() {
       final fields = find.byType(TextField);
       expect(fields, findsOneWidget);
       await tester.enterText(fields, 'user@example.com');
-      await tester.tap(find.text('Send Reset Link'));
+      await tester.tap(find.text('Send Code'));
       // Let the mocked worker future resolve, then the switchers animate.
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 100));
       await tester.pump(const Duration(milliseconds: 500));
 
-      expect(find.text('Check Your Email'), findsOneWidget);
+      expect(find.text('Verification Code'), findsOneWidget);
       expect(
         _findAssetImage('assets/images/auth_illust_reset.png'),
         findsNothing,

@@ -2,10 +2,16 @@
 //
 // Ports src/core/firebase/services/deviceSession.ts from the React (Expo) app.
 //
-// The claim lives in a single document — users/{uid}/session/active — whose
-// `deviceId` names the phone that currently holds the account. Logging in
-// somewhere else overwrites that document, and the displaced phone signs
+// Round-1 Cloudflare migration: the claim now lives server-side behind the
+// loksewa-api worker (POST /auth/session/claim + GET /auth/session/check),
+// whose rows name the `deviceId` that currently holds the account. Logging
+// in somewhere else overwrites that claim, and the displaced phone signs
 // itself out the next time it checks (splash, foreground return, or push).
+// The two endpoints cannot say WHO holds the claim or when it was last
+// active, so the takeover dialog now appears only when this phone had
+// claimed before and lost the claim (generic device copy); a first-ever
+// claim on a new phone takes over silently and the displaced phone finds
+// out on its next check — the eviction half is unchanged.
 //
 // The push is an accelerator, never the source of truth: the new device sends
 // it on its way in via the Cloudflare worker (FCM server key NEVER lives in
@@ -28,7 +34,9 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../screens/auth/app_info_screen.dart';
 import 'auth_service.dart';
+import 'cf_api.dart';
 import 'firestore_rest.dart';
 
 /// Outcome of [DeviceSessionService.checkDeviceSessionForLogin].
@@ -130,19 +138,19 @@ class DeviceSessionService {
   }
 
   // ------------------------------------------------------------ config check
-  /// Whether single-device enforcement is on. Reads meta/app_config
-  /// `singleDeviceLogin`; missing doc/field → true (enforce). Cached 5 min.
-  /// Fail-open: any error → true (keep enforcing; never silently disable).
+  /// Whether single-device enforcement is on. Reads `singleDeviceLogin`
+  /// from the API config object (GET /config); missing field → true
+  /// (enforce). Cached 5 min. Fail-open: any error → true (keep enforcing;
+  /// never silently disable).
   static Future<bool> isSingleDeviceEnabled() async {
     if (_configCached != null &&
         DateTime.now().millisecondsSinceEpoch - _configCheckedAt < _configCacheMs) {
       return _configCached!;
     }
     try {
-      final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-      final doc = await FirestoreRest.getDocument('meta/app_config', idToken: idToken);
-      final value = doc?['singleDeviceLogin'];
-      _configCached = value is bool ? value : true;
+      final config = await CfApi.getConfig();
+      final value = config['singleDeviceLogin'];
+      _configCached = value == null ? true : CfJson.asBool(value, fallback: true);
     } catch (_) {
       _configCached = true;
     }
@@ -161,11 +169,12 @@ class DeviceSessionService {
     final cached = _adminCache[uid];
     if (cached != null) return cached;
     try {
-      final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-      final doc = await FirestoreRest.getDocument('users/$uid', idToken: idToken);
-      final isAdmin = doc?['role'] == 'admin';
+      // /me is the signed-in user's own profile — in practice [uid] is
+      // always the current user wherever this is called.
+      final me = await CfApi.getMe();
+      final isAdmin = me?['role'] == 'admin';
       _adminCache[uid] = isAdmin;
-      final name = doc?['name']?.toString() ?? '';
+      final name = me?['name']?.toString() ?? '';
       if (name.isNotEmpty) _nameCache[uid] = name;
       return isAdmin;
     } catch (_) {
@@ -190,32 +199,52 @@ class DeviceSessionService {
   }
 
   // -------------------------------------------------------------- claim I/O
-  static String _sessionPath(String uid) => 'users/$uid/session/active';
+  /// Local marker that THIS phone has held the claim for [uid] at least
+  /// once. The CF check endpoint only answers "is this device active?" —
+  /// the marker is what distinguishes "nobody claimed yet" (first opener
+  /// takes it silently) from "we held it and lost it" (takeover dialog /
+  /// eviction), mirroring the empty-vs-other-device distinction the old
+  /// Firestore claim doc gave us.
+  static const _claimedFlagPrefix = 'cf:deviceClaimed:';
 
-  static Future<Map<String, dynamic>?> _readActiveSession(String uid) async {
-    final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-    return FirestoreRest.getDocument(_sessionPath(uid), idToken: idToken);
+  static Future<bool> _hasLocalClaim(String uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return prefs.getBool('$_claimedFlagPrefix$uid') ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
+  static Future<void> _setLocalClaim(String uid, bool value) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('$_claimedFlagPrefix$uid', value);
+    } catch (_) {}
+  }
+
+  /// True when the server names THIS device as the account's active one.
+  static Future<bool> _checkActive() async {
+    final deviceId = await getDeviceId();
+    return CfApi.sessionCheck(deviceId);
+  }
+
+  /// Claims this device server-side (also the "touch" — the worker stamps
+  /// claimedAt/lastActiveAt itself) and remembers the claim locally.
   static Future<void> _writeClaim(String uid) async {
-    final idToken = await AuthService.getValidIdToken().catchError((_) => '');
     final deviceId = await getDeviceId();
     String osVersion = '';
     try {
       osVersion = (await DeviceInfoPlugin().androidInfo).version.release;
     } catch (_) {}
-    await FirestoreRest.setDocument(
-      _sessionPath(uid),
-      {
-        'deviceId': deviceId,
-        'deviceName': await getDeviceName(),
-        'platform': 'android',
-        'osVersion': osVersion,
-        'claimedAt': FirestoreRest.serverTimestampValue(),
-        'lastActiveAt': FirestoreRest.serverTimestampValue(),
-      },
-      idToken: idToken,
-    );
+    await CfApi.sessionClaim({
+      'deviceId': deviceId,
+      'deviceName': await getDeviceName(),
+      'platform': 'android',
+      'osVersion': osVersion,
+      'appVersion': AppInfoScreen.appVersion,
+    });
+    await _setLocalClaim(uid, true);
     _lastTouchedAt = DateTime.now().millisecondsSinceEpoch;
     _lastVerifiedAt = _lastTouchedAt;
   }
@@ -248,27 +277,35 @@ class DeviceSessionService {
       if (!await isSingleDeviceEnabled()) return const LoginSessionCheck.ok();
       if (await _isAdmin(uid)) return const LoginSessionCheck.ok();
 
-      final results = await Future.wait([_readActiveSession(uid), getDeviceId()]);
-      final record = results[0] as Map<String, dynamic>?;
-      final deviceId = results[1] as String;
-      final claimedBy = record?['deviceId']?.toString() ?? '';
-      if (claimedBy.isEmpty || claimedBy == deviceId) {
+      final active = await _checkActive();
+      if (active) {
+        // Already ours — re-claim as a touch and go.
         await _writeClaim(uid);
         _claimDeadline = 0;
         return const LoginSessionCheck.ok();
       }
 
-      // Hold the guard off while the dialog is on screen.
-      _claimDeadline = DateTime.now().millisecondsSinceEpoch + _claimWindowMs;
-      return LoginSessionCheck.conflict(
-        DeviceSessionConflict(
-          deviceName: record?['deviceName']?.toString().isNotEmpty == true
-              ? record!['deviceName'].toString()
-              : 'Another device',
-          platformLabel: 'Android',
-          lastActiveLabel: _formatLastActive(record?['lastActiveAt']),
-        ),
-      );
+      if (await _hasLocalClaim(uid)) {
+        // This phone held the account before and lost it: another device
+        // holds the claim now. The CF endpoints can't name the holder or
+        // its last-active time, so the dialog uses generic copy.
+        // Hold the guard off while the dialog is on screen.
+        _claimDeadline = DateTime.now().millisecondsSinceEpoch + _claimWindowMs;
+        return const LoginSessionCheck.conflict(
+          DeviceSessionConflict(
+            deviceName: 'Another device',
+            platformLabel: 'Android',
+            lastActiveLabel: 'recently',
+          ),
+        );
+      }
+
+      // Never claimed from this phone (first login here, or a reinstall):
+      // first opener takes the claim, mirroring the old empty-claim path.
+      // A displaced holder finds out on its next verify and signs out.
+      await _writeClaim(uid);
+      _claimDeadline = 0;
+      return const LoginSessionCheck.ok();
     } catch (_) {
       // Fail open — logging in matters more than enforcing.
       _claimDeadline = 0;
@@ -282,20 +319,14 @@ class DeviceSessionService {
   /// claim could not be written.
   static Future<bool> takeOverDeviceSession(String uid) async {
     try {
-      final previous = await _readActiveSession(uid).catchError((_) => null);
       final deviceId = await getDeviceId();
       await _writeClaim(uid);
-      // Notify BEFORE deleting the token row — the row is the only address
-      // we have for the displaced phone. AWAITED: the delete below must not
-      // win the race, or no push ever reaches the old device.
+      // Best-effort push to the displaced phone via the legacy worker +
+      // Firestore token rows (push tokens have not migrated this round).
+      // The old holder's token row is no longer deleted here: the CF
+      // endpoints don't reveal the previous device id, and the row is the
+      // only address the notification has.
       await _notifyDisplacedDevice(uid, deviceId);
-      final prevId = previous?['deviceId']?.toString() ?? '';
-      if (prevId.isNotEmpty && prevId != deviceId) {
-        final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-        await FirestoreRest.deleteDocument('users/$uid/push_tokens/$prevId',
-                idToken: idToken)
-            .catchError((_) {});
-      }
       _claimDeadline = 0;
       return true;
     } catch (_) {
@@ -440,32 +471,25 @@ class DeviceSessionService {
       if (await _isAdmin(uid)) {
         return const SessionCheck(SessionVerdict.skipped, null);
       }
-      final results = await Future.wait([_readActiveSession(uid), getDeviceId()]);
-      final record = results[0] as Map<String, dynamic>?;
-      final deviceId = results[1] as String;
-      final claimedBy = record?['deviceId']?.toString() ?? '';
-      if (claimedBy.isEmpty) {
-        // Never claimed (e.g. pre-feature account) — first opener takes it.
-        await _writeClaim(uid);
-        return const SessionCheck(SessionVerdict.ok, null);
+      final active = await _checkActive();
+      if (!active) {
+        if (!await _hasLocalClaim(uid)) {
+          // Never claimed from this phone (pre-feature account, reinstall,
+          // or a claim that failed to write) — first opener takes it.
+          await _writeClaim(uid);
+          return const SessionCheck(SessionVerdict.ok, null);
+        }
+        // We held the claim and lost it: another device took the account.
+        // The CF endpoints don't reveal the holder's name — the eviction
+        // notice shows its generic copy.
+        return const SessionCheck(SessionVerdict.evicted, null);
       }
-      if (claimedBy != deviceId) {
-        return SessionCheck(SessionVerdict.evicted,
-            record?['deviceName']?.toString());
-      }
-      // Touch lastActiveAt (throttled, best-effort).
+      // Ours: touch the claim (throttled, best-effort) so lastActiveAt and
+      // the local-claim marker stay fresh.
       final now = DateTime.now().millisecondsSinceEpoch;
       if (now - _lastTouchedAt >= _touchIntervalMs) {
         _lastTouchedAt = now;
-        final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-        await FirestoreRest.setDocument(
-          _sessionPath(uid),
-          {
-            'deviceId': deviceId,
-            'lastActiveAt': FirestoreRest.serverTimestampValue(),
-          },
-          idToken: idToken,
-        ).catchError((_) {});
+        await _writeClaim(uid).catchError((_) {});
       }
       _lastVerifiedAt = now;
       return const SessionCheck(SessionVerdict.ok, null);
@@ -474,18 +498,13 @@ class DeviceSessionService {
     }
   }
 
-  /// Drops this device's claim on deliberate sign-out — only when it still
-  /// names THIS device, so a displaced phone never wipes the new holder.
+  /// Drops this device's claim marker on deliberate sign-out. The CF API
+  /// has no "unclaim" endpoint this round, so the server-side claim row
+  /// keeps naming this device until another login overwrites it — only
+  /// the local marker is cleared, which is also what stops a later
+  /// sign-out on a displaced phone from mattering (it holds no marker).
   static Future<void> releaseDeviceSession(String uid) async {
-    try {
-      final results = await Future.wait([_readActiveSession(uid), getDeviceId()]);
-      final record = results[0] as Map<String, dynamic>?;
-      final deviceId = results[1] as String;
-      if (record?['deviceId']?.toString() != deviceId) return;
-      final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-      await FirestoreRest.deleteDocument(_sessionPath(uid), idToken: idToken)
-          .catchError((_) {});
-    } catch (_) {}
+    await _setLocalClaim(uid, false);
   }
 
   // ------------------------------------------------------- eviction notices

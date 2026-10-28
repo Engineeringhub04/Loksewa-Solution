@@ -12,6 +12,7 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
+import 'cf_api.dart';
 import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'server_clock.dart';
@@ -3757,7 +3758,17 @@ String qotdAttemptId(QotdQuestion q) =>
     '${q.dateKey}__${q.courseId}__${q.subcourseId}__v${q.version}__${_qotdFingerprint(q)}';
 
 /// Mirrors fetchQotdDay(): today's published question + today's result +
-/// summary, with the legacy `{dateKey}`-only result lookup fallback.
+/// summary. Round-1: the bundle comes from the Cloudflare API
+/// (GET /qotd?dateKey&courseId&subcourseId, Bearer) in ONE call — the
+/// worker joins the day doc, the user's result, the summary and the
+/// greetings server-side. The envelope is unwrapped defensively: the
+/// question may ride under 'question' or BE the body; 'result', 'summary'
+/// and 'greetings' are read when present. JSON-string fields (options,
+/// categorySnapshots, snapshot…) are decoded back to lists/maps exactly
+/// like ExamRest.decode used to produce from Firestore values. The [uid]
+/// parameter is kept for signature parity (identity now rides the CF
+/// Bearer token). submitQotdAnswer still writes to Firestore this round,
+/// so a just-answered result can lag here until the data re-syncs.
 Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
     {String? key}) async {
   final k = key ?? todayDateKey();
@@ -3773,16 +3784,42 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
         summary: emptySummary);
   }
   final docId = qotdDocumentId(k, courseId, subcourseId);
-  final results = await Future.wait([
-    ExamRest.getDoc('app_qotd_daily/$docId').catchError((_) => null),
-    ExamRest.getDoc('users/$uid/questionofdata/summary')
-        .catchError((_) => null),
-    ExamRest.getDoc('meta/qotd_greetings').catchError((_) => null),
-  ]);
-  final qRaw = results[0];
-  final summary = QotdSummary.fromMap(results[1] ?? {});
-  final greetings = results[2];
-  if (qRaw == null || qRaw['isPublished'] == false) {
+  Map<String, dynamic>? body;
+  try {
+    body = await CfApi.getQotd(
+        dateKey: k, courseId: courseId, subcourseId: subcourseId);
+  } catch (_) {
+    body = null;
+  }
+  if (body == null) {
+    return QotdDay(
+        dateKey: k,
+        courseId: courseId,
+        subcourseId: subcourseId,
+        question: null,
+        result: null,
+        summary: emptySummary);
+  }
+  final greetings = body['greetings'] is Map
+      ? Map<String, dynamic>.from(body['greetings'] as Map)
+      : null;
+  final summary = QotdSummary.fromMap(body['summary'] is Map
+      ? Map<String, dynamic>.from(body['summary'] as Map)
+      : const {});
+  Map<String, dynamic>? qRaw;
+  if (body['question'] is Map) {
+    qRaw = Map<String, dynamic>.from(body['question'] as Map);
+  } else if (body.containsKey('content') ||
+      body.containsKey('isPublished') ||
+      body.containsKey('options')) {
+    qRaw = Map<String, dynamic>.from(body)
+      ..remove('result')
+      ..remove('summary')
+      ..remove('greetings');
+  }
+  if (qRaw == null ||
+      (qRaw['isPublished'] != null &&
+          !CfJson.asBool(qRaw['isPublished'], fallback: true))) {
     return QotdDay(
         dateKey: k,
         courseId: courseId,
@@ -3791,34 +3828,24 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
         result: null,
         summary: summary);
   }
-  final question = QotdQuestion.normalized(qRaw, docId, greetings);
+  final questionRaw =
+      qRaw.map((k2, v) => MapEntry(k2, CfApi.decodeFieldValue(v)));
+  final question = QotdQuestion.normalized(questionRaw, docId, greetings);
 
   QotdResult? result;
-  final attemptDoc = await ExamRest.getDoc(
-          'users/$uid/questionofdata/${qotdAttemptId(question)}')
-      .catchError((_) => null);
-  Map<String, dynamic>? rRaw = attemptDoc;
-  if (rRaw == null) {
-    // Legacy lookup: result stored under the bare date key; valid only if the
-    // snapshot still matches today's question id + version.
-    final legacy = await ExamRest.getDoc('users/$uid/questionofdata/$k')
-        .catchError((_) => null);
-    final snap = legacy?['snapshot'];
-    if (legacy != null &&
-        snap is Map &&
-        '${snap['id'] ?? ''}' == question.id &&
-        _num(snap['version']) == question.version) {
-      rRaw = legacy;
+  final rRaw0 = body['result'];
+  if (rRaw0 is Map) {
+    final rRaw = Map<String, dynamic>.from(rRaw0)
+        .map((k2, v) => MapEntry(k2, CfApi.decodeFieldValue(v)));
+    if (rRaw['snapshot'] is Map) {
+      final snapRaw = Map<String, dynamic>.from(rRaw['snapshot'] as Map);
+      snapRaw['correctGreeting'] =
+          _str(greetings?['correctGreeting'], _str(snapRaw['correctGreeting']));
+      snapRaw['wrongGreeting'] =
+          _str(greetings?['wrongGreeting'], _str(snapRaw['wrongGreeting']));
+      final merged = Map<String, dynamic>.from(rRaw)..['snapshot'] = snapRaw;
+      result = QotdResult.fromMap(merged);
     }
-  }
-  if (rRaw != null && rRaw['snapshot'] is Map) {
-    final snapRaw = Map<String, dynamic>.from(rRaw['snapshot'] as Map);
-    snapRaw['correctGreeting'] =
-        _str(greetings?['correctGreeting'], _str(snapRaw['correctGreeting']));
-    snapRaw['wrongGreeting'] =
-        _str(greetings?['wrongGreeting'], _str(snapRaw['wrongGreeting']));
-    final merged = Map<String, dynamic>.from(rRaw)..['snapshot'] = snapRaw;
-    result = QotdResult.fromMap(merged);
   }
   return QotdDay(
       dateKey: k,

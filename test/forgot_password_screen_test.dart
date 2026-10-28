@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:loksewa_solution/screens/auth/forgot_password_screen.dart';
-import 'package:loksewa_solution/services/password_reset_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 
@@ -21,9 +21,13 @@ GoRouter _router() {
 }
 
 /// The form shows instantly — the 1s preloading shimmer was removed
-/// (2026-10-10). NEVER pumpAndSettle — the success/error animations are
-/// finite but the AnimatedSwitcher is mid-flight after taps.
+/// (2026-10-10). NEVER pumpAndSettle — the AnimatedSwitcher is mid-flight
+/// after taps.
 Future<void> _pumpScreen(WidgetTester tester) async {
+  // Tall surface: the code step (3 fields + buttons) must fit on screen
+  // for taps to land.
+  tester.view.physicalSize = const Size(1080, 2400);
+  tester.view.devicePixelRatio = 1.0;
   await tester.pumpWidget(MaterialApp.router(routerConfig: _router()));
   await tester.pump(const Duration(milliseconds: 100));
   for (var i = 0; i < 3; i++) {
@@ -34,54 +38,64 @@ Future<void> _pumpScreen(WidgetTester tester) async {
 Future<void> _submitEmail(WidgetTester tester, String email) async {
   await tester.enterText(find.byType(TextField), email);
   await tester.pump(const Duration(milliseconds: 100));
-  await tester.tap(find.text('Send Reset Link'));
+  await tester.tap(find.text('Send Code'));
   await tester.pump(const Duration(milliseconds: 100));
   await tester.pump(const Duration(milliseconds: 300));
+}
+
+/// Drives step 1 (mocked ok) into the code step, then fills code +
+/// passwords so the Reset button enables.
+Future<void> _reachVerify(WidgetTester tester) async {
+  await _submitEmail(tester, 'user@example.com');
+  final fields = find.byType(TextField);
+  await tester.enterText(fields.at(1), '123456');
+  await tester.enterText(fields.at(2), 'newpass1');
+  await tester.enterText(fields.at(3), 'newpass1');
+  await tester.pump(const Duration(milliseconds: 100));
 }
 
 void main() {
   tearDown(() {
     // Never leak a mock client into another test.
-    PasswordResetService.setTestClient(null);
+    CfApi.setTestClient(null);
   });
 
   testWidgets('rate_limited shows an in-page banner, not a popup',
       (tester) async {
-    PasswordResetService.setTestClient(
-      MockClient(
-          (_) async => http.Response('{"ok":false,"reason":"rate_limited"}', 200)),
+    CfApi.setTestClient(
+      MockClient((_) async =>
+          http.Response('{"ok":false,"error":"rate_limited"}', 429)),
     );
     await _pumpScreen(tester);
 
     await _submitEmail(tester, 'user@example.com');
 
     expect(
-      find.textContaining("already requested a password reset link today"),
+      find.textContaining('already requested a code recently'),
       findsOneWidget,
     );
-    // The banner is in-page: no modal popup, no "check your email" state.
+    // The banner is in-page: no modal popup, no code step.
     expect(find.byType(AppModalShell), findsNothing);
-    expect(find.text('Check Your Email'), findsNothing);
+    expect(find.text('Verification Code'), findsNothing);
     // The form stays visible so the user can act on the banner.
-    expect(find.text('Send Reset Link'), findsOneWidget);
+    expect(find.text('Send Code'), findsOneWidget);
   });
 
-  testWidgets('no_provider shows the service-unavailable banner',
-      (tester) async {
-    PasswordResetService.setTestClient(
-      MockClient(
-          (_) async => http.Response('{"ok":false,"reason":"no_provider"}', 200)),
+  testWidgets('unknown error shows the generic banner', (tester) async {
+    CfApi.setTestClient(
+      MockClient((_) async =>
+          http.Response('{"ok":false,"error":"server_error"}', 500)),
     );
     await _pumpScreen(tester);
 
     await _submitEmail(tester, 'user@example.com');
 
     expect(
-      find.textContaining('Email service is not configured yet'),
+      find.textContaining('Something went wrong'),
       findsOneWidget,
     );
     expect(find.byType(AppModalShell), findsNothing);
-    expect(find.text('Check Your Email'), findsNothing);
+    expect(find.text('Verification Code'), findsNothing);
   });
 
   testWidgets('form shows instantly — no preloading shimmer', (tester) async {
@@ -91,15 +105,15 @@ void main() {
     // The form is already there on the first frames: no PreloadingWidget,
     // no 1s shimmer wait.
     expect(find.byType(PreloadingWidget), findsNothing);
-    expect(find.text('Send Reset Link'), findsOneWidget);
+    expect(find.text('Send Code'), findsOneWidget);
     expect(find.byType(TextField), findsOneWidget);
   });
 
   testWidgets('account_not_found shows the no-account banner, not a popup',
       (tester) async {
-    PasswordResetService.setTestClient(
+    CfApi.setTestClient(
       MockClient((_) async =>
-          http.Response('{"ok":false,"reason":"account_not_found"}', 200)),
+          http.Response('{"ok":false,"error":"account_not_found"}', 404)),
     );
     await _pumpScreen(tester);
 
@@ -110,34 +124,70 @@ void main() {
       findsOneWidget,
     );
     expect(find.byType(AppModalShell), findsNothing);
-    expect(find.text('Check Your Email'), findsNothing);
+    expect(find.text('Verification Code'), findsNothing);
     // The form stays visible so the user can correct the email.
-    expect(find.text('Send Reset Link'), findsOneWidget);
+    expect(find.text('Send Code'), findsOneWidget);
   });
 
-  testWidgets('ok:true shows the existing check-your-email UI', (tester) async {
-    PasswordResetService.setTestClient(
+  testWidgets('ok:true reveals the code + new-password step', (tester) async {
+    CfApi.setTestClient(
       MockClient((_) async => http.Response('{"ok":true}', 200)),
     );
     await _pumpScreen(tester);
 
     await _submitEmail(tester, 'user@example.com');
 
-    expect(find.text('Check Your Email'), findsOneWidget);
-    expect(find.textContaining('valid for 10 minutes'), findsOneWidget);
-    expect(find.textContaining('valid for 1 hour'), findsNothing);
+    expect(find.text('Enter Code'), findsOneWidget);
+    expect(find.text('Verification Code'), findsOneWidget);
+    expect(find.text('New Password'), findsOneWidget);
+    expect(find.text('Confirm Password'), findsOneWidget);
   });
 
-  testWidgets('rate-limit banner says 10 minutes, not 1 hour', (tester) async {
-    PasswordResetService.setTestClient(
-      MockClient(
-          (_) async => http.Response('{"ok":false,"reason":"rate_limited"}', 200)),
+  testWidgets('wrong code shows the AppModalShell error popup',
+      (tester) async {
+    CfApi.setTestClient(MockClient((req) async {
+      if (req.url.path.endsWith('/verify')) {
+        return http.Response('{"ok":false,"error":"wrong_code"}', 401);
+      }
+      return http.Response('{"ok":true}', 200);
+    }));
+    await _pumpScreen(tester);
+    await _reachVerify(tester);
+
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Reset Password'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(AppModalShell), findsOneWidget);
+    expect(find.textContaining('incorrect or has expired'), findsOneWidget);
+  });
+
+  testWidgets('verify success shows the popup and returns to login',
+      (tester) async {
+    CfApi.setTestClient(
+      MockClient((_) async => http.Response('{"ok":true}', 200)),
     );
     await _pumpScreen(tester);
+    await _reachVerify(tester);
 
-    await _submitEmail(tester, 'user@example.com');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Reset Password'));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.textContaining('valid for 10 minutes'), findsOneWidget);
-    expect(find.textContaining('valid for 1 hour'), findsNothing);
+    expect(find.byType(AppModalShell), findsOneWidget);
+    expect(
+      find.textContaining('reset successfully'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.descendant(
+      of: find.byType(AppModalShell),
+      matching: find.text('Back to Login'),
+    ));
+    // Dialog pop + GoRouter page transition both need to run out.
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 200));
+    }
+    expect(find.byType(ForgotPasswordScreen), findsNothing);
   });
 }

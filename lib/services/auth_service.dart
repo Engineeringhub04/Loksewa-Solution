@@ -1,13 +1,22 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
+import 'cf_api.dart';
 import 'device_session_service.dart';
 import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'push_notification_service.dart';
 
-/// Firebase Identity Toolkit REST wrapper — mirrors src/core/firebase/auth.ts.
-/// Session is persisted in SharedPreferences (like the Expo app's session.ts).
+/// Auth service — Round-1 Cloudflare migration.
+///
+/// The PRIMARY session is now the Cloudflare (loksewa-api) session held by
+/// [CfApi]: sign-in / sign-up / Google run against the worker, and
+/// [currentUser] / [peekSavedSession] read that session. The Firebase
+/// Identity Toolkit session below is kept as a SECONDARY, best-effort
+/// mirror (same credentials exchanged silently after a CF sign-in) so
+/// [getValidIdToken] keeps returning a Firebase token for the screens that
+/// have not migrated yet (payments, exam, discussion). Every mirror failure
+/// is swallowed — a CF session alone is a fully valid login.
 class AppUser {
   final String uid;
   final String? email;
@@ -97,6 +106,51 @@ class AuthService {
 
   static _Session? _session;
 
+  /// The Cloudflare session's user (primary identity). Null when the user
+  /// is only holding a legacy Firebase session (pre-migration install).
+  static AppUser? _cfUser;
+
+  static void _installCfUser(CfUser user) {
+    _cfUser = AppUser(
+      uid: user.uid,
+      email: user.email,
+      displayName: user.name,
+      photoURL: user.photoURL,
+    );
+  }
+
+  /// Maps a worker error string to the AuthError codes the UI already
+  /// speaks. needs_claim / blacklisted get their own codes so the login +
+  /// signup screens can route/message them distinctly.
+  static AuthError _mapCfError(CfError e) {
+    switch (e.error) {
+      case 'blacklisted':
+        return AuthError('auth/blacklisted');
+      case 'email_in_use':
+        return AuthError('auth/email-already-in-use');
+      case 'use_google_or_claim':
+        return AuthError('auth/account-exists-with-different-credential');
+      case 'needs_claim':
+        return AuthError('auth/needs-claim');
+      case 'account_not_found':
+      case 'wrong_password':
+        return AuthError('auth/invalid-credential');
+      case 'account_disabled':
+        return AuthError('auth/user-disabled');
+      case 'invalid_email':
+        return AuthError('auth/invalid-email');
+      case 'weak_password':
+        return AuthError('auth/weak-password');
+      case 'too_many_requests':
+      case 'rate_limited':
+        return AuthError('auth/too-many-requests');
+      case 'wrong_code':
+        return AuthError('auth/invalid-action-code');
+      default:
+        return AuthError('auth/unknown-error');
+    }
+  }
+
   /// v1.0.110: logout hooks — services with user-specific in-memory or
   /// disk caches register a wipe function here (avoids circular imports:
   /// AuthService cannot import the services that import it). All hooks run
@@ -153,6 +207,23 @@ class AuthService {
   /// empty token. Returns null when nothing was saved or the saved blob is
   /// corrupt (without deleting anything).
   static Future<AppUser?> peekSavedSession() async {
+    // Round-1: the Cloudflare session is the primary identity. Installing
+    // it also restores the legacy Firebase blob (when present) so
+    // getValidIdToken keeps working for unmoved screens.
+    final cfUser = await CfApi.loadSavedUser();
+    if (cfUser != null) {
+      _installCfUser(cfUser);
+      try {
+        final raw = await PrefsService.getString(PrefsService.sessionKey);
+        if (raw != null) {
+          _session =
+              _Session.fromJson(json.decode(raw) as Map<String, dynamic>);
+        }
+      } catch (_) {}
+      return _cfUser;
+    }
+    // Legacy fallback: a pre-migration install holds only the Firebase
+    // session. It still counts as "logged in" (the read NEVER wipes).
     try {
       final raw = await PrefsService.getString(PrefsService.sessionKey);
       if (raw == null) return null;
@@ -196,31 +267,100 @@ class AuthService {
     return _session!.idToken;
   }
 
-  static AppUser? get currentUser => _session?.user;
+  static AppUser? get currentUser => _cfUser ?? _session?.user;
 
   static Future<AppUser> signInWithEmail(String email, String password) async {
-    final res = await _identityRequest('signInWithPassword', {
-      'email': email,
-      'password': password,
-      'returnSecureToken': true,
-    });
-    await _storeSession(res);
+    final CfAuthResult result;
+    try {
+      result = await CfApi.login(email: email, password: password);
+    } on CfError catch (e) {
+      throw _mapCfError(e);
+    }
+    _installCfUser(result.user);
+    // Best-effort Firebase mirror: unmoved screens still need a Firebase
+    // ID token. The CF password may differ from the Firebase one (e.g.
+    // right after a claim) — a failed mirror never blocks the login.
+    try {
+      final res = await _identityRequest('signInWithPassword', {
+        'email': email,
+        'password': password,
+        'returnSecureToken': true,
+      });
+      await _storeSession(res);
+    } catch (_) {}
     // Move FCM token to the user collection (best effort).
     PushNotificationService.onSignIn().catchError((_) {});
-    return _session!.user;
+    return _cfUser!;
   }
 
-  static Future<AppUser> signUpWithEmail(String email, String password) async {
-    final res = await _identityRequest('signUp', {
-      'email': email,
-      'password': password,
-      'returnSecureToken': true,
-    });
-    await _storeSession(res);
+  static Future<AppUser> signUpWithEmail(String email, String password,
+      {String? name}) async {
+    final CfAuthResult result;
+    try {
+      result =
+          await CfApi.signup(name: name ?? '', email: email, password: password);
+    } on CfError catch (e) {
+      throw _mapCfError(e);
+    }
+    _installCfUser(result.user);
+    // Best-effort Firebase mirror (see signInWithEmail). EMAIL_EXISTS for
+    // migrated accounts is expected and swallowed.
+    try {
+      final res = await _identityRequest('signUp', {
+        'email': email,
+        'password': password,
+        'returnSecureToken': true,
+      });
+      await _storeSession(res);
+    } catch (_) {}
     // Move FCM token to the user collection (best effort).
     PushNotificationService.onSignIn().catchError((_) {});
-    return _session!.user;
+    return _cfUser!;
   }
+
+  // ------------------------------------------------------------ claim flow
+  /// NOTE-11 claim, step 1: email a 6-digit code to [email]. The worker
+  /// answers ok whether or not the account exists. [CfError] /
+  /// [CfNetworkError] propagate for the claim screen to surface.
+  static Future<void> requestClaimCode(String email) =>
+      CfApi.claimRequest(email);
+
+  /// NOTE-11 claim, step 2: verify the code, set the account's first
+  /// password, and log in (CF session stored by [CfApi.claimVerify]).
+  static Future<AppUser> claimWithCode({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final result = await CfApi.claimVerify(
+        email: email, code: code, newPassword: newPassword);
+    _installCfUser(result.user);
+    // Best-effort Firebase mirror with the just-set password (works when
+    // the Firebase password was the same or the account is Google-only —
+    // failures are expected in some cases and swallowed).
+    try {
+      final res = await _identityRequest('signInWithPassword', {
+        'email': email,
+        'password': newPassword,
+        'returnSecureToken': true,
+      });
+      await _storeSession(res);
+    } catch (_) {}
+    PushNotificationService.onSignIn().catchError((_) {});
+    return _cfUser!;
+  }
+
+  /// Forgot-password (code flow), steps 1 + 2. No session is created —
+  /// the user logs in with the new password afterwards.
+  static Future<void> requestResetCode(String email) =>
+      CfApi.resetRequest(email);
+
+  static Future<void> resetWithCode({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) =>
+      CfApi.resetVerify(email: email, code: code, newPassword: newPassword);
 
   /// Google Sign-In via Identity Toolkit signInWithIdp — mirrors
   /// signInWithGoogleIdTokenResult in auth.ts. Returns the user plus whether
@@ -233,6 +373,45 @@ class AuthService {
   /// ownership) instead of blocking. No new account is created, the
   /// password is untouched, and both login methods keep working.
   static Future<({AppUser user, bool isNewUser})> signInWithGoogleIdToken(
+    String idToken, {
+    required bool allowCreate,
+    String? googlePhotoUrl,
+  }) async {
+    // PRIMARY: the Cloudflare worker verifies the Google ID token and
+    // resolves it to the account (existing uid for migrated users).
+    final CfAuthResult result;
+    try {
+      result = await CfApi.google(idToken, allowCreate: allowCreate, store: false);
+    } on CfError catch (e) {
+      throw _mapCfError(e);
+    }
+    if (!allowCreate && result.isNewUser) {
+      // Login screen forbids account creation. The CF account may already
+      // exist server-side at this point (the worker creates on first
+      // sight), but NO session is persisted — same contract as the old
+      // Firebase defensive guard.
+      throw AuthError('auth/google-account-creation-blocked');
+    }
+    await CfApi.storeAuthResult(result);
+    _installCfUser(result.user);
+    // SECONDARY (best effort): the Firebase exchange below keeps a
+    // Firebase ID token available for unmoved screens and keeps the
+    // Firestore photo-sync / auto-link behavior alive during the
+    // transition. Its failures never block the CF login.
+    try {
+      await _firebaseGoogleSignIn(idToken,
+          allowCreate: allowCreate, googlePhotoUrl: googlePhotoUrl);
+    } catch (_) {}
+    // Move FCM token to the user collection (best effort).
+    PushNotificationService.onSignIn().catchError((_) {});
+    return (user: _cfUser!, isNewUser: result.isNewUser);
+  }
+
+  /// The pre-migration Google flow, kept as the best-effort Firebase
+  /// mirror: Identity Toolkit signInWithIdp (+ worker auto-link on a
+  /// provider conflict), storing the FIREBASE session and syncing the
+  /// Google photo into the Firebase profile doc.
+  static Future<void> _firebaseGoogleSignIn(
     String idToken, {
     required bool allowCreate,
     String? googlePhotoUrl,
@@ -264,14 +443,12 @@ class AuthService {
       }
       await _storeSession(res);
       await _maybeSyncGooglePhoto(_session!.user.uid, googlePhotoUrl);
-      // Move FCM token to the user collection (best effort).
-      PushNotificationService.onSignIn().catchError((_) {});
-      return (user: _session!.user, isNewUser: isNewUser);
     } on AuthError catch (e) {
       if (e.code == 'auth/account-exists-with-different-credential') {
         // Auto-link: hand the Google ID token to the worker, which verifies
         // email ownership and returns a custom token for the EXISTING user.
-        return _linkGoogleToExisting(idToken, googlePhotoUrl);
+        await _linkGoogleToExisting(idToken, googlePhotoUrl);
+        return;
       }
       rethrow;
     }
@@ -342,11 +519,13 @@ class AuthService {
   }
 
   static Future<void> logout() async {
-    final uid = _session?.user.uid;
+    final uid = currentUser?.uid;
     // Capture the ID token BEFORE clearing the session — onSignOut needs it
     // for the Firestore token move (after _session = null the token is gone).
     final idToken = await getValidIdToken().catchError((_) => '');
     _session = null;
+    _cfUser = null;
+    await CfApi.clearSession().catchError((_) {});
     await PrefsService.remove(PrefsService.sessionKey);
     // v1.0.110: wipe ALL user-specific caches (ProfileStore, pending
     // payments, etc.) so the next login fetches 100% fresh data — no
@@ -374,16 +553,19 @@ class AuthService {
   /// once the auth identity is gone the request is no longer authorised
   /// to touch the document.
   static Future<void> deleteCurrentAccount() async {
-    final idToken = await getValidIdToken();
-    if (idToken.isEmpty) return;
-    final uid = _session?.user.uid;
-    if (uid != null) {
-      // Drop this device's session claim while we still have auth.
-      await FirestoreRest.deleteDocument('users/$uid/session/active')
-          .catchError((_) {});
+    final idToken = await getValidIdToken().catchError((_) => '');
+    final uid = currentUser?.uid;
+    if (idToken.isNotEmpty) {
+      if (uid != null) {
+        // Drop this device's session claim while we still have auth.
+        await FirestoreRest.deleteDocument('users/$uid/session/active')
+            .catchError((_) {});
+      }
+      await _identityRequest('delete', {'idToken': idToken});
     }
-    await _identityRequest('delete', {'idToken': idToken});
     _session = null;
+    _cfUser = null;
+    await CfApi.clearSession().catchError((_) {});
     await PrefsService.remove(PrefsService.sessionKey);
   }
 
@@ -427,6 +609,22 @@ class AuthService {
       );
       await PrefsService.setString(
           PrefsService.sessionKey, json.encode(_session!.toJson()));
+    }
+    // Keep the primary (CF) identity in step so headers read the new
+    // name/photo without a re-login.
+    final cf = _cfUser;
+    if (cf != null) {
+      _cfUser = AppUser(
+        uid: cf.uid,
+        email: cf.email,
+        displayName:
+            displayName == keepField ? cf.displayName : displayName as String?,
+        photoURL: photoURL == keepField ? cf.photoURL : photoURL as String?,
+      );
+      await CfApi.patchStoredUser({
+        if (displayName != keepField) 'name': displayName,
+        if (photoURL != keepField) 'photoURL': photoURL,
+      }).catchError((_) {});
     }
   }
 }

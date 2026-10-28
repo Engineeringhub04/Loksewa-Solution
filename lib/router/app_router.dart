@@ -12,6 +12,7 @@ import '../screens/login_screen.dart';
 
 // Auth / static
 import '../screens/auth/signup_screen.dart';
+import '../screens/auth/claim_password_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
 import '../screens/auth/reset_password_screen.dart';
 import '../screens/auth/about_screen.dart';
@@ -132,6 +133,8 @@ const _kPublicPaths = {
   '/login',
   '/signup',
   '/forgot-password',
+  // NOTE-11 claim flow: logged-out users set their first password here.
+  '/claim-password',
   // Logged-out users NEED this for email reset links.
   '/auth/reset-password',
   '/blocking/maintenance',
@@ -199,6 +202,12 @@ final appRouter = GoRouter(
     GoRoute(
         path: '/forgot-password',
         builder: (_, __) => const ForgotPasswordScreen()),
+    // NOTE-11 claim: email arrives via `extra` from the login screen
+    // (needs_claim prompt / "Set Your Password" link) when available.
+    GoRoute(
+        path: '/claim-password',
+        builder: (_, state) =>
+            ClaimPasswordScreen(initialEmail: state.extra as String?)),
     // Password-reset completion link:
     // https://kbr.com.np/auth/reset-password?token=...
     // No token = a normal app open (not a reset link) → back to home.

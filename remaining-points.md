@@ -85,3 +85,22 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 - Android pahile; iOS chhuttai test (purano iOS ma web fallback ko seto hune purano tathya ajhai lagu).
 
 **Timing:** mathi ko verify sakiyepachhi matra implement; ahile note matra — user, 2026-10-25
+
+### NOTE-11 — Cloudflare Login (Auth) Migration — Password Claim Flow
+Firebase Authentication ka khata haru Cloudflare tira sarne yojana (user ko design 2026-10-28 + assistant ko email-code correction user le swikaareko). App aile public xaina — khata haru khali user kai kehi test ID matra xan, volume sano chha.
+
+**Bhag 1 — Khata ko tathya sarne (password bahek):**
+- Firebase Auth bata: **email, uid (thyakkai uही, ek akshar pani naferine), bhaneko date, signup tarika (Google / email-password)** Cloudflare ma sarne.
+- Password column **khali (null)** baschha — purano password sardaina.
+
+**Bhag 2 — App login page (Cloudflare version ma, pachi ko kaam):**
+- Login page ma **"Login with new password"** jasto link → ustai (duplicate) UI page: pahile **email field matra**.
+- Email haale pachhi system le herchha: tyo khata ko **password field null chha bhane** → tyo email ma **6-anka ko code** pathaaune (khata kas ko ho praman — code bina password rakhna dinu hudaina, natra email thahaaune le aru ko khata kabja garna sakchha).
+- Code mile pachhi **"Set Your Password"** field dekhinchha → password rakhe pachhi login + password save.
+- Ek choti password set bhaye pachhi sadhai normal login; login page le password-nasareko khata lai "wrong password" matra navani claim flow tira pathaaune.
+
+**Trigger niyam (user ko spashta, 2026-10-28):** Set Your Password **password field null bhayeko lai matra** aauchha — provider junsukai hos. Google khata ko pani password hudaina, tesaile tesko email **normal email-login form ma** haale Set Your Password aauchha; **"Continue with Google" button** bata jada chai kei password field dekhiidaina (tyo flow ustai).
+
+**UID:** Cloudflare ma auth hami aafai banauchhau — uid khali text ID ho, purano uid ustai sarne (system le naya banaaune hoina); pachi ka naya signup le pani purano style kai random ID pauchan.
+
+**Timing:** pachi ko Cloudflare migration round ma; ahile note matra — user, 2026-10-28

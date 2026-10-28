@@ -197,6 +197,7 @@ class _SignupScreenState extends State<SignupScreen>
       final user = await AuthService.signUpWithEmail(
         email,
         _password.text,
+        name: _name.text.trim(),
       );
       // Mirror registerWithEmail: store the display name on the user document.
       try {
@@ -224,6 +225,11 @@ class _SignupScreenState extends State<SignupScreen>
     } on AuthError catch (e) {
       if (!mounted) return;
       _triggerShake();
+      if (e.code == 'auth/blacklisted') {
+        showAuthToast(context, AccountProtection.blacklistedMessage(),
+            isError: true);
+        return;
+      }
       showAuthToast(context, _friendlyError(e.code), isError: true);
     } catch (_) {
       if (!mounted) return;
@@ -346,7 +352,10 @@ class _SignupScreenState extends State<SignupScreen>
     } on AuthError catch (e) {
       if (!mounted) return;
       final code = e.code;
-      if (code == 'auth/email-already-in-use' ||
+      if (code == 'auth/blacklisted') {
+        showAuthToast(context, AccountProtection.blacklistedMessage(),
+            isError: true);
+      } else if (code == 'auth/email-already-in-use' ||
           code == 'auth/account-exists-with-different-credential') {
         showAuthToast(
           context,

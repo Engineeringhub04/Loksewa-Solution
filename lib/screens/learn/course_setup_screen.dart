@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
-import '../../services/firestore_rest.dart';
 import '../../services/main_leaderboard.dart';
 import '../../services/theme_service.dart';
 import '../../theme/app_theme.dart';
@@ -17,16 +17,15 @@ import '../../widgets/preloading.dart';
 ///   header on this screen — NOT the shared SubpageHeader), with a working
 ///   theme toggle. The system status bar is tinted brand-blue via
 ///   [AnnotatedRegion] so no light band sits above the header.
-/// - Courses from `app_courses` sorted by `order` (client-side, like React).
-/// - Subcourses from `app_courses/{courseId}/subcourses`, falling back to the
-///   legacy flat `app_subcourses` collection filtered by `courseId`.
+/// - Courses from the Cloudflare API (GET /courses — the copied
+///   `app_courses` rows) sorted by `order` (client-side, like React).
+/// - Subcourses from the same payload (the copied subcollection rows plus
+///   the legacy flat `app_subcourses` rows, one list) filtered by courseId.
 /// - Blue = currently-enrolled selection.
 /// - Orange (AppColors.accent) = a NEW course pick that differs.
 /// - Red = a NEW subcourse pick that differs.
-/// - Save writes users/{uid} (merge): courseId, subcourseId,
-///   courseSetupComplete — with the user's ID token (anonymous reads/writes
-///   are rejected by the Firestore rules, which is why the course list used
-///   to come back empty).
+/// - Save writes the profile via PATCH /me: courseId, subcourseId,
+///   courseSetupComplete. The saved selection is read back from GET /me.
 class CourseSetupScreen extends StatefulWidget {
   final String mode; // 'update' | 'initial'
 
@@ -37,10 +36,11 @@ class CourseSetupScreen extends StatefulWidget {
 }
 
 class _CourseSetupScreenState extends State<CourseSetupScreen> {
-  static const _courseCol = 'app_courses';
-  static const _legacySubCol = 'app_subcourses';
-
   List<Map<String, dynamic>> _courses = [];
+
+  /// Every subcourse row from the last GET /courses payload; the visible
+  /// list is this filtered by the selected course.
+  List<Map<String, dynamic>> _allSubcourses = [];
   List<Map<String, dynamic>> _subcourses = [];
   String? _selectedCourse;
   String? _selectedSubcourse;
@@ -84,17 +84,14 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     }
   }
 
-  Future<String> _token() => AuthService.getValidIdToken();
-
   /// Seeds the working selection from the user's enrolled course, like React's
   /// applySaved(): only fills in while nothing is chosen yet, so a late fetch
-  /// never overwrites a tap the user already made.
+  /// never overwrites a tap the user already made. Source: GET /me.
   Future<void> _loadSaved() async {
     try {
       final user = AuthService.currentUser;
       if (user == null) return;
-      final doc = await FirestoreRest.getDocument('users/${user.uid}',
-          idToken: await _token());
+      final doc = await CfApi.getMe();
       if (!mounted) return;
       final cid = _str(doc?['courseId']);
       final scid = _str(doc?['subcourseId']);
@@ -117,20 +114,23 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
       (v is String && v.isNotEmpty) ? v : null;
 
   int _ord(Map<String, dynamic> d) {
+    // D1 rows can carry `order` as a numeric string — accept both.
     final o = d['order'];
-    return o is num ? o.toInt() : 0;
+    return o is num ? o.toInt() : int.tryParse('${o ?? ''}') ?? 0;
   }
 
-  /// Mirrors React's fetchCourses: one direct read, client-side order sort.
-  /// Pull-to-refresh re-runs this; it never shows the full-page spinner.
+  /// Mirrors React's fetchCourses: one read (GET /courses), client-side
+  /// order sort. Pull-to-refresh re-runs this; it never shows the
+  /// full-page spinner.
   Future<void> _loadCourses() async {
     try {
-      final docs = await FirestoreRest.listDocuments(_courseCol,
-          idToken: await _token(), pageSize: 100);
+      final data = await CfApi.getCourses();
+      final docs = data.courses;
       docs.sort((a, b) => _ord(a).compareTo(_ord(b)));
       if (!mounted) return;
       setState(() {
         _courses = docs;
+        _allSubcourses = data.subcourses;
         _loadingCourses = false;
       });
     } catch (_) {
@@ -146,23 +146,21 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
       _subcourseError = false;
     });
     try {
-      final token = await _token();
-      var docs = await FirestoreRest.listDocuments(
-          '$_courseCol/$courseId/subcourses',
-          idToken: token,
-          pageSize: 200);
-      if (docs.isEmpty) {
-        // Legacy layout: flat `app_subcourses` filtered client-side.
-        try {
-          final legacy = await FirestoreRest.listDocuments(_legacySubCol,
-              idToken: token, pageSize: 200);
-          docs = legacy
-              .where((d) => d['courseId'] == courseId)
-              .toList();
-        } catch (_) {
-          // keep empty — the error state below explains
-        }
+      // Subcourses ride along with GET /courses; when the boot order made
+      // this run before the courses landed (saved-selection path), fetch
+      // the payload on demand.
+      if (_allSubcourses.isEmpty) {
+        final data = await CfApi.getCourses();
+        _allSubcourses = data.subcourses;
       }
+      // Accept either parent spelling: rows merged from the subcollection
+      // carry parent_id; flat legacy rows carry courseId.
+      final docs = _allSubcourses
+          .where((d) =>
+              d['courseId'] == courseId ||
+              d['parent_id'] == courseId ||
+              d['parentId'] == courseId)
+          .toList();
       docs.sort((a, b) => _ord(a).compareTo(_ord(b)));
       if (!mounted) return;
       setState(() {
@@ -204,16 +202,13 @@ class _CourseSetupScreenState extends State<CourseSetupScreen> {
     }
     setState(() => _saving = true);
     try {
-      await FirestoreRest.setDocument(
-        'users/${user.uid}',
-        {
-          'courseId': _selectedCourse,
-          'subcourseId': _selectedSubcourse,
-          'courseSetupComplete': true,
-        },
-        idToken: await _token(),
-        merge: true,
-      );
+      // Course selection is a migrated area: API only (PATCH /me), no
+      // Firestore write.
+      await CfApi.patchMe({
+        'courseId': _selectedCourse,
+        'subcourseId': _selectedSubcourse,
+        'courseSetupComplete': true,
+      });
       // Grant the 50pt signup-bonus leaderboard row for this subcourse.
       // Idempotent — only created when the row is missing (existing users
       // get it lazily on their next leaderboard visit instead). Never

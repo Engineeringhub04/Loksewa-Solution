@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/notification_badge.dart';
@@ -98,35 +99,40 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     bool isPremium = false;
     if (user != null) {
       try {
-        final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: token);
+        // Round-1: the profile (course selection, premium, photo) comes
+        // from GET /me — the migrated users row.
+        final userDoc = await CfApi.getMe();
         courseId = userDoc?['courseId'] as String?;
         subcourseId = userDoc?['subcourseId'] as String?;
         isPremium = _isPremiumActive(userDoc);
         // React passes `storeProfile?.photoURL ?? user?.photoURL` — the
-        // Firestore user doc photo wins over the auth photoURL.
+        // profile doc photo wins over the auth photoURL.
         final docPhoto = userDoc?['photoURL'] as String?;
         photoURL = (docPhoto != null && docPhoto.isNotEmpty)
             ? docPhoto
             : user.photoURL;
       } catch (_) {}
-      // Resolve human-readable course names for the header.
-      // Collection is `app_courses` (mirrors courses.ts COURSES_COLLECTION).
+      // Resolve human-readable course names for the header from the
+      // GET /courses payload (subcollection + legacy rows in one list).
       if (courseId != null) {
         try {
-          final c = await FirestoreRest.getDocument('app_courses/$courseId',
-              idToken: token);
-          courseName = ((c?['name'] ?? c?['nameNe']) as String?)?.trim();
+          final data = await CfApi.getCourses();
+          for (final c in data.courses) {
+            if (c['id']?.toString() == courseId) {
+              courseName = ((c['name'] ?? c['nameNe']) as String?)?.trim();
+              break;
+            }
+          }
+          if (subcourseId != null) {
+            for (final sc in data.subcourses) {
+              if (sc['id']?.toString() == subcourseId) {
+                subcourseName =
+                    ((sc['name'] ?? sc['nameNe']) as String?)?.trim();
+                break;
+              }
+            }
+          }
         } catch (_) {}
-        if (subcourseId != null) {
-          try {
-            final sc = await FirestoreRest.getDocument(
-                'app_courses/$courseId/subcourses/$subcourseId',
-                idToken: token);
-            subcourseName = ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim();
-          } catch (_) {}
-          subcourseName ??= await _legacySubcourseName(token, subcourseId);
-        }
       }
     }
 
@@ -136,15 +142,23 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     Map<String, dynamic>? developer;
     int notificationCount = 0;
     try {
-      banners = await FirestoreRest.listDocuments('app_home_banners',
-          idToken: token, pageSize: 20);
+      // Round-1: banners from GET /banners (copied app_home_banners rows).
+      banners = await CfApi.getBanners();
     } catch (_) {}
     try {
-      // Mirrors fetchNotices (services/notices.ts): pageSize 30, drop
-      // `status == 'hidden'`, apply the subcourse targeting client-side,
-      // then sort newest-first by publishedAt; Home shows the first 3.
-      final allNotices = await FirestoreRest.listDocuments('app_notices',
-          idToken: token, pageSize: 30);
+      // Mirrors fetchNotices (services/notices.ts): pageSize 30 (the API
+      // caps at 30), drop `status == 'hidden'`, apply the subcourse
+      // targeting client-side, then sort newest-first by publishedAt;
+      // Home shows the first 3. publishedAt is coerced to DateTime first —
+      // D1 rows may carry it as text or epoch.
+      final rawNotices = await CfApi.getNotices();
+      final allNotices = rawNotices
+          .map((n) => {
+                ...n,
+                'publishedAt':
+                    CfJson.asDateTime(n['publishedAt']) ?? n['publishedAt'],
+              })
+          .toList();
       final visible = allNotices.where((n) {
         if ((n['status'] ?? '').toString() == 'hidden') return false;
         final targets = n['targetSubcourseIds'];
@@ -232,30 +246,14 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   }
 
   static bool _isPremiumActive(Map<String, dynamic>? userDoc) {
-    if (userDoc == null || userDoc['isPremium'] != true) return false;
+    // CfJson coercions: D1 rows may store the flag/expiry as text.
+    if (userDoc == null || !CfJson.asBool(userDoc['isPremium'])) {
+      return false;
+    }
     final expiry = userDoc['premiumExpiryDate'];
     if (expiry == null) return true;
-    DateTime? dt;
-    if (expiry is DateTime) {
-      dt = expiry;
-    } else {
-      dt = DateTime.tryParse('$expiry');
-    }
+    final dt = CfJson.asDateTime(expiry);
     return dt == null || dt.isAfter(DateTime.now());
-  }
-
-  /// Legacy fallback: subcourses seeded BEFORE the sub-collection restructure
-  /// live as direct documents in the flat `app_subcourses` collection —
-  /// mirrors fetchUserCourseInfo() in courses.ts (direct document read,
-  /// not a collection scan).
-  Future<String?> _legacySubcourseName(String token, String subcourseId) async {
-    try {
-      final legacy = await FirestoreRest.getDocument(
-          'app_subcourses/$subcourseId',
-          idToken: token);
-      return ((legacy?['name'] ?? legacy?['nameNe']) as String?)?.trim();
-    } catch (_) {}
-    return null;
   }
 
   /// Parses Firestore timestamp-ish values to DateTime. Best-effort.
@@ -265,8 +263,10 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     return null;
   }
 
-  /// Batch-fetch exam set durations for badge expiry filtering.
-  /// Returns setId → durationMinutes (60-min fallback). Never throws.
+  /// Exam set durations for badge expiry filtering, from GET
+  /// /exam-durations (one call — replaces the per-set app_exam_sets
+  /// reads). Returns setId → durationMinutes (60-min fallback for any id
+  /// the payload doesn't know). Never throws.
   static Future<Map<String, int>> _fetchExamDurationsForBadge(
       List<Map<String, dynamic>> examRows, String token) async {
     final result = <String, int>{};
@@ -279,18 +279,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       }
     }
     if (setIds.isEmpty) return result;
-    await Future.wait(setIds.map((setId) async {
-      try {
-        final doc = await FirestoreRest.getDocument(
-          'app_exam_sets/$setId',
-          idToken: token,
-        );
-        final dur = doc?['durationMinutes'];
-        result[setId] = dur is num ? dur.toInt() : int.tryParse('$dur') ?? 60;
-      } catch (_) {
-        result[setId] = 60;
-      }
-    }));
+    Map<String, int> durations = const {};
+    try {
+      durations = await CfApi.getExamDurations();
+    } catch (_) {}
+    for (final setId in setIds) {
+      result[setId] = durations[setId] ?? 60;
+    }
     return result;
   }
 

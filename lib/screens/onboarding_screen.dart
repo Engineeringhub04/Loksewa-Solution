@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
-import '../services/auth_service.dart';
-import '../services/firestore_rest.dart';
+import '../services/cf_api.dart';
 import '../services/onboarding_cache.dart';
 import '../services/prefs_service.dart';
 
@@ -12,8 +11,9 @@ import '../services/prefs_service.dart';
 /// indicators, and a circular arrow button that CONTINUOUSLY morphs into a
 /// full-width "Sign Up" pill while swiping from slide 3 to slide 4
 /// (finger-driven: the morph follows the PageView scroll position).
-/// Slides come from Firestore `app_onboarding-settings` (ordered by `order`);
-/// the 4 hardcoded slides are the fallback.
+/// Slides come from the Cloudflare API (GET /onboarding — the copied
+/// `app_onboarding-settings` rows, ordered by `order`); the 4 hardcoded
+/// slides are the fallback.
 class _Slide {
   final String id;
   final String title;
@@ -120,22 +120,21 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _loadRemoteSlides() async {
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final docs = await FirestoreRest.listDocuments(
-        'app_onboarding-settings',
-        idToken: idToken,
-        pageSize: 20,
-      );
+      // Round-1: slides come from the Cloudflare API (GET /onboarding) as
+      // plain-JSON rows with the same field names as the Firestore docs.
+      // An empty/short list keeps the hardcoded slides — same rule as
+      // before.
+      final docs = await CfApi.getOnboarding();
       if (docs.length >= 4) {
         docs.sort((a, b) =>
-            ((a['order'] as num?) ?? 0).compareTo((b['order'] as num?) ?? 0));
+            CfJson.asInt(a['order']).compareTo(CfJson.asInt(b['order'])));
         final slides = docs.map((d) {
-          final imageLink = d['imageLink'] as String? ?? '';
-          final isLocal = d['isLocal'] as bool? ?? false;
+          final imageLink = d['imageLink']?.toString() ?? '';
+          final isLocal = CfJson.asBool(d['isLocal']);
           return _Slide(
             id: '${d['id']}',
-            title: d['title'] as String? ?? '',
-            description: d['description'] as String? ?? '',
+            title: d['title']?.toString() ?? '',
+            description: d['description']?.toString() ?? '',
             assetPath: isLocal ? _localImageMap[imageLink] : null,
             imageUrl: isLocal ? null : (imageLink.isEmpty ? null : imageLink),
           );

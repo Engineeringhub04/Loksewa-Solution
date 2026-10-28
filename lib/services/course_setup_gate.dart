@@ -1,19 +1,19 @@
-import 'auth_service.dart';
-import 'firestore_rest.dart';
+import 'cf_api.dart';
 
 /// Course-setup gate — mirrors React's hasUserCourseSetup(uid):
-/// `users/{uid}.courseSetupComplete === true` (written by the course-setup
-/// screen on save). Returns null when the check can't be completed
-/// (offline / expired token / any error) so each caller can pick its own
-/// fallback: splash treats unknown as home (previous behavior), login
-/// treats unknown as setup (React's .catch(() => false)).
+/// the profile's `courseSetupComplete === true` (written by the
+/// course-setup screen on save, now via PATCH /me). Returns null when the
+/// check can't be completed (offline / no CF session / any error) so each
+/// caller can pick its own fallback: splash treats unknown as home
+/// (previous behavior), login treats unknown as setup (React's
+/// .catch(() => false)).
 class CourseSetupGate {
   static Future<bool?> isComplete(String uid) async {
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc =
-          await FirestoreRest.getDocument('users/$uid', idToken: idToken);
-      return doc?['courseSetupComplete'] == true;
+      final me = await CfApi.getMe();
+      if (me == null) return null;
+      // D1 may store the flag as a 'true' string — coerce either shape.
+      return CfJson.asBool(me['courseSetupComplete']);
     } catch (_) {
       return null;
     }

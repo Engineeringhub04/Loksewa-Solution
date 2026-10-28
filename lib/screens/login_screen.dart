@@ -3,10 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../services/account_protection.dart';
+import '../services/app_language.dart';
 import '../services/auth_service.dart';
 import '../services/course_setup_gate.dart';
 import '../services/device_session_service.dart';
 import '../services/google_auth.dart';
+import '../widgets/app_modal_shell.dart';
+import '../widgets/popup_action_button.dart';
 import '../widgets/auth/auth_buttons.dart';
 import '../widgets/auth/auth_screen_layout.dart';
 import '../widgets/auth/floating_label_field.dart';
@@ -95,6 +98,69 @@ class _LoginScreenState extends State<LoginScreen>
   }
 
   void _triggerShake() => _shakeController.forward(from: 0.0);
+
+  /// NOTE-11 needs_claim prompt (AppModalShell): the account exists but
+  /// has no password on the new backend yet — offer the claim page with
+  /// the typed email prefilled.
+  Future<void> _showNeedsClaimPrompt() {
+    final email = _email.text.trim();
+    return AppModalShell.show<void>(
+      context: context,
+      builder: (modalContext) => AppModalShell(
+        accent: const Color(0xFF2563EB),
+        accentMid: const Color(0xFF3B82F6),
+        accentLight: const Color(0xFFBFDBFE),
+        tagColor: const Color(0xFF1D4ED8),
+        tagLabel: AppLanguage.tr('SET PASSWORD', 'पासवर्ड सेट'),
+        onClose: () => Navigator.of(modalContext).pop(),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF2563EB),
+          ),
+          child: const Icon(Icons.lock_outline_rounded,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Set Your Password', 'पासवर्ड सेट गर्नुहोस्'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          AppLanguage.tr(
+            'This account does not have a password yet. Set your password now to log in.',
+            'यो खातामा अहिले पासवर्ड छैन। लगइन गर्न अहिले नै आफ्नो पासवर्ड सेट गर्नुहोस्।',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            height: 1.5,
+            color: Color(0xFF64748B),
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: PopupActionButton(
+          label: AppLanguage.tr('Set Your Password', 'पासवर्ड सेट गर्नुहोस्'),
+          backgroundColor: const Color(0xFF1D4ED8),
+          onTap: () {
+            Navigator.of(modalContext).pop();
+            if (mounted) {
+              context.push('/claim-password', extra: email);
+            }
+          },
+        ),
+      ),
+    );
+  }
 
   /// Terms skipped — flash the row red, shake and toast.
   void _flagTermsRequired() {
@@ -198,7 +264,18 @@ class _LoginScreenState extends State<LoginScreen>
       await _afterSignIn(user.uid);
     } on AuthError catch (e) {
       if (!mounted) return;
+      // NOTE-11: a migrated account whose password was never set gets
+      // routed to the claim page (email prefilled) instead of an error.
+      if (e.code == 'auth/needs-claim') {
+        await _showNeedsClaimPrompt();
+        return;
+      }
       _triggerShake();
+      if (e.code == 'auth/blacklisted') {
+        showAuthToast(context, AccountProtection.blacklistedMessage(),
+            isError: true);
+        return;
+      }
       showAuthToast(context, _friendlyError(e.code), isError: true);
     } catch (_) {
       if (!mounted) return;
@@ -263,7 +340,10 @@ class _LoginScreenState extends State<LoginScreen>
       // v1.0.110: account-exists is now auto-linked inside
       // signInWithGoogleIdToken — reaching here means the worker refused
       // (bad token etc.), so keep the explanatory message.
-      if (code == 'auth/account-exists-with-different-credential') {
+      if (code == 'auth/blacklisted') {
+        showAuthToast(context, AccountProtection.blacklistedMessage(),
+            isError: true);
+      } else if (code == 'auth/account-exists-with-different-credential') {
         showAuthToast(
           context,
           'Could not link this Google account. Please try again or use email login.',
@@ -389,22 +469,40 @@ class _LoginScreenState extends State<LoginScreen>
           onChanged: (_) => setState(() {}),
           onSubmitted: _handleLogin,
         ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: TextButton(
-            onPressed: () => context.push('/forgot-password'),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.only(top: 4, bottom: 8),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            // NOTE-11: migrated accounts without a password claim one here.
+            TextButton(
+              onPressed: () => context.push('/claim-password',
+                  extra: _email.text.trim()),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.only(top: 4, bottom: 8),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                AppLanguage.tr('Set Your Password', 'पासवर्ड सेट गर्नुहोस्'),
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1D4ED8)),
+              ),
             ),
-            child: const Text(
-              'Forgot Password?',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF1D4ED8)),
+            TextButton(
+              onPressed: () => context.push('/forgot-password'),
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.only(top: 4, bottom: 8),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text(
+                'Forgot Password?',
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1D4ED8)),
+              ),
             ),
-          ),
+          ],
         ),
         AuthPrimaryButton(
           label: 'Login',

@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
@@ -21,7 +21,7 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// §40 Edit Profile — mirrors app/edit-profile.tsx.
 ///
 /// First/last name, email (locked), date of birth, gender and a
-/// Cloudinary-hosted profile photo, persisted to users/{uid}.
+/// Cloudinary-hosted profile photo, persisted via PATCH /me.
 ///
 /// Design follows the app's premium dark language (dark surfaces, hairline
 /// borders, tone-coded icon boxes — same as the Profile tab) instead of the
@@ -45,7 +45,7 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// - When the upload completes the new photo is set and shown at once; a
 ///   brief full-green-ring "done" beat follows, then the normal identity ring.
 /// - Pick-then-back-out without saving: the screen is disposed without a
-///   Firestore write, so the old photoURL stands. The uploaded-but-unused
+///   profile write, so the old photoURL stands. The uploaded-but-unused
 ///   Cloudinary image is an accepted orphan — unsigned presets cannot delete.
 /// - Upload failure: error toast, and the photo reverts to the previous one
 ///   (`_photoURL` is only ever assigned on success).
@@ -71,13 +71,13 @@ class EditProfileScreen extends StatefulWidget {
   });
 
   /// Test seam: load/save for this uid instead of the signed-in user, and
-  /// never touches AuthService/Firestore/Cloudinary.
+  /// never touches AuthService/the API/Cloudinary.
   final String? debugUid;
 
-  /// Test seam: replaces the users/{uid} read. Returns the document map.
+  /// Test seam: replaces the GET /me read. Returns the profile row map.
   final Future<Map<String, dynamic>?> Function(String uid)? loadProfile;
 
-  /// Test seam: replaces the Firestore merge write + auth session sync.
+  /// Test seam: replaces the PATCH /me write + auth session sync.
   final Future<void> Function({
     required String uid,
     required String firstName,
@@ -211,39 +211,44 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (widget.loadProfile != null) {
         doc = await widget.loadProfile!(uid);
       } else {
-        final token = await AuthService.getValidIdToken();
-        doc = await FirestoreRest.getDocument('users/$uid', idToken: token);
+        // Phase-3: the boot read is GET /me (the store's row source).
+        doc = await CfApi.getMe();
       }
       if (!mounted) return;
-      // Seed from the Firestore doc first, then the auth session (covers
-      // brand-new Google sign-ins with no doc yet) — like the React screen.
+      // Seed from the profile row first, then the auth session (covers
+      // brand-new Google sign-ins with no row yet) — like the React screen.
       final sessionUser = AuthService.currentUser;
       final sessionParts = (sessionUser?.displayName ?? '')
           .trim()
           .split(RegExp(r'\s+'))
           .where((p) => p.isNotEmpty)
           .toList();
-      // Signup writes 'name' (full name); older docs have firstName/lastName.
+      // Signup writes 'name' (full name); older rows have firstName/lastName.
       // Fall back to splitting 'name' so new accounts prefill correctly.
-      final nameParts = ((doc?['name'] as String?) ?? '')
+      String? str(dynamic v) => v is String ? v : null;
+      final nameParts = (str(doc?['name']) ?? '')
           .trim()
           .split(RegExp(r'\s+'))
           .where((p) => p.isNotEmpty)
           .toList();
-      final firstName = (doc?['firstName'] as String?) ??
-          (nameParts.isNotEmpty ? nameParts.first : '') ??
-          (sessionParts.isNotEmpty ? sessionParts.first : '');
-      final lastName = (doc?['lastName'] as String?) ??
-          (nameParts.length > 1 ? nameParts.skip(1).join(' ') : '') ??
-          (sessionParts.length > 1 ? sessionParts.skip(1).join(' ') : '');
+      final firstName = str(doc?['firstName']) ??
+          (nameParts.isNotEmpty
+              ? nameParts.first
+              : (sessionParts.isNotEmpty ? sessionParts.first : ''));
+      final lastName = str(doc?['lastName']) ??
+          (nameParts.length > 1
+              ? nameParts.skip(1).join(' ')
+              : (sessionParts.length > 1
+                  ? sessionParts.skip(1).join(' ')
+                  : ''));
       setState(() {
         _firstCtrl.text = firstName;
         _lastCtrl.text = lastName;
-        _dobCtrl.text = (doc?['dob'] as String?) ?? '';
-        final g = doc?['gender'] as String?;
+        _dobCtrl.text = str(doc?['dob']) ?? '';
+        final g = str(doc?['gender']);
         _gender = g == 'male' || g == 'female' || g == 'other' ? g : null;
-        _photoURL = (doc?['photoURL'] as String?) ?? sessionUser?.photoURL;
-        _email = sessionUser?.email ?? (doc?['email'] as String?) ?? '';
+        _photoURL = str(doc?['photoURL']) ?? sessionUser?.photoURL;
+        _email = sessionUser?.email ?? str(doc?['email']) ?? '';
         _pro = _activePremium(doc);
         _initFirst = _firstCtrl.text;
         _initLast = _lastCtrl.text;
@@ -262,7 +267,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   /// Same rule as hasActivePremium(): the mirrored entitlement must still be
   /// in date — a lapsed subscription stops decorating immediately.
   bool _activePremium(Map<String, dynamic>? doc) {
-    if (doc == null || doc['isPremium'] != true) return false;
+    if (doc == null || !CfJson.asBool(doc['isPremium'])) return false;
     final expiry = doc['premiumExpiryDate'] as String?;
     if (expiry == null) return true;
     final dt = DateTime.tryParse(expiry);
@@ -588,7 +593,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   }
 
   /// Persists everything visible on the form — the photo was already
-  /// uploaded at pick time, so this is only the Firestore write (plus the
+  /// uploaded at pick time, so this is only the profile write (plus the
   /// auth session and the shared store).
   Future<void> _handleSave() async {
     final uid = widget.debugUid ?? AuthService.currentUser?.uid;
@@ -623,7 +628,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           photoURLSource: photoURLSource,
         );
       } else {
-        final token = await AuthService.getValidIdToken();
         await updateUserProfile(
           uid,
           firstName: _firstCtrl.text,
@@ -632,7 +636,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           gender: _gender,
           photoURL: _photoURL,
           photoURLSource: photoURLSource,
-          idToken: token,
         );
         // Keep the cached auth session in sync so the Home/Profile headers
         // update immediately without needing a re-login.
@@ -832,7 +835,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                 ),
               ],
             ),
-            // Only the Firestore-write phase blocks the screen with an
+            // Only the profile-write phase blocks the screen with an
             // overlay. The photo upload never does — its progress ring on the
             // photo is the feedback, and covering it is what made the upload
             // invisible before.

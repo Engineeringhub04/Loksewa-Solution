@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -44,12 +44,8 @@ class _AdminAnswersReviewScreenState extends State<AdminAnswersReviewScreen> {
       _error = null;
     });
     try {
-      final user = AuthService.currentUser;
-      if (user == null) throw _Denied();
-      final token = await AuthService.getValidIdToken();
-      final profile =
-          await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-      if (profile?['isAdmin'] != true) throw _Denied();
+      if (AuthService.currentUser == null) throw _Denied();
+      if (!await fetchIsAdmin()) throw _Denied();
       final answers = await fetchAllExamAnswers();
       if (!mounted) return;
       setState(() {

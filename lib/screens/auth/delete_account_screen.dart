@@ -9,7 +9,7 @@ import 'package:loksewa_solution/screens/auth/app_info_screen.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
@@ -21,22 +21,22 @@ import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 /// Delete Account — mirrors app/delete-account.tsx.
 ///
 /// This page no longer deletes anything itself. It collects a deletion
-/// REQUEST (reason + full message), saves it to the Firestore collection
-/// `app_deleterequest` (document id = the user's uid), and sends it to the
-/// team's Discord webhook for manual review — the admin deletes the account
-/// by hand.
+/// REQUEST (reason + full message), saves it via POST /delete-request
+/// (Phase-3: the request lives in D1, keyed by the user's uid), and sends
+/// it to the team's Discord webhook for manual review — the admin deletes
+/// the account by hand.
 ///
-/// Duplicate guard: on load the page reads `app_deleterequest/{uid}`. When a
+/// Duplicate guard: on load the page reads GET /delete-request. When a
 /// request already exists the form is replaced by an "already requested"
 /// state and no second submission is possible.
 ///
 /// Flow (standing popup-action pattern): fill the form → Submit Request →
 /// [AppModalShell] confirm popup → loading state on the popup's confirm
-/// button → save to Firestore + POST to Discord → success toast → refresh
+/// button → save via the API + POST to Discord → success toast → refresh
 /// (the page now shows the already-requested state).
 ///
-/// The Discord webhook URL is read at runtime from the Firestore document
-/// `app_applink_details/main` (field `discordWebhookUrl`), so the URL can
+/// The Discord webhook URL is read at runtime from the app-link row
+/// (field `discordWebhookUrl`, GET /app-link), so the URL can
 /// change without an app update. When offline the form is hidden and only
 /// a warning line + Cancel remain (same as React).
 class DeleteAccountScreen extends StatefulWidget {
@@ -57,12 +57,12 @@ class DeleteAccountScreen extends StatefulWidget {
   final Future<void> Function(String url, Map<String, dynamic> body)?
       postToDiscord;
 
-  /// Override in tests: returns the existing `app_deleterequest/{uid}`
-  /// document, or null when the user has not requested before.
+  /// Override in tests: returns the existing delete request row,
+  /// or null when the user has not requested before.
   @visibleForTesting
   final Future<Map<String, dynamic>?> Function()? fetchDeleteRequest;
 
-  /// Override in tests: saves the request record to `app_deleterequest/{uid}`.
+  /// Override in tests: saves the request record.
   @visibleForTesting
   final Future<void> Function(Map<String, dynamic> fields)? saveDeleteRequest;
 
@@ -160,22 +160,20 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   Future<Map<String, dynamic>?> _defaultFetchDeleteRequest() async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) return null;
-    String token = '';
-    try {
-      token = await AuthService.getValidIdToken();
-    } catch (_) {}
-    return FirestoreRest.getDocument('app_deleterequest/$uid', idToken: token);
+    // Phase-3: the request lives in D1 now (GET /delete-request).
+    return CfApi.getDeleteRequest();
   }
 
   Future<void> _defaultSaveDeleteRequest(Map<String, dynamic> fields) async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) throw Exception('not signed in');
-    String token = '';
-    try {
-      token = await AuthService.getValidIdToken();
-    } catch (_) {}
-    await FirestoreRest.setDocument('app_deleterequest/$uid', fields,
-        idToken: token);
+    // Phase-3: POST /delete-request carries reason/message/appVersion;
+    // the worker composes the rest of the record server-side.
+    await CfApi.postDeleteRequest(
+      reason: (fields['reason'] ?? '').toString(),
+      message: (fields['message'] ?? '').toString(),
+      appVersion: (fields['appVersion'] ?? '').toString(),
+    );
   }
 
   Future<void> _checkOnline() async {
@@ -200,15 +198,10 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       _reasonText.text.trim().isNotEmpty &&
       _messageText.text.trim().isNotEmpty;
 
-  /// Reads the Discord webhook URL from `app_applink_details/main`.
+  /// Reads the Discord webhook URL from the app-link row (GET /app-link).
   Future<String?> _defaultFetchWebhookUrl() async {
     try {
-      String token = '';
-      try {
-        token = await AuthService.getValidIdToken();
-      } catch (_) {}
-      final doc = await FirestoreRest.getDocument('app_applink_details/main',
-          idToken: token);
+      final doc = await CfApi.getAppLink();
       final v = doc?['discordWebhookUrl'];
       return (v is String && v.isNotEmpty) ? v : null;
     } catch (_) {
@@ -263,7 +256,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
       'email': email,
       'reason': reason,
       'message': message,
-      'requestedAt': FirestoreRest.serverTimestampValue(),
+      'requestedAt': DateTime.now().toUtc().toIso8601String(),
       'status': 'pending',
       'appVersion': AppInfoScreen.appVersion,
     };

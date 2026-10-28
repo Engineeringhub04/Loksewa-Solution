@@ -8,14 +8,14 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 
 /// "Report a Problem" submission pipeline.
 ///
 /// Mirrors, in order:
 /// - `app/settings/report-problem.tsx` (screen flow)
 /// - `src/core/messaging/support.ts` → `submitProblemReport`
-///   (Cloudinary upload first, Google Form POST second, Firestore history copy
+///   (Cloudinary upload first, Google Form POST second, API history copy
 ///   best-effort last)
 /// - `src/core/media/cloudinary.ts` → `uploadImageToCloudinary`
 ///   (unsigned preset — no API secret is shipped, same as the Expo app)
@@ -176,7 +176,7 @@ class CloudinaryUploader {
 }
 
 /// Submits a problem report: screenshot → Cloudinary, then the Google Form
-/// (relayed to Discord by Apps Script), then a best-effort Firestore history
+/// (relayed to Discord by Apps Script), then a best-effort API history
 /// copy. Mirrors `submitProblemReport` in `src/core/messaging/support.ts`.
 ///
 /// A failed screenshot upload is NOT a failed report — the marker text goes in
@@ -281,7 +281,7 @@ class ReportService {
   /// Report an issue with a specific exam/quiz question (manual entry screen).
   /// Mirrors `submitQuestionReport` in `src/core/messaging/support.ts`: the
   /// Google Form POST (the copy support actually reads) and the private
-  /// Firestore report-history copy are awaited TOGETHER — a Form failure is
+  /// API report-history copy are awaited TOGETHER — a Form failure is
   /// a visible failure, exactly like the Expo app.
   static Future<void> submitQuestionReport({
     required String questionRef,
@@ -320,6 +320,10 @@ class ReportService {
   /// Mirrors the `createReportHistory` call inside the Expo
   /// `submitQuestionReport` — fixed source/target for the manual screen.
   ///
+  /// Phase-3: the record is created by POST /reports — the worker composes
+  /// the reporter fields from the caller's profile, stamps createdAt, and
+  /// appends the new id to the user's reportIds index server-side.
+  ///
   /// Returns the reporter name (used for the admin push) after the history
   /// write succeeds.
   static Future<String> _createQuestionReportHistory({
@@ -329,47 +333,21 @@ class ReportService {
   }) async {
     final user = AuthService.currentUser;
     if (user == null) throw Exception('AUTH_REQUIRED');
-    final idToken = await AuthService.getValidIdToken();
-    final userDoc =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: idToken)
-            .catchError((_) => null);
-    final reporterName =
-        (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
-
-    final reportId = _randomId();
-    await FirestoreRest.setDocument(
-      'app_report_history/$reportId',
-      {
-        'reporterId': user.uid,
-        'reporterName': reporterName,
-        'reporterEmail': userDoc?['email'] ?? user.email,
-        'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
-        'reporterCourseId': userDoc?['courseId'],
-        'reporterSubcourseId': userDoc?['subcourseId'],
-        'source': 'question',
-        'targetType': 'question',
-        'targetId': questionRef,
-        'targetTitle': questionRef,
-        'targetPreview': null,
-        'contextLabel': 'Question · Manual report',
-        'targetAuthorName': null,
-        'targetAuthorPhoto': null,
-        // The issue VALUE (e.g. 'wrong-answer') — the history list shows it
-        // raw, exactly like the Expo record.
-        'reason': issue,
-        'description': description,
-        'status': 'pending',
-        'adminMessage': null,
-        'adminResponses': [],
-        'createdAt': FirestoreRest.serverTimestamp(),
-        'reviewedAt': null,
-      },
-      idToken: idToken,
-    );
-    // Index the report ID on the user's doc for per-user history.
-    // Rules deny LIST queries on app_report_history for non-admins.
-    await _indexReportId(user.uid, reportId, idToken);
-    return reporterName;
+    await CfApi.postReport({
+      'source': 'question',
+      'targetType': 'question',
+      'targetId': questionRef,
+      'targetTitle': questionRef,
+      'targetPreview': null,
+      'contextLabel': 'Question · Manual report',
+      'targetAuthorName': null,
+      'targetAuthorPhoto': null,
+      // The issue VALUE (e.g. 'wrong-answer') — the history list shows it
+      // raw, exactly like the Expo record.
+      'reason': issue,
+      'description': description,
+    });
+    return (user.displayName ?? 'Anonymous').toString();
   }
 
   static Future<void> _submitToGoogleForm({
@@ -418,75 +396,25 @@ class ReportService {
 
   /// Mirrors `createReportHistory` in
   /// `src/core/firebase/services/reportHistory.ts`.
+  ///
+  /// Phase-3: POST /reports creates the record (reporter fields, status,
+  /// createdAt and the reportIds index are composed server-side).
   static Future<String> _createReportHistory(
       String category, String message) async {
     final user = AuthService.currentUser;
     if (user == null) return '';
-    final idToken = await AuthService.getValidIdToken();
-    final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: idToken)
-        .catchError((_) => null);
-    final reporterName =
-        (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString();
-
-    final reportId = _randomId();
-    await FirestoreRest.setDocument(
-      'app_report_history/$reportId',
-      {
-        'reporterId': user.uid,
-        'reporterName': reporterName,
-        'reporterEmail': userDoc?['email'] ?? user.email,
-        'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
-        'reporterCourseId': userDoc?['courseId'],
-        'reporterSubcourseId': userDoc?['subcourseId'],
-        'source': 'app',
-        'targetType': 'app',
-        'targetId': 'app-problem',
-        'targetTitle': category,
-        'targetPreview': null,
-        'contextLabel': 'App · Report a Problem',
-        'targetAuthorName': null,
-        'targetAuthorPhoto': null,
-        'reason': category,
-        'description': message,
-        'status': 'pending',
-        'adminMessage': null,
-        'adminResponses': [],
-        'createdAt': FirestoreRest.serverTimestamp(),
-        'reviewedAt': null,
-      },
-      idToken: idToken,
-    );
-    // Index the report ID on the user's doc for per-user history.
-    // Rules deny LIST queries on app_report_history for non-admins.
-    await _indexReportId(user.uid, reportId, idToken);
-    return reporterName;
-  }
-
-  /// Best-effort index of a report ID into the reporter's own doc.
-  /// Never throws — the report itself is already saved.
-  static Future<void> _indexReportId(
-      String uid, String reportId, String idToken) async {
-    try {
-      final userDoc = await FirestoreRest.getDocument('users/$uid',
-          idToken: idToken);
-      final ids = <String>[
-        for (final e in (userDoc?['reportIds'] as List? ?? [])) e.toString(),
-      ];
-      if (!ids.contains(reportId)) {
-        ids.add(reportId);
-        await FirestoreRest.updateDocument(
-            'users/$uid', {'reportIds': ids},
-            idToken: idToken);
-      }
-    } catch (_) {
-      // Best-effort only; the admin backfill can repair it.
-    }
-  }
-
-  static String _randomId() {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final rng = Random.secure();
-    return List.generate(20, (_) => chars[rng.nextInt(chars.length)]).join();
+    await CfApi.postReport({
+      'source': 'app',
+      'targetType': 'app',
+      'targetId': 'app-problem',
+      'targetTitle': category,
+      'targetPreview': null,
+      'contextLabel': 'App · Report a Problem',
+      'targetAuthorName': null,
+      'targetAuthorPhoto': null,
+      'reason': category,
+      'description': message,
+    });
+    return (user.displayName ?? 'Anonymous').toString();
   }
 }

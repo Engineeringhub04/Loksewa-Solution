@@ -10,21 +10,19 @@ import 'package:loksewa_solution/widgets/stagger_entrance.dart';
 
 /// Widget tests for Security Settings → Change Password.
 ///
-/// The screen's network seams are injected ([ChangePasswordScreen.debugEmail]
-/// etc.), so no Identity Toolkit calls happen. NEVER pumpAndSettle — the
+/// The screen's network seam is injected ([ChangePasswordScreen.debugEmail]
+/// etc.), so no API calls happen. NEVER pumpAndSettle — the
 /// confirmation popup's 200ms transitions are finite but the entrance
 /// animations need small pumps.
 
 Widget _screen({
-  Future<OldPasswordCheck> Function(String, String)? verify,
-  Future<bool> Function(String, String)? update,
+  Future<PasswordChangeOutcome> Function(String, String)? change,
 }) {
   return MaterialApp(
     home: Scaffold(
       body: ChangePasswordScreen(
         debugEmail: 'user@example.com',
-        verifyOldPassword: verify,
-        updatePassword: update,
+        changePassword: change,
       ),
     ),
   );
@@ -113,13 +111,12 @@ void main() {
   });
 
   testWidgets('valid form opens the confirmation popup', (tester) async {
-    var verifyCalls = 0;
+    var changeCalls = 0;
     await tester.pumpWidget(_screen(
-      verify: (_, __) async {
-        verifyCalls++;
-        return const OldPasswordCheck.ok('fresh-token');
+      change: (_, __) async {
+        changeCalls++;
+        return PasswordChangeOutcome.ok;
       },
-      update: (_, __) async => true,
     ));
     await _pumpEntered(tester);
 
@@ -129,18 +126,17 @@ void main() {
     // The confirmation popup — never a raw dialog.
     expect(find.text('Change your password?'), findsOneWidget);
     expect(find.byType(AppModalShell), findsOneWidget);
-    // Nothing verified yet — the verify happens on Confirm.
-    expect(verifyCalls, 0);
+    // Nothing submitted yet — the change happens on Confirm.
+    expect(changeCalls, 0);
   });
 
-  testWidgets('cancel dismisses the popup without verifying', (tester) async {
-    var verifyCalls = 0;
+  testWidgets('cancel dismisses the popup without submitting', (tester) async {
+    var changeCalls = 0;
     await tester.pumpWidget(_screen(
-      verify: (_, __) async {
-        verifyCalls++;
-        return const OldPasswordCheck.ok('fresh-token');
+      change: (_, __) async {
+        changeCalls++;
+        return PasswordChangeOutcome.ok;
       },
-      update: (_, __) async => true,
     ));
     await _pumpEntered(tester);
 
@@ -156,14 +152,13 @@ void main() {
     }
 
     expect(find.byType(AppModalShell), findsNothing);
-    expect(verifyCalls, 0);
+    expect(changeCalls, 0);
     expect(find.text('Update Password'), findsOneWidget);
   });
 
   testWidgets('wrong old password → inline error after confirm', (tester) async {
     await tester.pumpWidget(_screen(
-      verify: (_, __) async => OldPasswordCheck.wrong,
-      update: (_, __) async => true,
+      change: (_, __) async => PasswordChangeOutcome.wrongPassword,
     ));
     await _pumpEntered(tester);
 
@@ -181,18 +176,13 @@ void main() {
 
   testWidgets('confirm with correct old password → success state',
       (tester) async {
-    String? seenToken;
+    String? seenOld;
     String? seenNew;
     await tester.pumpWidget(_screen(
-      verify: (email, old) async {
-        expect(email, 'user@example.com');
-        expect(old, 'oldpass1');
-        return const OldPasswordCheck.ok('fresh-token');
-      },
-      update: (token, newPw) async {
-        seenToken = token;
+      change: (old, newPw) async {
+        seenOld = old;
         seenNew = newPw;
-        return true;
+        return PasswordChangeOutcome.ok;
       },
     ));
     await _pumpEntered(tester);
@@ -203,16 +193,15 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 300));
 
-    // The fresh idToken from the sign-in step is used for the update.
-    expect(seenToken, 'fresh-token');
+    // The single change call carries the typed old + new passwords.
+    expect(seenOld, 'oldpass1');
     expect(seenNew, 'newpass2');
     expect(find.text('Password changed successfully'), findsOneWidget);
   });
 
-  testWidgets('update failure → error toast, no success state', (tester) async {
+  testWidgets('change failure → error toast, no success state', (tester) async {
     await tester.pumpWidget(_screen(
-      verify: (_, __) async => const OldPasswordCheck.ok('fresh-token'),
-      update: (_, __) async => false,
+      change: (_, __) async => PasswordChangeOutcome.error,
     ));
     await _pumpEntered(tester);
 

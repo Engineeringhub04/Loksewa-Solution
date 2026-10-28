@@ -108,24 +108,11 @@ class _SignupScreenState extends State<SignupScreen>
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
   Future<void> _afterSignIn(String uid) async {
-    // Post-signup safety net (defense in depth behind the pre-signup
-    // worker check): the user IS authenticated now, so the local blacklist
-    // query can read their own blacklist row. A hit means the pre-check was
-    // bypassed — destroy the just-created Auth identity so no usable
-    // account survives, and never navigate into the app.
-    final signedUpEmail =
-        (AuthService.currentUser?.email ?? _email.text.trim()).trim();
-    if (signedUpEmail.isNotEmpty &&
-        await AccountProtection.isEmailBlacklisted(signedUpEmail)) {
-      await AuthService.deleteCurrentAccount().catchError((_) {});
-      await AuthService.logout().catchError((_) {});
-      if (!mounted) return;
-      _triggerShake();
-      showAuthToast(
-          context, AccountProtection.blacklistedMessage(),
-          isError: true);
-      return;
-    }
+    // NOTE 1 — blacklist: the old post-signup safety-net check is RETIRED
+    // (Phase-3). The loksewa-api refuses blacklisted emails during signup
+    // itself ('auth/blacklisted' → blacklistedMessage() in the catch
+    // blocks), so a completed signup is never blacklisted; no rollback is
+    // needed here anymore.
     // One account = one device (same flow as login screen).
     final check = await DeviceSessionService.checkDeviceSessionForLogin(uid);
     if (!mounted) return;
@@ -180,20 +167,10 @@ class _SignupScreenState extends State<SignupScreen>
     setState(() => _loading = true);
     try {
       final email = _email.text.trim();
-      // NOTE 1 — blacklist: check BEFORE creating the Auth account (the
-      // typed email is all we need). Local fast-path first, then the
-      // authoritative worker check (works pre-auth where Firestore rules
-      // would deny the direct query). A hit blocks signup entirely — the
-      // account is never created.
-      if (await AccountProtection.isEmailBlacklisted(email) ||
-          await AccountProtection.isEmailBlacklistedViaWorker(email)) {
-        if (!mounted) return;
-        _triggerShake();
-        showAuthToast(
-            context, AccountProtection.blacklistedMessage(),
-            isError: true);
-        return;
-      }
+      // NOTE 1 — blacklist: the client pre-checks are RETIRED (Phase-3) —
+      // the loksewa-api checks the blacklist inside signup and refuses
+      // with 'auth/blacklisted', mapped to the blacklisted message in the
+      // catch below. The account is never created on a hit, as before.
       final user = await AuthService.signUpWithEmail(
         email,
         _password.text,
@@ -274,20 +251,10 @@ class _SignupScreenState extends State<SignupScreen>
             isError: true);
         return;
       }
-      // NOTE 1 — blacklist: the Google email is known after authenticate(),
-      // so the check runs BEFORE the Firebase session is created. Local
-      // fast-path first, then the authoritative worker check (pre-auth
-      // safe). A hit blocks signup; the Google session is released so
-      // nothing remains.
-      if (await AccountProtection.isEmailBlacklisted(account.email) ||
-          await AccountProtection.isEmailBlacklistedViaWorker(account.email)) {
-        await GoogleSignIn.instance.signOut().catchError((_) {});
-        if (!mounted) return;
-        showAuthToast(
-            context, AccountProtection.blacklistedMessage(),
-            isError: true);
-        return;
-      }
+      // NOTE 1 — blacklist: the client pre-checks are RETIRED (Phase-3) —
+      // the loksewa-api checks the blacklist inside the Google sign-in and
+      // refuses with 'auth/blacklisted', mapped to the blacklisted
+      // message in the catch below.
       final result = await AuthService.signInWithGoogleIdToken(
         idToken,
         allowCreate: true,

@@ -499,22 +499,17 @@ class AuthService {
       String uid, String? googlePhotoUrl) async {
     if (googlePhotoUrl == null || googlePhotoUrl.isEmpty) return;
     try {
-      final token = await getValidIdToken();
-      if (token.isEmpty) return;
-      final doc = await FirestoreRest.getDocument('users/$uid', idToken: token);
+      // Phase-3: the profile lives behind GET /me now; the manual-wins
+      // rule is unchanged (a user-uploaded photo is never overwritten).
+      final doc = await CfApi.getMe();
       final source = doc?['photoURLSource']?.toString() ?? 'none';
       if (source == 'manual') return; // user-uploaded — hands off.
       final current = doc?['photoURL']?.toString() ?? '';
       if (current == googlePhotoUrl) return;
-      await FirestoreRest.setDocument(
-        'users/$uid',
-        {
-          'photoURL': googlePhotoUrl,
-          'photoURLSource': 'google',
-        },
-        idToken: token,
-        merge: true,
-      );
+      await CfApi.patchMe({
+        'photoURL': googlePhotoUrl,
+        'photoURLSource': 'google',
+      });
     } catch (_) {}
   }
 
@@ -525,6 +520,10 @@ class AuthService {
     final idToken = await getValidIdToken().catchError((_) => '');
     _session = null;
     _cfUser = null;
+    // Phase-3: revoke the CF refresh token server-side BEFORE the local
+    // CF session is cleared (best-effort — a failed revoke never blocks
+    // the sign-out; the token simply expires on its own schedule).
+    await CfApi.logoutSession().catchError((_) {});
     await CfApi.clearSession().catchError((_) {});
     await PrefsService.remove(PrefsService.sessionKey);
     // v1.0.110: wipe ALL user-specific caches (ProfileStore, pending
@@ -545,14 +544,16 @@ class AuthService {
     DeviceSessionService.resetCaches();
   }
 
-  /// Permanently deletes the Firebase Auth identity (Identity Toolkit
-  /// `accounts:delete`), then clears the local session.
+  /// Permanently deletes the account: the Cloudflare account FIRST
+  /// (DELETE /auth/account — full self-delete, no tombstone), then the
+  /// mirrored Firebase Auth identity (Identity Toolkit `accounts:delete`)
+  /// best-effort, then clears the local session.
   /// Mirrors `deleteCurrentAccount` in `src/core/firebase/auth.ts`.
-  ///
-  /// Callers must delete the user's Firestore profile document FIRST —
-  /// once the auth identity is gone the request is no longer authorised
-  /// to touch the document.
   static Future<void> deleteCurrentAccount() async {
+    // CF is the primary identity now: delete it while its Bearer session
+    // is still alive. A failure here must not strand the Firebase cleanup
+    // below, so it is best-effort like everything else in this method.
+    await CfApi.deleteAccount().catchError((_) {});
     final idToken = await getValidIdToken().catchError((_) => '');
     final uid = currentUser?.uid;
     if (idToken.isNotEmpty) {
@@ -561,7 +562,11 @@ class AuthService {
         await FirestoreRest.deleteDocument('users/$uid/session/active')
             .catchError((_) {});
       }
-      await _identityRequest('delete', {'idToken': idToken});
+      try {
+        await _identityRequest('delete', {'idToken': idToken});
+      } catch (_) {
+        // Best-effort mirror cleanup — the CF account is already gone.
+      }
     }
     _session = null;
     _cfUser = null;
@@ -574,22 +579,18 @@ class AuthService {
   /// params cannot express both.
   static const keepField = Object();
 
-  /// Updates the Firebase Auth user profile (Identity Toolkit `accounts:update`)
-  /// and patches the cached session user so Home/Profile headers update
+  /// Patches the cached session user so Home/Profile headers update
   /// immediately without a re-login. Mirrors `updateCurrentUserProfile` in
   /// src/core/firebase/auth.ts. Failures are the caller's to swallow.
+  ///
+  /// Phase-3: the Firebase Identity Toolkit `accounts:update` call is
+  /// DROPPED — Cloudflare is the identity now; the durable write is the
+  /// Edit Profile PATCH /me (updateUserProfile) and this method only keeps
+  /// the local session + the stored CF user in step.
   static Future<void> updateCurrentUserProfile({
     Object? displayName = keepField,
     Object? photoURL = keepField,
   }) async {
-    final idToken = await getValidIdToken();
-    if (idToken.isEmpty) return;
-    await _identityRequest('update', {
-      'idToken': idToken,
-      if (displayName != keepField) 'displayName': displayName,
-      if (photoURL != keepField) 'photoUrl': photoURL,
-      'returnSecureToken': false,
-    });
     final session = _session;
     if (session != null) {
       final user = session.user;

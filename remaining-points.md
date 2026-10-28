@@ -15,6 +15,7 @@
 - [x] ~~**NOTE-7 — Exam Rules Card Icons:** Rules card ko `icon` naam anusar harek card ma farak icon dekhaune (data ma bhayeka naam haru Ionicon naam hun). Admin preview ✅ Done (2026-10-23, Ionicons CDN on-demand load); app side baki thiyo — app le naam bewasta garera sabai card ma fixed shield icon dekhauchthyo.~~ — **Done 2026-10-28 (Phase-2 Cloudflare migration, app side):** `examRuleIconData()` (`lib/services/exam_service.dart`) le stored Ionicon naam lai Material icon ma map garchha (`-outline`/`-sharp` suffix hataayera, common naam haru cover garne), naam namile / invalid bhaye shield fallback; exam_tab ko rules popup le harek card ma tesko aafno icon dekhaauchha.
 - [x] ~~**NOTE-8 — Exam Rankings App-Side Scope Fields:** App ko `saveExamAttempt()` le public row `app_exam_rankings` ma examSetId, courseId, subcourseId, uid, name, photoURL, isPro, score, timeTakenSeconds, createdAt lekhthyo, tara ExamSet sangai bhayeka **provinceId, sectionId, contentType** lekhdaaina thiyo — app bata aayeka row haru ma admin ko Province/Section filter, tracker ra Model Type column le kaam gardaina thiyo. Admin side bata ko sambodhan (existing row backfill + dead-row cleanup, button haru hataiyo) ra sambandhit tayari (rules sahit) ✅ 2026-10-23/24 mai sakisakeko thiyo.~~ — **Done 2026-10-28 (Phase-2 Cloudflare migration, app side):** `saveExamAttempt()` aba POST /exam/attempts — payload le ExamSet bata **provinceId, sectionId, contentType** pani ranking row ma pathaaunchha (set nai source of truth), tesaile app-created naya row haru ma pani admin filter/tracker/Model Type sabai kaam garchha.
 - [x] ~~**NOTE-9 — Exam Provinces Course/Subcourse Scope (App Side):** Admin panel le `app_exam_provinces` doc haru ma courseIds / subcourseIds array field thapeko thiyo (khali = All), tara app le parse nai gardaina thiyo — `ExamProvince` le id, nameEn, nameNe, order matra parse garthyo, `fetchExamProvinces()` le kunai scope parameter lidaina thiyo, exam_tab le pani sabai province pill haru dekhauchthyo. (Sections ko scope pahile nai pura thiyo — feri nagarne.)~~ — **Done 2026-10-28 (Phase-2 Cloudflare migration, app side):** `ExamProvince` le **courseIds/subcourseIds** pani parse garchha, `fetchExamProvinces({courseId, subcourseId})` le `ExamSection.inScope()` jastai filter garchha (scope list khali/absent bhaye **All** — sadhai dekhine), ra exam_tab le sections lai gareko jasto selected courseId/subcourseId pass garchha.
+- [x] ~~**NOTE-11 — Cloudflare Login (Auth) Migration — Password Claim Flow:** Firebase Authentication ka khata haru Cloudflare tira sarne — email, uid (thyakkai uही), bhaneko date, signup tarika sarne, password column khali (null); email → 6-anka ko code (khata praman) → "Set Your Password" → login + password save. Trigger = password field null bhayeko lai matra (Google khata ko email normal email-login form ma haale pani aauchha; "Continue with Google" button flow ustai).~~ — **Done 2026-10-28:** Bhag 1 + claim flow **Round-1 (v1.0.127)** mai ship bhayo (auth data D1 ma, claim/reset code flow, dual session). Baki raheko auth bhag — **Change Password** (pahile Firebase password matra badlinthyo, CF login password ustai rahanchthyo), **logout ma CF refresh token revoke**, **signup rollback + self-delete ko CF DELETE /auth/account** — **Phase-3 (Profile tree) Cloudflare migration ma pura bhayo (2026-10-28):** ChangePasswordScreen → POST /auth/change-password (arkako session haru revoke), AuthService.logout → POST /auth/logout best-effort, deleteCurrentAccount → CF delete pahile, tes pachi Firebase identity delete best-effort.
 
 ---
 
@@ -47,22 +48,3 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 - Android pahile; iOS chhuttai test (purano iOS ma web fallback ko seto hune purano tathya ajhai lagu).
 
 **Timing:** mathi ko verify sakiyepachhi matra implement; ahile note matra — user, 2026-10-25
-
-### NOTE-11 — Cloudflare Login (Auth) Migration — Password Claim Flow
-Firebase Authentication ka khata haru Cloudflare tira sarne yojana (user ko design 2026-10-28 + assistant ko email-code correction user le swikaareko). App aile public xaina — khata haru khali user kai kehi test ID matra xan, volume sano chha.
-
-**Bhag 1 — Khata ko tathya sarne (password bahek):**
-- Firebase Auth bata: **email, uid (thyakkai uही, ek akshar pani naferine), bhaneko date, signup tarika (Google / email-password)** Cloudflare ma sarne.
-- Password column **khali (null)** baschha — purano password sardaina.
-
-**Bhag 2 — App login page (Cloudflare version ma, pachi ko kaam):**
-- Login page ma **"Login with new password"** jasto link → ustai (duplicate) UI page: pahile **email field matra**.
-- Email haale pachhi system le herchha: tyo khata ko **password field null chha bhane** → tyo email ma **6-anka ko code** pathaaune (khata kas ko ho praman — code bina password rakhna dinu hudaina, natra email thahaaune le aru ko khata kabja garna sakchha).
-- Code mile pachhi **"Set Your Password"** field dekhinchha → password rakhe pachhi login + password save.
-- Ek choti password set bhaye pachhi sadhai normal login; login page le password-nasareko khata lai "wrong password" matra navani claim flow tira pathaaune.
-
-**Trigger niyam (user ko spashta, 2026-10-28):** Set Your Password **password field null bhayeko lai matra** aauchha — provider junsukai hos. Google khata ko pani password hudaina, tesaile tesko email **normal email-login form ma** haale Set Your Password aauchha; **"Continue with Google" button** bata jada chai kei password field dekhiidaina (tyo flow ustai).
-
-**UID:** Cloudflare ma auth hami aafai banauchhau — uid khali text ID ho, purano uid ustai sarne (system le naya banaaune hoina); pachi ka naya signup le pani purano style kai random ID pauchan.
-
-**Timing:** pachi ko Cloudflare migration round ma; ahile note matra — user, 2026-10-28

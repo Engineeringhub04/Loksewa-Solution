@@ -28,7 +28,7 @@ import '../../widgets/subpage_header.dart';
 /// - confirm != new → mismatch error
 ///
 /// "Update Password" opens an AppModalShell CONFIRMATION popup
-/// ("Change your password?"); Confirm runs verify → update with a spinner
+/// ("Change your password?"); Confirm runs the change with a spinner
 /// on the confirm button. Success → success state. A "Forgot Password?"
 /// link under the button goes to `/forgot-password`.
 ///
@@ -38,20 +38,15 @@ class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({
     super.key,
     this.debugEmail,
-    this.verifyOldPassword,
-    this.updatePassword,
+    this.changePassword,
   });
 
   /// Test seam: user email instead of [AuthService.currentUser].
   final String? debugEmail;
 
-  /// Test seam: replaces [ChangePasswordService.verifyOldPassword].
-  final Future<OldPasswordCheck> Function(String email, String oldPassword)?
-      verifyOldPassword;
-
-  /// Test seam: replaces [ChangePasswordService.updatePassword].
-  final Future<bool> Function(String idToken, String newPassword)?
-      updatePassword;
+  /// Test seam: replaces [ChangePasswordService.changePassword].
+  final Future<PasswordChangeOutcome> Function(
+      String oldPassword, String newPassword)? changePassword;
 
   @override
   State<ChangePasswordScreen> createState() => _ChangePasswordScreenState();
@@ -73,13 +68,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   String get _email =>
       widget.debugEmail ?? AuthService.currentUser?.email ?? '';
 
-  Future<OldPasswordCheck> _verify(String email, String oldPassword) =>
-      widget.verifyOldPassword?.call(email, oldPassword) ??
-      ChangePasswordService.verifyOldPassword(email, oldPassword);
-
-  Future<bool> _update(String idToken, String newPassword) =>
-      widget.updatePassword?.call(idToken, newPassword) ??
-      ChangePasswordService.updatePassword(idToken, newPassword);
+  Future<PasswordChangeOutcome> _change(
+          String oldPassword, String newPassword) =>
+      widget.changePassword?.call(oldPassword, newPassword) ??
+      ChangePasswordService.changePassword(oldPassword, newPassword);
 
   @override
   void dispose() {
@@ -222,39 +214,30 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     );
   }
 
-  /// Re-authenticates with the old password, then updates to the new one.
+  /// Submits the old + new password to POST /auth/change-password.
   /// Wrong old password → inline error on the old field; anything else →
   /// error toast. Returns true only when the password was changed.
   Future<bool> _runChange() async {
-    final check = await _verify(_email, _old.text);
+    final outcome = await _change(_old.text, _new.text);
     if (!mounted) return false;
-    if (!check.success) {
-      if (check.wrongPassword) {
+    switch (outcome) {
+      case PasswordChangeOutcome.ok:
+        setState(() => _success = true);
+        return true;
+      case PasswordChangeOutcome.wrongPassword:
         setState(() {
           _oldError = AppLanguage.tr('Old password is incorrect.',
               'पुरानो पासवर्ड गलत छ।');
         });
-      } else {
+        return false;
+      case PasswordChangeOutcome.error:
         showAuthToast(
             context,
             AppLanguage.tr('Something went wrong. Please try again.',
                 'केही गलत भयो। कृपया पुनः प्रयास गर्नुहोस्।'),
             isError: true);
-      }
-      return false;
+        return false;
     }
-    final ok = await _update(check.idToken!, _new.text);
-    if (!mounted) return false;
-    if (ok) {
-      setState(() => _success = true);
-      return true;
-    }
-    showAuthToast(
-        context,
-        AppLanguage.tr('Something went wrong. Please try again.',
-            'केही गलत भयो। कृपया पुनः प्रयास गर्नुहोस्।'),
-        isError: true);
-    return false;
   }
 
   Widget _formCard() {

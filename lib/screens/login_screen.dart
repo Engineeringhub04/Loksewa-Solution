@@ -181,23 +181,11 @@ class _LoginScreenState extends State<LoginScreen>
 
   void _dismissKeyboard() => FocusScope.of(context).unfocus();
 
-  /// NOTE 1 — blacklist: after a successful sign-in, a blacklisted email is
-  /// signed straight back out and blocked. Returns true when blocked.
-  Future<bool> _rejectIfBlacklisted(String? email) async {
-    final e = (email ?? '').trim();
-    if (e.isEmpty) return false;
-    if (await AccountProtection.isEmailBlacklisted(e)) {
-      await GoogleSignIn.instance.signOut().catchError((_) {});
-      await AuthService.logout().catchError((_) {});
-      if (!mounted) return true;
-      _triggerShake();
-      showAuthToast(
-          context, AccountProtection.blacklistedMessage(),
-          isError: true);
-      return true;
-    }
-    return false;
-  }
+  // NOTE 1 — blacklist: the client-side post-sign-in check is RETIRED
+  // (Phase-3). The loksewa-api refuses blacklisted emails during sign-in
+  // itself ('auth/blacklisted'), which the catch blocks below map to
+  // AccountProtection.blacklistedMessage() — the server verdict is
+  // authoritative, so a successful sign-in is never blacklisted.
 
   Future<void> _afterSignIn(String uid) async {
     // NOTE 3 backfill: older accounts may lack the platform field —
@@ -259,8 +247,6 @@ class _LoginScreenState extends State<LoginScreen>
         _email.text.trim(),
         _password.text,
       );
-      // NOTE 1 — blacklisted emails cannot log back in.
-      if (await _rejectIfBlacklisted(user.email)) return;
       await _afterSignIn(user.uid);
     } on AuthError catch (e) {
       if (!mounted) return;
@@ -325,12 +311,6 @@ class _LoginScreenState extends State<LoginScreen>
         allowCreate: false,
         googlePhotoUrl: account.photoUrl,
       );
-      if (!mounted) return;
-      // NOTE 1 — blacklisted emails cannot log back in.
-      if (await _rejectIfBlacklisted(
-          result.user.email ?? account.email)) {
-        return;
-      }
       if (!mounted) return;
       showAuthToast(context, 'Login successful');
       await _afterSignIn(result.user.uid);

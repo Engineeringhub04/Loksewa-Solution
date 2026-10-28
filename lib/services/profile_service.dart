@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 
 /// User profile service + shared profile store.
@@ -12,16 +11,16 @@ import 'package:loksewa_solution/services/subscription_service.dart';
 /// `src/core/store/profileStore.ts` (load / refresh / score / scoreLoading /
 /// error, warmed once and shared by every screen).
 ///
-/// Everything shown on the Profile tab is backed by the users/{uid} Firestore
-/// document, not just the cached auth session, so the values survive
-/// reinstalls and match across devices.
+/// Phase-3: everything shown on the Profile tab is backed by the
+/// loksewa-api (GET /me + GET /profile/course-info), not the Firestore
+/// document, so the values survive reinstalls and match across devices.
 
 // ---------------------------------------------------------------------------
 // Models
 // ---------------------------------------------------------------------------
 
 /// Mirrored headline numbers on users/{uid}.stats. They are NOT computed here;
-/// jobs that already have them in hand mirror them (see writeUserStats), so
+/// jobs that already have them in hand mirror them (PATCH /me 'stats'), so
 /// the Profile stats card reads them for free.
 class UserStats {
   final int testsTaken;
@@ -271,8 +270,16 @@ bool isValidDob(String dob) {
   return year >= 1900;
 }
 
-/// Merge-writes the editable profile fields to users/{uid}.
+/// Merge-writes the editable profile fields via PATCH /me.
 /// Mirrors updateUserProfile() in profile.ts.
+///
+/// Phase-3: identity rides the Bearer token (the [uid] parameter is kept
+/// for signature parity with the old Firestore write). The worker's PATCH
+/// merge treats an explicit null as a CLEAR for dob / gender /
+/// photoURLSource — the same semantics the Firestore merge had — so
+/// cleared fields are sent as nulls, never omitted. One exception:
+/// photoURL is stringified server-side, so a cleared photo is sent as ''
+/// (the established clear encoding; readers treat '' like no photo).
 ///
 /// [photoURLSource] is 'manual' | 'none' when the photo was touched, null to
 /// leave the existing source unchanged (so a Google re-login cannot replace
@@ -285,23 +292,16 @@ Future<void> updateUserProfile(
   String? gender,
   String? photoURL,
   String? photoURLSource,
-  required String idToken,
 }) {
-  return FirestoreRest.setDocument(
-    'users/$uid',
-    {
-      'firstName': firstName.trim(),
-      'lastName': lastName.trim(),
-      'name': fullNameOf(firstName, lastName),
-      'dob': dob,
-      'gender': gender,
-      'photoURL': photoURL,
-      if (photoURLSource != null) 'photoURLSource': photoURLSource,
-      'updatedAt': FirestoreRest.serverTimestampValue(),
-    },
-    idToken: idToken,
-    merge: true,
-  );
+  return CfApi.patchMe({
+    'firstName': firstName.trim(),
+    'lastName': lastName.trim(),
+    'name': fullNameOf(firstName, lastName),
+    'dob': dob,
+    'gender': gender,
+    'photoURL': photoURL ?? '',
+    if (photoURLSource != null) 'photoURLSource': photoURLSource,
+  });
 }
 
 /// Coverage percent for the stats ring. Sub-10% values keep one decimal —
@@ -342,39 +342,24 @@ String? _asString(Object? v) => v is String ? v : null;
 String? _toGender(Object? v) =>
     v == 'male' || v == 'female' || v == 'other' ? v as String : null;
 
-/// Reads the profile document. Returns null only when the document doesn't
-/// exist; otherwise every field is normalised. `firstName`/`lastName` fall
-/// back to splitting the legacy `name` field.
-Future<UserProfile?> fetchUserProfile(String uid) async {
-  final token = await AuthService.getValidIdToken();
-  final doc =
-      await FirestoreRest.getDocument('users/$uid', idToken: token);
-  if (doc == null) return null;
-
+/// Normalises a GET /me row into a [UserProfile]. `firstName`/`lastName`
+/// fall back to splitting the legacy `name` field. D1 rows may carry
+/// scalars as text ('true', JSON-encoded maps), so booleans and the stats
+/// map are decoded defensively. Also seeds the stats baseline the store's
+/// setScore composes against.
+///
+/// Phase-3: the old Firestore fetch also BACKFILLED a missing stats map
+/// with a write — that write is dropped; readers default missing stats to
+/// zeros (UserStats.fromMap), which is all the backfill ever produced.
+UserProfile profileFromMeRow(String uid, Map<String, dynamic> doc) {
   final name = _asString(doc['name']) ?? '';
   final storedFirst = _asString(doc['firstName']) ?? '';
   final storedLast = _asString(doc['lastName']) ?? '';
   final derived = splitName(name);
 
-  // Backfill the stats map on the same read that fetched the profile, so
-  // callers never need a separate ensureUserStats() read. A failed backfill
-  // must never block profile loading.
-  if (doc['stats'] == null) {
-    try {
-      await FirestoreRest.setDocument(
-        'users/$uid',
-        {
-          'stats': const UserStats().toMap(),
-          'updatedAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: token,
-        merge: true,
-      );
-    } catch (_) {}
-  }
-
-  final stats = UserStats.fromMap(
-      doc['stats'] is Map<String, dynamic> ? doc['stats'] : null);
+  final statsRaw = CfApi.decodeFieldValue(doc['stats']);
+  final stats =
+      UserStats.fromMap(statsRaw is Map ? statsRaw.cast<String, dynamic>() : null);
   // Seed the baseline every writer composes its partial update against.
   _statsBaseline[uid] = stats;
 
@@ -395,81 +380,29 @@ Future<UserProfile?> fetchUserProfile(String uid) async {
     courseId: _asString(doc['courseId']),
     subcourseId: _asString(doc['subcourseId']),
     stats: stats,
-    isAdmin: doc['role'] == 'admin',
-    isPremium: doc['isPremium'] == true,
+    isAdmin: doc['role'] == 'admin' || CfJson.asBool(doc['isAdmin']),
+    isPremium: CfJson.asBool(doc['isPremium']),
     premiumPlanName: _asString(doc['premiumPlanName']),
     premiumBillingCycle: _asString(doc['premiumBillingCycle']),
     premiumExpiryDate: _asString(doc['premiumExpiryDate']),
   );
 }
 
-/// Fetches the user's selected course + subcourse names. Mirrors
-/// fetchUserCourseInfo() in courses.ts (direct document reads, plus the
-/// legacy flat `app_subcourses` fallback).
+/// Fetches the user's selected course + subcourse names via
+/// GET /profile/course-info (the worker resolves the course/subcourse
+/// documents, including the legacy flat-collection fallback). The [uid] /
+/// [userDoc] parameters are kept for signature parity — identity rides
+/// the Bearer token and the worker reads the profile itself.
 Future<UserCourseInfo?> fetchUserCourseInfo(String uid,
     {Map<String, dynamic>? userDoc}) async {
-  final token = await AuthService.getValidIdToken();
-  try {
-    userDoc ??= await FirestoreRest.getDocument('users/$uid', idToken: token);
-  } catch (_) {
-    return null;
-  }
-  final courseId = _asString(userDoc?['courseId']);
-  final subcourseId = _asString(userDoc?['subcourseId']);
-  if (courseId == null || courseId.isEmpty) {
-    return UserCourseInfo(courseId: courseId, subcourseId: subcourseId);
-  }
-
-  String? courseName;
-  String? subcourseName;
-  try {
-    final c = await FirestoreRest.getDocument('app_courses/$courseId',
-        idToken: token);
-    courseName = _asString(c?['name']) ?? _asString(c?['nameNe']);
-  } catch (_) {}
-  if (subcourseId != null && subcourseId.isNotEmpty) {
-    try {
-      final sc = await FirestoreRest.getDocument(
-          'app_courses/$courseId/subcourses/$subcourseId',
-          idToken: token);
-      subcourseName = _asString(sc?['name']) ?? _asString(sc?['nameNe']);
-    } catch (_) {}
-    // Legacy fallback: subcourses seeded BEFORE the sub-collection
-    // restructure live in the flat `app_subcourses` collection.
-    if (subcourseName == null || subcourseName.isEmpty) {
-      try {
-        final legacy = await FirestoreRest.getDocument(
-            'app_subcourses/$subcourseId',
-            idToken: token);
-        subcourseName =
-            _asString(legacy?['name']) ?? _asString(legacy?['nameNe']);
-      } catch (_) {}
-    }
-  }
+  final row = await CfApi.getProfileCourseInfo().catchError((_) => null);
+  if (row == null) return null;
   return UserCourseInfo(
-    courseId: courseId,
-    subcourseId: subcourseId,
-    courseName: courseName?.trim(),
-    subcourseName: subcourseName?.trim(),
+    courseId: _asString(row['courseId']),
+    subcourseId: _asString(row['subcourseId']),
+    courseName: _asString(row['courseName'])?.trim(),
+    subcourseName: _asString(row['subcourseName'])?.trim(),
   );
-}
-
-/// Reads the stored whole-app aggregate (users/{uid}/app_mainleaderboard/{subcourseId}).
-/// Null subcourse (not enrolled) settles on null — a skeleton that would never
-/// resolve is worse than the empty state.
-Future<MainLeaderboardScore?> fetchMyMainLeaderboardScore(
-    String uid, String? subcourseId) async {
-  if (uid.isEmpty || subcourseId == null || subcourseId.isEmpty) return null;
-  try {
-    final token = await AuthService.getValidIdToken();
-    final doc = await FirestoreRest.getDocument(
-        'users/$uid/app_mainleaderboard/$subcourseId',
-        idToken: token);
-    if (doc == null) return null;
-    return MainLeaderboardScore.fromMap(doc);
-  } catch (_) {
-    return null;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -490,55 +423,7 @@ void forgetUserStats([String? uid]) {
   }
 }
 
-bool _sameStats(UserStats a, UserStats b) =>
-    a.testsTaken == b.testsTaken &&
-    a.streak == b.streak &&
-    a.rank == b.rank &&
-    a.points == b.points;
 
-int _pickStat(Object? value, int fallback) =>
-    value is num && value.isFinite && value >= 0 ? value.round() : fallback;
-
-/// Merges real numbers into users/{uid}.stats and returns the resulting map.
-/// Never throws — every caller is a background job finishing work whose result
-/// the user has already seen. Returns null only when it could not write.
-Future<UserStats?> writeUserStats(
-    String uid, Map<String, Object?> patch) async {
-  if (uid.isEmpty) return null;
-  try {
-    var baseline = _statsBaseline[uid];
-    if (baseline == null) {
-      final token = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument('users/$uid', idToken: token)
-          .catchError((_) => null);
-      final statsRaw = doc?['stats'];
-      baseline = UserStats.fromMap(
-          statsRaw is Map<String, dynamic> ? statsRaw : null);
-    }
-    final next = UserStats(
-      testsTaken: _pickStat(patch['testsTaken'], baseline.testsTaken),
-      streak: _pickStat(patch['streak'], baseline.streak),
-      rank: _pickStat(patch['rank'], baseline.rank),
-      points: _pickStat(patch['points'], baseline.points),
-    );
-    _statsBaseline[uid] = baseline;
-    if (_sameStats(next, baseline)) return next;
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.setDocument(
-      'users/$uid',
-      {
-        'stats': next.toMap(),
-        'updatedAt': FirestoreRest.serverTimestamp(),
-      },
-      idToken: token,
-      merge: true,
-    );
-    _statsBaseline[uid] = next;
-    return next;
-  } catch (_) {
-    return null;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Shared store (mirrors profileStore.ts)
@@ -622,17 +507,15 @@ class ProfileStore extends ChangeNotifier {
       notifyListeners();
 
       try {
-        // fetchUserProfile performs the stats backfill itself; course info
-        // reuses the already-read user document for the course ids.
-        // A throwing users/{uid} read means a real failure -> error state;
-        // a missing document means an empty-but-ready page.
-        final token = await AuthService.getValidIdToken();
-        final userDoc =
-            await FirestoreRest.getDocument('users/$uid', idToken: token);
+        // Phase-3: the profile comes from GET /me and the course info
+        // from GET /profile/course-info. A throwing read means a real
+        // failure -> error state; a missing row means an empty-but-ready
+        // page.
+        final meRow = await CfApi.getMe();
         final fetchedProfile =
-            userDoc == null ? null : await _profileFromDoc(uid, userDoc, token);
-        final fetchedCourse = await fetchUserCourseInfo(uid, userDoc: userDoc)
-            .catchError((_) => null);
+            meRow == null ? null : profileFromMeRow(uid, meRow);
+        final fetchedCourse =
+            await fetchUserCourseInfo(uid).catchError((_) => null);
 
         profile = fetchedProfile;
         courseInfo = fetchedCourse;
@@ -670,60 +553,8 @@ class ProfileStore extends ChangeNotifier {
     }
   }
 
-  /// Same normalisation as fetchUserProfile, but over an already-fetched doc.
-  Future<UserProfile?> _profileFromDoc(
-      String uid, Map<String, dynamic> doc, String token) async {
-    final name = _asString(doc['name']) ?? '';
-    final storedFirst = _asString(doc['firstName']) ?? '';
-    final storedLast = _asString(doc['lastName']) ?? '';
-    final derived = splitName(name);
-
-    if (doc['stats'] == null) {
-      try {
-        await FirestoreRest.setDocument(
-          'users/$uid',
-          {
-            'stats': const UserStats().toMap(),
-            'updatedAt': FirestoreRest.serverTimestamp(),
-          },
-          idToken: token,
-          merge: true,
-        );
-      } catch (_) {}
-    }
-
-    final stats = UserStats.fromMap(
-        doc['stats'] is Map<String, dynamic> ? doc['stats'] : null);
-    _statsBaseline[uid] = stats;
-
-    final photoURL = _asString(doc['photoURL']);
-    final source = _asString(doc['photoURLSource']);
-    return UserProfile(
-      uid: uid,
-      name: name,
-      firstName: storedFirst.isNotEmpty ? storedFirst : derived['firstName']!,
-      lastName: storedLast.isNotEmpty ? storedLast : derived['lastName']!,
-      email: _asString(doc['email']),
-      dob: _asString(doc['dob']),
-      gender: _toGender(doc['gender']),
-      photoURL: photoURL,
-      photoURLSource:
-          source == 'manual' || source == 'google' || source == 'none'
-              ? source!
-              : (photoURL != null && photoURL.isNotEmpty ? 'manual' : 'none'),
-      courseId: _asString(doc['courseId']),
-      subcourseId: _asString(doc['subcourseId']),
-      stats: stats,
-      isAdmin: doc['role'] == 'admin',
-      isPremium: doc['isPremium'] == true,
-      premiumPlanName: _asString(doc['premiumPlanName']),
-      premiumBillingCycle: _asString(doc['premiumBillingCycle']),
-      premiumExpiryDate: _asString(doc['premiumExpiryDate']),
-    );
-  }
-
-  /// Reads the stored aggregate. Pass a null subcourse for a user who has not
-  /// enrolled.
+  /// Reads the stats-card aggregate. Pass a null subcourse for a user who
+  /// has not enrolled.
   /// Best-effort fetch of the active subscription record's plan name, using
   /// the exact same pick as the Subscription Details page
   /// ([SubscriptionService.currentActiveRecord]: the last-approved active
@@ -754,7 +585,19 @@ class ProfileStore extends ChangeNotifier {
     }
     scoreLoading = true;
     notifyListeners();
-    final fetched = await fetchMyMainLeaderboardScore(uid, subcourseId);
+    // Phase-3: the aggregate is the Phase-1 leaderboard response's 'own'
+    // row (the worker's stored app_main_leaderboard aggregate) — the old
+    // direct Firestore read of users/{uid}/app_mainleaderboard is gone.
+    MainLeaderboardScore? fetched;
+    try {
+      final courseId = courseInfo?.courseId ?? profile?.courseId ?? '';
+      final result = await CfApi.getLeaderboard(
+          courseId: courseId, subcourseId: subcourseId);
+      final own = result.own;
+      fetched = own == null ? null : MainLeaderboardScore.fromMap(own);
+    } catch (_) {
+      fetched = null;
+    }
     // Someone signed out, switched course, or published a fresher score while
     // this read was in flight — our answer is now the stale one.
     if (token != _scoreRequestToken) return;

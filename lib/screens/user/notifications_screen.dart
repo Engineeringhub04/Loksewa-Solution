@@ -3,8 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/notification_feed.dart';
 import 'package:loksewa_solution/services/notification_tracks.dart';
 import 'package:loksewa_solution/services/notification_badge.dart';
@@ -24,7 +24,8 @@ import '../tabs_screen.dart';
 /// Phase-1: the personal inbox, global feed and exam-push rows come from
 /// GET /notifications (notification_feed.dart — the same fetch the Home
 /// badge uses); read-marks and expired-exam cleanup go through the API.
-/// Only the ADMIN-ONLY enrichment reads below still hit Firestore.
+/// Phase-3: the ADMIN-ONLY enrichment lists come from
+/// GET /admin/notifications-enrichment — nothing here reads Firestore.
 ///
 /// Merges the personal inbox (durable server-side `read` field) with the
 /// global feed (`segment == 'nonlogin'` campaigns excluded, read state kept locally per
@@ -162,22 +163,24 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       return;
     }
     try {
-      final token = await AuthService.getValidIdToken();
       // Phase-1: the profile (for the admin gate) comes from GET /me; the
       // personal/global/exam feeds come from the shared GET /notifications
-      // fetch. The ADMIN-ONLY enrichment reads further below stay on
-      // Firestore this phase (no contract endpoints exist for them).
+      // fetch. Phase-3: the ADMIN-ONLY enrichment lists come from
+      // GET /admin/notifications-enrichment (one call instead of the six
+      // Firestore list reads). A failed enrichment degrades to empty
+      // admin tracks; the personal/global feeds are unaffected.
       final profile = await CfApi.getMe();
-      final isAdmin = CfJson.asBool(profile?['isAdmin']);
+      final isAdmin = isAdminMe(profile);
+      final enrichment = isAdmin
+          ? await CfApi.getAdminNotificationsEnrichment()
+              .catchError((_) => <String, dynamic>{})
+          : <String, dynamic>{};
 
       final feed = await fetchNotificationFeed();
       final results = await Future.wait([
         Future.value(feed.personal),
         Future.value(feed.global),
-        isAdmin
-            ? FirestoreRest.listDocuments('app_report_history',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
+        Future.value(CfApi.enrichmentRows(enrichment, 'reports')),
         _getGlobalReadIds(),
         // Exam-push rows: worker writes type='exam' rows (no expiresAt) to
         // app_exam_notifications. Expiry is computed client-side from the
@@ -185,27 +188,12 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         Future.value(feed.exam),
         // Admin-only derived feeds for the track chips (see
         // notification_tracks.dart). Normal users never pay for these
-        // queries. Pending items only — filtered client-side.
-        isAdmin
-            ? FirestoreRest.listDocuments('app_subscriptions',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
-        isAdmin
-            ? FirestoreRest.listDocuments('app_exam_purchases',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
-        isAdmin
-            ? FirestoreRest.listDocuments('app_content_purchases',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
-        isAdmin
-            ? FirestoreRest.listDocuments('app_deleterequest',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
-        isAdmin
-            ? FirestoreRest.listDocuments('app_exam_answers',
-                idToken: token, pageSize: 100)
-            : Future.value(<Map<String, dynamic>>[]),
+        // reads. Pending items only — filtered client-side.
+        Future.value(CfApi.enrichmentRows(enrichment, 'subscriptions')),
+        Future.value(CfApi.enrichmentRows(enrichment, 'examPurchases')),
+        Future.value(CfApi.enrichmentRows(enrichment, 'contentPurchases')),
+        Future.value(CfApi.enrichmentRows(enrichment, 'deleteRequests')),
+        Future.value(CfApi.enrichmentRows(enrichment, 'examAnswers')),
       ]);
 
       final personalRows = results[0] as List<Map<String, dynamic>>;

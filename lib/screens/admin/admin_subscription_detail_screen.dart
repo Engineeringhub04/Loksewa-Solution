@@ -2,10 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
@@ -15,12 +16,12 @@ import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
 
 /// Admin → review one subscription request. Approve activates the subscription
-/// immediately (writes isPremium + premiumPlanName + premiumExpiryDate onto
-/// the user doc); Reject tags it 'rejected' with a reason the user sees on
-/// their Subscription page. Either action keeps the request permanently
-/// visible in the admin list — this screen just updates its status/tag, never
-/// deletes it. Mirrors app/admin/subscriptions/[id].tsx. Collections:
-/// app_subscriptions, app_subscription_plans, users, app_courses.
+/// immediately (the worker writes isPremium + premiumPlanName +
+/// premiumExpiryDate onto the buyer's profile); Reject tags it 'rejected'
+/// with a reason the user sees on their Subscription page. Either action
+/// keeps the request permanently visible in the admin list — this screen
+/// just updates its status/tag, never deletes it. Mirrors
+/// app/admin/subscriptions/[id].tsx. Data: the admin API (Phase-3).
 ///
 /// PREMIUM layout: a status-tinted gradient hero, a user card with a course
 /// chip, an icon-led payment-details card, the screenshot card, the decision
@@ -29,12 +30,12 @@ import '../../widgets/syllabus_entrance.dart';
 /// field is filled. Save opens an AppModalShell confirm whose own Save button
 /// carries the loading state; on success the page reloads.
 ///
-/// Logic is untouched: same load (record + plans + profile + course info),
-/// same approve atomic batch, same reject write (same collections, status
-/// values, fields), same copy-url, same loading / denied / error / not-found
-/// states, and the Scaffold > Stack [Column[header, body]] structure is
-/// preserved. The payment-proof image now opens with the global
-/// showImageViewer.
+/// Logic is untouched: same load (record + profile + course info), same
+/// approve pair of writes and reject write (now server-side, same status
+/// values and fields), same copy-url, same loading / denied / error /
+/// not-found states, and the Scaffold > Stack [Column[header, body]]
+/// structure is preserved. The payment-proof image now opens with the
+/// global showImageViewer.
 class AdminSubscriptionDetailScreen extends StatefulWidget {
   final String id;
   const AdminSubscriptionDetailScreen({super.key, required this.id});
@@ -89,47 +90,42 @@ class _AdminSubscriptionDetailScreenState
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final record = await FirestoreRest.getDocument(
-        'app_subscriptions/${widget.id}',
-        idToken: token);
-    if (record == null) return null;
-    // Plans (active only, ordered) — the approve expiry window comes from
-    // the plan's durationDays, exactly like fetchSubscriptionPlans().
-    try {
-      final plans = await FirestoreRest.listDocuments('app_subscription_plans',
-          idToken: token);
-      plans.retainWhere((p) => p['isActive'] != false);
-      plans.sort(((a, b) =>
-          ((a['order'] ?? 0) as num).compareTo((b['order'] ?? 0) as num)));
-      record['_plans'] = plans;
-    } catch (_) {
-      record['_plans'] = <Map<String, dynamic>>[];
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: the record comes from GET /admin/subscriptions (requester
+    // basics attached per row); the buyer's full profile row comes from
+    // GET /admin/users/:uid.
+    Map<String, dynamic>? record;
+    for (final row in await CfApi.getAdminSubscriptions()) {
+      if ((row['id'] ?? '').toString() == widget.id) {
+        record = row;
+        break;
+      }
     }
+    if (record == null) return null;
     // Requesting user's profile + their course info (course · subcourse
     // names), like fetchUserProfile + fetchUserCourseInfo.
     try {
       final uid = record['uid'];
       if (uid is String && uid.isNotEmpty) {
-        final userProfile =
-            await FirestoreRest.getDocument('users/$uid', idToken: token);
+        final userProfile = await CfApi.getAdminUser(uid).catchError((_) =>
+            <String, dynamic>{
+              'name': record?['requesterName'],
+              'email': record?['requesterEmail'],
+              'photoURL': record?['requesterPhotoURL'],
+            });
         record['_profile'] = userProfile;
-        record['_courseInfo'] = await _fetchUserCourseInfo(userProfile, token);
+        record['_courseInfo'] = await _fetchUserCourseInfo(userProfile);
       }
     } catch (_) {}
     return record;
   }
 
-  /// Mirrors fetchUserCourseInfo(): course name from app_courses/{courseId},
-  /// subcourse name from the sub-collection with the legacy flat
-  /// app_subcourses fallback.
+  /// Mirrors fetchUserCourseInfo(): course/subcourse names resolved from
+  /// the GET /courses catalogue (which already includes the legacy
+  /// flat-collection subcourses).
   Future<Map<String, String?>> _fetchUserCourseInfo(
-      Map<String, dynamic>? userDoc, String token) async {
+      Map<String, dynamic>? userDoc) async {
     final courseId = userDoc?['courseId'] as String?;
     final subcourseId = userDoc?['subcourseId'] as String?;
     if (courseId == null || courseId.isEmpty) {
@@ -138,126 +134,60 @@ class _AdminSubscriptionDetailScreenState
     String? courseName;
     String? subcourseName;
     try {
-      final courseDoc = await FirestoreRest.getDocument('app_courses/$courseId',
-          idToken: token);
-      courseName = courseDoc?['name'] as String?;
-    } catch (_) {
-      // ignore — course may have been removed
-    }
-    if (subcourseId != null && subcourseId.isNotEmpty) {
-      try {
-        final subDoc = await FirestoreRest.getDocument(
-            'app_courses/$courseId/subcourses/$subcourseId',
-            idToken: token);
-        subcourseName = subDoc?['name'] as String?;
-      } catch (_) {
-        // ignore
-      }
-      if (subcourseName == null) {
-        try {
-          final legacyDoc = await FirestoreRest.getDocument(
-              'app_subcourses/$subcourseId',
-              idToken: token);
-          subcourseName = legacyDoc?['name'] as String?;
-        } catch (_) {
-          // ignore — subcourse may have been removed
+      final data = await CfApi.getCourses();
+      for (final c in data.courses) {
+        if ((c['id'] ?? '').toString() == courseId) {
+          courseName = (c['name'] ?? c['nameNe']) as String?;
+          break;
         }
       }
+      if (subcourseId != null && subcourseId.isNotEmpty) {
+        for (final s in data.subcourses) {
+          if ((s['id'] ?? '').toString() == subcourseId) {
+            subcourseName = (s['name'] ?? s['nameNe']) as String?;
+            break;
+          }
+        }
+      }
+    } catch (_) {
+      // ignore — course may have been removed
     }
     return {'courseName': courseName, 'subcourseName': subcourseName};
   }
 
   void _refresh() => setState(() => _future = _load());
 
-  int _durationDays(Map<String, dynamic> record) {
-    final plans = (record['_plans'] as List?) ?? [];
-    for (final p in plans) {
-      final plan = p as Map<String, dynamic>;
-      if ('${plan['id'] ?? ''}' == '${record['planId'] ?? ''}') {
-        final days = plan['durationDays'];
-        if (days is int) return days;
-        if (days is String) return int.tryParse(days) ?? 30;
-      }
-    }
-    return 30;
-  }
-
-  /// Approve write — the exact two-write batch the old Approve button ran
-  /// (status 'active', expiry window from the plan, premium flags mirrored
-  /// onto the user doc). Throws on failure so the confirm dialog can stay
-  /// open with an error toast.
+  /// Approve write — POST /admin/subscriptions/:id/approve. The worker
+  /// runs the exact pair the old Approve button's commitWrites ran:
+  /// the record goes active (expiry = the plan's durationDays from now)
+  /// AND the premium mirror lands on the buyer's profile. Throws on
+  /// failure so the confirm dialog can stay open with an error toast.
   Future<void> _writeApprove(Map<String, dynamic> record) async {
-    final reviewer = AuthService.currentUser;
-    if (reviewer == null) {
+    if (AuthService.currentUser == null) {
       throw Exception(
           AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
     }
-    final token = await AuthService.getValidIdToken();
-    final days = _durationDays(record);
-    final now = DateTime.now();
-    final expiry = now.add(Duration(days: days));
     final adminMessage =
         _adminMessage.text.trim().isEmpty ? null : _adminMessage.text.trim();
-    // Atomic two-write batch, like approveSubscription()'s commitWrites:
-    // activate the request AND mirror premium flags onto the user doc.
-    await FirestoreRest.commitWrites(
-      [
-        FirestoreWrite(
-          'app_subscriptions/${widget.id}',
-          {
-            'status': 'active',
-            'reviewedAt': now.toIso8601String(),
-            'reviewedBy': reviewer.uid,
-            'adminMessage': adminMessage,
-            'rejectionReason': null,
-            'startDate': now.toIso8601String(),
-            'expiryDate': expiry.toIso8601String(),
-            'updatedAt': FirestoreRest.serverTimestamp(),
-          },
-          merge: true,
-        ),
-        if (record['uid'] is String && (record['uid'] as String).isNotEmpty)
-          FirestoreWrite(
-            'users/${record['uid']}',
-            {
-              'isPremium': true,
-              'premiumPlanName': record['planName'],
-              'premiumBillingCycle': record['billingCycle'],
-              'premiumExpiryDate': expiry.toIso8601String(),
-              'updatedAt': FirestoreRest.serverTimestamp(),
-            },
-            merge: true,
-          ),
-      ],
-      idToken: token,
-    );
+    await CfApi.approveAdminSubscription(widget.id,
+        adminMessage: adminMessage);
   }
 
-  /// Reject write — the exact updateDocument the old Reject button ran:
-  /// status 'rejected' + rejectionReason. [reason] is the default
-  /// verification text for a plain Reject, or the admin's custom text for
-  /// Other. Throws on failure.
+  /// Reject write — POST /admin/subscriptions/:id/reject: status
+  /// 'rejected' + rejectionReason. [reason] is the default verification
+  /// text for a plain Reject, or the admin's custom text for Other.
+  /// Throws on failure.
   Future<void> _writeReject(String reason) async {
-    final reviewer = AuthService.currentUser;
-    if (reviewer == null) {
+    if (AuthService.currentUser == null) {
       throw Exception(
           AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
     }
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.updateDocument(
-      'app_subscriptions/${widget.id}',
-      {
-        'status': 'rejected',
-        'reviewedAt': DateTime.now().toIso8601String(),
-        'reviewedBy': reviewer.uid,
-        'rejectionReason':
-            reason.isEmpty ? 'Payment could not be verified.' : reason,
-        'adminMessage': _adminMessage.text.trim().isEmpty
-            ? null
-            : _adminMessage.text.trim(),
-        'updatedAt': FirestoreRest.serverTimestamp(),
-      },
-      idToken: token,
+    await CfApi.rejectAdminSubscription(
+      widget.id,
+      adminMessage:
+          _adminMessage.text.trim().isEmpty ? null : _adminMessage.text.trim(),
+      rejectionReason:
+          reason.isEmpty ? 'Payment could not be verified.' : reason,
     );
   }
 

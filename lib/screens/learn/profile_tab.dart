@@ -5,11 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 
-import 'package:loksewa_solution/screens/tabs_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/app_link_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/services/theme_service.dart';
@@ -33,9 +31,9 @@ import 'package:loksewa_solution/widgets/trash_icon.dart';
 /// logout with a destructive confirm (550ms spinner floor + 1400ms
 /// sign-out ceiling).
 ///
-/// Everything shown here is backed by the users/{uid} Firestore document (via
-/// the shared [ProfileStore]), not just the cached auth session, so the
-/// values survive reinstalls and match across devices.
+/// Everything shown here is backed by the user's profile row (via the
+/// shared [ProfileStore], Phase-3: GET /me), not just the cached auth
+/// session, so the values survive reinstalls and match across devices.
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
 
@@ -98,8 +96,6 @@ class _ProfileTabState extends State<ProfileTab> {
     }
     // The store may already be loaded (e.g. coming back from Edit Profile).
     _onStoreChanged();
-    // One-time share-link migration (admin only, best-effort).
-    _migrateAppLinkDoc();
   }
 
   @override
@@ -186,35 +182,6 @@ class _ProfileTabState extends State<ProfileTab> {
   }
 
   void _goToEdit() => context.push('/edit-profile');
-
-  /// One-time migration (2026-10-02, remove in a later update): the share link
-  /// One-time admin migration: the shared App Link is now the plain domain
-  /// https://www.kbr.com.np (tapping it just opens / resumes the app — no
-  /// in-app routing). If the seeded `app_applink_details/main` document
-  /// still carries an old link (/downloadapp or /signup), an admin opening
-  /// the profile flips it — no console work needed. Admin-only write per
-  /// firebase.rules.
-  Future<void> _migrateAppLinkDoc() async {
-    try {
-      final profile = ProfileStore.instance.profile;
-      if (profile == null || !profile.isAdmin) return;
-      final doc =
-          await FirestoreRest.getDocument('app_applink_details/main');
-      final link = (doc?['link'] as String?)?.trim() ?? '';
-      if (link == 'https://www.kbr.com.np') return;
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.setDocument(
-        'app_applink_details/main',
-        {
-          'link': 'https://www.kbr.com.np',
-          'updatedDate': DateTime.now().toUtc(),
-        },
-        idToken: idToken,
-        merge: true,
-      );
-      AppLinkService.resetForTest();
-    } catch (_) {}
-  }
 
   String? _genderLabel(String? gender) {
     switch (gender) {

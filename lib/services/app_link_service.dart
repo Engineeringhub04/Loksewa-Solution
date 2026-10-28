@@ -1,13 +1,12 @@
-import 'firestore_rest.dart';
+import 'cf_api.dart';
 
 /// App Links configuration — the runtime source of the share URL and the app
-/// domain. Read from Firestore (`app_applink_details/main`, public read) so the
-/// links can change without an app update; cached in memory after the first
-/// load. Falls back to the domain root until the document is seeded.
+/// domain. Read from the loksewa-api (GET /app-link — the migrated
+/// `app_applink_details/main` row) so the links can change without an app
+/// update; cached in memory after the first load. Falls back to the domain
+/// root until the row is seeded.
 class AppLinkService {
-  static const String _docPath = 'app_applink_details/main';
-
-  /// Used when the Firestore document is not seeded yet.
+  /// Used when the app-link row is not seeded yet.
   static const String fallbackShareLink = 'https://www.kbr.com.np';
 
   /// App domain used for App Links (host only, no scheme).
@@ -17,7 +16,7 @@ class AppLinkService {
   static bool _loaded = false;
   static Future<void>? _inflight;
 
-  /// Loads (and caches) the document. Safe to call repeatedly or concurrently.
+  /// Loads (and caches) the row. Safe to call repeatedly or concurrently.
   static Future<void> ensureLoaded() {
     if (_loaded) return Future.value();
     _inflight ??= _fetch();
@@ -26,7 +25,7 @@ class AppLinkService {
 
   static Future<void> _fetch() async {
     try {
-      _doc = await FirestoreRest.getDocument(_docPath);
+      _doc = await CfApi.getAppLink();
     } catch (_) {
       _doc = null;
     }

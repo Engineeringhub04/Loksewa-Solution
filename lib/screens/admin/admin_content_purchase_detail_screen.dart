@@ -1,10 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/image_viewer.dart';
@@ -15,10 +16,10 @@ import 'admin_review_dialogs.dart'
     show showAdminDecisionConfirmDialog, adminContentTitle;
 
 /// Admin → review one content (subject/unit/chapter) purchase request.
-/// Mirrors app/admin/content-purchases/[id].tsx. Collection:
-/// app_content_purchases. Approve tags it active; reject tags it rejected
-/// with a reason. The record is never deleted — it stays in the admin list
-/// as an audit trail.
+/// Mirrors app/admin/content-purchases/[id].tsx. Data: the admin API
+/// (Phase-3). Approve tags it active; reject tags it rejected with a
+/// reason. The record is never deleted — it stays in the admin list as
+/// an audit trail.
 class AdminContentPurchaseDetailScreen extends StatefulWidget {
   final String id;
   const AdminContentPurchaseDetailScreen({super.key, required this.id});
@@ -60,21 +61,29 @@ class _AdminContentPurchaseDetailScreenState
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final record = await FirestoreRest.getDocument(
-        'app_content_purchases/${widget.id}',
-        idToken: token);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: the record comes from GET /admin/purchases (content list,
+    // requester basics attached).
+    Map<String, dynamic>? record;
+    final rows =
+        CfApi.adminPurchaseRows(await CfApi.getAdminPurchases(), 'content');
+    for (final row in rows) {
+      if ((row['id'] ?? '').toString() == widget.id) {
+        record = row;
+        break;
+      }
+    }
     if (record == null) return null;
     try {
       final uid = record['uid'];
       if (uid is String && uid.isNotEmpty) {
-        record['_profile'] =
-            await FirestoreRest.getDocument('users/$uid', idToken: token);
+        record['_profile'] = await CfApi.getAdminUser(uid).catchError((_) =>
+            <String, dynamic>{
+              'name': record?['requesterName'],
+              'email': record?['requesterEmail'],
+              'photoURL': record?['requesterPhotoURL'],
+            });
       }
     } catch (_) {}
     _record = record;
@@ -97,8 +106,8 @@ class _AdminContentPurchaseDetailScreenState
 
   /// ONE Save button → AppModalShell confirm popup → the popup's Save button
   /// shows loading while the write runs → success reloads the page. The
-  /// Firestore writes are IDENTICAL to the old approve/reject pair:
-  /// app_content_purchases, status 'active'/'rejected', rejectionReason, the
+  /// decide write is IDENTICAL to the old approve/reject pair (now
+  /// server-side): status 'active'/'rejected', rejectionReason, the
   /// default 'Payment could not be verified.' reason.
   Future<void> _save() async {
     final decision = _decision;
@@ -172,23 +181,19 @@ class _AdminContentPurchaseDetailScreenState
             color: Colors.white),
       ),
       onConfirm: () async {
-        final token = await AuthService.getValidIdToken();
-        await FirestoreRest.updateDocument(
-          'app_content_purchases/${widget.id}',
-          {
-            'status': isApprove ? 'active' : 'rejected',
-            'reviewedAt': DateTime.now().toIso8601String(),
-            'reviewedBy': reviewer.uid,
-            'adminMessage': message,
-            'rejectionReason': isApprove
-                ? null
-                : decision == 'other'
-                    ? customReason
-                    : 'Payment could not be verified.',
-            'updatedAt': FirestoreRest.serverTimestamp(),
-          },
-          idToken: token,
-        );
+        // Phase-3: POST /admin/purchases/content/:id/approve|reject — the
+        // worker writes the same status/reviewedAt/reviewedBy/
+        // adminMessage/rejectionReason fields the old updateDocument did.
+        if (isApprove) {
+          await CfApi.approveAdminPurchase('content', widget.id,
+              adminMessage: message);
+        } else {
+          await CfApi.rejectAdminPurchase('content', widget.id,
+              adminMessage: message,
+              rejectionReason: decision == 'other'
+                  ? customReason
+                  : 'Payment could not be verified.');
+        }
       },
     );
     if (!mounted) return;

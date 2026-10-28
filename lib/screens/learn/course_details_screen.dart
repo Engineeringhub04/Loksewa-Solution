@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -11,19 +11,18 @@ import '../../widgets/syllabus_entrance.dart';
 /// Course details — mirrors app/course-details.tsx (Profile → App Settings →
 /// Course details).
 ///
-/// Reads the user's enrolled course/subcourse from users/{uid} and resolves
-/// the display names from the course catalogue collections, exactly like
-/// React's `fetchUserCourseInfo`: `app_courses/{id}`,
-/// `app_courses/{id}/subcourses/{sub}`, with the legacy `app_subcourses/{sub}`
-/// fallback for subcourses seeded before the sub-collection restructure.
+/// Reads the user's enrolled course/subcourse and resolves the display
+/// names exactly like React's `fetchUserCourseInfo` — Phase-3 via
+/// GET /profile/course-info, which performs the same catalogue lookups
+/// (including the legacy flat-collection fallback) server-side.
 class CourseDetailsScreen extends StatefulWidget {
   const CourseDetailsScreen({super.key, this.debugUid, this.loadInfo});
 
   /// Test seam: when set, the screen loads info for this uid instead of the
-  /// signed-in user, and never touches AuthService/Firestore.
+  /// signed-in user, and never touches AuthService/the API.
   final String? debugUid;
 
-  /// Test seam: replaces the whole Firestore load.
+  /// Test seam: replaces the whole course-info load.
   final Future<CourseDetailsInfo> Function(String uid)? loadInfo;
 
   @override
@@ -108,50 +107,17 @@ class _CourseDetailsScreenState extends State<CourseDetailsScreen> {
       return const CourseDetailsInfo();
     }
     if (widget.loadInfo != null) return widget.loadInfo!(uid);
-    final token = await AuthService.getValidIdToken();
-
-    final userDoc =
-        await FirestoreRest.getDocument('users/$uid', idToken: token);
-    final courseId = userDoc?['courseId'] as String?;
-    final subcourseId = userDoc?['subcourseId'] as String?;
-    if (courseId == null || courseId.isEmpty) {
-      return const CourseDetailsInfo();
-    }
-
-    String? courseName;
-    String? subcourseName;
-    try {
-      final courseDoc = await FirestoreRest.getDocument('app_courses/$courseId',
-          idToken: token);
-      courseName = courseDoc?['name'] as String?;
-    } catch (_) {
-      // ignore — course may have been removed
-    }
-    if (subcourseId != null && subcourseId.isNotEmpty) {
-      try {
-        final subDoc = await FirestoreRest.getDocument(
-            'app_courses/$courseId/subcourses/$subcourseId',
-            idToken: token);
-        subcourseName = subDoc?['name'] as String?;
-      } catch (_) {
-        // ignore
-      }
-      if (subcourseName == null || subcourseName.isEmpty) {
-        try {
-          final legacyDoc = await FirestoreRest.getDocument(
-              'app_subcourses/$subcourseId',
-              idToken: token);
-          subcourseName = legacyDoc?['name'] as String?;
-        } catch (_) {
-          // ignore — subcourse may have been removed
-        }
-      }
-    }
+    // Phase-3: GET /profile/course-info resolves the enrolled course +
+    // subcourse names server-side (including the legacy flat-collection
+    // fallback) in the fetchUserCourseInfo shape.
+    final row = await CfApi.getProfileCourseInfo();
+    if (row == null) return const CourseDetailsInfo();
+    String? str(dynamic v) => v is String ? v : null;
     return CourseDetailsInfo(
-      courseId: courseId,
-      subcourseId: subcourseId,
-      courseName: courseName,
-      subcourseName: subcourseName,
+      courseId: str(row['courseId']),
+      subcourseId: str(row['subcourseId']),
+      courseName: str(row['courseName']),
+      subcourseName: str(row['subcourseName']),
     );
   }
 

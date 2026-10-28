@@ -3,8 +3,7 @@
 // full-colour, locked ones dimmed. Tapping a badge opens a bottom sheet with
 // its title and description (or the unlocked-on date).
 import 'package:flutter/material.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -31,18 +30,11 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   late final Future<List<_Badge>> _future = _load();
 
   Future<List<_Badge>> _load() async {
-    final token = await AuthService.getValidIdToken();
-    final uid = AuthService.currentUser?.uid;
-    final results = await Future.wait([
-      FirestoreRest.listDocuments('achievements',
-          idToken: token, pageSize: 100),
-      FirestoreRest.getDocument('users/$uid', idToken: token),
-    ]);
-    final catalog = results[0] as List<Map<String, dynamic>>;
-    final userDoc = results[1] as Map<String, dynamic>?;
-    final unlockedMap =
-        (userDoc?['unlockedAchievements'] as Map?)?.cast<String, dynamic>() ??
-            {};
+    // Phase-3: GET /achievements returns the catalogue plus the signed-in
+    // user's own unlock map in one call.
+    final data = await CfApi.getAchievements();
+    final catalog = data['catalogue'] as List<Map<String, dynamic>>;
+    final unlockedMap = data['unlocked'] as Map<String, dynamic>;
     return catalog
         .map((a) => _Badge(
               a['id']?.toString() ?? '',

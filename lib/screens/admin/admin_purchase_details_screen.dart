@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
@@ -12,7 +13,8 @@ import 'admin_review_dialogs.dart' show adminContentTitle;
 
 /// Admin → Purchase Request Control: every exam + content purchase request in
 /// one list. Mirrors app/admin/purchase-details/index.tsx. Each request
-/// carries its requester's profile (photo/name/email), fetched best-effort.
+/// carries its requester's basics (photo/name/email), attached by the
+/// worker. Data: GET /admin/purchases.
 ///
 /// PREMIUM layout (same treatment as the v1.0.31 Subscription Requests
 /// redesign): gradient stat hero (Total / Awaiting / Approved) with
@@ -52,40 +54,30 @@ class _AdminPurchaseDetailsScreenState
   }
 
   Future<List<_Item>> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final results = await Future.wait([
-      FirestoreRest.listDocuments('app_exam_purchases',
-          idToken: token, pageSize: 300),
-      FirestoreRest.listDocuments('app_content_purchases',
-          idToken: token, pageSize: 300),
-    ]);
-    final raws = <_Item>[
-      for (final r in results[0]) _Item('exam', r),
-      for (final r in results[1]) _Item('content', r),
-    ];
-    // Requester profiles, best-effort (a missing profile never blocks the
-    // list) — mirrors the per-uid fetchUserProfile calls.
-    final profiles = await Future.wait(raws.map((item) async {
-      final uid = item.record['uid'];
-      if (uid is! String || uid.isEmpty) return null;
-      try {
-        return await FirestoreRest.getDocument('users/$uid', idToken: token);
-      } catch (_) {
-        return null;
-      }
-    }));
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: GET /admin/purchases returns both queues at once, with the
+    // requester's basics attached to each row by the worker (the old
+    // per-uid profile fan-out is gone).
+    final body = await CfApi.getAdminPurchases();
     final items = <_Item>[
-      for (var i = 0; i < raws.length; i++)
-        _Item(raws[i].kind, raws[i].record, profiles[i]),
+      for (final r in CfApi.adminPurchaseRows(body, 'exam'))
+        _Item('exam', r, _requesterProfile(r)),
+      for (final r in CfApi.adminPurchaseRows(body, 'content'))
+        _Item('content', r, _requesterProfile(r)),
     ];
     items.sort((a, b) =>
         _date(b.record['submittedAt']).compareTo(_date(a.record['submittedAt'])));
     return items;
+  }
+
+  /// The card's profile shape (name + photo) from the worker-attached
+  /// requester fields. Null when the row carries neither.
+  static Map<String, dynamic>? _requesterProfile(Map<String, dynamic> r) {
+    final name = (r['requesterName'] ?? '').toString();
+    final photo = (r['requesterPhotoURL'] ?? '').toString();
+    if (name.isEmpty && photo.isEmpty) return null;
+    return {'name': name, 'photoURL': photo};
   }
 
   static DateTime _date(dynamic v) {

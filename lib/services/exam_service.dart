@@ -14,7 +14,6 @@ import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
 import 'cf_api.dart';
-import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'server_clock.dart';
 
@@ -1807,9 +1806,13 @@ Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
 
 /// Mirrors fetchAllExamAnswers (examAnswers.ts) — ADMIN ONLY: every theory
 /// answer submission, newest first. Powers the Answers Review desk.
+///
+/// Phase-3: reads GET /admin/answers (the worker re-checks the admin role
+/// server-side). Rows pass through the same CF shaping as the Phase-2
+/// answer reads before hitting [ExamAnswer.fromMap].
 Future<List<ExamAnswer>> fetchAllExamAnswers() async {
-  final docs = await ExamRest.runQuery('app_exam_answers', limit: 500);
-  final answers = docs.map(ExamAnswer.fromMap).toList()
+  final rows = await CfApi.getAdminAnswers();
+  final answers = rows.map((r) => ExamAnswer.fromMap(_cfAnswerRow(r))).toList()
     ..sort((a, b) => b.createdAtMillis.compareTo(a.createdAtMillis));
   return answers;
 }

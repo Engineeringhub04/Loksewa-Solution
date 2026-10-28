@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
 
 /// Admin → exam purchase review queue. Mirrors
-/// app/admin/exam-purchases/index.tsx. Collection: app_exam_purchases.
+/// app/admin/exam-purchases/index.tsx. Data: GET /admin/purchases.
 /// Statuses: pending (New), active (Approved), rejected.
 class AdminExamPurchasesScreen extends StatefulWidget {
   const AdminExamPurchasesScreen({super.key});
@@ -31,14 +32,11 @@ class _AdminExamPurchasesScreenState extends State<AdminExamPurchasesScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final docs = await FirestoreRest.listDocuments('app_exam_purchases',
-        idToken: token, pageSize: 300);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: the exam queue rides GET /admin/purchases ({exam, content}).
+    final docs =
+        CfApi.adminPurchaseRows(await CfApi.getAdminPurchases(), 'exam');
     docs.sort(
         (a, b) => _date(b['submittedAt']).compareTo(_date(a['submittedAt'])));
     return docs;

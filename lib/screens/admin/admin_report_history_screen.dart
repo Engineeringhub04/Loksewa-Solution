@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
 /// Admin → Report Details Control: every report from every user, newest first.
-/// Mirrors app/admin/report-history/index.tsx. Collection: app_report_history.
+/// Mirrors app/admin/report-history/index.tsx. Data: GET /admin/reports.
 /// Tracks: all | question | discussion (source != 'question').
 class AdminReportHistoryScreen extends StatefulWidget {
   const AdminReportHistoryScreen({super.key});
@@ -29,14 +30,10 @@ class _AdminReportHistoryScreenState extends State<AdminReportHistoryScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final docs = await FirestoreRest.listDocuments('app_report_history',
-        idToken: token, pageSize: 300);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: GET /admin/reports (newest first server-side too).
+    final docs = await CfApi.getAdminReports();
     docs.sort(
         (a, b) => _date(b['createdAt']).compareTo(_date(a['createdAt'])));
     return docs;

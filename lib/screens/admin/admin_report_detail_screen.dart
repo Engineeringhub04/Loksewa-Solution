@@ -1,14 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
 /// Admin → review one report and answer the reporter. Mirrors
-/// app/admin/report-history/[id].tsx. Collection: app_report_history.
+/// app/admin/report-history/[id].tsx. Data: the admin API (Phase-3).
 /// Actions: resolved / reviewed / dismissed, each optionally with a message
 /// appended to adminResponses.
 class AdminReportDetailScreen extends StatefulWidget {
@@ -40,22 +41,22 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final record = await FirestoreRest.getDocument(
-        'app_report_history/${widget.id}',
-        idToken: token);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: the record comes from GET /admin/reports (picked out of
+    // the list); the reporter's profile from GET /admin/users/:uid.
+    Map<String, dynamic>? record;
+    for (final row in await CfApi.getAdminReports()) {
+      if ((row['id'] ?? '').toString() == widget.id) {
+        record = row;
+        break;
+      }
+    }
     if (record == null) return null;
     try {
       final reporterId = record['reporterId'];
       if (reporterId is String && reporterId.isNotEmpty) {
-        record['_reporterProfile'] = await FirestoreRest.getDocument(
-            'users/$reporterId',
-            idToken: token);
+        record['_reporterProfile'] = await CfApi.getAdminUser(reporterId);
       }
     } catch (_) {}
     return record;
@@ -92,32 +93,15 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
     if (confirm != true) return;
     setState(() => _busy = true);
     try {
-      final token = await AuthService.getValidIdToken();
       final message = _adminMessage.text.trim();
-      final existing = (record['adminResponses'] as List?)?.toList() ?? [];
-      final next = List<Map<String, dynamic>>.from(
-          existing.map((e) => Map<String, dynamic>.from(e as Map)));
-      if (message.isNotEmpty) {
-        next.add({
-          'id': 'response-${DateTime.now().millisecondsSinceEpoch}',
-          'message': message,
-          'status': status,
-          'createdAt': DateTime.now().toIso8601String(),
-        });
-      }
-      await FirestoreRest.setDocument(
-        'app_report_history/${widget.id}',
-        {
-          'status': status,
-          'adminMessage': message.isNotEmpty
-              ? message
-              : (record['adminMessage'] as String?),
-          'adminResponses': next,
-          'reviewedAt': FirestoreRest.serverTimestamp(),
-        },
-        idToken: token,
-        merge: true,
-      );
+      // Phase-3: PATCH /admin/reports/:id — the worker appends the
+      // response to adminResponses, applies the adminMessage fallback
+      // (empty message keeps the previous one) and stamps reviewedAt,
+      // exactly as the old client-side merge composed them.
+      await CfApi.patchAdminReport(widget.id, {
+        'status': status,
+        'adminMessage': message,
+      });
       _adminMessage.clear();
       // Best-effort push to the reporter — never blocks.
       final reporterId = (record['reporterId'] ?? '').toString();

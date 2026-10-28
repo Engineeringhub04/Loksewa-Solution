@@ -3,14 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
 /// Admin grading screen for one theory answer submission. Mirrors
-/// app/admin/exam-answer/[id].tsx. Collection: app_exam_answers.
+/// app/admin/exam-answer/[id].tsx. Data: the admin API (Phase-3).
 ///
 /// Note: the Expo app embeds a PDF viewer and uploads the checked PDF to
 /// Cloudinary — both need packages this screen may not import, so the
@@ -51,14 +52,15 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    return FirestoreRest.getDocument('app_exam_answers/${widget.id}',
-        idToken: token);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: the record comes from GET /admin/answers (the contract has
+    // no single-answer admin read — the row is picked out of the list).
+    final rows = await CfApi.getAdminAnswers();
+    for (final row in rows) {
+      if ((row['id'] ?? '').toString() == widget.id) return row;
+    }
+    return null;
   }
 
   void _prefill(Map<String, dynamic> a) {
@@ -124,19 +126,19 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
     if (confirm != true) return;
     setState(() => _saving = true);
     try {
-      final token = await AuthService.getValidIdToken();
+      // Phase-3: PATCH /admin/exam-answers/:id — the worker stamps
+      // reviewedAt server-side (the old client sent a server timestamp,
+      // which is the same instant).
       final data = <String, dynamic>{
         'score': score,
         'fullMarks': fullMarks,
         'passed': _passed,
         'reviewNote': _reviewNote.text.trim(),
         'status': 'reviewed',
-        'reviewedAt': FirestoreRest.serverTimestamp(),
       };
       final checked = _checkedPdfUrl.text.trim();
       if (checked.isNotEmpty) data['checkedPdfUrl'] = checked;
-      await FirestoreRest.setDocument('app_exam_answers/${widget.id}', data,
-          idToken: token, merge: true);
+      await CfApi.patchAdminExamAnswer(widget.id, data);
       // Best-effort push to the student — never blocks.
       final studentUid = (record['uid'] ?? '').toString();
       if (studentUid.isNotEmpty) {

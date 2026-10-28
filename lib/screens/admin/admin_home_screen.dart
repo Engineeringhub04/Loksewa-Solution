@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
 /// Admin home — dashboard menu linking to every admin tool. Admin-only
-/// (users/{uid}.isAdmin == true), mirroring the Admin section of the Expo
+/// (GET /me role == 'admin'), mirroring the Admin section of the Expo
 /// profile tab.
 class AdminHomeScreen extends StatefulWidget {
   const AdminHomeScreen({super.key});
@@ -28,12 +28,9 @@ class _AdminHomeScreenState extends State<AdminHomeScreen> {
   }
 
   Future<bool> _checkAdmin() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
+    // Phase-3: the gate is the unified GET /me role check.
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
     return true;
   }
 

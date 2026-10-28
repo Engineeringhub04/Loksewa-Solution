@@ -7,9 +7,9 @@
 // admin shortcut card, footer note, pull-to-refresh.
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
@@ -37,40 +37,27 @@ class _ReportHistoryScreenState extends State<ReportHistoryScreen> {
     _load();
   }
 
-  /// Mirrors `fetchMyReportHistory`: newest first. Security rules only ever
-  /// return this user's docs for non-admins, so the client-side filter is a
-  /// no-op.
+  /// Mirrors `fetchMyReportHistory`: newest first.
+  ///
+  /// Phase-3: GET /reports/mine returns the caller's reports in one call
+  /// (the worker resolves the per-user index server-side — the old
+  /// reportIds fan-out is gone), and the admin shortcut gate is the
+  /// unified GET /me role check.
   Future<void> _load({bool refresh = false}) async {
     if (!refresh) setState(() => _loading = true);
     try {
-      final uid = AuthService.currentUser?.uid;
-      final idToken = await AuthService.getValidIdToken();
-      final userDoc =
-          await FirestoreRest.getDocument('users/$uid', idToken: idToken)
-              .catchError((_) => null);
-      // Per-user index: rules deny LIST queries on app_report_history for
-      // non-admins (resource.data is unavailable on lists), so the user's
-      // report IDs are read from their own doc and each is fetched with
-      // getDocument (which the rules allow for the reporter).
-      final ids = <String>[
-        for (final e in (userDoc?['reportIds'] as List? ?? [])) e.toString(),
-      ];
-      final mine = <Map<String, dynamic>>[];
-      for (final rid in ids) {
-        try {
-          final doc = await FirestoreRest.getDocument('app_report_history/$rid',
-              idToken: idToken);
-          if (doc != null) mine.add(doc);
-        } catch (_) {
-          // Skip docs that fail to load; never crash the whole list.
-        }
-      }
+      final results = await Future.wait([
+        CfApi.getMyReports(),
+        CfApi.getMe().catchError((_) => null),
+      ]);
+      final mine = results[0] as List<Map<String, dynamic>>;
+      final me = results[1] as Map<String, dynamic>?;
       mine.sort((a, b) => _millis(b['createdAt'])
           .compareTo(_millis(a['createdAt'])));
       if (!mounted) return;
       setState(() {
         _items = mine;
-        _isAdmin = userDoc?['isAdmin'] == true;
+        _isAdmin = isAdminMe(me);
         _loading = false;
         // A stale selection can outlive its last record — fall back to all.
         if (_filter != 'all' &&

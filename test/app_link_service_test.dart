@@ -13,7 +13,7 @@ void main() {
     expect(AppLinkService.appDomainLink, 'www.kbr.com.np');
   });
 
-  test('ensureLoaded does not throw when Firestore is unreachable', () async {
+  test('ensureLoaded does not throw when the API is unreachable', () async {
     // No network/auth in unit tests: _fetch catches and keeps fallbacks.
     await AppLinkService.ensureLoaded();
     expect(AppLinkService.shareLink, 'https://www.kbr.com.np');

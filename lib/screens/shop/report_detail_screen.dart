@@ -8,8 +8,7 @@
 // or the pending-review hint when nothing has arrived yet.
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
@@ -36,14 +35,11 @@ class _ReportDetailScreenState extends State<ReportDetailScreen> {
     _load();
   }
 
-  /// Mirrors `fetchReportHistory`.
+  /// Mirrors `fetchReportHistory`. Phase-3: GET /reports/:id.
   Future<void> _load({bool refresh = false}) async {
     if (!refresh) setState(() => _loading = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-          'app_report_history/${widget.id}',
-          idToken: idToken);
+      final doc = await CfApi.getReport(widget.id);
       if (!mounted) return;
       setState(() {
         _record = doc;

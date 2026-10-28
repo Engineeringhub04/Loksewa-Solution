@@ -268,7 +268,14 @@ class CfApi {
         'PATCH' => client
             .patch(uri, headers: headers, body: json.encode(body ?? {}))
             .timeout(_timeout),
-        'DELETE' => client.delete(uri, headers: headers).timeout(_timeout),
+        // http.delete can't carry a body; DELETE /auth/account sends an
+        // optional password, so go through a raw Request.
+        'DELETE' => client
+            .send(http.Request('DELETE', uri)
+              ..headers.addAll(headers)
+              ..body = json.encode(body ?? {}))
+            .then((s) => http.Response.fromStream(s))
+            .timeout(_timeout),
         _ => throw ArgumentError('unsupported method $method'),
       };
     } catch (e) {
@@ -1038,5 +1045,239 @@ class CfApi {
     final body =
         await _request('POST', '/daily-test/results', body: payload);
     return _asMap(body);
+  }
+
+  // ============================================================ Phase 3
+  // Profile-tree endpoints. Same conventions as Phase 1/2: flat rows with
+  // Firestore field names, single-row reads return null on 404.
+
+  /// Changes the CF login password. The worker verifies the old password
+  /// (401 'wrong_password' on mismatch) and revokes the user's OTHER
+  /// sessions; this session stays signed in.
+  static Future<void> changePassword({
+    required String oldPassword,
+    required String newPassword,
+  }) async {
+    // The worker spares the session whose refresh token is presented;
+    // without it EVERY session (this device included) is revoked and the
+    // user is silently signed out once the access token expires.
+    final rt = _session?.refreshToken ?? '';
+    await _request('POST', '/auth/change-password', body: {
+      'oldPassword': oldPassword,
+      'newPassword': newPassword,
+      if (rt.isNotEmpty) 'refreshToken': rt,
+    });
+  }
+
+  /// Revokes the saved refresh token server-side (best-effort logout).
+  static Future<void> logoutSession() async {
+    final rt = _session?.refreshToken ?? '';
+    await _request('POST', '/auth/logout',
+        body: rt.isEmpty ? null : {'refreshToken': rt});
+  }
+
+  /// Full Cloudflare self-delete of the signed-in account (no tombstone /
+  /// blacklist entry). [password] is sent when provided.
+  static Future<void> deleteAccount({String? password}) async {
+    await _request('DELETE', '/auth/account',
+        body: password == null ? null : {'password': password});
+  }
+
+  /// The signed-in user's course info (fetchUserCourseInfo shape):
+  /// courseId / subcourseId / courseName / subcourseName.
+  static Future<Map<String, dynamic>?> getProfileCourseInfo() =>
+      _getRow('/profile/course-info');
+
+  /// The app_applink_details/main row (share link, Discord webhook, ...).
+  static Future<Map<String, dynamic>?> getAppLink() => _getRow('/app-link');
+
+  /// Files a report-history record server-side (the worker stamps the
+  /// reporter fields + createdAt and appends the id to the user's
+  /// reportIds). Returns the new report id.
+  static Future<String> postReport(Map<String, dynamic> fields) async {
+    final body = await _request('POST', '/reports', body: fields);
+    final m = _asMap(body);
+    final id = m['id'] ?? _asMap(m['row'])['id'];
+    return (id ?? '').toString();
+  }
+
+  /// The signed-in user's own reports, newest data as stored.
+  static Future<List<Map<String, dynamic>>> getMyReports() async {
+    final body = await _request('GET', '/reports/mine');
+    return _rows(body, ['rows', 'reports', 'items', 'data']);
+  }
+
+  /// One report by id. Null when missing.
+  static Future<Map<String, dynamic>?> getReport(String id) =>
+      _getRow('/reports/${Uri.encodeComponent(id)}');
+
+  /// The signed-in user's pending delete-account request, if any.
+  static Future<Map<String, dynamic>?> getDeleteRequest() async {
+    try {
+      final body = await _request('GET', '/delete-request');
+      final m = _asMap(body);
+      if (m.containsKey('row')) {
+        return m['row'] is Map ? normalizeRow(_asMap(m['row'])) : null;
+      }
+      return _rowOf(body);
+    } on CfError catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Submits a delete-account request (duplicate-guarded server-side).
+  static Future<void> postDeleteRequest({
+    required String reason,
+    required String message,
+    required String appVersion,
+  }) async {
+    await _request('POST', '/delete-request', body: {
+      'reason': reason,
+      'message': message,
+      'appVersion': appVersion,
+    });
+  }
+
+  /// Achievements payload, normalized to {catalogue: [rows], unlocked:
+  /// {id: unlockedAt}} — the achievements catalogue plus the signed-in
+  /// user's own unlock map, wherever the worker nests them.
+  static Future<Map<String, dynamic>> getAchievements() async {
+    final body = _asMap(await _request('GET', '/achievements'));
+    final catalogue = _rows(body, ['catalogue', 'achievements', 'rows']);
+    dynamic unlocked = body['unlocked'] ?? body['unlockedAchievements'];
+    if (unlocked == null && body['own'] is Map) {
+      unlocked = _asMap(body['own'])['unlockedAchievements'];
+    }
+    if (unlocked == null && body['user'] is Map) {
+      unlocked = _asMap(body['user'])['unlockedAchievements'];
+    }
+    unlocked = decodeFieldValue(unlocked);
+    return {
+      'catalogue': catalogue,
+      'unlocked': unlocked is Map
+          ? unlocked.cast<String, dynamic>()
+          : <String, dynamic>{},
+    };
+  }
+
+  // ------------------------------------------------------- admin (Phase 3)
+  // In-app /admin screens. The worker re-checks role=='admin' on every
+  // call; the screens keep their own not-admin state UI on top.
+
+  /// All exam answers for the admin review queue.
+  static Future<List<Map<String, dynamic>>> getAdminAnswers() async {
+    final body = await _request('GET', '/admin/answers');
+    return _rows(body, ['rows', 'answers', 'items', 'data']);
+  }
+
+  /// Grades one exam answer (score / fullMarks / passed / reviewNote /
+  /// status / checkedPdfUrl fields).
+  static Future<void> patchAdminExamAnswer(
+      String id, Map<String, dynamic> fields) async {
+    await _request('PATCH', '/admin/exam-answers/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// All subscription purchase requests.
+  static Future<List<Map<String, dynamic>>> getAdminSubscriptions() async {
+    final body = await _request('GET', '/admin/subscriptions');
+    return _rows(body, ['rows', 'subscriptions', 'items', 'data']);
+  }
+
+  static Future<void> approveAdminSubscription(String id,
+      {String? adminMessage}) async {
+    await _request(
+        'POST', '/admin/subscriptions/${Uri.encodeComponent(id)}/approve',
+        body: {
+          if (adminMessage != null) 'adminMessage': adminMessage,
+        });
+  }
+
+  static Future<void> rejectAdminSubscription(String id,
+      {String? adminMessage, String? rejectionReason}) async {
+    await _request(
+        'POST', '/admin/subscriptions/${Uri.encodeComponent(id)}/reject',
+        body: {
+          if (adminMessage != null) 'adminMessage': adminMessage,
+          if (rejectionReason != null) 'rejectionReason': rejectionReason,
+        });
+  }
+
+  /// Both purchase queues: {exam: [...], content: [...]}.
+  static Future<Map<String, dynamic>> getAdminPurchases() async {
+    final body = await _request('GET', '/admin/purchases');
+    return _asMap(body);
+  }
+
+  /// Purchase rows of one kind ('exam' | 'content') from getAdminPurchases.
+  static List<Map<String, dynamic>> adminPurchaseRows(
+      Map<String, dynamic> body, String kind) {
+    final v = body[kind];
+    if (v is List) {
+      return v
+          .whereType<Map>()
+          .map((e) => normalizeRow(e.cast<String, dynamic>()))
+          .toList();
+    }
+    return <Map<String, dynamic>>[];
+  }
+
+  static Future<void> approveAdminPurchase(String kind, String id,
+      {String? adminMessage}) async {
+    await _request('POST',
+        '/admin/purchases/$kind/${Uri.encodeComponent(id)}/approve',
+        body: {
+          if (adminMessage != null) 'adminMessage': adminMessage,
+        });
+  }
+
+  static Future<void> rejectAdminPurchase(String kind, String id,
+      {String? adminMessage, String? rejectionReason}) async {
+    await _request('POST',
+        '/admin/purchases/$kind/${Uri.encodeComponent(id)}/reject',
+        body: {
+          if (adminMessage != null) 'adminMessage': adminMessage,
+          if (rejectionReason != null) 'rejectionReason': rejectionReason,
+        });
+  }
+
+  /// All reports for the admin report control screens.
+  static Future<List<Map<String, dynamic>>> getAdminReports() async {
+    final body = await _request('GET', '/admin/reports');
+    return _rows(body, ['rows', 'reports', 'items', 'data']);
+  }
+
+  /// Answers/reviews one report (status / adminMessage / adminResponses /
+  /// reviewedAt fields).
+  static Future<void> patchAdminReport(
+      String id, Map<String, dynamic> fields) async {
+    await _request('PATCH', '/admin/reports/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// One user's profile row for admin detail screens. Null when missing.
+  static Future<Map<String, dynamic>?> getAdminUser(String uid) =>
+      _getRow('/admin/users/${Uri.encodeComponent(uid)}');
+
+  /// The six admin-only enrichment lists for the notifications screen:
+  /// {reports, subscriptions, examPurchases, contentPurchases,
+  /// deleteRequests, examAnswers}.
+  static Future<Map<String, dynamic>> getAdminNotificationsEnrichment() async {
+    final body = await _request('GET', '/admin/notifications-enrichment');
+    return _asMap(body);
+  }
+
+  /// One list out of an enrichment-shaped body, normalized.
+  static List<Map<String, dynamic>> enrichmentRows(
+      Map<String, dynamic> body, String key) {
+    final v = body[key];
+    if (v is List) {
+      return v
+          .whereType<Map>()
+          .map((e) => normalizeRow(e.cast<String, dynamic>()))
+          .toList();
+    }
+    return <Map<String, dynamic>>[];
   }
 }

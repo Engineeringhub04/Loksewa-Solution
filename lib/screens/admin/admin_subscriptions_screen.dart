@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -12,12 +13,12 @@ import '../../widgets/subpage_header.dart';
 /// Admin desk — every subscription request, newest first. A request is NEVER
 /// removed from this list after review; it just changes tag (New → Approved
 /// / Rejected), so the admin always has a full audit trail here. Mirrors
-/// app/admin/subscriptions/index.tsx. Collection: app_subscriptions.
+/// app/admin/subscriptions/index.tsx. Data: GET /admin/subscriptions.
 ///
 /// PREMIUM layout: gradient stat hero (Total / Awaiting / Approved) with
 /// divider-separated numbers, a segmented filter control, then modern
 /// request cards — gradient avatar ring, name + plan line, status pill +
-/// date, and a bold amount on the right edge.
+/// date, and a bold amount on the right edge. Data: GET /admin/subscriptions.
 ///
 /// Logic is untouched: same fetch + newest-first sort, same four filters,
 /// same card tap route, same loading / denied / error / empty states.
@@ -46,39 +47,26 @@ class _AdminSubscriptionsScreenState extends State<AdminSubscriptionsScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final user = AuthService.currentUser;
-    if (user == null) throw _Denied();
-    final token = await AuthService.getValidIdToken();
-    final profile =
-        await FirestoreRest.getDocument('users/${user.uid}', idToken: token);
-    if (profile?['isAdmin'] != true) throw _Denied();
-    final docs = await FirestoreRest.listDocuments('app_subscriptions',
-        idToken: token, pageSize: 300);
+    if (AuthService.currentUser == null) throw _Denied();
+    if (!await fetchIsAdmin()) throw _Denied();
+    // Phase-3: GET /admin/subscriptions (newest first, requester basics
+    // attached per row by the worker).
+    final docs = await CfApi.getAdminSubscriptions();
     docs.sort(
         (a, b) => _date(b['submittedAt']).compareTo(_date(a['submittedAt'])));
-    await _prefetchPhotos(docs, token);
+    _fillPhotoCache(docs);
     return docs;
   }
 
-  /// One batched lookup of every subscriber's profile photo; cards read from
-  /// the cache so no card triggers its own fetch.
-  Future<void> _prefetchPhotos(
-      List<Map<String, dynamic>> docs, String token) async {
-    final uids = <String>{};
+  /// Fills the avatar cache from the requester photo the worker attaches
+  /// to each row; cards read from the cache so no card triggers a fetch.
+  void _fillPhotoCache(List<Map<String, dynamic>> docs) {
     for (final d in docs) {
       final uid = '${d['uid'] ?? ''}';
-      if (uid.isNotEmpty && !_photoCache.containsKey(uid)) uids.add(uid);
+      if (uid.isEmpty || _photoCache.containsKey(uid)) continue;
+      final url = (d['requesterPhotoURL'] ?? '').toString();
+      _photoCache[uid] = url.isEmpty ? null : url;
     }
-    await Future.wait(uids.map((uid) async {
-      try {
-        final doc =
-            await FirestoreRest.getDocument('users/$uid', idToken: token);
-        final url = (doc?['photoURL'] ?? doc?['photoUrl'] ?? '').toString();
-        _photoCache[uid] = url.isEmpty ? null : url;
-      } catch (_) {
-        _photoCache[uid] = null;
-      }
-    }));
   }
 
   static DateTime _date(dynamic v) {

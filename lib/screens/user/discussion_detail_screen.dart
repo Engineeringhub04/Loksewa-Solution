@@ -100,16 +100,12 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   bool get _signedIn => AuthService.currentUser != null;
   bool get _isAdmin => ProfileStore.instance.profile?.isAdmin ?? false;
 
-  /// Maps a write failure to an actionable message: 403/PERMISSION_DENIED
-  /// almost always means the Firebase console rules are older than the app's
-  /// firebase.rules (the user pastes them manually).
+  /// Maps a write failure to an actionable message: a 403 from the API
+  /// means the account is not allowed to perform the write.
   String _writeErrorMessage(Object e) {
     final s = e.toString();
     if (s.contains('403') || s.contains('PERMISSION_DENIED')) {
-      return AppLanguage.tr(
-        'Not allowed — please update Firebase rules from GitHub.',
-        'अनुमति छैन — GitHub बाट Firebase rules अपडेट गर्नुहोस्।',
-      );
+      return AppLanguage.tr('Not allowed', 'अनुमति छैन');
     }
     return AppLanguage.tr('Something went wrong', 'केही समस्या भयो');
   }
@@ -254,8 +250,13 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
   Future<void> _togglePostLike(bool liked) async {
     if (!_signedIn) _requireSignIn();
     try {
-      await DiscussionService.toggleLikeDiscussion(widget.id, liked);
+      final serverCount =
+          await DiscussionService.toggleLikeDiscussion(widget.id, liked);
       _postLiked = liked;
+      // Adopt the worker's authoritative likeCount into the header model.
+      if (serverCount != null && mounted && _post != null) {
+        setState(() => _post = _post!.copyWith(likeCount: serverCount));
+      }
     } catch (_) {
       rethrow;
     }
@@ -265,11 +266,40 @@ class _DiscussionDetailScreenState extends State<DiscussionDetailScreen> {
       DiscussionComment c, bool liked, String? replyId) async {
     if (!_signedIn) _requireSignIn();
     try {
-      await DiscussionService.toggleCommentLike(widget.id, c.id, liked, replyId);
+      final serverCount = await DiscussionService.toggleCommentLike(
+          widget.id, c.id, liked, replyId);
       if (replyId == null) {
         _commentLiked[c.id] = liked;
       } else {
         _replyLiked['${c.id}__$replyId'] = liked;
+      }
+      // Adopt the worker's authoritative likeCount into the list model.
+      if (serverCount != null && mounted) {
+        setState(() {
+          if (replyId == null) {
+            final i = _comments.indexWhere((x) => x.id == c.id);
+            if (i >= 0) {
+              _comments[i] = _comments[i].copyWith(likeCount: serverCount);
+            }
+          } else {
+            final list = _replies[c.id];
+            final j = list?.indexWhere((r) => r.id == replyId) ?? -1;
+            if (list != null && j >= 0) {
+              final r = list[j];
+              list[j] = DiscussionReply(
+                id: r.id,
+                body: r.body,
+                authorName: r.authorName,
+                authorPhoto: r.authorPhoto,
+                authorId: r.authorId,
+                likeCount: serverCount,
+                createdAt: r.createdAt,
+                editedAt: r.editedAt,
+                parentCommentId: r.parentCommentId,
+              );
+            }
+          }
+        });
       }
     } catch (_) {
       rethrow;

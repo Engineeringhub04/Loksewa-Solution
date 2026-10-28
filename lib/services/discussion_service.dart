@@ -2,14 +2,13 @@
 // `src/core/firebase/services/discussions.ts` (352 lines) and
 // `src/core/firebase/services/discussionGuidelines.ts` (48 lines).
 //
-// Firestore access goes through the hand-rolled REST layer only:
-// - one-shot `ExamRest.runQuery` (single-field orderBy, NO composite
-//   indexes, NO realtime listeners anywhere in this module);
-// - `ExamRest.createDoc` with real server timestamps for new docs;
-// - `:commit` field-transform `increment(±1)` for like/comment counters
-//   (never read-then-write).
-// - Per-user reaction reads are cached 60s in-memory with in-flight
-//   dedup — the same read-quota protection the Expo app has.
+// Phase-4: all data access goes through the Cloudflare API (CfApi) —
+// one-shot requests only, NO realtime listeners anywhere in this module.
+// The worker composes the author snapshot + zeroed counters on creates,
+// maintains like/comment counters server-side (toggles and comment
+// writes), and cascades deletes (post → comments → replies → reactions).
+// Per-user reaction reads are cached 60s in-memory with in-flight
+// dedup — the same read-quota protection the Expo app has.
 
 import 'dart:async';
 import 'dart:convert';
@@ -18,10 +17,8 @@ import 'dart:math';
 import 'package:http/http.dart' as http;
 
 import 'admin_notify_service.dart';
-import 'app_config.dart';
 import 'auth_service.dart';
-import 'exam_service.dart';
-import 'firestore_rest.dart';
+import 'cf_api.dart';
 
 /// Thrown by like toggles when no user is signed in (Expo: 'AUTH_REQUIRED').
 class AuthRequiredException implements Exception {
@@ -31,7 +28,7 @@ class AuthRequiredException implements Exception {
 }
 
 /// Thrown by [DiscussionService.reportContent] only when BOTH the Google
-/// Form path and the Firestore history path fail.
+/// Form path and the API history path fail.
 class DiscussionReportFailedException implements Exception {
   const DiscussionReportFailedException();
   @override
@@ -96,11 +93,13 @@ class DiscussionPost {
   static int _int(Object? v) =>
       v is num && v.isFinite ? v.toInt() : int.tryParse('$v') ?? 0;
 
-  static DateTime? _dt(Object? v) => v is DateTime ? v : null;
+  /// CF rows carry timestamps as ISO strings / epoch numbers (the
+  /// Firestore-era models only ever saw DateTime objects).
+  static DateTime? _dt(Object? v) => CfJson.asDateTime(v);
 
   /// Display-only copy with an overridden field (e.g. live comment count
   /// on the detail header — the stored counter is not the source of truth).
-  DiscussionPost copyWith({int? commentCount, bool? isPinned}) =>
+  DiscussionPost copyWith({int? commentCount, bool? isPinned, int? likeCount}) =>
       DiscussionPost(
         id: id,
         title: title,
@@ -118,7 +117,7 @@ class DiscussionPost {
         isAdmin: isAdmin,
         isSeed: isSeed,
         isPinned: isPinned ?? this.isPinned,
-        likeCount: likeCount,
+        likeCount: likeCount ?? this.likeCount,
         commentCount: commentCount ?? this.commentCount,
         createdAt: createdAt,
         editedAt: editedAt,
@@ -139,9 +138,9 @@ class DiscussionPost {
         subcourseName: _strOrNull(m['subcourseName']),
         imageUrl: _strOrNull(m['imageUrl']),
         linkUrl: _strOrNull(m['linkUrl']),
-        isAdmin: m['isAdmin'] == true,
-        isSeed: m['isSeed'] == true,
-        isPinned: m['isPinned'] == true,
+        isAdmin: CfJson.asBool(m['isAdmin']),
+        isSeed: CfJson.asBool(m['isSeed']),
+        isPinned: CfJson.asBool(m['isPinned']),
         likeCount: _int(m['likeCount']),
         commentCount: _int(m['commentCount']),
         createdAt: _dt(m['createdAt']),
@@ -169,6 +168,19 @@ class DiscussionComment {
     this.createdAt,
     this.editedAt,
   });
+
+  /// Copy with a server-reported like count applied (like toggles return
+  /// the authoritative count from the worker).
+  DiscussionComment copyWith({int? likeCount}) => DiscussionComment(
+        id: id,
+        body: body,
+        authorName: authorName,
+        authorPhoto: authorPhoto,
+        authorId: authorId,
+        likeCount: likeCount ?? this.likeCount,
+        createdAt: createdAt,
+        editedAt: editedAt,
+      );
 
   factory DiscussionComment.fromMap(Map<String, dynamic> m) =>
       DiscussionComment(
@@ -391,12 +403,15 @@ class DiscussionService {
   static final Map<String, ({bool liked, int cachedAtMs})> _reactionCache = {};
   static final Map<String, Future<bool>> _reactionInFlight = {};
 
-  static String _reactionKey(String reactionPath, String uid) =>
-      '${reactionPath}__$uid';
+  /// Logical cache key for one reaction target (the Firestore-era keys
+  /// were subcollection paths; the API identifies a target by
+  /// type + target id + owning discussion).
+  static String _reactionKey(String targetType, String targetId) =>
+      '$targetType:$targetId';
 
   static Future<bool> _isReactionLikedCached(
-      String reactionPath, String uid) async {
-    final key = _reactionKey(reactionPath, uid);
+      String targetType, String targetId, String discussionId) async {
+    final key = _reactionKey(targetType, targetId);
     final entry = _reactionCache[key];
     if (entry != null &&
         DateTime.now().millisecondsSinceEpoch - entry.cachedAtMs <
@@ -405,25 +420,27 @@ class DiscussionService {
     }
     final inFlight = _reactionInFlight[key];
     if (inFlight != null) return inFlight;
-    final request = _readReaction(reactionPath, uid).whenComplete(() {
+    final request =
+        _readReaction(targetType, targetId, discussionId).whenComplete(() {
       _reactionInFlight.remove(key);
     });
     _reactionInFlight[key] = request;
     return request;
   }
 
-  static Future<bool> _readReaction(String reactionPath, String uid) async {
-    final token = await AuthService.getValidIdToken();
-    final doc = await FirestoreRest.getDocument('$reactionPath/$uid',
-        idToken: token);
-    final liked = doc != null;
-    _reactionCache[_reactionKey(reactionPath, uid)] =
+  static Future<bool> _readReaction(
+      String targetType, String targetId, String discussionId) async {
+    final likedIds = await CfApi.getDiscussionReactionState(
+        [(type: targetType, id: targetId)]);
+    final liked = likedIds.contains(targetId);
+    _reactionCache[_reactionKey(targetType, targetId)] =
         (liked: liked, cachedAtMs: DateTime.now().millisecondsSinceEpoch);
     return liked;
   }
 
-  static void _invalidateReactionCache(String reactionPath, String uid) {
-    _reactionCache.remove(_reactionKey(reactionPath, uid));
+  static void _cacheReaction(String targetType, String targetId, bool liked) {
+    _reactionCache[_reactionKey(targetType, targetId)] =
+        (liked: liked, cachedAtMs: DateTime.now().millisecondsSinceEpoch);
   }
 
   /// Test/support hook: clears the 60s reaction cache.
@@ -434,23 +451,22 @@ class DiscussionService {
 
   // ---------- Feed ----------
 
-  /// Latest [max] posts, `orderBy createdAt desc`, one-shot.
+  /// Latest [max] posts, newest first (server order), one-shot.
   static Future<List<DiscussionPost>> fetchDiscussions({int max = 30}) async {
-    final docs = await ExamRest.runQuery(
-      'discussions',
-      orderBy: [ExamRest.orderField('createdAt', 'DESCENDING')],
-      limit: max,
-    );
-    return docs.map(DiscussionPost.fromMap).toList();
+    final rows = await CfApi.getDiscussions(limit: max);
+    return rows.map(DiscussionPost.fromMap).toList();
   }
 
   static Future<DiscussionPost?> fetchDiscussion(String id) async {
-    final token = await AuthService.getValidIdToken();
-    final doc =
-        await FirestoreRest.getDocument('discussions/$id', idToken: token);
-    return doc == null ? null : DiscussionPost.fromMap(doc);
+    final row = await CfApi.getDiscussion(id);
+    return row == null ? null : DiscussionPost.fromMap(row);
   }
 
+  /// Creates a post and returns the SERVER id from the created row. The
+  /// worker composes the author snapshot (name/photo/course stamp) and
+  /// the zeroed counters from the caller's profile — the author/course
+  /// parameters stay in the signature for the existing callers but are
+  /// no longer trusted as the stored values.
   static Future<String> createDiscussion({
     required String title,
     required String body,
@@ -465,30 +481,15 @@ class DiscussionService {
     String? imageUrl,
     String? linkUrl,
     required bool isAdmin,
-  }) {
-    return ExamRest.createDoc(
-      'discussions',
-      {
-        'title': title,
-        'body': body,
-        'category': category,
-        'authorName': authorName,
-        'authorPhoto': authorPhoto,
-        'authorId': authorId,
-        'courseId': courseId,
-        'subcourseId': subcourseId,
-        'courseName': courseName,
-        'subcourseName': subcourseName,
-        'imageUrl': imageUrl,
-        'linkUrl': linkUrl,
-        'isAdmin': isAdmin,
-        'isSeed': false,
-        'likeCount': 0,
-        'commentCount': 0,
-        'editedAt': null,
-      },
-      serverTimestampFields: const ['createdAt'],
-    );
+  }) async {
+    final row = await CfApi.createDiscussion({
+      'title': title,
+      'content': body,
+      if (category.isNotEmpty) 'category': category,
+      if (imageUrl != null && imageUrl.isNotEmpty) 'imageUrl': imageUrl,
+      if (linkUrl != null && linkUrl.isNotEmpty) 'linkUrl': linkUrl,
+    });
+    return '${row['id'] ?? ''}';
   }
 
   static Future<void> updateDiscussion(
@@ -499,80 +500,66 @@ class DiscussionService {
     String? imageUrl,
     String? linkUrl,
   }) async {
-    final token = await AuthService.getValidIdToken();
     final data = <String, dynamic>{};
     if (title != null) data['title'] = title;
-    if (body != null) data['body'] = body;
+    if (body != null) data['content'] = body;
     if (category != null) data['category'] = category;
     if (imageUrl != null) data['imageUrl'] = imageUrl;
     if (linkUrl != null) data['linkUrl'] = linkUrl;
-    data['editedAt'] = FirestoreRest.serverTimestamp();
-    await FirestoreRest.updateDocument('discussions/$id', data,
-        idToken: token);
+    await CfApi.updateDiscussion(id, data);
   }
 
-  /// Deletes the post doc only — comments/replies/reactions subcollections
-  /// stay orphaned (service limitation, same as Expo).
+  /// Deletes the post — the worker cascades its comments, replies and
+  /// reactions (the Firestore-era orphan behaviour is gone server-side).
   static Future<void> deleteDiscussion(String id) async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.deleteDocument('discussions/$id', idToken: token);
+    await CfApi.deleteDiscussion(id);
   }
 
   /// Admin-only: pin or unpin a post. Pinned posts sort first in the feed.
   static Future<void> togglePinDiscussion(String id, bool pinned) async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.updateDocument(
-      'discussions/$id',
-      {'isPinned': pinned},
-      idToken: token,
-    );
+    await CfApi.pinDiscussion(id, pinned);
   }
 
   // ---------- Post likes ----------
 
-  static String _postReactionPath(String postId) =>
-      'discussions/$postId/reactions';
-
   static Future<bool> isDiscussionLiked(String postId) async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) return false;
-    return _isReactionLikedCached(_postReactionPath(postId), uid);
+    return _isReactionLikedCached('post', postId, postId);
   }
 
-  static Future<void> toggleLikeDiscussion(String postId, bool liked) async {
+  /// Flips the post like server-side and returns the worker's
+  /// authoritative likeCount (null when the cached state already matched
+  /// [liked] and no server call was needed). Throws
+  /// [AuthRequiredException] when signed out.
+  static Future<int?> toggleLikeDiscussion(String postId, bool liked) async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) throw const AuthRequiredException();
-    final reactionPath = _postReactionPath(postId);
-    // Keep the cache consistent with the toggle (Expo invalidates BEFORE).
-    _invalidateReactionCache(reactionPath, uid);
-    final token = await AuthService.getValidIdToken();
-    if (liked) {
-      await FirestoreRest.setDocument(
-        '$reactionPath/$uid',
-        {'uid': uid, 'createdAt': FirestoreRest.serverTimestamp()},
-        idToken: token,
-        merge: true,
-      );
-      await _incrementField('discussions/$postId', 'likeCount', 1, token);
-    } else {
-      await FirestoreRest.deleteDocument('$reactionPath/$uid', idToken: token);
-      await _incrementField('discussions/$postId', 'likeCount', -1, token);
-    }
+    // The worker endpoint is a toggle (not a set): only call it when the
+    // state actually changes, exactly like the comment path always did.
+    final alreadyLiked = await _isReactionLikedCached('post', postId, postId);
+    if (liked == alreadyLiked) return null;
+    final result = await CfApi.toggleDiscussionReaction(
+      targetType: 'post',
+      targetId: postId,
+      discussionId: postId,
+    );
+    _cacheReaction('post', postId, result.liked);
+    return result.likeCount;
   }
 
   // ---------- Comments ----------
 
+  /// Comments of a post, createdAt ascending (server order), one-shot.
   static Future<List<DiscussionComment>> fetchComments(
       String discussionId) async {
-    final docs = await ExamRest.runQuery(
-      'comments',
-      parent: 'discussions/$discussionId',
-      orderBy: [ExamRest.orderField('createdAt', 'ASCENDING')],
-      limit: 500,
-    );
-    return docs.map(DiscussionComment.fromMap).toList();
+    final rows = await CfApi.getDiscussionComments(discussionId);
+    return rows.map(DiscussionComment.fromMap).toList();
   }
 
+  /// Adds a comment and returns the SERVER id from the created row. The
+  /// worker composes the author snapshot and bumps the post's
+  /// commentCount; the author parameters stay for the existing callers.
   static Future<String> addComment(
     String discussionId, {
     required String body,
@@ -580,49 +567,30 @@ class DiscussionService {
     String? authorPhoto,
     required String authorId,
   }) async {
-    final token = await AuthService.getValidIdToken();
-    final id = await ExamRest.createDoc(
-      'discussions/$discussionId/comments',
-      {
-        'body': body,
-        'authorName': authorName,
-        'authorPhoto': authorPhoto,
-        'authorId': authorId,
-        'likeCount': 0,
-        'editedAt': null,
-      },
-      serverTimestampFields: const ['createdAt'],
-    );
-    await _incrementField(
-        'discussions/$discussionId', 'commentCount', 1, token);
-    return id;
+    final row = await CfApi.addDiscussionComment(discussionId, {
+      'content': body,
+    });
+    return '${row['id'] ?? ''}';
   }
 
+  /// Deletes a comment — the worker decrements the post's commentCount
+  /// and cascades the comment's replies.
   static Future<void> deleteComment(
       String discussionId, String commentId) async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.deleteDocument(
-        'discussions/$discussionId/comments/$commentId',
-        idToken: token);
-    await _incrementField(
-        'discussions/$discussionId', 'commentCount', -1, token);
+    await CfApi.deleteDiscussionComment(discussionId, commentId);
   }
 
   // ---------- Replies ----------
 
+  /// Replies of a comment, createdAt ascending (server order), one-shot.
   static Future<List<DiscussionReply>> fetchReplies(
       String discussionId, String commentId) async {
-    final docs = await ExamRest.runQuery(
-      'replies',
-      parent: 'discussions/$discussionId/comments/$commentId',
-      orderBy: [ExamRest.orderField('createdAt', 'ASCENDING')],
-      limit: 500,
-    );
-    return docs
-        .map((d) => DiscussionReply.fromMap(d, commentId))
-        .toList();
+    final rows = await CfApi.getDiscussionReplies(discussionId, commentId);
+    return rows.map((d) => DiscussionReply.fromMap(d, commentId)).toList();
   }
 
+  /// Adds a reply and returns the SERVER id from the created row.
+  /// Replies never touch the post's commentCount (server-side either).
   static Future<String> addReply(
     String discussionId,
     String commentId, {
@@ -630,50 +598,33 @@ class DiscussionService {
     required String authorName,
     String? authorPhoto,
     required String authorId,
-  }) {
-    return ExamRest.createDoc(
-      'discussions/$discussionId/comments/$commentId/replies',
-      {
-        'body': body,
-        'authorName': authorName,
-        'authorPhoto': authorPhoto,
-        'authorId': authorId,
-        'likeCount': 0,
-        'parentCommentId': commentId,
-        'editedAt': null,
-      },
-      serverTimestampFields: const ['createdAt'],
-    );
+  }) async {
+    final row = await CfApi.addDiscussionReply(discussionId, commentId, {
+      'content': body,
+    });
+    return '${row['id'] ?? ''}';
   }
 
   static Future<void> deleteReply(
       String discussionId, String commentId, String replyId) async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.deleteDocument(
-        'discussions/$discussionId/comments/$commentId/replies/$replyId',
-        idToken: token);
+    await CfApi.deleteDiscussionReply(discussionId, commentId, replyId);
   }
 
   // ---------- Comment/reply likes ----------
-
-  static String _commentReactionPath(String discussionId, String commentId) =>
-      'discussions/$discussionId/comments/$commentId/reactions';
-
-  static String _replyReactionPath(
-          String discussionId, String commentId, String replyId) =>
-      'discussions/$discussionId/comments/$commentId/replies/$replyId/reactions';
 
   static Future<bool> isCommentLiked(
       String discussionId, String commentId, [String? replyId]) async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) return false;
-    final reactionPath = replyId == null
-        ? _commentReactionPath(discussionId, commentId)
-        : _replyReactionPath(discussionId, commentId, replyId);
-    return _isReactionLikedCached(reactionPath, uid);
+    return replyId == null
+        ? _isReactionLikedCached('comment', commentId, discussionId)
+        : _isReactionLikedCached('reply', replyId, discussionId);
   }
 
-  static Future<void> toggleCommentLike(
+  /// Flips a comment/reply like server-side and returns the worker's
+  /// authoritative likeCount (null when the cached state already matched
+  /// [liked]). Throws [AuthRequiredException] when signed out.
+  static Future<int?> toggleCommentLike(
     String discussionId,
     String commentId,
     bool liked, [
@@ -681,30 +632,20 @@ class DiscussionService {
   ]) async {
     final uid = AuthService.currentUser?.uid;
     if (uid == null || uid.isEmpty) throw const AuthRequiredException();
-    final reactionPath = replyId == null
-        ? _commentReactionPath(discussionId, commentId)
-        : _replyReactionPath(discussionId, commentId, replyId);
-    final targetPath = replyId == null
-        ? 'discussions/$discussionId/comments/$commentId'
-        : 'discussions/$discussionId/comments/$commentId/replies/$replyId';
-    // Cached-state check first — no-op when unchanged (saves a read).
-    final alreadyLiked = await _isReactionLikedCached(reactionPath, uid);
-    if (liked == alreadyLiked) return;
-    final token = await AuthService.getValidIdToken();
-    if (liked) {
-      await FirestoreRest.setDocument(
-        '$reactionPath/$uid',
-        {'uid': uid, 'createdAt': FirestoreRest.serverTimestamp()},
-        idToken: token,
-        merge: true,
-      );
-      await _incrementField(targetPath, 'likeCount', 1, token);
-    } else {
-      await FirestoreRest.deleteDocument('$reactionPath/$uid', idToken: token);
-      await _incrementField(targetPath, 'likeCount', -1, token);
-    }
-    // After a toggle the like status changed — drop the stale cached read.
-    _invalidateReactionCache(reactionPath, uid);
+    final targetType = replyId == null ? 'comment' : 'reply';
+    final targetId = replyId ?? commentId;
+    // Cached-state check first — no-op when unchanged (the worker
+    // endpoint is a toggle, so a redundant call would flip it back).
+    final alreadyLiked =
+        await _isReactionLikedCached(targetType, targetId, discussionId);
+    if (liked == alreadyLiked) return null;
+    final result = await CfApi.toggleDiscussionReaction(
+      targetType: targetType,
+      targetId: targetId,
+      discussionId: discussionId,
+    );
+    _cacheReaction(targetType, targetId, result.liked);
+    return result.likeCount;
   }
 
   // ---------- Guidelines ----------
@@ -773,11 +714,9 @@ class DiscussionService {
   }
 
   static Future<DiscussionGuidelines> fetchDiscussionGuidelines() async {
-    final token = await AuthService.getValidIdToken();
     Map<String, dynamic>? doc;
     try {
-      doc = await FirestoreRest.getDocument('app_discussion_guidelines/default',
-          idToken: token);
+      doc = await CfApi.getDiscussionGuidelines();
     } catch (_) {
       doc = null;
     }
@@ -801,27 +740,22 @@ class DiscussionService {
     );
   }
 
-  /// Admin-only per Firestore rules; the fixed ID makes re-seed safe.
+  /// Admin-only (worker re-checks the role); the fixed 'default' row
+  /// makes re-seed safe (create-if-absent server-side).
   static Future<void> seedDiscussionGuidelines() async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.setDocument(
-      'app_discussion_guidelines/default',
-      {
-        'title': _defaultGuidelineTitleEn,
-        'body': _defaultGuidelineBodyEn,
-        'bullets': _defaultGuidelineBulletsEn,
-        'version': 1,
-        'seeded': true,
-      },
-      idToken: token,
-      merge: true,
-    );
+    await CfApi.seedDiscussionGuidelines({
+      'title': _defaultGuidelineTitleEn,
+      'body': _defaultGuidelineBodyEn,
+      'bullets': _defaultGuidelineBulletsEn,
+      'version': 1,
+      'seeded': true,
+    });
   }
 
   // ---------- Report flow (Google Form + history + admin relay) ----------
 
   /// Mirrors `reportContent` in discussions.ts: fans out to the legacy
-  /// Google Form path and the Firestore history path. Throws
+  /// Google Form path and the API history path (POST /reports). Throws
   /// [DiscussionReportFailedException] only when BOTH fail.
   static Future<void> reportContent(
     String targetType, // 'post' | 'comment'
@@ -832,6 +766,7 @@ class DiscussionService {
     String? authorName,
     String? authorPhoto,
   }) async {
+    String? historyReportId;
     final results = await Future.wait([
       _submitDiscussionToGoogleForm(
         targetType: targetType,
@@ -846,7 +781,10 @@ class DiscussionService {
         preview: preview,
         authorName: authorName,
         authorPhoto: authorPhoto,
-      ).then((_) => true).catchError((_) => false),
+      ).then((id) {
+        historyReportId = id;
+        return true;
+      }).catchError((_) => false),
     ]);
     if (results.every((ok) => !ok)) {
       throw const DiscussionReportFailedException();
@@ -864,13 +802,15 @@ class DiscussionService {
         deepLink: '/admin/report-history',
       ));
     }
-    // Discord relay: fire independently (not tied to the history write).
-    // If the history write failed but the Form succeeded, admins still
-    // get the Discord alert.
+    // Discord relay: fires EXACTLY ONCE per successful report (the
+    // Firestore-era flow fired it twice — once from reportContent with a
+    // throwaway id and once from the history write with the real id).
+    // When the history write landed, the relay carries the real report
+    // id; when only the Form landed, a throwaway id is used, as before.
     final user = AuthService.currentUser;
     if (user != null) {
       unawaited(notifyAdminsOfReport(
-        reportId: _randomId(),
+        reportId: historyReportId ?? _randomId(),
         reporterName: user.displayName ?? 'Anonymous',
         reason: reason,
         targetTitle: title,
@@ -933,7 +873,14 @@ class DiscussionService {
     }
   }
 
-  static Future<void> _createDiscussionReportHistory({
+  /// Creates the report-history record via POST /reports and returns the
+  /// new report id. The worker composes the reporter fields from the
+  /// caller's profile and stamps status/createdAt server-side; the client
+  /// sends only the content fields — the same set the Firestore record
+  /// carried (source 'discussion' for posts, 'comment' for comments AND
+  /// replies; reply reports keep the reply id as the target, as before).
+  /// Like the Firestore-era flow, no reportIds append happens here.
+  static Future<String> _createDiscussionReportHistory({
     required String targetType,
     required String targetId,
     required String reason,
@@ -944,49 +891,18 @@ class DiscussionService {
   }) async {
     final user = AuthService.currentUser;
     if (user == null) throw const AuthRequiredException();
-    final token = await AuthService.getValidIdToken();
-    final userDoc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: token)
-        .catchError((_) => null);
-
-    final reportId = _randomId();
-    await FirestoreRest.setDocument(
-      'app_report_history/$reportId',
-      {
-        'reporterId': user.uid,
-        'reporterName':
-            (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString(),
-        'reporterEmail': userDoc?['email'] ?? user.email,
-        'reporterPhoto': userDoc?['photoURL'] ?? user.photoURL,
-        'reporterCourseId': userDoc?['courseId'],
-        'reporterSubcourseId': userDoc?['subcourseId'],
-        'source': targetType == 'post' ? 'discussion' : 'comment',
-        'targetType': targetType,
-        'targetId': targetId,
-        'targetTitle': title,
-        'targetPreview': preview,
-        'targetAuthorName': authorName,
-        'targetAuthorPhoto': authorPhoto,
-        'reason': reason,
-        'description': '',
-        'status': 'pending',
-        'adminMessage': null,
-        'adminResponses': [],
-        'createdAt': FirestoreRest.serverTimestamp(),
-        'reviewedAt': null,
-      },
-      idToken: token,
-    );
-
-    // Deliberately NOT awaited: the report is already saved; a relay
-    // outage must never turn a saved report into a visible failure.
-    unawaited(notifyAdminsOfReport(
-      reportId: reportId,
-      reporterName:
-          (userDoc?['name'] ?? user.displayName ?? 'Anonymous').toString(),
-      reason: reason,
-      targetTitle: title,
-    ));
+    return CfApi.postReport({
+      'source': targetType == 'post' ? 'discussion' : 'comment',
+      'targetType': targetType,
+      'targetId': targetId,
+      'targetTitle': title,
+      'targetPreview': preview,
+      'targetExcerpt': preview,
+      'targetAuthorName': authorName,
+      'targetAuthorPhoto': authorPhoto,
+      'reason': reason,
+      'description': '',
+    });
   }
 
   /// Asks the relay to alert admins about a new report. Best-effort and
@@ -1033,28 +949,5 @@ class DiscussionService {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     final rng = Random.secure();
     return List.generate(20, (_) => chars[rng.nextInt(chars.length)]).join();
-  }
-
-  // ---------- Atomic counter helper ----------
-
-  /// Atomic `increment(delta)` via the `:commit` field transform — the same
-  /// operation the React `increment()` performs, never read-then-write.
-  /// Increments a counter field via read-modify-write (merge update).
-  /// The atomic :commit transform form was failing against the security
-  /// rules' changedOnly() check; a merge write of the new value satisfies
-  /// the rule (new == old ± 1) reliably. Clamped at 0 — counts never go
-  /// negative even if the stored value drifted.
-  static Future<void> _incrementField(
-      String docPath, String field, int delta, String token) async {
-    final doc =
-        await FirestoreRest.getDocument(docPath, idToken: token);
-    final current = doc?[field];
-    final currentInt = current is num ? current.toInt() : 0;
-    final next = (currentInt + delta).clamp(0, 1 << 31);
-    await FirestoreRest.updateDocument(
-      docPath,
-      {field: next},
-      idToken: token,
-    );
   }
 }

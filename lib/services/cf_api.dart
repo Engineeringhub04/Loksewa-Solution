@@ -1280,4 +1280,160 @@ class CfApi {
     }
     return <Map<String, dynamic>>[];
   }
+
+  // ============================================================ Phase 4
+  // Discussion-tree endpoints. Rows are flat with Firestore field names;
+  // the worker composes the author snapshot + counters server-side on
+  // creates, maintains like/comment counters on toggles + comment writes,
+  // and cascades deletes (post → comments → replies → reactions).
+
+  /// Discussion feed rows, newest first (server order; the tab re-sorts
+  /// pinned-first client-side, as before).
+  static Future<List<Map<String, dynamic>>> getDiscussions({
+    int limit = 30,
+  }) async {
+    final q = Uri(queryParameters: {'limit': '$limit'}).query;
+    final body = await _request('GET', '/discussions?$q');
+    return _rows(body, ['items', 'rows', 'discussions', 'data']);
+  }
+
+  /// One discussion post row. Null on 404 (the deleted-post state).
+  static Future<Map<String, dynamic>?> getDiscussion(String id) =>
+      _getRow('/discussions/${Uri.encodeComponent(id)}');
+
+  /// Creates a post; the worker stamps the author snapshot + zeroed
+  /// counters. Returns the created row (carries the server id).
+  static Future<Map<String, dynamic>> createDiscussion(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/discussions', body: payload);
+    return _rowOf(body);
+  }
+
+  /// Merges [fields] into one post (owner-or-admin server-side).
+  static Future<void> updateDiscussion(
+      String id, Map<String, dynamic> fields) async {
+    await _request('PATCH', '/discussions/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// Deletes one post; the worker cascades its comments/replies/reactions.
+  static Future<void> deleteDiscussion(String id) async {
+    await _request('DELETE', '/discussions/${Uri.encodeComponent(id)}');
+  }
+
+  /// Admin pin/unpin.
+  static Future<void> pinDiscussion(String id, bool isPinned) async {
+    await _request('POST',
+        '/discussions/${Uri.encodeComponent(id)}/pin',
+        body: {'isPinned': isPinned});
+  }
+
+  /// Comment rows of one post, createdAt ascending (server order).
+  static Future<List<Map<String, dynamic>>> getDiscussionComments(
+      String discussionId) async {
+    final body = await _request(
+        'GET', '/discussions/${Uri.encodeComponent(discussionId)}/comments');
+    return _rows(body, ['items', 'rows', 'comments', 'data']);
+  }
+
+  /// Adds a comment (worker bumps the post's commentCount). Returns the
+  /// created row (carries the server id).
+  static Future<Map<String, dynamic>> addDiscussionComment(
+      String discussionId, Map<String, dynamic> payload) async {
+    final body = await _request(
+        'POST', '/discussions/${Uri.encodeComponent(discussionId)}/comments',
+        body: payload);
+    return _rowOf(body);
+  }
+
+  /// Deletes one comment (worker decrements the count + cascades replies).
+  static Future<void> deleteDiscussionComment(
+      String discussionId, String commentId) async {
+    await _request('DELETE',
+        '/discussions/${Uri.encodeComponent(discussionId)}/comments/${Uri.encodeComponent(commentId)}');
+  }
+
+  /// Reply rows of one comment, createdAt ascending (server order).
+  static Future<List<Map<String, dynamic>>> getDiscussionReplies(
+      String discussionId, String commentId) async {
+    final body = await _request('GET',
+        '/discussions/${Uri.encodeComponent(discussionId)}/comments/${Uri.encodeComponent(commentId)}/replies');
+    return _rows(body, ['items', 'rows', 'replies', 'data']);
+  }
+
+  /// Adds a reply (no counter change — replies were never counted).
+  /// Returns the created row (carries the server id).
+  static Future<Map<String, dynamic>> addDiscussionReply(String discussionId,
+      String commentId, Map<String, dynamic> payload) async {
+    final body = await _request('POST',
+        '/discussions/${Uri.encodeComponent(discussionId)}/comments/${Uri.encodeComponent(commentId)}/replies',
+        body: payload);
+    return _rowOf(body);
+  }
+
+  /// Deletes one reply.
+  static Future<void> deleteDiscussionReply(
+      String discussionId, String commentId, String replyId) async {
+    await _request('DELETE',
+        '/discussions/${Uri.encodeComponent(discussionId)}/comments/${Uri.encodeComponent(commentId)}/replies/${Uri.encodeComponent(replyId)}');
+  }
+
+  /// Flips one reaction server-side (reaction row + likeCount move
+  /// together). Returns {liked, likeCount} as the worker reports them.
+  static Future<({bool liked, int likeCount})> toggleDiscussionReaction({
+    required String targetType, // 'post' | 'comment' | 'reply'
+    required String targetId,
+    required String discussionId,
+  }) async {
+    final body = await _request('POST', '/discussions/reactions/toggle',
+        body: {
+          'targetType': targetType,
+          'targetId': targetId,
+          'discussionId': discussionId,
+        });
+    final m = _asMap(body);
+    return (
+      liked: CfJson.asBool(m['liked']),
+      likeCount: CfJson.asInt(m['likeCount']),
+    );
+  }
+
+  /// Bulk liked-state for a batch of targets: POSTs {targets:[{type,id}]}
+  /// and returns the subset of target ids the worker reports as liked.
+  static Future<Set<String>> getDiscussionReactionState(
+      List<({String type, String id})> targets) async {
+    if (targets.isEmpty) return <String>{};
+    final body = await _request('POST', '/discussions/reactions/state',
+        body: {
+          'targets': [
+            for (final t in targets) {'type': t.type, 'id': t.id},
+          ],
+        });
+    final m = _asMap(body);
+    final liked = m['liked'];
+    if (liked is List) return liked.map((e) => '$e').toSet();
+    return <String>{};
+  }
+
+  /// The discussion-guidelines row ('default' doc). Null when the worker
+  /// answers {row: null} or 404 — callers fall back to local defaults.
+  static Future<Map<String, dynamic>?> getDiscussionGuidelines() async {
+    try {
+      final body = await _request('GET', '/discussion-guidelines');
+      final m = _asMap(body);
+      if (m.containsKey('row')) {
+        return m['row'] is Map ? normalizeRow(_asMap(m['row'])) : null;
+      }
+      return _rowOf(body);
+    } on CfError catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Admin seed of the guidelines doc (create-if-absent server-side).
+  static Future<void> seedDiscussionGuidelines(
+      Map<String, dynamic> defaults) async {
+    await _request('POST', '/discussion-guidelines/seed', body: defaults);
+  }
 }

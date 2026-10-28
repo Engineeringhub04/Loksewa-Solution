@@ -9,20 +9,13 @@ import 'package:loksewa_solution/screens/user/discussion_detail_screen.dart';
 
 /// Widget tests for the rebuilt Discussion detail + create pages.
 ///
-/// Network is faked with http.runWithClient + MockClient so
-/// FirestoreRest/ExamRest never leave the test. AuthService has no session
-/// in tests → signed out (like toggles revert, composers hidden on detail).
+/// Network is faked with http.runWithClient + MockClient so the CfApi
+/// client never leaves the test (Phase-4: the worker endpoints below).
+/// AuthService has no session in tests → signed out (like toggles revert,
+/// composers hidden on detail).
 ///
 /// Conventions: no pumpAndSettle while infinite animations exist (all page
 /// animations here are finite); UTF-8 Response.bytes for Devanagari bodies.
-
-Map<String, dynamic> _enc(dynamic v) {
-  if (v is String) return {'stringValue': v};
-  if (v is bool) return {'booleanValue': v};
-  if (v is int) return {'integerValue': '$v'};
-  if (v == null) return {'nullValue': null};
-  throw ArgumentError('unsupported: $v');
-}
 
 http.Response _json(Object body, [int status = 200]) {
   return http.Response.bytes(
@@ -32,12 +25,9 @@ http.Response _json(Object body, [int status = 200]) {
   );
 }
 
-Map<String, dynamic> _doc(String id, Map<String, dynamic> fields) => {
-      'name': 'projects/p/databases/(default)/documents/x/$id',
-      'fields': fields.map((k, v) => MapEntry(k, _enc(v))),
-    };
-
-Map<String, dynamic> _postFields() => {
+/// Flat CF row for the detail post (Firestore field names, ISO timestamps).
+Map<String, dynamic> _postRow() => {
+      'id': 'p1',
       'title': 'Exam tips',
       'body': 'Study daily and revise weekly.',
       'category': 'tips',
@@ -50,7 +40,8 @@ Map<String, dynamic> _postFields() => {
       'createdAt': '2026-10-02T08:30:00Z',
     };
 
-Map<String, dynamic> _commentFields(String body, String author) => {
+Map<String, dynamic> _commentRow(String id, String body, String author) => {
+      'id': id,
       'body': body,
       'authorName': author,
       'authorId': 'u2',
@@ -58,26 +49,22 @@ Map<String, dynamic> _commentFields(String body, String author) => {
       'createdAt': '2026-10-02T09:00:00Z',
     };
 
-/// Fake backend: post doc + comments runQuery. [postStatus] lets tests
+/// Fake loksewa-api: post row + comments list. [postStatus] lets tests
 /// simulate a deleted post (404).
 MockClient _mockDetail({int postStatus = 200}) {
   return MockClient((request) async {
     final path = request.url.path;
-    if (request.method == 'GET' && path.endsWith('/discussions/p1')) {
+    if (request.method == 'GET' && path == '/discussions/p1') {
       if (postStatus != 200) return _json({}, postStatus);
-      return _json(_doc('p1', _postFields()));
+      return _json({'row': _postRow()});
     }
-    if (request.method == 'POST' && path.contains(':runQuery')) {
-      final body = json.decode(request.body) as Map<String, dynamic>;
-      final sq = body['structuredQuery'] as Map<String, dynamic>;
-      final from = (sq['from'] as List).first as Map<String, dynamic>;
-      if (from['collectionId'] == 'comments') {
-        return _json([
-          {'document': _doc('c1', _commentFields('Great tips!', 'Sita'))},
-          {'document': _doc('c2', _commentFields('Thanks!', 'Hari'))},
-        ]);
-      }
-      return _json([]);
+    if (request.method == 'GET' && path == '/discussions/p1/comments') {
+      return _json({
+        'items': [
+          _commentRow('c1', 'Great tips!', 'Sita'),
+          _commentRow('c2', 'Thanks!', 'Hari'),
+        ],
+      });
     }
     return _json({}, 404);
   });
@@ -141,30 +128,19 @@ void main() {
         (tester) async {
       final client = MockClient((request) async {
         final path = request.url.path;
-        if (request.method == 'GET' && path.endsWith('/discussions/p1')) {
-          return _json(_doc('p1', _postFields()));
+        if (request.method == 'GET' && path == '/discussions/p1') {
+          return _json({'row': _postRow()});
         }
-        if (request.method == 'POST' && path.contains(':runQuery')) {
-          final body = json.decode(request.body) as Map<String, dynamic>;
-          final sq = body['structuredQuery'] as Map<String, dynamic>;
-          final from = (sq['from'] as List).first as Map<String, dynamic>;
-          if (from['collectionId'] == 'comments') {
-            return _json([
-              {
-                'document':
-                    _doc('c1', _commentFields('Great tips!', 'Sita'))
-              },
-            ]);
-          }
-          if (from['collectionId'] == 'replies') {
-            return _json([
-              {
-                'document':
-                    _doc('r1', _commentFields('Agreed!', 'Gita'))
-              },
-            ]);
-          }
-          return _json([]);
+        if (request.method == 'GET' && path == '/discussions/p1/comments') {
+          return _json({
+            'items': [_commentRow('c1', 'Great tips!', 'Sita')],
+          });
+        }
+        if (request.method == 'GET' &&
+            path == '/discussions/p1/comments/c1/replies') {
+          return _json({
+            'items': [_commentRow('r1', 'Agreed!', 'Gita')],
+          });
         }
         return _json({}, 404);
       });

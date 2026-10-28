@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -12,11 +13,12 @@ import '../../widgets/preloading.dart';
 /// Global search — mirrors app/search.tsx +
 /// src/core/firebase/services/search.ts.
 ///
-/// Client-side filtering over the full `subjects` collection, the latest 50
-/// `discussions`, and the first 100 `questions` (lowercased substring on
-/// name / title+body / text). 350ms debounce. Recent searches persist under
-/// `loksewa:recentSearches` (max 8), the exact key/cap the Expo settings
-/// store uses.
+/// Client-side filtering over the full `subjects` collection, the latest
+/// 100 `discussions` (Phase-4: from the Cloudflare API — the same feed
+/// corpus shape the search index uses), and the first 100 `questions`
+/// (lowercased substring on name / title+body / text). 350ms debounce.
+/// Recent searches persist under `loksewa:recentSearches` (max 8), the
+/// exact key/cap the Expo settings store uses.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -108,8 +110,9 @@ class _SearchScreenState extends State<SearchScreen> {
       final idToken = await AuthService.getValidIdToken();
       final results = await Future.wait([
         FirestoreRest.listDocuments('subjects', idToken: idToken),
-        FirestoreRest.listDocuments('discussions',
-            idToken: idToken, pageSize: 50),
+        // Phase-4: the discussion corpus comes from the CF feed endpoint
+        // (flat rows with the same id/title/body fields the filter reads).
+        CfApi.getDiscussions(limit: 100),
         FirestoreRest.listDocuments('questions',
             idToken: idToken, pageSize: 100),
       ]);

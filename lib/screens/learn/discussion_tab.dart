@@ -240,8 +240,16 @@ class _DiscussionTabState extends State<DiscussionTab> {
       throw const AuthRequiredException();
     }
     try {
-      await DiscussionService.toggleLikeDiscussion(post.id, liked);
+      final serverCount =
+          await DiscussionService.toggleLikeDiscussion(post.id, liked);
       _liked[post.id] = liked;
+      // Adopt the worker's authoritative likeCount into the feed model.
+      if (serverCount != null && mounted) {
+        setState(() {
+          final i = _posts.indexWhere((p) => p.id == post.id);
+          if (i >= 0) _posts[i] = _posts[i].copyWith(likeCount: serverCount);
+        });
+      }
     } catch (_) {
       rethrow;
     }

@@ -2,8 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
-import '../../services/content_purchases.dart';
-import '../../services/firestore_rest.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
@@ -130,11 +129,10 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       _loadError = false;
     });
     try {
-      final token = await AuthService.getValidIdToken();
       Map<String, dynamic>? userDoc;
       try {
-        userDoc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: token);
+        // Phase-1: profile from GET /me.
+        userDoc = await CfApi.getMe();
       } catch (_) {}
       _profilePremium = _hasActivePremium(userDoc);
 
@@ -154,8 +152,7 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
       // Approved content purchases unlock without a subscription. Uses the
       // per-user index (getDocument per id) — the old map-based query was
       // denied by the rules for non-admins and always failed open.
-      final approvedIds = await fetchMyApprovedContentIds(user.uid)
-          .catchError((_) => <String>[]);
+      final approvedIds = await fetchApprovedContentIdsFromMe(userDoc);
       final specificAccess = approvedIds.contains(widget.chapterId) ||
           approvedIds.contains(widget.subjectId) ||
           (_unitId.isNotEmpty && approvedIds.contains(_unitId));
@@ -237,9 +234,11 @@ class _SubjectPracticeScreenState extends State<SubjectPracticeScreen> {
   static bool _hasActivePremium(Map<String, dynamic>? userDoc) {
     final pro = userDoc?['pro'];
     if (pro is bool) return pro;
+    if (pro is String) return CfJson.asBool(pro);
     if (pro is Map) {
       final active = pro['active'];
       if (active is bool) return active;
+      if (active is String) return CfJson.asBool(active);
       final exp = pro['expiresAt'];
       if (exp is String) {
         final dt = DateTime.tryParse(exp);
@@ -1339,11 +1338,7 @@ class _PracticeBookmarkButtonState
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-        'users/${widget.uid}/bookmarks/$_docId',
-        idToken: idToken,
-      );
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -1379,13 +1374,8 @@ class _PracticeBookmarkButtonState
   }
 
   Future<void> _saveInBackground(int op) async {
-    final path = 'users/${widget.uid}/bookmarks/$_docId';
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final rows = await FirestoreRest.listDocuments(
-        'users/${widget.uid}/bookmarks',
-        idToken: idToken,
-      );
+      final rows = await CfApi.getBookmarks();
       // Free-tier cap: 15 bookmarks per sub-course (React parity).
       final scoped = widget.subcourseId.isEmpty
           ? rows.length
@@ -1409,8 +1399,8 @@ class _PracticeBookmarkButtonState
           'Practice Mode',
         if (widget.chapterName.isNotEmpty) widget.chapterName,
       ].join(' · ');
-      await FirestoreRest.setDocument(
-        path,
+      await CfApi.saveBookmark(
+        _docId,
         {
           'context': 'practice',
           'kind': 'question',
@@ -1437,7 +1427,6 @@ class _PracticeBookmarkButtonState
           },
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
-        idToken: idToken,
       );
       // Success is reported by the 2s timer — nothing more to do here.
     } catch (_) {
@@ -1461,10 +1450,7 @@ class _PracticeBookmarkButtonState
     _saveTimer?.cancel();
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      await CfApi.deleteBookmark(_docId);
       if (!mounted) return;
       setState(() {
         _saved = false;

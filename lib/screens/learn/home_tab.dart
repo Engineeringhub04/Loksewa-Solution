@@ -7,10 +7,9 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/notification_badge.dart';
+import 'package:loksewa_solution/services/notification_feed.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
-import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/home/home_header.dart';
 import 'package:loksewa_solution/widgets/home/banner_carousel.dart';
@@ -61,22 +60,15 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     _scrollController.addListener(() {
       _scrollOffset.value = _scrollController.offset;
     });
-    // Warm the shared profile store (like the root layout does on the Expo
-    // side) so the header below can read name/photo from it — and so a save
-    // in Edit Profile updates this header in real time. Deduplicated inside
-    // the store, so racing the Profile tab's own warm-up is harmless.
-    final uid = AuthService.currentUser?.uid;
-    if (uid != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) ProfileStore.instance.load(uid);
-        // NOTE (v1.0.107, user design): no silent auto-recheck of pending
-        // gateway payments here. Activation happens only via a visible flow:
-        // the in-app Verifying popup, or the user's manual "Check My Payment"
-        // button on the subscription detail screen. The pending record stays
-        // in SharedPrefs for those flows; the Your-Request list + Problem
-        // section surface it to the user.
-      });
-    }
+    // Phase-1: the header renders from the CF _HomeData loaded below
+    // (GET /me) — the Firestore ProfileStore warm-up that used to run
+    // here is gone; Home no longer touches Firestore at all.
+    // NOTE (v1.0.107, user design): no silent auto-recheck of pending
+    // gateway payments here. Activation happens only via a visible flow:
+    // the in-app Verifying popup, or the user's manual "Check My Payment"
+    // button on the subscription detail screen. The pending record stays
+    // in SharedPrefs for those flows; the Your-Request list + Problem
+    // section surface it to the user.
   }
 
   @override
@@ -88,7 +80,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   }
 
   Future<_HomeData> _load() async {
-    final token = await AuthService.getValidIdToken();
     final user = AuthService.currentUser;
 
     String? courseId;
@@ -96,6 +87,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     String? courseName;
     String? subcourseName;
     String? photoURL;
+    String? displayName;
     bool isPremium = false;
     if (user != null) {
       try {
@@ -105,6 +97,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         courseId = userDoc?['courseId'] as String?;
         subcourseId = userDoc?['subcourseId'] as String?;
         isPremium = _isPremiumActive(userDoc);
+        final docName =
+            (userDoc?['name'] ?? userDoc?['displayName']) as String?;
+        if (docName != null && docName.trim().isNotEmpty) {
+          displayName = docName.trim();
+        }
         // React passes `storeProfile?.photoURL ?? user?.photoURL` — the
         // profile doc photo wins over the auth photoURL.
         final docPhoto = userDoc?['photoURL'] as String?;
@@ -193,12 +190,12 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       }
     } catch (_) {}
     try {
-      final devs = await FirestoreRest.listDocuments('app_developers',
-          idToken: token, pageSize: 5);
+      // Phase-1: developers card from GET /developers.
+      final devs = await CfApi.getDevelopers();
       if (devs.isNotEmpty) developer = devs.first;
     } catch (_) {}
     try {
-      notificationCount = await _unreadNotificationCount(token, user?.uid);
+      notificationCount = await _unreadNotificationCount(user?.uid);
       // Publish to the shared badge so the header bell stays live even
       // when the count changes elsewhere (notifications page mark-all-read).
       NotificationBadge.set(notificationCount);
@@ -218,9 +215,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       final scopeCourse = courseId ?? 'civil-engineering';
       final scopeSubcourse = subcourseId ?? 'civil-assistant-sub-engineer';
       for (final slug in subjectSlugs) {
-        final doc = await FirestoreRest.getDocument(
-            'app_subjects_details/${scopeCourse}__${scopeSubcourse}__$slug',
-            idToken: token);
+        // Phase-1: GET /subjects/details/{deterministicId}.
+        final doc = await CfApi.getSubjectDetail(
+            '${scopeCourse}__${scopeSubcourse}__$slug');
         if (doc != null) {
           doc['id'] = '${scopeCourse}__${scopeSubcourse}__$slug';
           subjects.add(doc);
@@ -234,6 +231,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       subcourseId: subcourseId,
       courseName: courseName,
       subcourseName: subcourseName,
+      displayName: displayName,
       photoURL: photoURL ?? user?.photoURL,
       isPremium: isPremium,
       notificationCount: notificationCount,
@@ -268,7 +266,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
   /// reads). Returns setId → durationMinutes (60-min fallback for any id
   /// the payload doesn't know). Never throws.
   static Future<Map<String, int>> _fetchExamDurationsForBadge(
-      List<Map<String, dynamic>> examRows, String token) async {
+      List<Map<String, dynamic>> examRows) async {
     final result = <String, int>{};
     final setIds = <String>{};
     for (final n in examRows) {
@@ -291,33 +289,26 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
 
   /// Mirrors the read-tracking in notifications_screen.dart so the header
   /// badge matches what the Notifications page considers unread.
-  Future<int> _unreadNotificationCount(String token, String? uid) async {
-    final results = await Future.wait([
-      uid == null
-          ? Future.value(<Map<String, dynamic>>[])
-          : FirestoreRest.listDocuments('users/$uid/notifications',
-              idToken: token),
-      FirestoreRest.listDocuments('app_global_notification', idToken: token),
-      // Exam-push rows: count non-expired ones so the badge matches the
-      // inbox. Expiry = createdAt + the exam set's durationMinutes (same
-      // logic as notifications_screen.dart). Expired rows are hidden
-      // silently everywhere.
-      uid == null
-          ? Future.value(<Map<String, dynamic>>[])
-          : FirestoreRest.listDocuments('app_exam_notifications',
-              idToken: token),
-    ]);
-    final personal =
-        results[0].map((n) => {...n, '_source': 'personal'}).toList();
-    final global = results[1]
+  /// Phase-1: the three row sets come from the shared GET /notifications
+  /// feed (notification_feed.dart) — the same fetch the inbox uses.
+  Future<int> _unreadNotificationCount(String? uid) async {
+    final feed = await fetchNotificationFeed();
+    final personal = uid == null
+        ? <Map<String, dynamic>>[]
+        : feed.personal.map((n) => {...n, '_source': 'personal'}).toList();
+    final global = feed.global
         .where((n) => (n['segment'] ?? '').toString() != 'nonlogin')
         .map((n) => {...n, '_source': 'global'})
         .toList();
     final now = DateTime.now();
+    // Exam-push rows: count non-expired ones so the badge matches the
+    // inbox. Expiry = createdAt + the exam set's durationMinutes (same
+    // logic as notifications_screen.dart). Expired rows are hidden
+    // silently everywhere.
     // Batch-fetch durations for exam rows (best effort; 60-min fallback).
-    final Map<String, int> durations = await _fetchExamDurationsForBadge(
-        results[2], token);
-    final exams = results[2]
+    final Map<String, int> durations =
+        await _fetchExamDurationsForBadge(feed.exam);
+    final exams = (uid == null ? <Map<String, dynamic>>[] : feed.exam)
         .where((n) => (n['type'] ?? '').toString() == 'exam')
         .where((n) {
           final created = _asDateTime(n['createdAt']);
@@ -339,12 +330,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
         : (json.decode(raw) as List).map((e) => e.toString()).toSet();
     var count = 0;
     for (final n in [...personal, ...global, ...exams]) {
-      final created = n['createdAt'];
-      final ms = created is DateTime
-          ? created.millisecondsSinceEpoch
-          : created is num
-              ? created.toInt()
-              : int.tryParse('$created') ?? 0;
+      // CfJson.asDateTime covers every shape the value can take (Firestore
+      // used to hand back a DateTime; the D1 copy may carry ISO text or
+      // epoch) — the read-id keys keep their exact old form.
+      final ms =
+          CfJson.asDateTime(n['createdAt'])?.millisecondsSinceEpoch ?? 0;
       final key = "${n['_source']}:${n['title']}:$ms";
       if (!readIds.contains(key)) count++;
     }
@@ -417,13 +407,6 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     edgeOffset: expandedH,
                     onRefresh: () async {
                       setState(() => _future = _load());
-                      // Keep the shared store fresh too, so the header (and
-                      // Profile) shows the same data — mirrors index.tsx.
-                      final refreshUid = AuthService.currentUser?.uid;
-                      if (refreshUid != null) {
-                        unawaited(ProfileStore.instance
-                            .load(refreshUid, refresh: true));
-                      }
                       await _future;
                     },
                     child: ListView(
@@ -538,47 +521,36 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                       ],
                     ),
                   ),
-                  // Fixed collapsing header overlay. Sourced from the shared
-                  // profile store first, so a photo/name change saved in Edit
-                  // Profile shows up here immediately — no refresh needed
-                  // (mirrors index.tsx's storeProfile-first header).
+                  // Fixed collapsing header overlay. Phase-1: sourced from
+                  // the CF _HomeData (GET /me) loaded above — the Firestore
+                  // ProfileStore no longer feeds this header.
                   ValueListenableBuilder<double>(
                     valueListenable: _scrollOffset,
-                    builder: (context, offset, _) => ListenableBuilder(
-                      listenable: ProfileStore.instance,
-                      builder: (context, _) {
-                        final storeProfile = ProfileStore.instance.profile;
-                        final storeName = storeProfile?.name.trim() ?? '';
-                        final storePhoto = storeProfile?.photoURL;
-                        // Live badge: the bell count follows the shared
-                        // notifier so mark-all-read on the notifications
-                        // page updates it instantly, no home reload needed.
-                        return ValueListenableBuilder<int>(
-                          valueListenable: NotificationBadge.unreadCount,
-                          builder: (context, liveCount, _) => HomeHeader(
-                            scrollOffset: offset < 0 ? 0 : offset,
-                            displayName: storeName.isNotEmpty
-                                ? storeName
-                                : (user?.displayName ?? user?.email),
-                            photoURL:
-                                (storePhoto != null && storePhoto.isNotEmpty)
-                                    ? storePhoto
-                                    : d.photoURL,
-                            pro: storeProfile != null
-                                ? hasActivePremium(storeProfile)
-                                : d.isPremium,
-                            notificationCount: liveCount,
-                            courseName: d.courseName,
-                            subcourseName: d.subcourseName,
-                            onNotificationsPress: () =>
-                                context.push('/notifications'),
-                            onProfilePress: () => context.push('/profile'),
-                            onCoursePress: () =>
-                                context.push('/course-setup?mode=update'),
-                          ),
-                        );
-                      },
-                    ),
+                    builder: (context, offset, _) {
+                      // Live badge: the bell count follows the shared
+                      // notifier so mark-all-read on the notifications
+                      // page updates it instantly, no home reload needed.
+                      return ValueListenableBuilder<int>(
+                        valueListenable: NotificationBadge.unreadCount,
+                        builder: (context, liveCount, _) => HomeHeader(
+                          scrollOffset: offset < 0 ? 0 : offset,
+                          displayName: (d.displayName != null &&
+                                  d.displayName!.isNotEmpty)
+                              ? d.displayName
+                              : (user?.displayName ?? user?.email),
+                          photoURL: d.photoURL,
+                          pro: d.isPremium,
+                          notificationCount: liveCount,
+                          courseName: d.courseName,
+                          subcourseName: d.subcourseName,
+                          onNotificationsPress: () =>
+                              context.push('/notifications'),
+                          onProfilePress: () => context.push('/profile'),
+                          onCoursePress: () =>
+                              context.push('/course-setup?mode=update'),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -689,7 +661,7 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
           final s = subjects[i];
           final name = '${s['nameNe'] ?? s['name'] ?? 'Subject'}';
           final id = '${s['id']}';
-          final isPro = s['pro'] == true;
+          final isPro = CfJson.asBool(s['pro']);
           return SubjectCardColored(
             name: name,
             icon: icons[i % icons.length],
@@ -779,6 +751,7 @@ class _HomeData {
   final String? subcourseId;
   final String? courseName;
   final String? subcourseName;
+  final String? displayName;
   final String? photoURL;
   final bool isPremium;
   final int notificationCount;
@@ -793,6 +766,7 @@ class _HomeData {
     this.subcourseId,
     this.courseName,
     this.subcourseName,
+    this.displayName,
     this.photoURL,
     this.isPremium = false,
     this.notificationCount = 0,

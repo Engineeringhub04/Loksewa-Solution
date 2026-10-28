@@ -12,7 +12,7 @@ import 'package:loksewa_solution/services/analytics/analytics_store.dart';
 import 'package:loksewa_solution/services/analytics/analytics_types.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/main_leaderboard.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -54,32 +54,33 @@ class AnalyticsIdentity {
 }
 
 Future<AnalyticsIdentity> _defaultLoadIdentity(String uid) async {
-  final idToken = await AuthService.getValidIdToken();
-  final userDoc =
-      await FirestoreRest.getDocument('users/$uid', idToken: idToken);
+  // Phase-1: identity from GET /me, names from the GET /courses payload
+  // (its subcourse list carries both the subcollection and legacy rows —
+  // the two-step fallback the Firestore reads used to perform).
+  final userDoc = await CfApi.getMe();
   final courseId = (userDoc?['courseId'] as String?) ?? '';
   final subcourseId = (userDoc?['subcourseId'] as String?) ?? '';
   var courseName = '';
   var subcourseName = '';
   if (courseId.isNotEmpty) {
     try {
-      final course = await FirestoreRest.getDocument('app_courses/$courseId',
-          idToken: idToken);
-      courseName =
-          ((course?['name'] ?? course?['nameNe']) as String?)?.trim() ?? '';
+      final data = await CfApi.getCourses();
+      for (final course in data.courses) {
+        if (course['id']?.toString() == courseId) {
+          courseName =
+              ((course['name'] ?? course['nameNe']) as String?)?.trim() ?? '';
+          break;
+        }
+      }
       if (subcourseId.isNotEmpty) {
-        final subcourse = await FirestoreRest.getDocument(
-            'app_courses/$courseId/subcourses/$subcourseId',
-            idToken: idToken);
-        subcourseName =
-            ((subcourse?['name'] ?? subcourse?['nameNe']) as String?)?.trim() ??
-                '';
-        if (subcourseName.isEmpty) {
-          final legacy = await FirestoreRest.getDocument(
-              'app_subcourses/$subcourseId',
-              idToken: idToken);
-          subcourseName =
-              ((legacy?['name'] ?? legacy?['nameNe']) as String?)?.trim() ?? '';
+        for (final subcourse in data.subcourses) {
+          if (subcourse['id']?.toString() == subcourseId) {
+            subcourseName =
+                ((subcourse['name'] ?? subcourse['nameNe']) as String?)
+                        ?.trim() ??
+                    '';
+            break;
+          }
         }
       }
     } catch (_) {
@@ -239,17 +240,32 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
   /// when the publish throttle allows — but only with a loaded profile, so
   /// the public row is never written as "Anonymous". Never throws; a null
   /// result puts the hero in degraded mode (snapshot fallback).
+  /// Phase-1: the profile comes from GET /me (not the Firestore-fed
+  /// ProfileStore).
   Future<CanonicalStats?> _defaultLoadCanonical(
-      String uid, String courseId, String subcourseId) {
-    final profile = ProfileStore.instance.profile;
+      String uid, String courseId, String subcourseId) async {
+    Map<String, dynamic>? me;
+    try {
+      me = await CfApi.getMe();
+    } catch (_) {}
+    var isPro = false;
+    if (me != null && CfJson.asBool(me['isPremium'])) {
+      final expiry = me['premiumExpiryDate'];
+      if (expiry == null) {
+        isPro = true;
+      } else {
+        final dt = CfJson.asDateTime(expiry);
+        isPro = dt == null || dt.isAfter(DateTime.now());
+      }
+    }
     return loadCanonicalStats(
       uid: uid,
       courseId: courseId,
       subcourseId: subcourseId,
-      name: profile?.name ?? '',
-      photoURL: profile?.photoURL,
-      isPro: profile != null && hasActivePremium(profile),
-      allowRefresh: profile != null,
+      name: (me?['name'] as String?)?.trim() ?? '',
+      photoURL: me?['photoURL'] as String?,
+      isPro: isPro,
+      allowRefresh: me != null,
     );
   }
 
@@ -294,30 +310,20 @@ class _AnalyticsScreenState extends State<AnalyticsScreen> {
       List<AnalyticsSubcourseRow> rows) async {
     if (rows.length < 2) return {};
     final names = <String, String>{};
-    final courseIds =
-        rows.map((row) => row.courseId).where((id) => id.isNotEmpty).toSet();
-    String token = '';
+    // Phase-1: one GET /courses call carries every subcourse row (the
+    // per-course subcollection listings this used to fan out to).
     try {
-      token = await AuthService.getValidIdToken();
-    } catch (_) {
-      return names;
-    }
-    await Future.wait(courseIds.map((courseId) async {
-      try {
-        final docs = await FirestoreRest.listDocuments(
-            'app_courses/$courseId/subcourses',
-            idToken: token);
-        for (final doc in docs) {
-          final id = (doc['id'] as String?) ?? '';
-          if (id.isEmpty) continue;
-          final name =
-              ((doc['name'] ?? doc['nameNe']) as String?)?.trim() ?? '';
-          if (name.isNotEmpty) names[id] = name;
-        }
-      } catch (_) {
-        // Falls back upstream.
+      final data = await CfApi.getCourses();
+      for (final doc in data.subcourses) {
+        final id = (doc['id'] as String?) ?? '';
+        if (id.isEmpty) continue;
+        final name =
+            ((doc['name'] ?? doc['nameNe']) as String?)?.trim() ?? '';
+        if (name.isNotEmpty) names[id] = name;
       }
-    }));
+    } catch (_) {
+      // Falls back upstream.
+    }
     return names;
   }
 

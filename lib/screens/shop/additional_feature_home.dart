@@ -4,8 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 
 import 'package:loksewa_solution/widgets/app_toast.dart';
@@ -122,11 +121,8 @@ class _AdditionalFeatureHomeScreenState
       _error = null;
     });
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final page = await FirestoreRest.getDocument(
-        'app_additional_feature_pages/${_fid}__all__all',
-        idToken: idToken,
-      );
+      // Phase-1: GET /features/{featureId} returns the page doc.
+      final page = await CfApi.getFeaturePage(_fid);
       final rawTopics = page?['topics'];
       final list = rawTopics is List ? rawTopics : const [];
       final topics = <_Topic>[];
@@ -173,7 +169,10 @@ class _AdditionalFeatureHomeScreenState
         _updateAvailable = downloaded &&
             isAdditionalFeatureUpdateAvailable(
               storedUpdateTime: storedUpdateTime,
-              liveUpdateTime: page?['__updateTime']?.toString(),
+              // The API row carries the doc's own updatedAt stamp
+              // (Firestore used to inject __updateTime).
+              liveUpdateTime:
+                  (page?['updatedAt'] ?? page?['__updateTime'])?.toString(),
             );
         _loading = false;
       });
@@ -318,7 +317,6 @@ class _AdditionalFeatureHomeScreenState
   ) async {
     setState(() => _downloading = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
       final dir = await _offlineDir();
       final page = _page;
       if (page != null) {
@@ -330,11 +328,9 @@ class _AdditionalFeatureHomeScreenState
       var done = 0;
       for (final t in _topics) {
         if (isCancelled()) return false;
-        final docId = '${_fid}__all__all__${t.topicId}';
-        final bank = await FirestoreRest.getDocument(
-          'app_additional_feature_question_banks/$docId',
-          idToken: idToken,
-        );
+        // Phase-1: GET /features/{featureId}/topics/{topicId} → bank.
+        final topic = await CfApi.getFeatureTopic(_fid, t.topicId);
+        final bank = topic.bank;
         if (bank != null) {
           File('${banksDir.path}/${t.topicId}.json')
               .writeAsStringSync(json.encode(_jsonSafe(bank)));
@@ -343,7 +339,8 @@ class _AdditionalFeatureHomeScreenState
         onProgress(done, _topics.length);
       }
       if (isCancelled()) return false;
-      final updateTime = page?['__updateTime']?.toString() ?? '';
+      final updateTime =
+          (page?['updatedAt'] ?? page?['__updateTime'])?.toString() ?? '';
       await PrefsService.setString('af_offline_${_fid}_complete', 'true');
       await PrefsService.setString(
           'af_offline_${_fid}_date', _dateKey(DateTime.now()));

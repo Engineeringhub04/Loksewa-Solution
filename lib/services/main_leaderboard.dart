@@ -37,6 +37,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 
+import 'cf_api.dart';
 import 'exam_service.dart';
 
 /// Signup bonus granted once per account per subcourse (see
@@ -673,13 +674,37 @@ double computeProgressPercent(double points, double marks) {
 
 // ---------- publish ----------
 
-/// Computes and publishes the score. The private document carries the whole
-/// breakdown; the public row carries only what the list renders plus the
-/// tiebreak fields.
+/// Extracts a leaderboard row map from a worker response body: the row
+/// under 'row' when present, else the body itself when it looks like a
+/// row. Null when neither carries row fields.
+Map<String, dynamic>? _rowFromBody(Map<String, dynamic> body) {
+  final row = body['row'];
+  if (row is Map) return Map<String, dynamic>.from(row);
+  if (body.containsKey('points') || body.containsKey('uid')) return body;
+  return null;
+}
+
+/// The caller's own leaderboard entry from GET /leaderboard ('own'),
+/// shaped as a row map. Null when the worker has none.
+Future<Map<String, dynamic>?> _ownLeaderboardMap(
+    String courseId, String subcourseId) async {
+  try {
+    final result =
+        await CfApi.getLeaderboard(courseId: courseId, subcourseId: subcourseId);
+    return result.own;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Computes and publishes the score.
 ///
-/// The signup bonus is PRESERVED: the existing public row is read first and its
-/// `signupBonus` is added to the computed activity points, so a republish can
-/// never wipe the bonus out. Points are never written without adding it.
+/// Phase-1: the recompute + republish happens SERVER-side via
+/// POST /leaderboard/refresh — the worker recomputes from the migrated
+/// data (the same sources [computeMainLeaderboardScore] used to read),
+/// preserves the signup bonus, and writes both the private aggregate and
+/// the public row. The throttle contract is unchanged: a skipped or
+/// failed publish returns null and a failure never consumes the throttle.
 ///
 /// Returns the freshly written public row on success, so the caller can show it
 /// immediately without re-reading the board. Returns null when the publish is
@@ -695,78 +720,21 @@ Future<MainLeaderboardRow?> publishMainLeaderboardScore({
   if (uid.isEmpty || subcourseId.isEmpty) return null;
   if (!shouldPublishMainLeaderboardScore(uid, subcourseId)) return null;
   try {
-    final rowId = publicRowId(uid, subcourseId);
-
-    // Read the existing public row for its signup bonus (default 0). One read;
-    // a missing row just means no bonus has been granted yet.
-    final existing =
-        await _guardDoc(ExamRest.getDoc('app_main_leaderboard/$rowId'));
-    final signupBonus = _toInt(existing?['signupBonus']);
-
-    final score = await computeMainLeaderboardScore(uid, courseId, subcourseId);
+    noteLeaderboardScope(courseId, subcourseId);
+    final body = await CfApi.refreshLeaderboard({
+      'courseId': courseId,
+      'subcourseId': subcourseId,
+      'name': name.isEmpty ? 'Anonymous' : name,
+      'photoURL': photoURL,
+      'isPro': isPro,
+    });
     _lastPublishedAt[_throttleKey(uid, subcourseId)] =
         DateTime.now().millisecondsSinceEpoch;
-
-    final total = score.points + signupBonus;
-    final displayName = name.isEmpty ? 'Anonymous' : name;
-
-    await ExamRest.setDoc(
-      'users/$uid/app_mainleaderboard/$subcourseId',
-      {
-        'courseId': courseId,
-        'subcourseId': subcourseId,
-        'percent': score.percent,
-        'accuracyPercent': score.accuracyPercent,
-        'points': total,
-        'usageSeconds': score.usageSeconds,
-        'activityCount': score.activityCount,
-        'breakdown': score.breakdown,
-      },
-      serverTimestampFields: const ['updatedAt'],
-    );
-
-    // Best-effort: losing the public row costs a leaderboard position, not
-    // data. (The row is still returned below from the values just written.)
-    try {
-      await ExamRest.setDoc(
-        'app_main_leaderboard/$rowId',
-        {
-          'uid': uid,
-          'courseId': courseId,
-          'subcourseId': subcourseId,
-          // Stored so other users' devices can draw the verified tick without
-          // reading this person's profile - which the rules would not allow.
-          'name': displayName,
-          'photoURL': photoURL,
-          'isPro': isPro,
-          'percent': score.percent,
-          'points': total,
-          'usageSeconds': score.usageSeconds,
-          'activityCount': score.activityCount,
-          'signupBonus': signupBonus,
-        },
-        serverTimestampFields: const ['updatedAt'],
-      );
-    } catch (_) {
-      // Best-effort only - the private aggregate above is already safe.
-    }
-
-    // TODO: record a daily analytics snapshot here once the Flutter app has an
-    // analytics pipeline (React's recordAnalyticsSnapshot). It must stay
-    // best-effort and last, like in React, so it can never fail a publish.
-
-    return MainLeaderboardRow(
-      id: rowId,
-      uid: uid,
-      name: displayName,
-      photoURL: photoURL,
-      isPro: isPro,
-      percent: score.percent,
-      points: total,
-      usageSeconds: score.usageSeconds,
-      activityCount: score.activityCount,
-      signupBonus: signupBonus,
-    );
+    final rowMap = _rowFromBody(body) ??
+        await _ownLeaderboardMap(courseId, subcourseId);
+    if (rowMap == null) return null;
+    final row = MainLeaderboardRow.fromMap(rowMap);
+    return row.uid.isEmpty ? null : row;
   } catch (_) {
     // A failed publish must NOT consume the throttle — otherwise every screen
     // sits on stale/fallback numbers for 5 minutes instead of retrying on the
@@ -819,7 +787,12 @@ class CanonicalStats {
 
 CanonicalStats? _canonicalFromMap(Map<String, dynamic>? m) {
   if (m == null) return null;
-  num n(dynamic v) => v is num && v.isFinite ? v : 0;
+  num n(dynamic v) {
+    if (v is num && v.isFinite) return v;
+    // Phase-1: the API's own-row values may arrive as text.
+    if (v is String) return num.tryParse(v.trim()) ?? 0;
+    return 0;
+  }
   final b = m['breakdown'];
   return CanonicalStats(
     percent: n(m['percent']).toDouble().clamp(0.0, 100.0),
@@ -849,6 +822,7 @@ Future<CanonicalStats?> loadCanonicalStats({
 }) async {
   if (uid.isEmpty || subcourseId.isEmpty) return null;
   try {
+    noteLeaderboardScope(courseId, subcourseId);
     if (allowRefresh && shouldPublishMainLeaderboardScore(uid, subcourseId)) {
       final row = await publishMainLeaderboardScore(
         uid: uid,
@@ -859,11 +833,10 @@ Future<CanonicalStats?> loadCanonicalStats({
         isPro: isPro,
       );
       if (row != null) {
-        // The public row omits the breakdown — re-read the private aggregate
-        // (one extra read, only on a refresh) so the breakdown stays whole.
-        final agg = await _guardDoc(
-            ExamRest.getDoc('users/$uid/app_mainleaderboard/$subcourseId'));
-        return _canonicalFromMap(agg) ??
+        // The public row omits the breakdown — read the caller's own
+        // aggregate (GET /leaderboard 'own') so the breakdown stays whole.
+        final own = await _ownLeaderboardMap(courseId, subcourseId);
+        return _canonicalFromMap(own) ??
             CanonicalStats(
               percent: row.percent,
               points: row.points,
@@ -872,9 +845,8 @@ Future<CanonicalStats?> loadCanonicalStats({
             );
       }
     }
-    final agg = await _guardDoc(
-        ExamRest.getDoc('users/$uid/app_mainleaderboard/$subcourseId'));
-    return _canonicalFromMap(agg);
+    final own = await _ownLeaderboardMap(courseId, subcourseId);
+    return _canonicalFromMap(own);
   } catch (_) {
     return null;
   }
@@ -897,60 +869,37 @@ Future<MainLeaderboardRow?> ensureMainLeaderboardRow({
 }) async {
   if (uid.isEmpty || subcourseId.isEmpty) return null;
   try {
-    final rowId = publicRowId(uid, subcourseId);
-    final existing =
-        await _guardDoc(ExamRest.getDoc('app_main_leaderboard/$rowId'));
-    if (existing != null) {
-      return MainLeaderboardRow.fromMap(existing);
-    }
-
-    const bonus = kLeaderboardSignupBonus;
+    noteLeaderboardScope(courseId, subcourseId);
     final displayName = name.isEmpty ? 'Anonymous' : name;
-
-    await ExamRest.setDoc(
-      'app_main_leaderboard/$rowId',
-      {
-        'uid': uid,
-        'courseId': courseId,
-        'subcourseId': subcourseId,
-        'name': displayName,
-        'photoURL': photoURL,
-        'isPro': isPro,
-        'percent': 0,
-        'points': bonus,
-        'usageSeconds': 0,
-        'activityCount': 0,
-        'signupBonus': bonus,
-      },
-      serverTimestampFields: const ['updatedAt'],
-    );
-    await ExamRest.setDoc(
-      'users/$uid/app_mainleaderboard/$subcourseId',
-      {
-        'courseId': courseId,
-        'subcourseId': subcourseId,
-        'percent': 0,
-        'accuracyPercent': 0,
-        'points': bonus,
-        'usageSeconds': 0,
-        'activityCount': 0,
-        'signupBonus': bonus,
-        'breakdown': <String, dynamic>{},
-      },
-      serverTimestampFields: const ['updatedAt'],
-    );
-
+    // Phase-1: POST /leaderboard/ensure-row — the worker returns the
+    // existing row untouched, or creates both documents with the bonus
+    // exactly as the client used to.
+    final body = await CfApi.ensureLeaderboardRow({
+      'courseId': courseId,
+      'subcourseId': subcourseId,
+      'name': displayName,
+      'photoURL': photoURL,
+      'isPro': isPro,
+    });
+    final rowMap = _rowFromBody(body) ??
+        await _ownLeaderboardMap(courseId, subcourseId);
+    if (rowMap != null) {
+      final row = MainLeaderboardRow.fromMap(rowMap);
+      if (row.uid.isNotEmpty) return row;
+    }
+    // The POST landed but carried no row back — mirror the row the old
+    // code returned right after creating it.
     return MainLeaderboardRow(
-      id: rowId,
+      id: publicRowId(uid, subcourseId),
       uid: uid,
       name: displayName,
       photoURL: photoURL,
       isPro: isPro,
       percent: 0,
-      points: bonus,
+      points: kLeaderboardSignupBonus,
       usageSeconds: 0,
       activityCount: 0,
-      signupBonus: bonus,
+      signupBonus: kLeaderboardSignupBonus,
     );
   } catch (_) {
     return null;
@@ -982,8 +931,8 @@ Future<void> writeUserStatsRank(String uid, int rank) async {
     var baseline = _userStatsBaseline[uid];
     if (baseline == null) {
       // Only reached when a writer runs before any profile load. One read,
-      // once, per session.
-      final doc = await _guardDoc(ExamRest.getDoc('users/$uid'));
+      // once, per session. Phase-1: the baseline comes from GET /me.
+      final doc = await CfApi.getMe().catchError((_) => null);
       final stats = doc?['stats'];
       final map =
           stats is Map ? Map<String, dynamic>.from(stats) : <String, dynamic>{};
@@ -1007,11 +956,8 @@ Future<void> writeUserStatsRank(String uid, int rank) async {
     _userStatsBaseline[uid] = baseline;
     if (next['rank'] == baseline['rank']) return;
 
-    await ExamRest.setDoc(
-      'users/$uid',
-      {'stats': next},
-      serverTimestampFields: const ['updatedAt'],
-    );
+    // Phase-1: the stats mirror merges into the profile via PATCH /me.
+    await CfApi.patchMe({'stats': next});
     // Promoted only after the write lands.
     _userStatsBaseline[uid] = next;
   } catch (_) {

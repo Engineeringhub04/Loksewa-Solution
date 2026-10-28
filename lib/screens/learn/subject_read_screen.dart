@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
-import '../../services/firestore_rest.dart';
+import '../../services/cf_api.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
@@ -108,11 +108,10 @@ class _SubjectReadScreenState extends State<SubjectReadScreen> {
       _loadError = false;
     });
     try {
-      final token = await AuthService.getValidIdToken();
       Map<String, dynamic>? userDoc;
       try {
-        userDoc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: token);
+        // Phase-1: profile from GET /me.
+        userDoc = await CfApi.getMe();
       } catch (_) {}
       _isPremium =
           UserProfile.fromMap(user.uid, userDoc ?? {}).hasActivePremium;
@@ -704,10 +703,7 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -762,11 +758,7 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
   /// Fire-and-forget Firestore write for the optimistic save above.
   /// Same doc-id scheme and payload as before — UX layer only.
   Future<void> _save() async {
-    final idToken = await AuthService.getValidIdToken();
-    final path = 'users/${widget.uid}/bookmarks/$_docId';
-    final rows = await FirestoreRest.listDocuments(
-        'users/${widget.uid}/bookmarks',
-        idToken: idToken);
+    final rows = await CfApi.getBookmarks();
     if (rows.length >= _freeLimit && !widget.isPro) {
       throw _BookmarkLimitException();
     }
@@ -775,8 +767,8 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
     final explanationText = bilingual(q.explanation, q.explanationNe);
     final chapterName =
         (widget.chapterName ?? '').isNotEmpty ? widget.chapterName! : 'Chapter';
-    await FirestoreRest.setDocument(
-      path,
+    await CfApi.saveBookmark(
+      _docId,
       {
         'context': 'read',
         'kind': 'question',
@@ -799,17 +791,13 @@ class _ReadBookmarkButtonState extends State<_ReadBookmarkButton> {
         },
         'createdAt': DateTime.now().toUtc().toIso8601String(),
       },
-      idToken: idToken,
     );
   }
 
   Future<void> _remove() async {
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      await CfApi.deleteBookmark(_docId);
       if (!mounted) return;
       setState(() {
         _saved = false;

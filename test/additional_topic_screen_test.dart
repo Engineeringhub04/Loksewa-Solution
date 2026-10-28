@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:loksewa_solution/screens/shop/additional_topic_screen.dart';
 
-// The topic screen fetches its bank via Firestore REST. These tests must never
+// The topic screen fetches its bank via the loksewa-api. These tests must never
 // touch the network: every http call fails fast via HttpOverrides, so _load
 // deterministically falls into the offline-cache fallback (or the error
 // state when no cache is seeded).

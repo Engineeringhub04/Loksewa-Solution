@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
@@ -113,18 +114,30 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen>
         subcourseId = profile?.subcourseId ?? '';
         courseName = courseId;
         subcourseName = subcourseId;
-        // Resolve human-readable names like the home header does.
+        // Resolve human-readable names like the home header does —
+        // Phase-1: from the GET /courses payload.
         if (courseId.isNotEmpty) {
-          final c =
-              await ExamRest.getDoc('app_courses/$courseId').catchError((_) => null);
-          final n = (c?['name'] ?? c?['nameNe']) as String?;
-          if (n != null && n.trim().isNotEmpty) courseName = n.trim();
-        }
-        if (courseId.isNotEmpty && subcourseId.isNotEmpty) {
-          final sc = await ExamRest.getDoc('app_subcourses/$subcourseId')
-              .catchError((_) => null);
-          final n = (sc?['name'] ?? sc?['nameNe']) as String?;
-          if (n != null && n.trim().isNotEmpty) subcourseName = n.trim();
+          try {
+            final data = await CfApi.getCourses();
+            for (final c in data.courses) {
+              if (c['id']?.toString() == courseId) {
+                final n = (c['name'] ?? c['nameNe']) as String?;
+                if (n != null && n.trim().isNotEmpty) courseName = n.trim();
+                break;
+              }
+            }
+            if (subcourseId.isNotEmpty) {
+              for (final sc in data.subcourses) {
+                if (sc['id']?.toString() == subcourseId) {
+                  final n = (sc['name'] ?? sc['nameNe']) as String?;
+                  if (n != null && n.trim().isNotEmpty) {
+                    subcourseName = n.trim();
+                  }
+                  break;
+                }
+              }
+            }
+          } catch (_) {}
         }
       }
       if (!mounted) return;

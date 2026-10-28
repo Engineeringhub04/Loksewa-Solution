@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
@@ -51,33 +52,38 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       final subcourseId = profile?.subcourseId ?? '';
       String courseName = '';
       String subcourseName = '';
+      // Phase-1: names resolve from the GET /courses payload (course row,
+      // then subcourse row — the payload carries both the subcollection
+      // and legacy rows, like the two doc reads + fallback used to).
       if (courseId.isNotEmpty) {
         try {
-          final doc = await ExamRest.getDoc('app_courses/$courseId');
-          courseName = '${doc?['name'] ?? doc?['title'] ?? ''}';
+          final data = await CfApi.getCourses();
+          for (final c in data.courses) {
+            if (c['id']?.toString() == courseId) {
+              courseName = '${c['name'] ?? c['title'] ?? ''}';
+              break;
+            }
+          }
+          if (subcourseId.isNotEmpty) {
+            for (final sc in data.subcourses) {
+              if (sc['id']?.toString() == subcourseId) {
+                subcourseName = '${sc['name'] ?? sc['title'] ?? ''}';
+                break;
+              }
+            }
+          }
         } catch (_) {}
-      }
-      if (courseId.isNotEmpty && subcourseId.isNotEmpty) {
-        try {
-          final doc = await ExamRest.getDoc(
-              'app_courses/$courseId/subcourses/$subcourseId');
-          subcourseName = '${doc?['name'] ?? doc?['title'] ?? ''}';
-        } catch (_) {
-          try {
-            final doc =
-                await ExamRest.getDoc('app_subcourses/$subcourseId');
-            subcourseName = '${doc?['name'] ?? doc?['title'] ?? ''}';
-          } catch (_) {}
-        }
       }
 
       List<Map<String, dynamic>> items = const [];
       if (courseId.isNotEmpty) {
-        final all = await ExamRest.runQuery('app_syllabusdata',
-            where: ExamRest.fieldFilter('courseId', 'EQUAL', courseId),
-            limit: 200);
+        // Phase-1: GET /syllabus rows, filtered to the enrolled course
+        // client-side (the old query filtered server-side on courseId).
+        final all = await CfApi.getSyllabus();
         items = all
-            .where((s) => s['active'] != false)
+            .where((s) =>
+                '${s['courseId'] ?? ''}' == courseId &&
+                CfJson.asBool(s['active'], fallback: true))
             .toList()
           ..sort((a, b) => _num(a['order']).compareTo(_num(b['order'])));
       }

@@ -21,34 +21,11 @@ import 'package:loksewa_solution/screens/shop/additional_feature_home.dart';
 ///   AGENTS.md), and records the updateTime pref
 /// - header always shows widget.reactSubtitle, never the page doc title
 ///
-/// Network is faked with http.runWithClient + MockClient so
-/// FirestoreRest.getDocument never leaves the test. AuthService has no
-/// session in tests, so getValidIdToken() returns '' without network.
+/// Network is faked with http.runWithClient + MockClient so the
+/// CfApi calls never leave the test.
 
 const _oldUpdate = '2026-09-20T10:00:00Z';
 const _newUpdate = '2026-09-30T10:00:00Z';
-
-/// Encode a raw Dart value the way Firestore REST encodes a field value.
-Map<String, dynamic> _encField(dynamic v) {
-  if (v is String) return {'stringValue': v};
-  if (v is bool) return {'booleanValue': v};
-  if (v is int) return {'integerValue': '$v'};
-  if (v is double) return {'doubleValue': v};
-  if (v is List) {
-    return {
-      'arrayValue': {'values': v.map(_encField).toList()}
-    };
-  }
-  if (v is Map) {
-    return {
-      'mapValue': {
-        'fields': (v as Map<String, dynamic>)
-            .map((k, val) => MapEntry(k, _encField(val))),
-      }
-    };
-  }
-  throw ArgumentError('unsupported test value: $v');
-}
 
 /// Build a JSON mock response. Uses Response.bytes with explicit UTF-8:
 /// the plain Response(String) constructor defaults to latin1 and throws
@@ -60,63 +37,64 @@ http.Response _jsonResponse(Map<String, dynamic> body) {
     headers: {'content-type': 'application/json; charset=utf-8'},
   );
 }
-/// Fake Firestore backend: page doc with two published topics (+ one
-/// unpublished, which must be filtered out) and per-topic bank docs.
-/// [bankRequests] records every bank doc id requested.
+/// Fake loksewa-api backend: GET /features/gk returns the page doc
+/// (two published topics + one unpublished, which must be filtered out)
+/// and GET /features/gk/topics/{id} returns each topic's bank.
+/// [bankRequests] records every topic id whose bank was requested.
 MockClient _mockHttp({
   required String pageUpdateTime,
   required List<String> bankRequests,
 }) {
   return MockClient((request) async {
     final path = request.url.path;
-    if (path.contains('app_additional_feature_pages/')) {
+    if (path.contains('/topics/')) {
+      final topicId = path.split('/').last;
+      bankRequests.add(topicId);
       return _jsonResponse({
-        'name': 'projects/p/databases/(default)/documents/page',
-        'updateTime': pageUpdateTime,
-        'fields': {
-            'titleEn': _encField('Server Page Title'),
-            'titleNp': _encField('सर्भर पृष्ठ शीर्षक'),
-            'topics': _encField([
-              {
-                'topicId': 't1',
-                'titleEn': 'General Knowledge',
-                'titleNp': 'सामान्य ज्ञान',
-                'order': 1,
-                'questionCount': 10,
-                'questionBankId': 'bank1',
-                'isPublished': true,
-              },
-              {
-                'topicId': 't2',
-                'titleEn': 'Current Affairs',
-                'titleNp': 'समसामयिक घटनाहरू',
-                'order': 2,
-                'questionCount': 5,
-                'questionBankId': 'bank2',
-                'isPublished': true,
-              },
-              {
-                'topicId': 't3',
-                'titleEn': 'Hidden Draft',
-                'titleNp': 'मस्यौदा',
-                'order': 3,
-                'questionCount': 5,
-                'questionBankId': 'bank3',
-                'isPublished': false,
-              },
-            ]),
-          },
-        });
+        'ok': true,
+        'bank': {
+          'topicId': topicId,
+          'questionCount': 10,
+        },
+        'page': null,
+      });
     }
-    if (path.contains('app_additional_feature_question_banks/')) {
-      final docId = path.split('/').last;
-      bankRequests.add(docId);
+    if (path.contains('/features/')) {
       return _jsonResponse({
-        'name': 'projects/p/databases/(default)/documents/$docId',
-        'updateTime': _newUpdate,
-        'fields': {
-          'topicId': _encField(docId.split('__').last),
-          'questionCount': _encField(10),
+        'ok': true,
+        'page': {
+          'titleEn': 'Server Page Title',
+          'titleNp': 'सर्भर पृष्ठ शीर्षक',
+          'updatedAt': pageUpdateTime,
+          'topics': [
+            {
+              'topicId': 't1',
+              'titleEn': 'General Knowledge',
+              'titleNp': 'सामान्य ज्ञान',
+              'order': 1,
+              'questionCount': 10,
+              'questionBankId': 'bank1',
+              'isPublished': true,
+            },
+            {
+              'topicId': 't2',
+              'titleEn': 'Current Affairs',
+              'titleNp': 'समसामयिक घटनाहरू',
+              'order': 2,
+              'questionCount': 5,
+              'questionBankId': 'bank2',
+              'isPublished': true,
+            },
+            {
+              'topicId': 't3',
+              'titleEn': 'Hidden Draft',
+              'titleNp': 'मस्यौदा',
+              'order': 3,
+              'questionCount': 5,
+              'questionBankId': 'bank3',
+              'isPublished': false,
+            },
+          ],
         },
       });
     }
@@ -321,11 +299,8 @@ void main() {
         await _settleDownload(tester, client);
       }, () => client);
 
-      // Both banks fetched with the {fid}__all__all__{topicId} doc ids.
-      expect(
-          bankRequests,
-          containsAll(
-              ['gk__all__all__t1', 'gk__all__all__t2']));
+      // Both banks fetched by topic id.
+      expect(bankRequests, containsAll(['t1', 't2']));
       // Files persisted under <appDocs>/af_offline/gk/.
       final pageFile = File('${docsDir.path}/af_offline/gk/page.json');
       final bank1 = File('${docsDir.path}/af_offline/gk/banks/t1.json');
@@ -335,7 +310,7 @@ void main() {
       expect(bank2.existsSync(), isTrue);
       final pageJson =
           json.decode(pageFile.readAsStringSync()) as Map<String, dynamic>;
-      expect(pageJson['__updateTime'], _newUpdate);
+      expect(pageJson['updatedAt'], _newUpdate);
       expect((pageJson['topics'] as List).length, 3);
       // Prefs recorded: complete flag, date, and updateTime.
       final prefs = await SharedPreferences.getInstance();

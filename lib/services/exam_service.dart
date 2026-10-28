@@ -399,11 +399,20 @@ int _num(dynamic v, [int fallback = 0]) {
   if (v is int) return v;
   if (v is double) return v.round();
   if (v is num) return v.toInt();
+  // Phase-1: rows arriving from the D1 copy may carry numbers as text.
+  if (v is String) {
+    final n = num.tryParse(v.trim());
+    if (n != null) return n.round();
+  }
   return fallback;
 }
 
 double _dbl(dynamic v, [double fallback = 0.0]) {
   if (v is num) return v.toDouble();
+  if (v is String) {
+    final n = double.tryParse(v.trim());
+    if (n != null) return n;
+  }
   return fallback;
 }
 
@@ -436,8 +445,11 @@ DateTime? _dt(dynamic v) {
 }
 
 /// True when the user's profile doc stores courseId/subcourseId.
+/// Phase-1: the scope comes from GET /me (the migrated users row); the
+/// [uid] parameter is kept for signature parity — identity rides the CF
+/// Bearer token.
 Future<Map<String, String>> fetchCourseScope(String uid) async {
-  final doc = await ExamRest.getDoc('users/$uid').catchError((_) => null);
+  final doc = await CfApi.getMe().catchError((_) => null);
   return {
     'courseId': _str(doc?['courseId']),
     'subcourseId': _str(doc?['subcourseId']),
@@ -533,8 +545,13 @@ DateTime? _parseFlexibleDateTime(dynamic v) {
   return null;
 }
 
+/// Phase-1: the profile comes from GET /me (the migrated users row) —
+/// the same document this used to read from Firestore. The [uid]
+/// parameter is kept for signature parity (identity rides the Bearer
+/// token). Shared with boundary screens (Daily Test), which therefore
+/// read the same profile from D1 too.
 Future<UserProfile?> fetchUserProfile(String uid) async {
-  final doc = await ExamRest.getDoc('users/$uid').catchError((_) => null);
+  final doc = await CfApi.getMe().catchError((_) => null);
   if (doc == null) return null;
   return UserProfile.fromMap(uid, doc);
 }
@@ -2606,21 +2623,55 @@ Future<SubjectLearningStats> fetchSubjectLearningStats({
       .where((e) => e.isNotEmpty)
       .toSet()
       .toList();
-  if (ids.isEmpty)
+  if (ids.isEmpty) {
     return const SubjectLearningStats(complete: 0, inProgress: 0);
-  final docs = await ExamRest.runQuery(
-    'learning_progress',
-    parent: 'users/$uid',
-    where: ExamRest.fieldFilter('subjectId', 'IN', ids),
-    limit: 200,
-  );
+  }
+  // Phase-1: there is no learning_progress collection read anymore — the
+  // per-chapter progress pre-merged into the /subjects/chapters and
+  // /subjects/units payloads is the same data the old query returned, one
+  // entry per chapter that has a progress doc signal. The counting math
+  // below is unchanged.
+  final entries = <Map<String, dynamic>>[];
+  final seenChapters = <String>{};
+  void collect(List<Map<String, dynamic>> chapters) {
+    for (final c in chapters) {
+      final p = c['progress'];
+      if (p is! Map) continue;
+      final chapterKey = _canonicalLearningId('${c['id'] ?? ''}');
+      if (chapterKey.isEmpty || !seenChapters.add(chapterKey)) continue;
+      entries.add({
+        'subjectId': '${c['subjectId'] ?? ''}',
+        'unitId': c['unitId'],
+        'chapterId': '${c['id'] ?? ''}',
+        'attempted': _num(p['attempted']),
+        'totalQuestions': _num(p['totalQuestions']),
+        'completed': _bool(p['completed']),
+      });
+    }
+  }
+
+  for (final subjectId in subjectIds) {
+    try {
+      collect(await fetchSubjectChaptersWithProgress(
+          courseId, subcourseId, subjectId, uid));
+    } catch (_) {}
+    try {
+      final units = await fetchSubjectUnitsWithChapters(
+          courseId, subcourseId, subjectId, uid);
+      for (final u in units) {
+        final chapters = u['chapters'];
+        if (chapters is List) {
+          collect(chapters.cast<Map<String, dynamic>>());
+        }
+      }
+    } catch (_) {}
+  }
   // React refreshes every denominator concurrently (Promise.all) — a
   // sequential await per document is what made the subject page take minutes.
-  final refreshed = await Future.wait(docs.map((d) async {
-    final attempted =
-        ((d['attemptedQuestionIds'] as List?) ?? []).whereType<String>().length;
-    final total = _num(d['totalQuestions']);
-    final done = _bool(d['completed']);
+  final refreshed = await Future.wait(entries.map((d) async {
+    final attempted = d['attempted'] as int;
+    final total = d['totalQuestions'] as int;
+    final done = d['completed'] as bool;
     // Refresh the denominator from the current practice question-set doc for
     // chapters that already have progress (question banks grow over time).
     var currentTotal = total;
@@ -2685,12 +2736,12 @@ String appSubjectSlug(String v) {
 /// Deterministic direct reads — never scans the collection (subjectDetails.ts).
 /// The 3 seed reads run concurrently and the scope is cached for 3 minutes,
 /// mirroring React's cachedOrInFlight.
+/// Phase-1: each read is GET /subjects/details/{id} on the loksewa-api.
 Future<List<Map<String, dynamic>>> fetchSubjectDetails(
     String courseId, String subcourseId) {
   return _cachedOrInFlight('${courseId}__${subcourseId}', () async {
     final docs = await Future.wait(subjectSeedSlugs.map((slug) =>
-        ExamRest.getDoc(
-            'app_subjects_details/${courseId}__${subcourseId}__$slug')));
+        CfApi.getSubjectDetail('${courseId}__${subcourseId}__$slug')));
     final out = <Map<String, dynamic>>[];
     for (var i = 0; i < docs.length; i++) {
       final doc = docs[i];
@@ -2725,184 +2776,185 @@ Map<String, dynamic> _subjectChapterFromDoc(Map<String, dynamic> doc) {
   };
 }
 
-/// Direct (unit-less) chapters: runQuery where course==, client filters
-/// (subjectChapterDetails.ts loadDirectChapters). Cached 3 minutes per scope,
-/// mirroring React's cachedOrInFlight.
+/// Phase-1: chapter/unit catalogue + progress now come from the
+/// loksewa-api. GET /subjects/chapters and GET /subjects/units return
+/// entries in exactly the shapes the fetchers below used to build locally
+/// (chapter entries via [_subjectChapterFromDoc], progress pre-merged
+/// server-side), so the shapers are applied defensively — they are
+/// idempotent on already-shaped entries and repair raw rows if the worker
+/// ever returns unshaped docs. Progress is NOT cached (it must stay as
+/// fresh as the per-doc Firestore reads were); the catalogue-only
+/// fetchers keep the 3-minute cache on stripped copies.
+
+/// Normalizes one progress map from a /subjects/* payload: counts coerced
+/// (D1 may carry them as text), `completed` passed through as the server
+/// merged it (direct chapters: flag || pct>=100; unit chapters: flag
+/// only — the distinction is the server's, exactly as the local merge
+/// used to make it). Extra fields the server merged from the stored
+/// progress doc (id lists, daily counters…) pass through untouched.
+Map<String, dynamic> _cfProgress(dynamic raw, String chapterId) {
+  if (raw is! Map) {
+    return {
+      'chapterId': chapterId,
+      'attempted': 0,
+      'correct': 0,
+      'totalQuestions': 0,
+      'percentage': 0,
+      'completed': false,
+    };
+  }
+  final p = Map<String, dynamic>.from(raw);
+  final attemptedList = p['attemptedQuestionIds'];
+  final correctList = p['correctQuestionIds'];
+  final attempted = attemptedList is List
+      ? attemptedList.whereType<String>().length
+      : _num(p['attempted']);
+  final correct = correctList is List
+      ? correctList.whereType<String>().length
+      : _num(p['correct']);
+  final total = _num(p['totalQuestions']);
+  final completed = _bool(p['completed']);
+  final pct = total > 0
+      ? ((attempted / total * 100).round().clamp(0, 100))
+      : (completed ? 100 : 0);
+  return {
+    ...p,
+    'chapterId': '${p['chapterId'] ?? chapterId}',
+    'attempted': attempted,
+    'correct': correct,
+    'totalQuestions': total,
+    'percentage': p['percentage'] is num ? _num(p['percentage']) : pct,
+    'completed': completed,
+  };
+}
+
+/// One chapter entry from a /subjects/* payload, with progress attached
+/// (normalized) when [withProgress] — the entry shape
+/// fetchSubjectChaptersWithProgress has always returned.
+Map<String, dynamic> _cfChapterEntry(Map<String, dynamic> raw,
+    {required bool withProgress}) {
+  final shaped = _subjectChapterFromDoc(raw);
+  if (!withProgress) return shaped;
+  return {...shaped, 'progress': _cfProgress(raw['progress'], '${shaped['id']}')};
+}
+
+/// One unit entry from a /subjects/units payload — the shape
+/// fetchSubjectUnits has always returned (no 'chapters' key).
+Map<String, dynamic> _cfUnitEntry(Map<String, dynamic> d) => {
+      'id': '${d['id'] ?? ''}',
+      'name': (d['name'] as String?)?.isNotEmpty == true ? d['name'] : 'Unit',
+      'nameNe': d['nameNe'] ?? d['name'] ?? 'Unit',
+      'order': _num(d['order'], 0),
+      'course': d['course'] ?? '',
+      'subcourse': d['subcourse'] ?? '',
+      'subjectId': d['subjectId'] ?? '',
+      'pro': _bool(d['pro']),
+      'price': _num(d['price'], 0),
+    };
+
+int _cfOrder(Map<String, dynamic> m) => _num(m['order'], 0);
+
+/// Direct (unit-less) chapters (subjectChapterDetails.ts loadDirectChapters).
+/// Phase-1: GET /subjects/chapters, progress stripped. Cached 3 minutes
+/// per scope on the stripped copies, mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchSubjectChapters(
     String course, String subcourse, String subjectId) {
   final logical = canonicalCatalogSlug(subjectId);
-  return _cachedOrInFlight('${course}__${subcourse}__$logical', () async {
-    final docs = await ExamRest.runQuery(
-      'app_subjects_chapter_details',
-      where: ExamRest.fieldFilter('course', 'EQUAL', course),
-      limit: 300,
-    );
-    final out = docs
-        .where((d) =>
-            '${d['subcourse'] ?? ''}' == subcourse &&
-            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-            _bool(d['isPublished']) == true &&
-            !(d['unitId'] is String &&
-                (d['unitId'] as String).trim().isNotEmpty))
-        .map(_subjectChapterFromDoc)
+  return _cachedOrInFlight('chapters:${course}__${subcourse}__$logical',
+      () async {
+    final rows = await CfApi.getSubjectChapters(subjectId,
+        courseId: course, subcourseId: subcourse);
+    final out = rows
+        .map((r) => _cfChapterEntry(r, withProgress: false))
         .toList();
-    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
+    out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
     return out;
   });
 }
 
 /// Direct chapters with per-user learning progress attached
 /// (subjectChapterDetails.ts fetchSubjectChaptersWithProgress).
-/// Progress doc read: users/{uid}/learning_progress/{logicalSlug}__{chapterId}.
-/// Progress reads run concurrently (React: Promise.all). The cached chapter
-/// maps are never mutated — progress is attached on copies, like React's
-/// withProgress spread.
+/// Phase-1: one GET /subjects/chapters call — the worker merges each
+/// chapter's learning progress server-side. The [uid] parameter is kept
+/// for signature parity (identity rides the CF Bearer token).
 Future<List<Map<String, dynamic>>> fetchSubjectChaptersWithProgress(
     String course, String subcourse, String subjectId, String? uid) async {
-  final logical = _canonicalLearningId(subjectId);
-  final chapters = await fetchSubjectChapters(course, subcourse, logical);
-  Future<Map<String, dynamic>> withProgress(Map<String, dynamic> c) async {
-    Map<String, dynamic>? p;
-    if (uid != null && uid.isNotEmpty) {
-      try {
-        p = await fetchLearningProgress(uid, logical, '${c['id']}');
-      } catch (_) {}
-    }
-    final total = (p?['totalQuestions'] as int?) ?? 0;
-    final attempted = (p?['attempted'] as int?) ?? 0;
-    final correct =
-        ((p?['correctQuestionIds'] as List?) ?? []).whereType<String>().length;
-    final completed = _bool(p?['completed']);
-    final pct = total > 0
-        ? ((attempted / total * 100).round().clamp(0, 100))
-        : (completed ? 100 : 0);
-    return {
-      ...c,
-      'progress': {
-        'chapterId': '${c['id']}',
-        'attempted': attempted,
-        'correct': correct,
-        'totalQuestions': total,
-        'percentage': pct,
-        'completed': completed || pct >= 100,
-      },
-    };
-  }
-
-  return Future.wait(chapters.map(withProgress));
+  final rows = await CfApi.getSubjectChapters(subjectId,
+      courseId: course, subcourseId: subcourse);
+  final out =
+      rows.map((r) => _cfChapterEntry(r, withProgress: true)).toList();
+  out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
+  return out;
 }
 
-/// Units for a subject (subjectUnitDetails.ts). Cached 3 minutes per scope,
-/// mirroring React's cachedOrInFlight.
+/// Units for a subject (subjectUnitDetails.ts). Phase-1: GET
+/// /subjects/units with the 'chapters' payload dropped. Cached 3 minutes
+/// per scope, mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchSubjectUnits(
     String course, String subcourse, String subjectId) {
   final logical = canonicalCatalogSlug(subjectId);
-  return _cachedOrInFlight('${course}__${subcourse}__$logical', () async {
-    final docs = await ExamRest.runQuery(
-      'app_subjects_units_details',
-      where: ExamRest.fieldFilter('course', 'EQUAL', course),
-      limit: 300,
-    );
-    final out = docs
-        .where((d) =>
-            '${d['subcourse'] ?? ''}' == subcourse &&
-            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-            _bool(d['isPublished']) == true)
-        .map((d) => {
-              'id': '${d['id'] ?? ''}',
-              'name': (d['name'] as String?)?.isNotEmpty == true
-                  ? d['name']
-                  : 'Unit',
-              'nameNe': d['nameNe'] ?? d['name'] ?? 'Unit',
-              'order': _num(d['order'], 0),
-              'course': d['course'] ?? '',
-              'subcourse': d['subcourse'] ?? '',
-              'subjectId': d['subjectId'] ?? '',
-              'pro': _bool(d['pro']),
-              'price': _num(d['price'], 0),
-            })
-        .toList();
-    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
+  return _cachedOrInFlight('units:${course}__${subcourse}__$logical',
+      () async {
+    final rows = await CfApi.getSubjectUnits(subjectId,
+        courseId: course, subcourseId: subcourse);
+    final out = rows.map(_cfUnitEntry).toList();
+    out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
     return out;
   });
 }
 
 /// Unit-chapters for one unit (subjectUnitDetails.ts loadUnitChapters).
-/// Cached 3 minutes per unit, mirroring React's cachedOrInFlight.
+/// Phase-1: read from the GET /subjects/units payload — the matching
+/// unit's chapters, progress stripped. Cached 3 minutes per unit,
+/// mirroring React's cachedOrInFlight.
 Future<List<Map<String, dynamic>>> fetchUnitChapters(
     String course, String subcourse, String subjectId, String unitId) {
   final logical = canonicalCatalogSlug(subjectId);
   final targetUnit = canonicalCatalogSlug(unitId);
-  return _cachedOrInFlight('${course}__${subcourse}__${logical}__$targetUnit',
+  return _cachedOrInFlight(
+      'unitchapters:${course}__${subcourse}__${logical}__$targetUnit',
       () async {
-    final docs = await ExamRest.runQuery(
-      'app_subjects_unit-chapters_details',
-      where: ExamRest.fieldFilter('course', 'EQUAL', course),
-      limit: 300,
-    );
-    final out = docs
-        .where((d) =>
-            '${d['subcourse'] ?? ''}' == subcourse &&
-            canonicalCatalogSlug('${d['subjectId'] ?? ''}') == logical &&
-            canonicalCatalogSlug('${d['unitId'] ?? ''}') == targetUnit &&
-            _bool(d['isPublished']) == true)
-        .map(_subjectChapterFromDoc)
-        .toList();
-    out.sort((a, b) => (a['order'] as int).compareTo(b['order'] as int));
-    return out;
+    final rows = await CfApi.getSubjectUnits(subjectId,
+        courseId: course, subcourseId: subcourse);
+    for (final u in rows) {
+      if (canonicalCatalogSlug('${u['id'] ?? ''}') != targetUnit) continue;
+      final chapters = u['chapters'];
+      if (chapters is! List) return <Map<String, dynamic>>[];
+      final out = chapters
+          .whereType<Map>()
+          .map((c) => _cfChapterEntry(
+              Map<String, dynamic>.from(c),
+              withProgress: false))
+          .toList();
+      out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
+      return out;
+    }
+    return <Map<String, dynamic>>[];
   });
 }
 
 /// Units with their unit-chapters and per-user learning progress attached
 /// (subjectUnitDetails.ts fetchSubjectUnitsWithChapters).
-/// Every unit's chapter lookup and every chapter's progress read runs
-/// concurrently (React: nested Promise.all) — the sequential awaits here were
-/// the main reason the units page took minutes. Cached maps are never mutated.
+/// Phase-1: one GET /subjects/units call — chapters + progress are merged
+/// server-side. The [uid] parameter is kept for signature parity.
 Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
     String course, String subcourse, String subjectId, String? uid) async {
-  final logical = _canonicalLearningId(subjectId);
-  final units = await fetchSubjectUnits(course, subcourse, logical);
-  Future<Map<String, dynamic>> withChapters(Map<String, dynamic> u) async {
-    List<Map<String, dynamic>> chapters = [];
-    try {
-      chapters =
-          await fetchUnitChapters(course, subcourse, logical, '${u['id']}');
-    } catch (_) {
-      // Keep the unit visible even if its chapter lookup is unavailable.
-    }
-    final withP = await Future.wait(chapters.map((c) async {
-      Map<String, dynamic>? p;
-      if (uid != null && uid.isNotEmpty) {
-        try {
-          p = await fetchLearningProgress(uid, logical, '${c['id']}');
-        } catch (_) {}
-      }
-      final total = (p?['totalQuestions'] as int?) ?? 0;
-      final attempted = (p?['attempted'] as int?) ?? 0;
-      final correct = ((p?['correctQuestionIds'] as List?) ?? [])
-          .whereType<String>()
-          .length;
-      final completed = _bool(p?['completed']);
-      final pct = total > 0
-          ? ((attempted / total * 100).round().clamp(0, 100))
-          : (completed ? 100 : 0);
-      return {
-        ...c,
-        'progress': {
-          'chapterId': '${c['id']}',
-          'attempted': attempted,
-          'correct': correct,
-          'totalQuestions': total,
-          'percentage': pct,
-          // Units layer: completed is the persisted flag only (no pct>=100).
-          'completed': completed,
-        },
-      };
-    }));
-    return {...u, 'chapters': withP};
-  }
-
-  return Future.wait(units.map(withChapters));
+  final rows = await CfApi.getSubjectUnits(subjectId,
+      courseId: course, subcourseId: subcourse);
+  final out = rows.map((u) {
+    final chapters = u['chapters'];
+    final shapedChapters = chapters is List
+        ? chapters
+            .whereType<Map>()
+            .map((c) => _cfChapterEntry(Map<String, dynamic>.from(c),
+                withProgress: true))
+            .toList()
+        : <Map<String, dynamic>>[];
+    shapedChapters.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
+    return {..._cfUnitEntry(u), 'chapters': shapedChapters};
+  }).toList();
+  out.sort((a, b) => _cfOrder(a).compareTo(_cfOrder(b)));
+  return out;
 }
 
 /// Per-chapter learning progress doc:
@@ -2911,20 +2963,60 @@ Future<List<Map<String, dynamic>>> fetchSubjectUnitsWithChapters(
 String learningProgressDocId(String subjectId, String chapterId) =>
     '${_canonicalLearningId(subjectId)}__${_canonicalLearningId(chapterId)}';
 
+/// Phase-1: the Phase-1 contract has no single-doc progress endpoint —
+/// the chapter's merged progress rides on the /subjects/chapters and
+/// /subjects/units payloads (see [_cfProgress]). This rebuilds the old
+/// return value from that merged progress: every field the server merged
+/// from the stored doc (attemptedQuestionIds, daily counters,
+/// selectedAnswerIndexes…) passes through, and `attempted` / `percentage`
+/// are computed exactly as before. Returns null when the chapter has no
+/// progress — the same signal a missing Firestore doc gave. The [uid]
+/// parameter is kept for signature parity (identity rides the Bearer
+/// token).
 Future<Map<String, dynamic>?> fetchLearningProgress(
     String uid, String subjectId, String chapterId) async {
-  final doc = await ExamRest.getDoc(
-      'users/$uid/learning_progress/${learningProgressDocId(subjectId, chapterId)}');
-  if (doc == null) return null;
-  final attempted =
-      ((doc['attemptedQuestionIds'] as List?) ?? []).whereType<String>().length;
-  final total = _num(doc['totalQuestions'], 0);
-  final completed = _bool(doc['completed']);
+  final target = _canonicalLearningId(chapterId);
+  Map<String, dynamic>? hit;
+  Future<void> scan(List<Map<String, dynamic>> chapters) async {
+    for (final c in chapters) {
+      if (_canonicalLearningId('${c['id'] ?? ''}') == target) {
+        hit = c;
+        return;
+      }
+    }
+  }
+
+  try {
+    await scan(await CfApi.getSubjectChapters(subjectId));
+  } catch (_) {}
+  if (hit == null) {
+    try {
+      final units = await CfApi.getSubjectUnits(subjectId);
+      for (final u in units) {
+        final chapters = u['chapters'];
+        if (chapters is List) {
+          await scan(chapters.cast<Map<String, dynamic>>());
+          if (hit != null) break;
+        }
+      }
+    } catch (_) {}
+  }
+  final chapter = hit;
+  if (chapter == null) return null;
+  final rawProgress = chapter['progress'];
+  if (rawProgress is! Map) return null;
+  final p = _cfProgress(rawProgress, '${chapter['id'] ?? ''}');
+  final attempted = p['attempted'] as int;
+  final total = p['totalQuestions'] as int;
+  final completed = p['completed'] as bool;
   final percentage = total > 0
       ? ((attempted / total * 100).round().clamp(0, 100))
       : (completed ? 100 : 0);
   return {
-    ...doc,
+    ...p,
+    'subjectId': p['subjectId'] ?? chapter['subjectId'] ?? _canonicalLearningId(subjectId),
+    'chapterId': p['chapterId'],
+    'unitId': p['unitId'] ?? chapter['unitId'],
     'attempted': attempted,
     'percentage': percentage,
   };
@@ -2974,9 +3066,10 @@ Future<void> saveLearningProgress(
       'dailyCorrectQuestionIds': dailyCorrectQuestionIds,
     'updatedAt': DateTime.now().toUtc().toIso8601String(),
   };
-  await ExamRest.setDoc(
-      'users/$uid/learning_progress/${learningProgressDocId(subjectId, chapterId)}',
-      data);
+  // Phase-1: POST /progress/learning — the worker merge-writes the same
+  // payload into the learning_progress doc (its id derives from the
+  // canonical subject/chapter ids in the payload, as before).
+  await CfApi.postLearningProgress(data);
 }
 
 /// Activity progress record (activityProgress.ts recordActivityProgress —
@@ -3002,38 +3095,23 @@ Future<void> recordActivityProgress(
 }) async {
   if (uid.isEmpty || refId.isEmpty || subcourseId.isEmpty) return;
   try {
-    final path =
-        'users/$uid/app_activity_progress/${activityProgressDocId(source, refId)}';
-    final existing = await ExamRest.getDoc(path);
-    Set<String> merge(List<String>? incoming, dynamic existingValue) {
-      final out = <String>{
-        ...((existingValue as List?) ?? []).whereType<String>()
-      };
-      if (incoming != null) out.addAll(incoming);
-      return out;
-    }
-
-    final prevCompleted = existing?['completed'] == true;
-    await ExamRest.setDoc(path, {
+    // Phase-1: POST /progress/activity — the worker performs the same
+    // read-merge-union + accumulation the client used to do (union the id
+    // lists, add secondsSpent, bump visits, sticky completed, keep the
+    // previous totalItems when none is passed).
+    await CfApi.postActivityProgress({
       'source': source,
       'refId': refId,
       'courseId': courseId,
       'subcourseId': subcourseId,
-      'attemptedQuestionIds':
-          merge(attemptedQuestionIds, existing?['attemptedQuestionIds'])
-              .toList(),
-      'correctQuestionIds':
-          merge(correctQuestionIds, existing?['correctQuestionIds']).toList(),
-      'viewedItemIds':
-          merge(viewedItemIds, existing?['viewedItemIds']).toList(),
-      'totalItems': totalItems != null
-          ? (totalItems < 0 ? 0 : totalItems)
-          : (_num(existing?['totalItems'], 0)),
-      'secondsSpent': _num(existing?['secondsSpent'], 0) +
-          (secondsSpent != null && secondsSpent > 0 ? secondsSpent : 0),
-      'visits': _num(existing?['visits'], 0) + (countVisit ? 1 : 0),
-      'completed': completed || prevCompleted,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
+      if (attemptedQuestionIds != null)
+        'attemptedQuestionIds': attemptedQuestionIds,
+      if (correctQuestionIds != null) 'correctQuestionIds': correctQuestionIds,
+      if (viewedItemIds != null) 'viewedItemIds': viewedItemIds,
+      if (totalItems != null) 'totalItems': totalItems < 0 ? 0 : totalItems,
+      if (secondsSpent != null) 'secondsSpent': secondsSpent,
+      'countVisit': countVisit,
+      'completed': completed,
     });
   } catch (_) {
     // Silent by design — usage tracking must never surface an error.
@@ -3045,12 +3123,8 @@ Future<void> recordActivityProgress(
 Future<void> recordAppActivity(String uid, [int count = 1]) async {
   if (uid.isEmpty || count <= 0) return;
   try {
-    final path = 'users/$uid/app_usage/summary';
-    final existing = await ExamRest.getDoc(path);
-    await ExamRest.setDoc(path, {
-      'activityCount': _num(existing?['activityCount'], 0) + count,
-      'updatedAt': DateTime.now().toUtc().toIso8601String(),
-    });
+    // Phase-1: POST /progress/usage bumps activityCount server-side.
+    await CfApi.postUsage(count: count);
   } catch (_) {}
 }
 
@@ -3058,19 +3132,62 @@ Future<void> recordAppActivity(String uid, [int count = 1]) async {
 /// fetchMyContentPurchases — newest first). Fields: status, contentType
 /// ('chapter'|'subject'), contentId.
 Future<List<Map<String, dynamic>>> fetchMyContentPurchases(String uid) async {
-  final docs = await ExamRest.runQuery(
-    'app_content_purchases',
-    where: ExamRest.fieldFilter('uid', 'EQUAL', uid),
-  );
+  // Phase-1: GET /purchases/content (Bearer — the [uid] parameter is kept
+  // for signature parity). Newest first, exactly as the query version.
+  final docs = await CfApi.getMyContentPurchases();
   return docs.map((d) {
-    final created = d['createdAt'];
-    int ts = 0;
-    if (created is String) {
-      ts = DateTime.tryParse(created)?.millisecondsSinceEpoch ?? 0;
-    }
+    final ts =
+        CfJson.asDateTime(d['createdAt'])?.millisecondsSinceEpoch ?? 0;
     return {...d, '_ts': ts};
   }).toList()
     ..sort((a, b) => (b['_ts'] as int).compareTo(a['_ts'] as int));
+}
+
+/// Approved content ids for the signed-in user (the D2 unlock: an approved
+/// content purchase opens its subject/unit/chapter without a subscription).
+/// Phase-1 replacement for the per-id Firestore reads: the profile's
+/// `contentPurchaseIds` index (from GET /me) resolved against the
+/// GET /purchases/content rows — a purchase counts when its status is
+/// 'active', exactly the old rule. Never throws.
+Future<Set<String>> fetchApprovedContentIdsFromMe(
+    Map<String, dynamic>? me) async {
+  try {
+    final ids = <String>[
+      for (final e in (me?['contentPurchaseIds'] as List? ?? [])) '$e',
+    ];
+    if (ids.isEmpty) return {};
+    final rows = await CfApi.getMyContentPurchases();
+    final byId = <String, Map<String, dynamic>>{
+      for (final r in rows) '${r['id'] ?? ''}': r,
+    };
+    final out = <String>{};
+    for (final pid in ids) {
+      final doc = byId[pid];
+      if (doc != null && '${doc['status'] ?? ''}' == 'active') {
+        final cid = '${doc['contentId'] ?? ''}';
+        if (cid.isNotEmpty) out.add(cid);
+      }
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
+/// Pending content purchase requests as contentId → purchase doc id, from
+/// the same GET /purchases/content rows (status 'pending'). Never throws.
+Future<Map<String, String>> fetchPendingContentPurchaseIds() async {
+  try {
+    final rows = await CfApi.getMyContentPurchases();
+    return {
+      for (final r in rows)
+        if ('${r['status'] ?? ''}' == 'pending' &&
+            '${r['contentId'] ?? ''}'.isNotEmpty)
+          '${r['contentId']}': '${r['id'] ?? ''}',
+    };
+  } catch (_) {
+    return {};
+  }
 }
 
 /// One question-set doc:
@@ -3093,20 +3210,22 @@ Future<Map<String, dynamic>?> fetchQuestionSetDoc(
     String? unitId,
     String chapterId,
     String mode) async {
-  return ExamRest.getDoc(
-      'app_subject_cucqdata_Allmode/${learningQuestionSetDocId(courseId, subcourseId, subjectId, unitId, chapterId, mode)}');
+  // Phase-1: GET /practice/set/{docId}.
+  return CfApi.getPracticeSet(learningQuestionSetDocId(
+      courseId, subcourseId, subjectId, unitId, chapterId, mode));
 }
 
 /// Theory resource doc:
 /// `app_subject_theory_resources/{course}__{subcourse}__{subject}__{unit|no-unit}__{chapter}__theory`.
+/// Phase-1: GET /theory/{docId}.
 Future<Map<String, dynamic>?> fetchTheoryResource(
     String courseId,
     String subcourseId,
     String subjectId,
     String? unitId,
     String chapterId) async {
-  return ExamRest.getDoc(
-      'app_subject_theory_resources/${learningQuestionSetDocId(courseId, subcourseId, subjectId, unitId, chapterId, 'theory')}');
+  return CfApi.getTheory(learningQuestionSetDocId(
+      courseId, subcourseId, subjectId, unitId, chapterId, 'theory'));
 }
 
 class SubjectQuestion {
@@ -3390,21 +3509,60 @@ int compareMainLeaderboardRows(MainLeaderboardRow a, MainLeaderboardRow b) {
   return a.uid.compareTo(b.uid);
 }
 
+/// Phase-1: leaderboard rows come from GET /leaderboard (Bearer). The
+/// endpoint is scoped by courseId + subcourseId, but the legacy fetchers
+/// below only receive a subcourseId — the course scope is remembered from
+/// the publish/ensure calls (which always carry it) and falls back to the
+/// signed-in user's own course from GET /me.
+final Map<String, String> _leaderboardCourseBySubcourse = {};
+
+/// Records the course scope for a subcourse so the subcourse-only
+/// leaderboard fetchers can address GET /leaderboard. Called by the
+/// publish/ensure/load paths in main_leaderboard.dart.
+void noteLeaderboardScope(String courseId, String subcourseId) {
+  if (courseId.isNotEmpty && subcourseId.isNotEmpty) {
+    _leaderboardCourseBySubcourse[subcourseId] = courseId;
+  }
+}
+
+Future<String> _leaderboardCourseId(String subcourseId) async {
+  final known = _leaderboardCourseBySubcourse[subcourseId];
+  if (known != null && known.isNotEmpty) return known;
+  try {
+    final me = await CfApi.getMe();
+    final courseId = '${me?['courseId'] ?? ''}';
+    if (courseId.isNotEmpty) {
+      _leaderboardCourseBySubcourse[subcourseId] = courseId;
+    }
+    return courseId;
+  } catch (_) {
+    return '';
+  }
+}
+
+/// All rows for the subcourse (unsorted, un-deduped), shared by the three
+/// fetchers below so their semantics stay identical to the Firestore era:
+/// the full fetch dedupes + sorts, the page slices the server order
+/// (points desc, id asc), the rank counts raw rows ahead.
+Future<List<Map<String, dynamic>>> _leaderboardRawRows(
+    String subcourseId) async {
+  final courseId = await _leaderboardCourseId(subcourseId);
+  final result =
+      await CfApi.getLeaderboard(courseId: courseId, subcourseId: subcourseId);
+  return result.rows;
+}
+
 /// Mirrors fetchMainLeaderboard in services/mainLeaderboard.ts: filter on
-/// subcourseId ONLY and sort client-side. A server-side orderBy on a
-/// different field would require a composite index which does not exist in
-/// the project (the REST API fails the whole query instead of returning
-/// results). One row per uid: a stale duplicate from an older id scheme must
-/// not let the same person occupy two positions.
+/// subcourseId ONLY and sort client-side. One row per uid: a stale
+/// duplicate from an older id scheme must not let the same person occupy
+/// two positions.
+/// Phase-1: the rows come from GET /leaderboard instead of a Firestore
+/// query; dedupe + sort semantics are unchanged.
 Future<List<MainLeaderboardRow>> fetchMainLeaderboard(
     String subcourseId) async {
   if (subcourseId.isEmpty) return [];
   try {
-    final docs = await ExamRest.runQuery(
-      'app_main_leaderboard',
-      where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-      limit: 300,
-    );
+    final docs = await _leaderboardRawRows(subcourseId);
     final bestByUid = <String, MainLeaderboardRow>{};
     for (final d in docs) {
       final row = MainLeaderboardRow.fromMap(d);
@@ -3426,68 +3584,64 @@ Future<List<MainLeaderboardRow>> fetchMainLeaderboard(
 /// photos — is fully loaded, so the first paint never pops in half-ready.
 const mainLeaderboardPageSize = 15;
 
-/// One page of the main leaderboard, ordered server-side by points desc
-/// (document name asc as the stable tiebreak).
-///
-/// Requires the composite index
-/// `app_main_leaderboard (subcourseId ASC, points DESC, __name__ ASC)`.
-/// Throws [MissingIndexException] when that index does not exist yet — the
-/// caller falls back to [fetchMainLeaderboard] (full fetch + client sort).
+/// One page of the main leaderboard, ordered by points desc (document id
+/// asc as the stable tiebreak — the order GET /leaderboard's rows are
+/// consumed in, matching the old server order).
 /// [startAfter] continues from the last row of the previous page.
 /// One row per uid: a stale duplicate id scheme must not let the same person
 /// occupy two positions, so callers drop uids they have already seen
 /// (the better duplicate always sorts first under points DESC).
+/// Phase-1: no Firestore composite index is involved anymore, so this
+/// never throws [MissingIndexException]; the caller's fallback branch
+/// simply never triggers.
 Future<List<MainLeaderboardRow>> fetchMainLeaderboardPage(
   String subcourseId, {
   int limit = mainLeaderboardPageSize,
   MainLeaderboardRow? startAfter,
 }) async {
   if (subcourseId.isEmpty) return [];
-  List<Map<String, dynamic>>? cursor;
-  if (startAfter != null) {
-    cursor = [
-      ExamRest.encode(startAfter.points),
-      {
-        'referenceValue':
-            '${ExamRest._base}/app_main_leaderboard/${startAfter.id}',
-      },
-    ];
-  }
-  final docs = await ExamRest.runQuery(
-    'app_main_leaderboard',
-    where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-    orderBy: [
-      ExamRest.orderField('points', 'DESCENDING'),
-      ExamRest.orderField('__name__', 'ASCENDING'),
-    ],
-    limit: limit,
-    startAfter: cursor,
-  );
+  final docs = await _leaderboardRawRows(subcourseId);
   final rows = <MainLeaderboardRow>[];
   for (final d in docs) {
     final row = MainLeaderboardRow.fromMap(d);
     if (row.uid.isEmpty) continue;
     rows.add(row);
   }
-  return rows;
+  rows.sort((a, b) {
+    if (b.points != a.points) return b.points.compareTo(a.points);
+    return a.id.compareTo(b.id);
+  });
+  var start = 0;
+  if (startAfter != null) {
+    final idx = rows.indexWhere((r) => r.id == startAfter.id);
+    if (idx >= 0) {
+      start = idx + 1;
+    } else {
+      // The cursor row vanished (republish changed ids) — resume after the
+      // last row that still sorts at-or-before it.
+      start = rows
+          .where((r) =>
+              r.points > startAfter.points ||
+              (r.points == startAfter.points &&
+                  r.id.compareTo(startAfter.id) <= 0))
+          .length;
+    }
+  }
+  if (start >= rows.length) return [];
+  return rows.sublist(start).take(limit).toList();
 }
 
-/// Exact 1-based rank of a points value without reading every document:
-/// count of rows in the same subcourse with strictly more points, + 1
-/// (standard competition ranking — ties share the rank).
-/// Needs the same composite index as [fetchMainLeaderboardPage];
-/// throws [MissingIndexException] when it is missing.
+/// Exact 1-based rank of a points value: count of rows in the same
+/// subcourse with strictly more points, + 1 (standard competition
+/// ranking — ties share the rank). Phase-1: counted over the
+/// GET /leaderboard rows (the old count query counted documents the same
+/// way, duplicates included).
 Future<int> countMainLeaderboardRank(String subcourseId, int points) async {
-  final where = {
-    'compositeFilter': {
-      'op': 'AND',
-      'filters': [
-        ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-        ExamRest.fieldFilter('points', 'GREATER_THAN', points),
-      ],
-    },
-  };
-  final ahead = await ExamRest.runCount('app_main_leaderboard', where: where);
+  final docs = await _leaderboardRawRows(subcourseId);
+  var ahead = 0;
+  for (final d in docs) {
+    if (_num(d['points']) > points) ahead++;
+  }
   return ahead + 1;
 }
 
@@ -3859,6 +4013,13 @@ Future<QotdDay> fetchQotdDay(String uid, String courseId, String subcourseId,
 /// Mirrors submitQotdAnswer(): expiry guard, idempotent (returns existing
 /// result), stores the full question snapshot, updates the summary with
 /// Math.round(correct*10000/total)/100.
+/// Phase-1: POST /qotd/answer — the payload is the old attempt doc's fields
+/// + identifiers verbatim; the worker stores the attempt idempotently (on
+/// attemptId) and merges the summary server-side. When the response
+/// carries the stored result/summary they are adopted; otherwise the
+/// return value is built locally with exactly the old math. The [uid]
+/// parameter is kept for signature parity (identity rides the Bearer
+/// token).
 Future<({QotdResult result, QotdSummary summary})> submitQotdAnswer(String uid,
     QotdQuestion question, String selectedOptionId, QotdSummary prior) async {
   final key = todayDateKey();
@@ -3866,46 +4027,57 @@ Future<({QotdResult result, QotdSummary summary})> submitQotdAnswer(String uid,
     throw Exception(
         'This daily question has expired. Please load today\u2019s question.');
   }
-  final path = 'users/$uid/questionofdata/${qotdAttemptId(question)}';
-  final existing = await ExamRest.getDoc(path).catchError((_) => null);
-  if (existing != null) {
-    return (result: QotdResult.fromMap(existing), summary: prior);
-  }
   final isCorrect = selectedOptionId == question.correctOptionId;
+  final answeredAt = DateTime.now().toUtc();
+  final body = await CfApi.submitQotdAnswer({
+    'attemptId': qotdAttemptId(question),
+    'dateKey': key,
+    'courseId': question.courseId,
+    'subcourseId': question.subcourseId,
+    'selectedOptionId': selectedOptionId,
+    'isCorrect': isCorrect,
+    'answeredAt': answeredAt.toIso8601String(),
+    'snapshot': question.toMap(),
+    // The prior summary rides along so the server merges from the same
+    // base the client used to read from the summary doc.
+    'priorTotalAttempts': prior.totalAttempts,
+    'priorCorrect': prior.correct,
+    'priorAveragePercent': prior.averagePercent,
+  });
+  final resultRaw = body['result'];
+  if (resultRaw is Map) {
+    final rMap = Map<String, dynamic>.from(resultRaw)
+        .map((k, v) => MapEntry(k, CfApi.decodeFieldValue(v)));
+    // QotdResult.fromMap only accepts a DateTime answeredAt — coerce the
+    // ISO text the API returns.
+    final answeredRaw = rMap['answeredAt'];
+    if (answeredRaw is String) {
+      rMap['answeredAt'] = DateTime.tryParse(answeredRaw);
+    }
+    final summaryRaw = body['summary'];
+    return (
+      result: QotdResult.fromMap(rMap),
+      summary: summaryRaw is Map
+          ? QotdSummary.fromMap(Map<String, dynamic>.from(summaryRaw))
+          : prior,
+    );
+  }
   final result = QotdResult(
     dateKey: key,
     courseId: question.courseId,
     subcourseId: question.subcourseId,
     selectedOptionId: selectedOptionId,
     isCorrect: isCorrect,
-    answeredAt: DateTime.now().toUtc(),
+    answeredAt: answeredAt,
     snapshot: question,
   );
   final total = prior.totalAttempts + 1;
   final correct = prior.correct + (isCorrect ? 1 : 0);
   final avg = (correct * 10000 / total).round() / 100;
-  final summaryDoc = await ExamRest.getDoc('users/$uid/questionofdata/summary')
-      .catchError((_) => null);
-  final mergedSummary = {
-    ...?summaryDoc,
-    'totalAttempts': total,
-    'correct': correct,
-    'averagePercent': avg,
-    'updatedAt': DateTime.now().toUtc(),
-  };
-  await ExamRest.setDoc(path, {
-    'dateKey': key,
-    'courseId': question.courseId,
-    'subcourseId': question.subcourseId,
-    'selectedOptionId': selectedOptionId,
-    'isCorrect': isCorrect,
-    'answeredAt': DateTime.now().toUtc(),
-    'snapshot': question.toMap(),
-  });
-  await ExamRest.setDoc('users/$uid/questionofdata/summary', mergedSummary);
   return (
     result: result,
-    summary: QotdSummary.fromMap(mergedSummary),
+    summary: QotdSummary(
+        totalAttempts: total, correct: correct, averagePercent: avg),
   );
 }
 
@@ -4493,39 +4665,42 @@ class GorkhapatraPage {
   const GorkhapatraPage({this.items = const [], this.nextCursor});
 }
 
+/// Coerces the fields GorkhapatraPost.fromMap is strict about
+/// (publishedAt as DateTime / {seconds} map, isQuestionSet as bool) from
+/// the shapes the D1 copy can carry (ISO text / epoch / 'true').
+Map<String, dynamic> _gorkhaRow(Map<String, dynamic> r) => {
+      ...r,
+      'publishedAt': CfJson.asDateTime(r['publishedAt']) ?? r['publishedAt'],
+      'isQuestionSet': CfJson.asBool(r['isQuestionSet']),
+    };
+
 /// Latest posts, newest first. Pass `before` (the oldest publishedAt you hold)
 /// to get the next page. Posts flagged `status: 'hidden'` are dropped.
+/// Phase-1: GET /gorkhapatra with the same limit/cursor contract.
 Future<GorkhapatraPage> fetchGorkhapatraPosts({
   int limit = gorkhapatraPageSize,
   DateTime? before,
 }) async {
-  final rows = await ExamRest.runQuery(
-    'gorkhapatra',
-    where: before != null
-        ? ExamRest.fieldFilter('publishedAt', 'LESS_THAN', before)
-        : null,
-    orderBy: [ExamRest.orderField('publishedAt', 'DESCENDING')],
-    limit: limit,
-  );
-  final items = rows
+  final page = await CfApi.getGorkhapatraPage(limit: limit, before: before);
+  final items = page.rows
       .where((p) => '${p['status'] ?? ''}' != 'hidden')
-      .map(GorkhapatraPost.fromMap)
+      .map((r) => GorkhapatraPost.fromMap(_gorkhaRow(r)))
       .toList();
-  DateTime? cursor;
-  if (items.isNotEmpty) {
+  DateTime? cursor = CfJson.asDateTime(page.body['nextCursor']);
+  if (cursor == null && items.isNotEmpty) {
     final last = items.last.publishedAt;
     if (last != null) {
-      // Firestore LESS_THAN is strict: subtract a tick so the last doc
-      // of this page can never reappear on the next page.
+      // The cursor is strict: subtract a tick so the last doc of this
+      // page can never reappear on the next page.
       cursor = last.subtract(const Duration(milliseconds: 1));
     }
   }
   return GorkhapatraPage(items: items, nextCursor: cursor);
 }
 
-/// One post by slug (== document id). A single direct read — never a query.
+/// One post by slug (== document id). Phase-1: GET /gorkhapatra/{slug}.
 Future<GorkhapatraPost?> fetchGorkhapatraPost(String slug) async {
-  final doc = await ExamRest.getDoc('gorkhapatra/$slug');
+  final doc = await CfApi.getGorkhapatraPost(slug);
   if (doc == null) return null;
-  return GorkhapatraPost.fromMap(doc);
+  return GorkhapatraPost.fromMap(_gorkhaRow(doc));
 }

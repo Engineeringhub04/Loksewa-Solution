@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
-import '../../services/content_purchases.dart';
+import '../../services/cf_api.dart';
 import '../../services/purchase_refresh.dart';
-import '../../services/firestore_rest.dart';
-import '../../services/exam_service.dart' hide fetchMyContentPurchases;
+import '../../services/exam_service.dart';
 import '../../widgets/premium_gate_dialog.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/home/subject_card_colored.dart';
@@ -59,7 +58,6 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
 
   Future<_SubjectPage> _load() async {
     final user = AuthService.currentUser;
-    final token = await AuthService.getValidIdToken();
     var courseId = 'civil-engineering';
     var subcourseId = 'civil-assistant-sub-engineer';
     var courseName = 'Civil Engineering';
@@ -69,46 +67,39 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     Map<String, String> pendingPurchaseIdByContentId = const {};
     if (user != null) {
       try {
-        final doc = await FirestoreRest.getDocument('users/${user.uid}',
-            idToken: token);
+        // Phase-1: profile + purchases come from the API (GET /me,
+        // GET /purchases/content).
+        final doc = await CfApi.getMe();
         courseId = (doc?['courseId'] as String?) ?? courseId;
         subcourseId = (doc?['subcourseId'] as String?) ?? subcourseId;
         isPremium = _hasActivePremium(doc);
         // D2: approved content purchases unlock without a subscription.
-        approvedContentIds =
-            (await fetchMyApprovedContentIdsFromDoc(doc, token)).toSet();
+        approvedContentIds = await fetchApprovedContentIdsFromMe(doc);
         // Pending content purchase requests: contentId -> purchase doc id.
         // Tapping a pending item goes straight to its detail (no Buy popup).
-        try {
-          final purchases = await fetchMyContentPurchases(user.uid);
-          pendingPurchaseIdByContentId = {
-            for (final p in purchases)
-              if (p.status == 'pending' && p.contentId.isNotEmpty)
-                p.contentId: p.id,
-          };
-        } catch (_) {}
+        pendingPurchaseIdByContentId =
+            await fetchPendingContentPurchaseIds();
       } catch (_) {}
     }
-    // The two name lookups and the subject catalogue are independent — fetch
-    // them concurrently instead of one after another.
-    Future<Map<String, dynamic>?> safeDoc(String path) async {
-      try {
-        return await FirestoreRest.getDocument(path, idToken: token);
-      } catch (_) {
-        return null;
+    // The name lookups and the subject catalogue are independent — fetch
+    // them concurrently instead of one after another. Names resolve from
+    // the GET /courses payload (Phase-1), like the Home header does.
+    final coursesFuture = CfApi.getCourses();
+    final subjectsFuture = fetchSubjectDetails(courseId, subcourseId);
+    final coursesData = await coursesFuture;
+    final subjects = await subjectsFuture;
+    for (final c in coursesData.courses) {
+      if (c['id']?.toString() == courseId) {
+        courseName = (c['name'] as String?) ?? courseName;
+        break;
       }
     }
-
-    final results = await Future.wait([
-      safeDoc('app_courses/$courseId'),
-      safeDoc('app_courses/$courseId/subcourses/$subcourseId'),
-      fetchSubjectDetails(courseId, subcourseId),
-    ]);
-    final cDoc = results[0] as Map<String, dynamic>?;
-    final scDoc = results[1] as Map<String, dynamic>?;
-    final subjects = results[2] as List<Map<String, dynamic>>;
-    courseName = (cDoc?['name'] as String?) ?? courseName;
-    subcourseName = (scDoc?['name'] as String?) ?? subcourseName;
+    for (final sc in coursesData.subcourses) {
+      if (sc['id']?.toString() == subcourseId) {
+        subcourseName = (sc['name'] as String?) ?? subcourseName;
+        break;
+      }
+    }
     SubjectLearningStats stats =
         const SubjectLearningStats(complete: 0, inProgress: 0);
     if (user != null && subjects.isNotEmpty) {
@@ -138,9 +129,11 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
   static bool _hasActivePremium(Map<String, dynamic>? userDoc) {
     final pro = userDoc?['pro'];
     if (pro is bool) return pro;
+    if (pro is String) return CfJson.asBool(pro);
     if (pro is Map) {
       final active = pro['active'];
       if (active is bool) return active;
+      if (active is String) return CfJson.asBool(active);
       final exp = pro['expiresAt'];
       if (exp is String) {
         final dt = DateTime.tryParse(exp);
@@ -162,7 +155,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
     final key = '$id $name'.toLowerCase();
     final hasUnits =
         key.contains('technical') || key.contains('प्राविधिक');
-    final pro = s['pro'] == true;
+    final pro = CfJson.asBool(s['pro']);
     // D2: an approved content purchase unlocks the subject without a
     // subscription.
     final purchased = d.approvedContentIds.contains(id);
@@ -209,7 +202,7 @@ class _SubjectsScreenState extends State<SubjectsScreen> {
                 }
                 final d = snap.data!;
                 final premiumCount =
-                    d.subjects.where((s) => s['pro'] == true).length;
+                    d.subjects.where((s) => CfJson.asBool(s['pro'])).length;
                 return Stack(
                   children: [
                     RefreshIndicator.adaptive(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/main_leaderboard.dart';
 import '../../widgets/disk_cached_image.dart';
@@ -137,17 +138,25 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       final displayName =
           p.name.trim().isEmpty ? 'Anonymous' : p.name.trim();
       // Header subtitle: subcourseName ?? courseName (best-effort).
+      // Phase-1: names resolve from the GET /courses payload.
       var subtitle = '';
       try {
         if (courseId.isNotEmpty) {
-          final c =
-              await ExamRest.getDoc('app_courses/$courseId').catchError((_) => null);
-          final sc = await ExamRest.getDoc(
-                  'app_courses/$courseId/subcourses/$subcourseId')
-              .catchError((_) => null);
-          final scName =
-              ((sc?['name'] ?? sc?['nameNe']) as String?)?.trim() ?? '';
-          final cName = ((c?['name'] ?? c?['nameNe']) as String?)?.trim() ?? '';
+          final data = await CfApi.getCourses();
+          var scName = '';
+          var cName = '';
+          for (final sc in data.subcourses) {
+            if (sc['id']?.toString() == subcourseId) {
+              scName = ((sc['name'] ?? sc['nameNe']) as String?)?.trim() ?? '';
+              break;
+            }
+          }
+          for (final c in data.courses) {
+            if (c['id']?.toString() == courseId) {
+              cName = ((c['name'] ?? c['nameNe']) as String?)?.trim() ?? '';
+              break;
+            }
+          }
           subtitle = scName.isNotEmpty ? scName : cName;
         }
       } catch (_) {}

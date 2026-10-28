@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/auth_service.dart';
 import '../../services/exam_service.dart';
-import '../../services/firestore_rest.dart';
+import '../../services/cf_api.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/report_dialog.dart';
@@ -466,10 +466,7 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -515,11 +512,9 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
   /// Fire-and-forget Firestore write for the optimistic save above.
   /// Same doc-id scheme and payload as before — UX layer only.
   Future<void> _save() async {
-    final idToken = await AuthService.getValidIdToken();
-    final path = 'users/${widget.uid}/bookmarks/$_docId';
     final refId = '${widget.chapterId}:theory';
-    await FirestoreRest.setDocument(
-      path,
+    await CfApi.saveBookmark(
+      _docId,
       {
         'kind': 'read',
         'context': 'chapter',
@@ -538,18 +533,13 @@ class _TheoryBookmarkButtonState extends State<_TheoryBookmarkButton> {
           ],
         },
       },
-      idToken: idToken,
-      merge: true,
     );
   }
 
   Future<void> _remove() async {
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      await CfApi.deleteBookmark(_docId);
       if (!mounted) return;
       setState(() {
         _saved = false;

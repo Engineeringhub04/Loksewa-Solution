@@ -62,11 +62,21 @@ String analyticsTodayKey() {
 
 int _toInt(dynamic value, [int fallback = 0]) {
   if (value is num) return value.isFinite ? value.round() : fallback;
+  // Phase-1: analytics docs now arrive from the D1 copy, where scalars
+  // may be text.
+  if (value is String) {
+    final n = num.tryParse(value.trim());
+    if (n != null && n.isFinite) return n.round();
+  }
   return fallback;
 }
 
 double _toDouble(dynamic value, [double fallback = 0]) {
   if (value is num) return value.isFinite ? value.toDouble() : fallback;
+  if (value is String) {
+    final n = double.tryParse(value.trim());
+    if (n != null && n.isFinite) return n;
+  }
   return fallback;
 }
 

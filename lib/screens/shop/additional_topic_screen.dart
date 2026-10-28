@@ -35,7 +35,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
@@ -197,25 +197,22 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
       _offline = false;
     });
     try {
-      final token = await AuthService.getValidIdToken();
       Map<String, dynamic>? bank;
       Map<String, dynamic>? page;
       var offline = false;
       try {
-        bank = await FirestoreRest.getDocument(
-          'app_additional_feature_question_banks/${widget.featureId}__all__all__${widget.topicId}',
-          idToken: token,
-        );
+        // Phase-1: one GET /features/{id}/topics/{topicId} call returns
+        // both the question bank and the page doc.
+        final topic =
+            await CfApi.getFeatureTopic(widget.featureId, widget.topicId);
+        bank = topic.bank;
         // Topic title from the page doc — only when the route didn't carry
         // the titles already.
         if ((widget.topicTitleEn?.trim().isNotEmpty ?? false) &&
             (widget.topicTitleNp?.trim().isNotEmpty ?? false)) {
           page = null;
         } else {
-          page = await FirestoreRest.getDocument(
-            'app_additional_feature_pages/${widget.featureId}__all__all',
-            idToken: token,
-          );
+          page = topic.page;
         }
       } catch (_) {
         // Network failed (offline) — fall back to the on-device cache.
@@ -1518,11 +1515,7 @@ class _AfBookmarkButtonState extends State<_AfBookmarkButton> {
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-        'users/${widget.uid}/bookmarks/$_docId',
-        idToken: idToken,
-      );
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -1554,14 +1547,12 @@ class _AfBookmarkButtonState extends State<_AfBookmarkButton> {
   }
 
   Future<void> _saveInBackground(int op) async {
-    final path = 'users/${widget.uid}/bookmarks/$_docId';
     try {
-      final idToken = await AuthService.getValidIdToken();
       final q = widget.question;
       final modeLabel =
           widget.track == 'read' ? 'Read Mode' : 'Practice Mode';
-      await FirestoreRest.setDocument(
-        path,
+      await CfApi.saveBookmark(
+        _docId,
         {
           'context': widget.track,
           'kind': 'question',
@@ -1581,7 +1572,6 @@ class _AfBookmarkButtonState extends State<_AfBookmarkButton> {
           },
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
-        idToken: idToken,
       );
       // Success is reported by the 2s timer — nothing more to do here.
     } catch (_) {
@@ -1605,10 +1595,7 @@ class _AfBookmarkButtonState extends State<_AfBookmarkButton> {
     _saveTimer?.cancel();
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      await CfApi.deleteBookmark(_docId);
       if (!mounted) return;
       setState(() {
         _saved = false;

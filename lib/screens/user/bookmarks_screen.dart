@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
@@ -66,7 +66,7 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
   }
 
   bool _isPremiumActive(Map<String, dynamic>? userDoc) {
-    if (userDoc == null || userDoc['isPremium'] != true) return false;
+    if (userDoc == null || !CfJson.asBool(userDoc['isPremium'])) return false;
     final expiry = userDoc['premiumExpiryDate'];
     if (expiry == null) return true;
     DateTime? dt;
@@ -86,12 +86,9 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
     try {
       final uid = AuthService.currentUser?.uid;
       if (uid == null) throw Exception('Not signed in.');
-      final idToken = await AuthService.getValidIdToken();
-      final userDoc =
-          await FirestoreRest.getDocument('users/$uid', idToken: idToken)
-              .catchError((_) => null);
-      final rows = await FirestoreRest.listDocuments('users/$uid/bookmarks',
-          idToken: idToken);
+      // Phase-1: profile from GET /me, bookmarks from GET /bookmarks.
+      final userDoc = await CfApi.getMe().catchError((_) => null);
+      final rows = await CfApi.getBookmarks();
       rows.sort((a, b) {
         final ta = _millis(a['createdAt']);
         final tb = _millis(b['createdAt']);
@@ -155,17 +152,15 @@ class _BookmarksScreenState extends State<BookmarksScreen> {
       context: context,
       builder: (c) => BookmarkRemoveDialog(
         item: b,
-        // The Firestore path is unchanged — only the UX around it moved:
+        // The delete goes through the bookmarks API — the UX around
+        // it is unchanged:
         // the dialog shows a spinner on the delete icon while this runs,
         // pops true on success (fading out), or stays open with an error
         // toast on failure.
         onRemove: () async {
           final uid = AuthService.currentUser?.uid;
           if (uid == null) throw Exception('Not signed in.');
-          final idToken = await AuthService.getValidIdToken();
-          await FirestoreRest.deleteDocument(
-              'users/$uid/bookmarks/${_bookmarkDocId(b)}',
-              idToken: idToken);
+          await CfApi.deleteBookmark(_bookmarkDocId(b));
         },
       ),
     );

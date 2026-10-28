@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/notification_feed.dart';
 import 'package:loksewa_solution/services/notification_tracks.dart';
 import 'package:loksewa_solution/services/notification_badge.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
@@ -19,9 +21,13 @@ import '../tabs_screen.dart';
 /// Notification inbox — mirrors app/notifications.tsx +
 /// src/core/firebase/services/notifications.ts.
 ///
-/// Merges the personal inbox (`users/{uid}/notifications`, durable
-/// server-side `read` field) with the global feed (`app_global_notification`,
-/// `segment == 'nonlogin'` campaigns excluded, read state kept locally per
+/// Phase-1: the personal inbox, global feed and exam-push rows come from
+/// GET /notifications (notification_feed.dart — the same fetch the Home
+/// badge uses); read-marks and expired-exam cleanup go through the API.
+/// Only the ADMIN-ONLY enrichment reads below still hit Firestore.
+///
+/// Merges the personal inbox (durable server-side `read` field) with the
+/// global feed (`segment == 'nonlogin'` campaigns excluded, read state kept locally per
 /// account under `loksewa:globalNotificationReadIds:{uid}` — the exact key the
 /// Expo app uses). Admins additionally see derived report rows built from
 /// `app_report_history` (newest 30, read state shared with the global set).
@@ -90,32 +96,22 @@ String _normalizeCategory(dynamic value) {
   return s.isEmpty ? 'App Notice' : s;
 }
 
-DateTime? _asDate(dynamic v) {
-  if (v is DateTime) return v;
-  if (v is String) return DateTime.tryParse(v);
-  return null;
-}
+DateTime? _asDate(dynamic v) => CfJson.asDateTime(v);
 
-/// Batch-fetch exam set durations (durationMinutes) for expiry computation.
-/// Returns setId → durationMinutes. Missing/failed docs fall back to 60.
+/// Exam set durations (durationMinutes) for expiry computation.
+/// Returns setId → durationMinutes. Missing ids fall back to 60.
+/// Phase-1: one GET /exam-durations call replaces the per-set doc reads.
 /// Best-effort: never throws.
-Future<Map<String, int>> _fetchExamDurations(
-    List<String> setIds, String idToken) async {
+Future<Map<String, int>> _fetchExamDurations(List<String> setIds) async {
   final result = <String, int>{};
   if (setIds.isEmpty) return result;
-  await Future.wait(setIds.map((setId) async {
-    try {
-      final doc = await FirestoreRest.getDocument(
-        'app_exam_sets/$setId',
-        idToken: idToken,
-      );
-      final dur = doc?['durationMinutes'];
-      result[setId] =
-          dur is num ? dur.toInt() : int.tryParse('$dur') ?? 60;
-    } catch (_) {
-      result[setId] = 60;
-    }
-  }));
+  Map<String, int> durations = const {};
+  try {
+    durations = await CfApi.getExamDurations();
+  } catch (_) {}
+  for (final setId in setIds) {
+    result[setId] = durations[setId] ?? 60;
+  }
   return result;
 }
 
@@ -167,24 +163,26 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
     try {
       final token = await AuthService.getValidIdToken();
-      final profile =
-          await FirestoreRest.getDocument('users/$uid', idToken: token);
-      final isAdmin = profile?['isAdmin'] == true;
+      // Phase-1: the profile (for the admin gate) comes from GET /me; the
+      // personal/global/exam feeds come from the shared GET /notifications
+      // fetch. The ADMIN-ONLY enrichment reads further below stay on
+      // Firestore this phase (no contract endpoints exist for them).
+      final profile = await CfApi.getMe();
+      final isAdmin = CfJson.asBool(profile?['isAdmin']);
 
+      final feed = await fetchNotificationFeed();
       final results = await Future.wait([
-        FirestoreRest.listDocuments('users/$uid/notifications',
-            idToken: token),
-        FirestoreRest.listDocuments('app_global_notification',
-            idToken: token),
+        Future.value(feed.personal),
+        Future.value(feed.global),
         isAdmin
             ? FirestoreRest.listDocuments('app_report_history',
                 idToken: token, pageSize: 100)
             : Future.value(<Map<String, dynamic>>[]),
         _getGlobalReadIds(),
         // Exam-push rows: worker writes type='exam' rows (no expiresAt) to
-        // app_exam_notifications. Readable by any signed-in user; expiry is
-        // computed client-side from the exam set's durationMinutes below.
-        FirestoreRest.listDocuments('app_exam_notifications', idToken: token),
+        // app_exam_notifications. Expiry is computed client-side from the
+        // exam set's durationMinutes below.
+        Future.value(feed.exam),
         // Admin-only derived feeds for the track chips (see
         // notification_tracks.dart). Normal users never pay for these
         // queries. Pending items only — filtered client-side.
@@ -227,13 +225,13 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                 docId: (row['id'] ?? '').toString(),
                 title: (row['title'] ?? 'Notification').toString(),
                 preview: (row['preview'] ?? '').toString(),
-                read: row['read'] == true,
+                read: CfJson.asBool(row['read']),
                 createdAt: _asDate(row['createdAt']),
                 deepLink: (row['deepLink'] as String?),
                 category: _normalizeCategory(row['category']),
                 imageUrl: (row['imageUrl'] as String?),
                 source: 'personal',
-                updatedNotice: row['updatedNotice'] == true,
+                updatedNotice: CfJson.asBool(row['updatedNotice']),
               ))
           .toList();
 
@@ -254,7 +252,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
           category: _normalizeCategory(row['category']),
           imageUrl: (row['imageUrl'] as String?),
           source: 'global',
-          updatedNotice: row['updatedNotice'] == true,
+          updatedNotice: CfJson.asBool(row['updatedNotice']),
         );
       }).toList();
 
@@ -431,8 +429,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
             setIds.add(ids.first.toString());
           }
         }
-        final durations =
-            await _fetchExamDurations(setIds.toList(), token);
+        final durations = await _fetchExamDurations(setIds.toList());
         for (final row in examCandidates) {
           final docId = (row['id'] ?? '').toString();
           final id = 'exam:$docId';
@@ -522,7 +519,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       // Failures are silently ignored; the rows stay hidden client-side
       // regardless.
       if (expiredExam.isNotEmpty) {
-        _cleanupExpiredExam(examRows: expiredExam, token: token);
+        _cleanupExpiredExam(examRows: expiredExam);
       }
     } catch (e) {
       if (!mounted) return;
@@ -532,18 +529,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     }
   }
 
-  /// Fire-and-forget deletion of expired exam rows from
-  /// app_exam_notifications. Best effort: failures are swallowed — rows
-  /// stay hidden client-side regardless.
-  void _cleanupExpiredExam(
-      {required List<_Notif> examRows, required String token}) {
+  /// Fire-and-forget deletion of expired exam rows. Phase-1: each row is
+  /// deleted server-side via POST /notifications/exam-expired. Best
+  /// effort: failures are swallowed — rows stay hidden client-side
+  /// regardless.
+  void _cleanupExpiredExam({required List<_Notif> examRows}) {
     Future(() async {
       for (final n in examRows) {
         final docId = n.docId;
         if (docId == null || docId.isEmpty) continue;
         try {
-          await FirestoreRest.deleteDocument('app_exam_notifications/$docId',
-              idToken: token);
+          await CfApi.deleteExpiredExamNotification(docId);
         } catch (_) {
           // Best effort — keep going with the rest.
         }
@@ -565,12 +561,8 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
         ids.add(item.id);
         await _saveGlobalReadIds(ids);
       } else if (item.docId != null) {
-        // Durable server-side read — mirrors markNotificationRead's
-        // updateDocument('users/{uid}/notifications/{id}', { read: true }).
-        final token = await AuthService.getValidIdToken();
-        await FirestoreRest.updateDocument(
-            'users/$uid/notifications/${item.docId}', {'read': true},
-            idToken: token);
+        // Durable server-side read — POST /notifications/read {id}.
+        await CfApi.markNotificationRead(item.docId!);
       }
     } catch (_) {
       // Best effort — the row already looks read.
@@ -592,7 +584,6 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
     NotificationBadge.clear();
     showToast(context, 'All notifications marked as read', ToastVariant.success);
     try {
-      final token = await AuthService.getValidIdToken();
       final globalIds = items
           .where((i) => i.source == 'global' || i.source == 'exam')
           .map((i) => i.id)
@@ -600,15 +591,17 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final ids = await _getGlobalReadIds();
       ids.addAll(globalIds);
       await _saveGlobalReadIds(ids);
-      // Mirrors markAllNotificationsRead: batched merge writes of
-      // { read: true } in chunks of 400 (chunking lives in commitWrites).
-      final writes = items
-          .where((i) => i.source == 'personal' && i.docId != null)
-          .map((i) => FirestoreWrite(
-              'users/$uid/notifications/${i.docId}', {'read': true},
-              merge: true))
-          .toList();
-      await FirestoreRest.commitWrites(writes, idToken: token);
+      // Mirrors markAllNotificationsRead: every personal row is marked
+      // read server-side (POST /notifications/read per row).
+      for (final i in items) {
+        if (i.source == 'personal' && i.docId != null) {
+          try {
+            await CfApi.markNotificationRead(i.docId!);
+          } catch (_) {
+            // Best effort per row — keep marking the rest.
+          }
+        }
+      }
     } catch (_) {
       // Best effort.
     }

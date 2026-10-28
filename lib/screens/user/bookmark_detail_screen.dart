@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
@@ -65,9 +65,8 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
     if (uid == null) {
       throw Exception(AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
     }
-    final idToken = await AuthService.getValidIdToken();
-    return FirestoreRest.getDocument('users/$uid/bookmarks/${widget.id}',
-        idToken: idToken);
+    // Phase-1: GET /bookmarks/{id}.
+    return CfApi.getBookmark(widget.id);
   }
 
   Future<void> _remove(Map<String, dynamic> b) async {
@@ -75,7 +74,8 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
       context: context,
       builder: (c) => BookmarkRemoveDialog(
         item: b,
-        // The Firestore path is unchanged — only the UX around it moved:
+        // The delete goes through the bookmarks API — the UX around
+        // it is unchanged:
         // the dialog shows a spinner on the delete icon while this runs,
         // pops true on success (fading out), or stays open with an error
         // toast on failure.
@@ -90,10 +90,7 @@ class _BookmarkDetailScreenState extends State<BookmarkDetailScreen> {
             throw Exception(
                 AppLanguage.tr('Not signed in.', 'साइन इन गरिएको छैन।'));
           }
-          final idToken = await AuthService.getValidIdToken();
-          await FirestoreRest.deleteDocument(
-              'users/$uid/bookmarks/${widget.id}',
-              idToken: idToken);
+          await CfApi.deleteBookmark(widget.id);
         },
       ),
     );

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/home/notice_card.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
@@ -45,28 +44,25 @@ class _NoticesScreenState extends State<NoticesScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _load() async {
-    final idToken = await AuthService.getValidIdToken();
-    final uid = AuthService.currentUser?.uid;
+    // Phase-1: notices come from GET /notices and the enrolled subcourse
+    // from GET /me — the same CF source the Home rail reads (single
+    // source now).
     String? subcourseId;
-    if (uid != null) {
-      try {
-        final userDoc =
-            await FirestoreRest.getDocument('users/$uid', idToken: idToken);
-        subcourseId = userDoc?['subcourseId'] as String?;
-      } catch (_) {}
-    }
-    final rows = await FirestoreRest.listDocuments('app_notices',
-        idToken: idToken, pageSize: 30);
+    try {
+      final userDoc = await CfApi.getMe();
+      subcourseId = userDoc?['subcourseId'] as String?;
+    } catch (_) {}
+    final rows = await CfApi.getNotices();
     final items = rows
         .where((n) =>
             (n['status'] ?? '').toString() != 'hidden' &&
             _visibleTo(n, subcourseId))
         .toList();
     items.sort((a, b) {
-      final pa = a['publishedAt'];
-      final pb = b['publishedAt'];
-      final ta = pa is DateTime ? pa.millisecondsSinceEpoch : 0;
-      final tb = pb is DateTime ? pb.millisecondsSinceEpoch : 0;
+      final ta =
+          CfJson.asDateTime(a['publishedAt'])?.millisecondsSinceEpoch ?? 0;
+      final tb =
+          CfJson.asDateTime(b['publishedAt'])?.millisecondsSinceEpoch ?? 0;
       return tb.compareTo(ta);
     });
     return items;
@@ -77,8 +73,8 @@ class _NoticesScreenState extends State<NoticesScreen> {
   String _dateLabel(Map<String, dynamic> n) {
     final label = (n['dateLabel'] ?? '').toString().trim();
     if (label.isNotEmpty) return label;
-    final p = n['publishedAt'];
-    if (p is DateTime) return noticeNeDate(p);
+    final p = CfJson.asDateTime(n['publishedAt']);
+    if (p != null) return noticeNeDate(p);
     return '';
   }
 

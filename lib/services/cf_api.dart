@@ -268,6 +268,7 @@ class CfApi {
         'PATCH' => client
             .patch(uri, headers: headers, body: json.encode(body ?? {}))
             .timeout(_timeout),
+        'DELETE' => client.delete(uri, headers: headers).timeout(_timeout),
         _ => throw ArgumentError('unsupported method $method'),
       };
     } catch (e) {
@@ -591,5 +592,290 @@ class CfApi {
   /// Merges [fields] into the signed-in user's profile.
   static Future<void> patchMe(Map<String, dynamic> fields) async {
     await _request('PATCH', '/me', body: fields);
+  }
+
+  // ============================================================ Phase 1
+  // Home-tree endpoints. Rows are flat objects with Firestore field names;
+  // single-row reads return null on 404 (mirroring FirestoreRest.getDocument).
+
+  /// Extracts one row from a decoded body: the row under 'row' / 'doc' /
+  /// 'data' / 'page' when present, else the body itself. Normalized.
+  static Map<String, dynamic> _rowOf(dynamic body) {
+    final m = _asMap(body);
+    for (final k in ['row', 'doc', 'data', 'page']) {
+      if (m[k] is Map) return normalizeRow(_asMap(m[k]));
+    }
+    return normalizeRow(m);
+  }
+
+  /// GET helper for single-row endpoints: null on 404.
+  static Future<Map<String, dynamic>?> _getRow(String path) async {
+    try {
+      return _rowOf(await _request('GET', path));
+    } on CfError catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Developer card rows (app_developers copy).
+  static Future<List<Map<String, dynamic>>> getDevelopers() async {
+    final body = await _request('GET', '/developers');
+    return _rows(body, ['rows', 'developers', 'items', 'data']);
+  }
+
+  /// One notice by id (app_notices copy). Null when missing.
+  static Future<Map<String, dynamic>?> getNotice(String id) =>
+      _getRow('/notices/${Uri.encodeComponent(id)}');
+
+  /// Syllabus rows (app_syllabusdata copy); callers filter by course.
+  static Future<List<Map<String, dynamic>>> getSyllabus() async {
+    final body = await _request('GET', '/syllabus');
+    return _rows(body, ['rows', 'syllabus', 'items', 'data']);
+  }
+
+  /// One page of Gorkhapatra posts (newest first). [before] is the
+  /// exclusive cursor the legacy fetcher used (last publishedAt − 1ms).
+  /// Returns the normalized rows plus the raw body for cursor metadata.
+  static Future<({List<Map<String, dynamic>> rows, Map<String, dynamic> body})>
+      getGorkhapatraPage({int limit = 10, DateTime? before}) async {
+    final params = <String, String>{'limit': '$limit'};
+    if (before != null) {
+      params['before'] = before.toUtc().toIso8601String();
+      params['beforeMs'] = '${before.millisecondsSinceEpoch}';
+    }
+    final q = Uri(queryParameters: params).query;
+    final body = await _request('GET', '/gorkhapatra?$q');
+    return (rows: _rows(body, ['rows', 'posts', 'items', 'data']), body: _asMap(body));
+  }
+
+  /// One Gorkhapatra post by slug. Null when missing.
+  static Future<Map<String, dynamic>?> getGorkhapatraPost(String slug) =>
+      _getRow('/gorkhapatra/${Uri.encodeComponent(slug)}');
+
+  /// Additional-feature page doc (topics list lives inside it).
+  static Future<Map<String, dynamic>?> getFeaturePage(String featureId) =>
+      _getRow('/features/${Uri.encodeComponent(featureId)}');
+
+  /// Additional-feature topic payload: the question bank doc + the page
+  /// doc (either may be null).
+  static Future<({Map<String, dynamic>? bank, Map<String, dynamic>? page})>
+      getFeatureTopic(String featureId, String topicId) async {
+    final body = await _request('GET',
+        '/features/${Uri.encodeComponent(featureId)}/topics/${Uri.encodeComponent(topicId)}');
+    final m = _asMap(body);
+    Map<String, dynamic>? pick(String key) =>
+        m[key] is Map ? normalizeRow(_asMap(m[key])) : null;
+    return (bank: pick('bank'), page: pick('page'));
+  }
+
+  /// One app_subjects_details doc by its deterministic id. Null on 404.
+  static Future<Map<String, dynamic>?> getSubjectDetail(String id) =>
+      _getRow('/subjects/details/${Uri.encodeComponent(id)}');
+
+  /// Subject detail rows for a course/subcourse scope.
+  static Future<List<Map<String, dynamic>>> getSubjectsList({
+    required String courseId,
+    required String subcourseId,
+  }) async {
+    final q = Uri(queryParameters: {
+      'courseId': courseId,
+      'subcourseId': subcourseId,
+    }).query;
+    final body = await _request('GET', '/subjects/list?$q');
+    return _rows(body, ['rows', 'subjects', 'items', 'data']);
+  }
+
+  /// One app_subject_cucqdata_Allmode doc (question set). Null on 404.
+  static Future<Map<String, dynamic>?> getPracticeSet(String docId) =>
+      _getRow('/practice/set/${Uri.encodeComponent(docId)}');
+
+  /// One app_subject_theory_resources doc. Null on 404.
+  static Future<Map<String, dynamic>?> getTheory(String docId) =>
+      _getRow('/theory/${Uri.encodeComponent(docId)}');
+
+  /// The signed-in user's notification feed: personal inbox rows, global
+  /// campaign rows and exam-push rows (same collections the Firestore
+  /// inbox merged, now from D1).
+  static Future<
+      ({
+        List<Map<String, dynamic>> personal,
+        List<Map<String, dynamic>> global,
+        List<Map<String, dynamic>> exam
+      })> getNotifications() async {
+    final body = await _request('GET', '/notifications');
+    final m = _asMap(body);
+    List<Map<String, dynamic>> pick(String key) =>
+        m[key] is List ? _rows(m[key], const []) : <Map<String, dynamic>>[];
+    return (
+      personal: pick('personal'),
+      global: pick('global'),
+      exam: pick('exam'),
+    );
+  }
+
+  /// Marks one personal notification read (server-side `read` field).
+  static Future<void> markNotificationRead(String id) async {
+    await _request('POST', '/notifications/read', body: {'id': id});
+  }
+
+  /// Deletes one expired exam-push notification row server-side.
+  static Future<void> deleteExpiredExamNotification(String id) async {
+    await _request('POST', '/notifications/exam-expired', body: {'id': id});
+  }
+
+  /// Submits a QOTD answer; the server stores the attempt (idempotent on
+  /// attemptId) and merges the summary. Returns the raw body so the caller
+  /// can adopt a server-computed result/summary when present.
+  static Future<Map<String, dynamic>> submitQotdAnswer(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/qotd/answer', body: payload);
+    return _asMap(body);
+  }
+
+  /// Chapters of a subject with per-chapter progress pre-merged
+  /// server-side (same entry shape as the legacy
+  /// fetchSubjectChaptersWithProgress result).
+  static Future<List<Map<String, dynamic>>> getSubjectChapters(
+    String subjectId, {
+    String? courseId,
+    String? subcourseId,
+  }) async {
+    final params = <String, String>{'subjectId': subjectId};
+    if (courseId != null && courseId.isNotEmpty) params['courseId'] = courseId;
+    if (subcourseId != null && subcourseId.isNotEmpty) {
+      params['subcourseId'] = subcourseId;
+    }
+    final q = Uri(queryParameters: params).query;
+    final body = await _request('GET', '/subjects/chapters?$q');
+    return _rows(body, ['chapters', 'rows', 'items', 'data']);
+  }
+
+  /// Units of a subject, each with its chapters + pre-merged progress
+  /// (same shape as the legacy fetchSubjectUnitsWithChapters result).
+  static Future<List<Map<String, dynamic>>> getSubjectUnits(
+    String subjectId, {
+    String? courseId,
+    String? subcourseId,
+  }) async {
+    final params = <String, String>{'subjectId': subjectId};
+    if (courseId != null && courseId.isNotEmpty) params['courseId'] = courseId;
+    if (subcourseId != null && subcourseId.isNotEmpty) {
+      params['subcourseId'] = subcourseId;
+    }
+    final q = Uri(queryParameters: params).query;
+    final body = await _request('GET', '/subjects/units?$q');
+    return _rows(body, ['units', 'rows', 'items', 'data']);
+  }
+
+  // ------------------------------------------------------------ bookmarks
+  /// The signed-in user's bookmark rows.
+  static Future<List<Map<String, dynamic>>> getBookmarks() async {
+    final body = await _request('GET', '/bookmarks');
+    return _rows(body, ['rows', 'bookmarks', 'items', 'data']);
+  }
+
+  /// One bookmark by doc id. Null when it does not exist.
+  static Future<Map<String, dynamic>?> getBookmark(String id) =>
+      _getRow('/bookmarks/${Uri.encodeComponent(id)}');
+
+  /// Creates/replaces the bookmark stored under [id] (upsert — mirrors
+  /// the legacy setDocument on users/{uid}/bookmarks/{id}).
+  static Future<void> saveBookmark(
+      String id, Map<String, dynamic> fields) async {
+    await _request('POST', '/bookmarks', body: {...fields, 'id': id});
+  }
+
+  /// Deletes the bookmark stored under [id].
+  static Future<void> deleteBookmark(String id) async {
+    await _request('DELETE', '/bookmarks/${Uri.encodeComponent(id)}');
+  }
+
+  // ------------------------------------------------------------- progress
+  /// Learning-progress write (mirrors saveLearningProgress's payload).
+  static Future<void> postLearningProgress(Map<String, dynamic> payload) async {
+    await _request('POST', '/progress/learning', body: payload);
+  }
+
+  /// Activity-progress write (mirrors recordActivityProgress's fields;
+  /// the server performs the read-merge-union).
+  static Future<void> postActivityProgress(Map<String, dynamic> payload) async {
+    await _request('POST', '/progress/activity', body: payload);
+  }
+
+  /// App-usage summary bump (mirrors recordAppActivity).
+  static Future<void> postUsage({int count = 1}) async {
+    await _request('POST', '/progress/usage', body: {'count': count});
+  }
+
+  // ------------------------------------------------------------ purchases
+  /// The signed-in user's content-purchase rows (app_content_purchases).
+  static Future<List<Map<String, dynamic>>> getMyContentPurchases() async {
+    final body = await _request('GET', '/purchases/content');
+    return _rows(body, ['rows', 'purchases', 'items', 'data']);
+  }
+
+  // ----------------------------------------------------------- leaderboard
+  /// Leaderboard rows for a subcourse + the caller's own row (when the
+  /// worker includes it).
+  static Future<
+      ({
+        List<Map<String, dynamic>> rows,
+        Map<String, dynamic>? own
+      })> getLeaderboard({
+    required String courseId,
+    required String subcourseId,
+  }) async {
+    final q = Uri(queryParameters: {
+      'courseId': courseId,
+      'subcourseId': subcourseId,
+    }).query;
+    final body = await _request('GET', '/leaderboard?$q');
+    final m = _asMap(body);
+    return (
+      rows: _rows(body, ['rows', 'leaderboard', 'items', 'data']),
+      own: m['own'] is Map ? normalizeRow(_asMap(m['own'])) : null,
+    );
+  }
+
+  /// Recomputes + republishes the caller's leaderboard row server-side.
+  /// Returns the raw body (the row rides under 'row' when present).
+  static Future<Map<String, dynamic>> refreshLeaderboard(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/leaderboard/refresh', body: payload);
+    return _asMap(body);
+  }
+
+  /// Ensures the caller's leaderboard row exists (signup-bonus row).
+  /// Returns the raw body (the row rides under 'row' when present).
+  static Future<Map<String, dynamic>> ensureLeaderboardRow(
+      Map<String, dynamic> payload) async {
+    final body =
+        await _request('POST', '/leaderboard/ensure-row', body: payload);
+    return _asMap(body);
+  }
+
+  /// All of the signed-in user's analytics rows (one per subcourse they
+  /// have a doc for) — the switcher list behind listAnalyticsSubcourses.
+  /// Flat D1 rows: numbers may still be text (callers coerce).
+  static Future<List<Map<String, dynamic>>> getAnalyticsList() async {
+    final body = await _request('GET', '/analytics/list');
+    return _rows(body, ['rows', 'items', 'data']);
+  }
+
+  /// The signed-in user's analytics doc for a subcourse. Null on 404.
+  static Future<Map<String, dynamic>?> getAnalytics(String subcourseId) async {
+    try {
+      final q = Uri(queryParameters: {'subcourseId': subcourseId}).query;
+      final body = await _request('GET', '/analytics?$q');
+      final m = _asMap(body);
+      if (m.containsKey('doc')) {
+        return m['doc'] is Map ? normalizeRow(_asMap(m['doc'])) : null;
+      }
+      return normalizeRow(m);
+    } on CfError catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
   }
 }

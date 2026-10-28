@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -128,36 +129,100 @@ class _PracticeAnalyticsScreenState extends State<PracticeAnalyticsScreen> {
 
   Future<_AnalyticsData> _load() async {
     final user = AuthService.currentUser;
-    // ExamRest auto-attaches the ID token (same pattern as the other
-    // learning_progress reads), but a signed-in user is still required.
     if (user == null) throw const _SignInRequired();
-    final docs = await ExamRest.listDocs(
-        'users/${user.uid}/learning_progress',
-        pageSize: 200);
-    var courseId = '';
-    var subcourseId = '';
+    // Phase-1: there is no learning_progress collection read anymore.
+    // The per-chapter progress pre-merged into the GET /subjects/chapters
+    // and GET /subjects/units payloads is rebuilt here into doc-shaped
+    // maps (same id + fields the Firestore docs carried), so the filter
+    // and row math below run unchanged. A chapter appears only when the
+    // server attached a progress entry — the old "doc exists" signal.
+    // Fields the server merged from the stored doc (id lists, updatedAt)
+    // pass through; counts fall back to the merged summary counts.
+    final scope = await fetchCourseScope(user.uid);
+    var courseId = scope['courseId'] ?? '';
+    var subcourseId = scope['subcourseId'] ?? '';
+    final subjectId = widget.subjectSlug ?? '';
+    if (courseId.isEmpty) {
+      // A composite subject id ({course}__{subcourse}__{slug}) carries
+      // the scope itself.
+      final parts = subjectId.split('__');
+      if (parts.length >= 3) {
+        courseId = parts[0];
+        subcourseId = parts[1];
+      }
+    }
+    final docs = <Map<String, dynamic>>[];
+    void collect(List<Map<String, dynamic>> chapters) {
+      for (final c in chapters) {
+        final rawP = c['progress'];
+        if (rawP is! Map) continue;
+        final p = Map<String, dynamic>.from(rawP);
+        docs.add({
+          ...p,
+          'id': learningProgressDocId(subjectId, '${c['id'] ?? ''}'),
+          'subjectId': c['subjectId'] ?? p['subjectId'],
+          'chapterId': _logical('${c['id'] ?? ''}'),
+          'unitId': c['unitId'] ?? p['unitId'],
+          'courseId': courseId,
+          'subcourseId': subcourseId,
+          'attemptedCount': CfJson.asInt(p['attempted']),
+          'correctCount': CfJson.asInt(p['correct']),
+          'totalQuestions': CfJson.asInt(p['totalQuestions']),
+          'completed': CfJson.asBool(p['completed']),
+        });
+      }
+    }
+
+    try {
+      collect(await CfApi.getSubjectChapters(subjectId,
+          courseId: courseId, subcourseId: subcourseId));
+    } catch (_) {}
+    try {
+      final units = await CfApi.getSubjectUnits(subjectId,
+          courseId: courseId, subcourseId: subcourseId);
+      for (final u in units) {
+        final chapters = u['chapters'];
+        if (chapters is List) {
+          collect(chapters.cast<Map<String, dynamic>>());
+        }
+      }
+    } catch (_) {}
+    var courseIdFromDocs = '';
+    var subcourseIdFromDocs = '';
     final rows = <_ChapterStat>[];
     for (final d in docs) {
       if (!_matches(d)) continue;
       // The practice save writes the raw course/subcourse alongside the
       // canonical ids — reuse them for the catalogue lookup below.
-      if (courseId.isEmpty) courseId = '${d['courseId'] ?? ''}';
-      if (subcourseId.isEmpty) subcourseId = '${d['subcourseId'] ?? ''}';
+      if (courseIdFromDocs.isEmpty) {
+        courseIdFromDocs = '${d['courseId'] ?? ''}';
+      }
+      if (subcourseIdFromDocs.isEmpty) {
+        subcourseIdFromDocs = '${d['subcourseId'] ?? ''}';
+      }
       final id = '${d['id'] ?? ''}';
       final idParts = id.split('__');
       rows.add(_ChapterStat(
         chapterId: '${d['chapterId'] ?? (idParts.length > 1 ? idParts.sublist(1).join('__') : id)}',
         subjectId: d['subjectId'] as String?,
         unitId: d['unitId'] as String?,
-        attempted:
-            ((d['attemptedQuestionIds'] as List?) ?? []).whereType<String>().length,
-        correct:
-            ((d['correctQuestionIds'] as List?) ?? []).whereType<String>().length,
+        attempted: (d['attemptedQuestionIds'] as List?)
+                ?.whereType<String>()
+                .length ??
+            (d['attemptedCount'] as num?)?.toInt() ??
+            0,
+        correct: (d['correctQuestionIds'] as List?)
+                ?.whereType<String>()
+                .length ??
+            (d['correctCount'] as num?)?.toInt() ??
+            0,
         total: (d['totalQuestions'] as num?)?.toInt() ?? 0,
         completed: d['completed'] == true,
         updatedAt: _parseDateTime(d['updatedAt']),
       ));
     }
+    if (courseIdFromDocs.isNotEmpty) courseId = courseIdFromDocs;
+    if (subcourseIdFromDocs.isNotEmpty) subcourseId = subcourseIdFromDocs;
     rows.sort((a, b) {
       final au = a.updatedAt, bu = b.updatedAt;
       if (au != null && bu != null) return bu.compareTo(au);

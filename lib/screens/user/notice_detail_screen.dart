@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/notice_visual.dart';
@@ -45,9 +44,8 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final idToken = await AuthService.getValidIdToken();
-    return FirestoreRest.getDocument('app_notices/${widget.id}',
-        idToken: idToken);
+    // Phase-1: GET /notices/{id} — the same CF source as the list.
+    return CfApi.getNotice(widget.id);
   }
 
   void _showLinkDialog(String url) {
@@ -110,11 +108,11 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
     final visual = noticeVisual(kind, palette);
     final tone = visual.color;
     final label = (n['dateLabel'] ?? '').toString().trim();
-    final p = n['publishedAt'];
+    final p = CfJson.asDateTime(n['publishedAt']);
     final date = label.isNotEmpty
         ? label
-        : (p is DateTime ? noticeNeDate(p) : '');
-    final downloadEnabled = n['downloadEnabled'] == true;
+        : (p != null ? noticeNeDate(p) : '');
+    final downloadEnabled = CfJson.asBool(n['downloadEnabled']);
     final downloadUrl = (n['downloadUrl'] ?? '').toString();
     final rawLabel = (n['downloadLabel'] ?? '').toString().trim();
     final downloadLabel = rawLabel.isEmpty ? 'Download' : rawLabel;

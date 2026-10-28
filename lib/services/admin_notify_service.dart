@@ -1,7 +1,10 @@
 /// Best-effort push-notification wiring between the app and the admin desk,
-/// delivered through the loksewa-push-worker Cloudflare worker
-/// (https://loksewa-push-worker.loksewasolutionapi.workers.dev — the same
-/// base the admin panel uses for VITE_FCM_PUSH_URL).
+/// delivered through the loksewa-api Cloudflare worker
+/// (https://loksewa-api.loksewa-solution-api.workers.dev).
+///
+/// Phase-5: /notify-admin and /send-to-uid moved from the old push
+/// worker to loksewa-api; calls carry the CF access token (Bearer) when
+/// a session exists.
 ///
 /// Two directions:
 /// - [notifyAdmin]: user -> admin. A user-side event just got recorded
@@ -22,12 +25,12 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'cf_api.dart';
+
 class AdminNotifyService {
-  /// Base URL of the push worker. Defined ONCE here — no other URL constant
-  /// for it exists in the Flutter repo; the admin panel reads the same
-  /// value from VITE_FCM_PUSH_URL.
-  static const _workerBase =
-      'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+  /// Base URL of the API worker (loksewa-api). The push endpoints live
+  /// on the same base as every other Phase-1..5 API call.
+  static String get _workerBase => CfApi.baseUrl;
 
   static const _timeout = Duration(seconds: 8);
 
@@ -90,13 +93,20 @@ class AdminNotifyService {
 
   /// Shared fire-and-forget POST with a short timeout. Non-2xx responses
   /// are ignored (never rethrown); any exception (network, timeout,
-  /// encoding) is swallowed by the callers.
+  /// encoding) is swallowed by the callers. Carries the CF Bearer when a
+  /// session exists (the endpoints live behind CF auth now); without a
+  /// session the header is omitted, exactly like the legacy anonymous
+  /// relay calls.
   static Future<void> _post(String url, Map<String, dynamic> payload) async {
     final client = _testClient ?? http.Client();
+    final token = CfApi.accessToken;
     await client
         .post(
           Uri.parse(url),
-          headers: const {'Content-Type': 'application/json'},
+          headers: {
+            'Content-Type': 'application/json',
+            if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+          },
           body: jsonEncode(payload),
         )
         .timeout(_timeout);

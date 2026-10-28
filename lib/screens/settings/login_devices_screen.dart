@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/device_session_service.dart';
-import '../../services/firestore_rest.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/stagger_entrance.dart';
@@ -12,12 +12,13 @@ import '../../widgets/subpage_header.dart';
 
 /// Security Settings → Login Devices.
 ///
-/// Lists the `users/{uid}/push_tokens` documents (one per device, keyed by
-/// the stable device id). The row whose `deviceId` matches this device's id
-/// (see [DeviceSessionService.getDeviceId]) wears a green blinking dot and
-/// a "This device" tag. Each row shows the device model (or "Unknown
-/// device"), the platform icon, the app version and the last-active time
-/// from `updatedAt`.
+/// Lists the user's registered devices (one per device, keyed by the
+/// stable device id — the push-token registrations, served since
+/// Phase-5 by GET /login-devices). The row whose `deviceId` matches this
+/// device's id (see [DeviceSessionService.getDeviceId]) wears a green
+/// blinking dot and a "This device" tag. Each row shows the device
+/// model (or "Unknown device"), the platform icon, the app version and
+/// the last-active time from `updatedAt`.
 ///
 /// Premium treatment: the shared gradient subpage header, a device-count
 /// summary card, staggered row entrances, gradient platform icon tiles and
@@ -33,7 +34,7 @@ class LoginDevicesScreen extends StatefulWidget {
   /// Test seam: list for this uid instead of the signed-in user.
   final String? debugUid;
 
-  /// Test seam: replaces the `users/{uid}/push_tokens` list read.
+  /// Test seam: replaces the GET /login-devices read.
   final Future<List<Map<String, dynamic>>> Function(String uid)? loadDevices;
 
   /// Test seam: pins "this device" instead of reading the real device id.
@@ -78,9 +79,9 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
   }
 
   Future<List<Map<String, dynamic>>> _fetchDevices(String uid) async {
-    final idToken = await AuthService.getValidIdToken().catchError((_) => '');
-    return FirestoreRest.listDocuments('users/$uid/push_tokens',
-        idToken: idToken);
+    // Phase-5: the registrations live behind GET /login-devices (the
+    // server scopes them to the Bearer — [uid] is the caller's own).
+    return CfApi.getLoginDevices();
   }
 
   static DateTime _updatedAt(Map<String, dynamic> doc) {

@@ -10,8 +10,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
@@ -36,9 +35,9 @@ class _ExamPurchaseScreenState extends State<ExamPurchaseScreen> {
   }
 
   Future<Map<String, dynamic>?> _load() async {
-    final token = await AuthService.getValidIdToken();
-    return FirestoreRest.getDocument('app_exam_sets/${widget.id}',
-        idToken: token);
+    // Phase-5: the exam-set row comes from the Phase-2 endpoint
+    // (GET /exam/sets/:id) instead of the Firestore doc read.
+    return CfApi.getExamSetRow(widget.id);
   }
 
   String _money(dynamic v) {

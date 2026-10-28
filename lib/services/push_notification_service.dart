@@ -1,7 +1,12 @@
 // Push notification service — FCM version of the React app's
-// pushNotifications.ts. Same Firestore structure:
-//   - Signed-in:  users/{uid}/push_tokens/{deviceId}
-//   - Signed-out: app_device_push_tokens/{deviceId}
+// pushNotifications.ts. Same registration structure:
+//   - Signed-in:  per-user token registration (POST /push-tokens)
+//   - Signed-out: anonymous device registration (POST /push-tokens/device)
+//
+// Phase-5: registrations live behind the loksewa-api (D1) instead of
+// Firestore (users/{uid}/push_tokens + app_device_push_tokens). The
+// payload shape is unchanged; deletes are keyed by the FCM token value.
+// FCM itself (getToken / onMessage / tap handling) is untouched.
 //
 // STABLE DEVICE ID (v1.0.60+): Uses ANDROID_ID which survives reinstalls,
 // so one physical device = one document. No duplicates on reinstall.
@@ -17,8 +22,8 @@ import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'auth_service.dart';
+import 'cf_api.dart';
 import 'device_session_service.dart';
-import 'firestore_rest.dart';
 import 'app_language.dart';
 import 'public_downloads.dart';
 
@@ -483,15 +488,10 @@ class PushNotificationService {
     return null;
   }
 
-  static Future<String?> _getLastUid() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      return prefs.getString(_lastUidKey);
-    } catch (_) {
-      return null;
-    }
-  }
-
+  // NOTE: the last-uid pref is still WRITTEN (kept for downgrade
+  // safety) but no longer READ — the Phase-5 cleanup deletes by token
+  // value, which covers the account-switch case without knowing the
+  // previous uid.
   static Future<void> _setLastUid(String? uid) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -546,9 +546,9 @@ class PushNotificationService {
     await registerToken();
   }
 
-  /// Registers this device's FCM token in Firestore for the current
+  /// Registers this device's FCM token with the API for the current
   /// auth state. Call on startup and whenever the uid changes.
-  /// `uid` null → anonymous collection. Best-effort: never throws.
+  /// `uid` null → anonymous device registration. Best-effort: never throws.
   ///
   /// NEW FLOW (v1.0.64+): User tokens carry `courseId`, `subcourseId` and
   /// `userName` so the push worker can filter by subcourse WITHOUT a
@@ -559,7 +559,6 @@ class PushNotificationService {
       if (token == null || token.isEmpty) return null;
       final uid = AuthService.currentUser?.uid;
       final deviceId = await _getDeviceId();
-      final idToken = await AuthService.getValidIdToken().catchError((_) => '');
       final payload = <String, dynamic>{
         'token': token,
         'deviceId': deviceId,
@@ -568,28 +567,22 @@ class PushNotificationService {
         'updatedAt': DateTime.now().toIso8601String(),
       };
       // Human-readable device model for the Login Devices screen
-      // (Security Settings). Best-effort: omitted when unavailable so the
-      // schema-locked push_tokens rules (hasOnly allowlist) still pass.
+      // (Security Settings). Best-effort: omitted when unavailable.
       final deviceModel = await _getDeviceModel();
       if (deviceModel != null && deviceModel.isNotEmpty) {
         payload['deviceModel'] = deviceModel;
       }
       if (uid != null && uid.isNotEmpty) {
         // Logged in: attach course info so the worker can filter directly.
-        final courseInfo = await _getUserCourseInfo(uid, idToken);
+        final courseInfo = await _getUserCourseInfo(uid);
         payload['courseId'] = courseInfo['courseId'];
         payload['subcourseId'] = courseInfo['subcourseId'];
         payload['userName'] = courseInfo['userName'];
-        await _saveForUser(uid, deviceId, payload, idToken);
+        await _saveForUser(uid, payload);
       } else {
-        // Signed-out: anonymous collection (merge = update in place).
+        // Signed-out: anonymous device registration (upsert in place).
         // No course info — guest has no user doc.
-        await FirestoreRest.setDocument(
-          'app_device_push_tokens/$deviceId',
-          payload,
-          idToken: idToken,
-          merge: true,
-        ).catchError((_) {});
+        await CfApi.registerDevicePushToken(payload).catchError((_) {});
       }
       return token;
     } catch (_) {
@@ -599,69 +592,48 @@ class PushNotificationService {
 
   /// Best-effort fetch of the user's course info for the token payload.
   /// Returns empty strings when unavailable — never throws.
-  static Future<Map<String, String>> _getUserCourseInfo(
-    String uid,
-    String idToken,
-  ) async {
+  /// Phase-5: GET /profile/course-info (the users-doc read retired).
+  static Future<Map<String, String>> _getUserCourseInfo(String uid) async {
     try {
-      final doc = await FirestoreRest.getDocument('users/$uid', idToken: idToken)
-          .catchError((_) => null);
-      final data = doc is Map<String, dynamic> ? doc : <String, dynamic>{};
+      final info = await CfApi.getProfileCourseInfo().catchError((_) => null);
       return {
-        'courseId': '${data['courseId'] ?? ''}',
-        'subcourseId': '${data['subcourseId'] ?? ''}',
-        'userName': '${data['name'] ?? data['displayName'] ?? ''}',
+        'courseId': '${info?['courseId'] ?? ''}',
+        'subcourseId': '${info?['subcourseId'] ?? ''}',
+        'userName': CfApi.currentUser?.name ?? '',
       };
     } catch (_) {
       return {'courseId': '', 'subcourseId': '', 'userName': ''};
     }
   }
 
-  /// Saves token for a user: cleans up old user's doc (account switch),
-  /// removes guest doc, saves to new user's doc. All merge/best-effort.
+  /// Saves token for a user: drops this token's previous registration
+  /// (the old user's row on an account switch, and the guest row — both
+  /// carry the same token value, and deletes are keyed by token), then
+  /// upserts the registration for [uid]. All best-effort.
   static Future<void> _saveForUser(
     String uid,
-    String deviceId,
     Map<String, dynamic> payload,
-    String idToken,
   ) async {
-    // 1. Account switch? Remove from the previous user's collection.
-    final lastUid = await _getLastUid();
-    if (lastUid != null && lastUid.isNotEmpty && lastUid != uid) {
-      await FirestoreRest.deleteDocument(
-        'users/$lastUid/push_tokens/$deviceId',
-        idToken: idToken,
-      ).catchError((_) {});
+    final token = '${payload['token'] ?? ''}';
+    if (token.isNotEmpty) {
+      await CfApi.deletePushToken(token).catchError((_) {});
     }
-    // 2. Remove guest doc (no duplicate across collections).
-    await FirestoreRest.deleteDocument(
-      'app_device_push_tokens/$deviceId',
-      idToken: idToken,
-    ).catchError((_) {});
-    // 3. Save to the current user's collection (merge = update in place).
-    await FirestoreRest.setDocument(
-      'users/$uid/push_tokens/$deviceId',
-      payload,
-      idToken: idToken,
-      merge: true,
-    ).catchError((_) {});
-    // 4. Remember this uid for the next switch.
+    await CfApi.registerPushToken(payload).catchError((_) {});
+    // Remember this uid for the next switch.
     await _setLastUid(uid);
   }
 
-  /// Call on sign-out: remove from user collection, save as anonymous.
-  /// Pass the idToken captured BEFORE the session was cleared — after logout
-  /// getValidIdToken() returns empty and Firestore denies the writes.
+  /// Call on sign-out: remove the user registration, save as anonymous.
+  /// Runs while the CF session is still alive (AuthService.logout calls
+  /// it before clearing the CF session) so the DELETE carries the
+  /// Bearer. The legacy [idToken] parameter is accepted for signature
+  /// compatibility and no longer used. Best-effort throughout.
   static Future<void> onSignOut(String uid, {String idToken = ''}) async {
     try {
-      final deviceId = await _getDeviceId();
-      final token = idToken.isNotEmpty
-          ? idToken
-          : await AuthService.getValidIdToken().catchError((_) => '');
-      await FirestoreRest.deleteDocument(
-        'users/$uid/push_tokens/$deviceId',
-        idToken: token,
-      ).catchError((_) {});
+      final token = await _messaging.getToken();
+      if (token != null && token.isNotEmpty) {
+        await CfApi.deletePushToken(token).catchError((_) {});
+      }
     } catch (_) {}
     await _setLastUid(null);
     await registerToken();

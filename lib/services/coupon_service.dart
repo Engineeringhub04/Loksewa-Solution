@@ -19,15 +19,14 @@
 //
 // Per-user usage is tracked in app_coupon_usages/{CODE}_{uid} {count}.
 //
-// The usage increment uses a Firestore `:commit` field transform
-// (`increment`), the same atomic operation the React `increment(1)` performs —
-// never a read-then-write.
-import 'dart:convert';
-
-import 'package:http/http.dart' as http;
-import 'package:loksewa_solution/services/app_config.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+// Phase-5: validation state (coupon doc + per-user usage + first-buyer
+// history) is fetched in ONE POST /coupons/validate — the scope rules
+// themselves still run locally in [CouponService.validateCouponData],
+// the single source of truth for reasons + discount math. Redemption
+// (usage-row creation + usedCount increment) is POST /coupons/redeem,
+// one atomic server operation replacing the two raw Firestore `:commit`
+// calls this file used to make.
+import 'package:loksewa_solution/services/cf_api.dart';
 
 /// Billing-cycle categories `validateCoupon` understands. 'exam' is the
 /// checkout-only category used for exam-set and content purchases.
@@ -68,44 +67,52 @@ class CouponService {
     String? examTier, // 'pro' | 'free' — the exam set's tier, if known
   }) async {
     final code = rawCode.trim().toUpperCase();
-    final token = await AuthService.getValidIdToken();
-    final coupon = await FirestoreRest.getDocument('app_coupon_codes/$code',
-        idToken: token);
+    // One round trip: the server reads the coupon doc, the per-user
+    // usage row and the buyer's purchase history (three collections the
+    // client can no longer read) and returns them together.
+    final body = await CfApi.validateCoupon({
+      'code': code,
+      'billingCycle': billingCycle,
+      'originalAmount': originalAmount,
+      if (purchaseType != null) 'purchaseType': purchaseType,
+      if (contentId != null) 'contentId': contentId,
+      if (courseId != null) 'courseId': courseId,
+      if (subcourseId != null) 'subcourseId': subcourseId,
+      if (examTier != null) 'examTier': examTier,
+    });
+    // A finished verdict ({valid, ...} with no coupon row attached) is
+    // used as-is.
+    final rawCoupon = body['coupon'];
+    final coupon = rawCoupon is Map
+        ? rawCoupon.cast<String, dynamic>()
+        : (body.containsKey('discountType') ||
+                body.containsKey('isActive') ||
+                body.containsKey('code')
+            ? body
+            : null);
     if (coupon == null) {
+      if (body.containsKey('valid')) {
+        return CouponValidationResult(
+          valid: body['valid'] == true,
+          discountedAmount: _asNumOrNull(body['discountedAmount']),
+          discountLabel: body['discountLabel']?.toString(),
+          reason: body['reason']?.toString(),
+        );
+      }
       return const CouponValidationResult(
           valid: false, reason: 'Coupon code not found');
     }
-    // Async per-user checks — fail-open so a read hiccup never blocks a
-    // legit coupon.
-    int? perUserUsedCount;
-    final maxPerUser = _asInt(coupon['maxUsesPerUser']);
-    if (maxPerUser > 0 && uid != null && uid.isNotEmpty) {
-      try {
-        final usage = await FirestoreRest.getDocument(
-            'app_coupon_usages/${code}_$uid',
-            idToken: token);
-        perUserUsedCount = _asInt(usage?['count']);
-      } catch (_) {
-        perUserUsedCount = 0;
-      }
-    }
-    bool? isFirstTimeBuyer;
-    if (coupon['firstTimeOnly'] == true && uid != null && uid.isNotEmpty) {
-      try {
-        final userDoc =
-            await FirestoreRest.getDocument('users/$uid', idToken: token);
-        final hasHistory = [
-          'subscriptionIds',
-          'contentPurchaseIds',
-          'examPurchaseIds'
-        ].any((k) => (userDoc?[k] as List?)?.isNotEmpty == true);
-        isFirstTimeBuyer = !hasHistory;
-      } catch (_) {
-        isFirstTimeBuyer = true;
-      }
-    }
+    // Per-user state computed server-side — fail-open like the old
+    // client reads: absent values skip those checks entirely.
+    final perUserUsedCount = body['perUserUsedCount'] is num
+        ? (body['perUserUsedCount'] as num).toInt()
+        : (body['perUserUsedCount'] != null
+            ? int.tryParse('${body['perUserUsedCount']}')
+            : null);
+    final isFirstTimeBuyer =
+        body['isFirstTimeBuyer'] is bool ? body['isFirstTimeBuyer'] as bool : null;
     return validateCouponData(
-      coupon,
+      CfApi.normalizeRow(coupon),
       billingCycle,
       originalAmount,
       purchaseType: purchaseType,
@@ -280,92 +287,34 @@ class CouponService {
     );
   }
 
-  /// Atomically increments `usedCount` on `app_coupon_codes/{code}`.
-  /// Best-effort like the React original (swallows failures).
-  static Future<void> incrementCouponUsage(String code) async {
+  /// Redeems [code] at checkout submit time: POST /coupons/redeem
+  /// creates the per-user usage row AND increments the code's
+  /// `usedCount` in one atomic server operation (the pair of raw
+  /// Firestore `:commit` calls this replaces). Call ONCE per successful
+  /// submit. Best-effort like the React original (swallows failures).
+  static Future<void> incrementCouponUsage(String code,
+      {String? planId, String? userId}) async {
     try {
-      final token = await AuthService.getValidIdToken();
-      const base =
-          'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
-      final res = await http.post(
-        Uri.parse('$base:commit'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-        },
-        body: jsonEncode({
-          'writes': [
-            {
-              'update': {
-                'name': '$base/app_coupon_codes/${code.toUpperCase()}',
-              },
-              'updateTransforms': [
-                {
-                  'fieldPath': 'usedCount',
-                  'increment': {'integerValue': '1'},
-                },
-              ],
-            },
-          ],
-        }),
-      );
-      if (res.statusCode != 200) throw Exception('increment failed');
+      await CfApi.redeemCoupon({
+        'code': code.trim().toUpperCase(),
+        if (planId != null && planId.isNotEmpty) 'planId': planId,
+        if (userId != null && userId.isNotEmpty) 'userId': userId,
+      });
     } catch (_) {
-      // Coupon may not exist / no-code path — nothing to increment.
+      // Coupon may not exist / no-code path — nothing to redeem.
     }
   }
 
-  /// Atomically increments the per-user usage counter at
-  /// `app_coupon_usages/{CODE}_{uid}`. Creates the doc with count=1 when it
-  /// does not exist yet. Best-effort (swallows failures).
+  /// Legacy companion of [incrementCouponUsage]: the per-user half of
+  /// the redemption. POST /coupons/redeem performs BOTH halves in one
+  /// call, so this now delegates to the same single redeem — callers
+  /// must invoke only ONE of the two per submit (the checkout calls
+  /// [incrementCouponUsage] only). [uid] is accepted for signature
+  /// compatibility; the server derives the user from the Bearer.
+  /// Best-effort (swallows failures).
   static Future<void> incrementCouponUsageForUser(
       String code, String uid) async {
-    try {
-      final token = await AuthService.getValidIdToken();
-      const base =
-          'https://firestore.googleapis.com/v1/projects/${AppConfig.firebaseProjectId}/databases/(default)/documents';
-      final docId = '${code.toUpperCase()}_$uid';
-      final headers = {
-        'Content-Type': 'application/json',
-        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
-      };
-      // Fast path: create with count=1 (succeeds on first use).
-      final createRes = await http.post(
-        Uri.parse('$base/app_coupon_usages?documentId=$docId'),
-        headers: headers,
-        body: jsonEncode({
-          'fields': {
-            'count': {'integerValue': '1'},
-            'code': {'stringValue': code.toUpperCase()},
-            'uid': {'stringValue': uid},
-          },
-        }),
-      );
-      if (createRes.statusCode == 200) return;
-      // Already exists (or create failed) — atomic increment instead.
-      final res = await http.post(
-        Uri.parse('$base:commit'),
-        headers: headers,
-        body: jsonEncode({
-          'writes': [
-            {
-              'update': {
-                'name': '$base/app_coupon_usages/$docId',
-              },
-              'updateTransforms': [
-                {
-                  'fieldPath': 'count',
-                  'increment': {'integerValue': '1'},
-                },
-              ],
-            },
-          ],
-        }),
-      );
-      if (res.statusCode != 200) throw Exception('increment failed');
-    } catch (_) {
-      // Best-effort only.
-    }
+    await incrementCouponUsage(code);
   }
 
   static List<String> _asStringList(dynamic v) {
@@ -394,6 +343,11 @@ class CouponService {
   static num _asNum(dynamic v) {
     if (v is num) return v;
     return num.tryParse('$v') ?? 0;
+  }
+
+  static num? _asNumOrNull(dynamic v) {
+    if (v is num) return v;
+    return num.tryParse('$v');
   }
 
   static num _maxNum(num a, num b) => a > b ? a : b;

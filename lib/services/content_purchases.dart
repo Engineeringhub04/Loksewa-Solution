@@ -1,17 +1,16 @@
-// Content purchase requests (user side + admin review).
+// Content purchase requests (user side).
 //
 // Mirrors src/core/firebase/services/contentPurchases.ts:
 // the ContentPurchaseRecord shape, the 30-minute edit window helpers,
-// fetch-my-records (server-side uid filter via structured query,
-// newest-first), the submit guard (one pending request per
-// user/contentType/contentId, doc id
-// `{uid}_{contentType}_{contentId}_{Date.now()}`), updates, and the admin
-// approve / reject writes.
+// fetch-my-records (newest-first), the submit guard (one pending request
+// per user/contentType/contentId, doc id
+// `{uid}_{contentType}_{contentId}_{Date.now()}`), and owner updates.
+// Phase-5: all data flows through the loksewa-api (/purchases/*);
+// admin review lives in the Phase-3 admin API.
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'dart:async';
 
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 
 /// Edit window after submission during which the user may still change the
 /// transaction ref / screenshot / message (matches
@@ -159,65 +158,15 @@ List<ContentPurchaseRecord> _newestFirst(
 }
 
 /// Mirrors fetchMyContentPurchases: newest first.
-/// Per-user index: rules deny LIST queries on app_content_purchases for
-/// non-admins (resource.data is unavailable on lists), so the user's
-/// purchase IDs are read from their own doc and each is fetched with
-/// getDocument (which the rules allow for the owner).
+/// Phase-5: GET /purchases/mine returns the caller's content rows in
+/// one call (the server resolves the contentPurchaseIds index itself).
+/// NOTE: exam_service.dart has a namesake fetcher for content-unlock
+/// checks (Phase-1 GET /purchases/content) — this one serves the
+/// history / detail / submit paths.
 Future<List<ContentPurchaseRecord>> fetchMyContentPurchases(
     String uid) async {
-  final token = await AuthService.getValidIdToken();
-  final userDoc =
-      await FirestoreRest.getDocument('users/$uid', idToken: token);
-  final ids = <String>[
-    for (final e in (userDoc?['contentPurchaseIds'] as List? ?? []))
-      e.toString(),
-  ];
-  if (ids.isEmpty) return [];
-  final records = <ContentPurchaseRecord>[];
-  for (final pid in ids) {
-    try {
-      final doc = await FirestoreRest.getDocument('app_content_purchases/$pid',
-          idToken: token);
-      if (doc != null) records.add(ContentPurchaseRecord.fromMap(doc));
-    } catch (_) {
-      // Skip docs that fail to load; never crash the whole list.
-    }
-  }
-  return _newestFirst(records);
-}
-
-/// Mirrors fetchMyApprovedContentIds.
-Future<List<String>> fetchMyApprovedContentIds(String uid) async {
-  final token = await AuthService.getValidIdToken();
-  final userDoc =
-      await FirestoreRest.getDocument('users/$uid', idToken: token)
-          .catchError((_) => null);
-  return fetchMyApprovedContentIdsFromDoc(userDoc, token);
-}
-
-/// Variant of [fetchMyApprovedContentIds] that reuses an already-fetched
-/// users/{uid} document (saves 1 read on screens that loaded it anyway).
-Future<List<String>> fetchMyApprovedContentIdsFromDoc(
-    Map<String, dynamic>? userDoc, String idToken) async {
-  final ids = <String>[
-    for (final e in (userDoc?['contentPurchaseIds'] as List? ?? []))
-      e.toString(),
-  ];
-  final out = <String>[];
-  for (final pid in ids) {
-    try {
-      final doc = await FirestoreRest.getDocument('app_content_purchases/$pid',
-          idToken: idToken);
-      if (doc != null &&
-          ContentPurchaseRecord.fromMap(doc).status == 'active') {
-        final cid = doc['contentId']?.toString() ?? '';
-        if (cid.isNotEmpty) out.add(cid);
-      }
-    } catch (_) {
-      // Skip docs that fail to load; never crash the whole list.
-    }
-  }
-  return out;
+  final mine = await CfApi.getMyPurchases();
+  return _newestFirst(mine.content.map(ContentPurchaseRecord.fromMap).toList());
 }
 
 /// Mirrors fetchPendingContentPurchase.
@@ -234,21 +183,14 @@ Future<ContentPurchaseRecord?> fetchPendingContentPurchase(
   return null;
 }
 
-/// Mirrors fetchContentPurchaseById.
+/// Mirrors fetchContentPurchaseById. Phase-5: the record is the
+/// caller's own, so it is resolved from GET /purchases/mine.
 Future<ContentPurchaseRecord?> fetchContentPurchaseById(String id) async {
-  // The read rule is owner-only — the request MUST carry the ID token,
-  // otherwise Firestore answers 403 ("Could not load this purchase").
-  final token = await AuthService.getValidIdToken();
-  final doc = await FirestoreRest.getDocument('app_content_purchases/$id',
-      idToken: token);
-  return doc == null ? null : ContentPurchaseRecord.fromMap(doc);
-}
-
-/// Mirrors fetchAllContentPurchases (admin).
-Future<List<ContentPurchaseRecord>> fetchAllContentPurchases() async {
-  final docs = await FirestoreRest.listDocuments('app_content_purchases',
-      pageSize: 200);
-  return _newestFirst(docs.map(ContentPurchaseRecord.fromMap).toList());
+  final records = await fetchMyContentPurchases(CfApi.currentUser?.uid ?? '');
+  for (final r in records) {
+    if (r.id == id) return r;
+  }
+  return null;
 }
 
 class SubmitContentPurchaseInput {
@@ -292,18 +234,18 @@ class SubmitContentPurchaseInput {
 /// Mirrors submitContentPurchase: keeps one active review request per
 /// user/content — an existing pending request's id is returned instead of
 /// creating a new one.
+/// Phase-5: POST /purchases/content — the server stamps ownership and
+/// appends the id to the user's contentPurchaseIds index itself.
 Future<String> submitContentPurchase(
     SubmitContentPurchaseInput input) async {
   final existing = await fetchPendingContentPurchase(
       input.uid, input.contentType, input.contentId);
   if (existing != null) return existing.id;
 
-  // The create rule requires a signed-in owner — the write MUST carry the
-  // user's ID token, otherwise Firestore answers 403.
-  final submitToken = await AuthService.getValidIdToken();
   final id =
       '${input.uid}_${input.contentType}_${input.contentId}_${DateTime.now().millisecondsSinceEpoch}';
-  await FirestoreRest.setDocument('app_content_purchases/$id', {
+  final row = await CfApi.createContentPurchase({
+    'id': id,
     'uid': input.uid,
     'userName': input.userName,
     'userEmail': input.userEmail,
@@ -328,31 +270,9 @@ Future<String> submitContentPurchase(
     'reviewedAt': null,
     'reviewedBy': null,
     'rejectionReason': null,
-    'createdAt': FirestoreRest.serverTimestamp(),
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  }, idToken: submitToken);
-  // Index the purchase ID on the user's doc for per-user history.
-  // Rules deny LIST queries on app_content_purchases for non-admins, so the
-  // app resolves the user's IDs from their own doc and getDocuments each.
-  // Best-effort: the purchase itself is saved; index failure only affects
-  // the history list (the admin backfill can repair it).
-  try {
-    final token = await AuthService.getValidIdToken();
-    final userDoc =
-        await FirestoreRest.getDocument('users/${input.uid}', idToken: token);
-    final ids = <String>[
-      for (final e in (userDoc?['contentPurchaseIds'] as List? ?? []))
-        e.toString(),
-    ];
-    if (!ids.contains(id)) {
-      ids.add(id);
-      await FirestoreRest.updateDocument(
-          'users/${input.uid}', {'contentPurchaseIds': ids},
-          idToken: token);
-    }
-  } catch (_) {
-    // Best-effort only; never blocks the submit flow.
-  }
+  });
+  final createdId = (row['id'] ?? '').toString();
+  final purchaseId = createdId.isNotEmpty ? createdId : id;
   // Fire-and-forget admin push — the request is recorded; never blocks.
   final buyerName = (input.userName ?? '').trim();
   unawaited(AdminNotifyService.notifyAdmin(
@@ -360,25 +280,24 @@ Future<String> submitContentPurchase(
     title: 'New Purchase Request 💳',
     body:
         '${buyerName.isEmpty ? 'Someone' : buyerName} requested to purchase "${input.contentTitle}" — Rs. ${input.amount}',
-    deepLink: '/admin/content-purchases/$id',
+    deepLink: '/admin/content-purchases/$purchaseId',
   ));
-  return id;
+  return purchaseId;
 }
 
 /// Mirrors updateMyContentPurchaseDetails.
+/// Phase-5: PATCH /purchases/content/:id.
 Future<void> updateMyContentPurchaseDetails(
   String id, {
   required String transactionRef,
   required String screenshotUrl,
   String? customerMessage,
 }) async {
-  final token = await AuthService.getValidIdToken();
-  await FirestoreRest.updateDocument('app_content_purchases/$id', {
+  await CfApi.patchPurchase('content', id, {
     'transactionRef': transactionRef.trim(),
     'screenshotUrl': screenshotUrl,
     'customerMessage': customerMessage,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  }, idToken: token);
+  });
 }
 
 /// Mirrors isContentPurchaseEditable.
@@ -403,28 +322,10 @@ int contentPurchaseEditRemainingMs(ContentPurchaseRecord record,
   return remaining < 0 ? 0 : remaining;
 }
 
-/// Mirrors approveContentPurchase (admin).
-Future<void> approveContentPurchase(String id, String reviewerUid,
-    {String? adminMessage}) async {
-  await FirestoreRest.updateDocument('app_content_purchases/$id', {
-    'status': 'active',
-    'reviewedAt': DateTime.now().toIso8601String(),
-    'reviewedBy': reviewerUid,
-    'adminMessage': adminMessage,
-    'rejectionReason': null,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  });
-}
-
-/// Mirrors rejectContentPurchase (admin).
-Future<void> rejectContentPurchase(String id, String reviewerUid,
-    String reason, {String? adminMessage}) async {
-  await FirestoreRest.updateDocument('app_content_purchases/$id', {
-    'status': 'rejected',
-    'reviewedAt': DateTime.now().toIso8601String(),
-    'reviewedBy': reviewerUid,
-    'rejectionReason': reason,
-    'adminMessage': adminMessage,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  });
-}
+// Phase-5 cleanup: the admin functions that used to live here
+// (fetchAllContentPurchases, approveContentPurchase,
+// rejectContentPurchase) and the superseded approved-ids fetchers
+// (fetchMyApprovedContentIds / fetchMyApprovedContentIdsFromDoc — the
+// unlock path uses exam_service's CF variant) had zero callers in lib/,
+// so they were deleted with their Firestore reads/writes instead of
+// being migrated. Admin review runs on the Phase-3 admin API.

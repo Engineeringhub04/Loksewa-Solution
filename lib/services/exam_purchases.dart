@@ -2,15 +2,14 @@
 //
 // Mirrors src/core/firebase/services/examPurchases.ts:
 // the ExamPurchaseRecord shape, the 30-minute edit window helpers,
-// fetch-my-records (server-side uid filter via structured query,
-// newest-first), the submit guard (one pending request per user/exam,
-// doc id `{uid}_{examSetId}_{Date.now()}`), updates, and the admin
-// approve / reject / price-seeding writes.
+// fetch-my-records (newest-first), the submit guard (one pending
+// request per user/exam, doc id `{uid}_{examSetId}_{Date.now()}`), and
+// owner updates. Phase-5: all data flows through the loksewa-api
+// (/purchases/*); admin review lives in the Phase-3 admin API.
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'dart:async';
 
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 
 /// Edit window after submission during which the user may still change the
 /// transaction ref / screenshot / message (matches
@@ -154,38 +153,11 @@ List<ExamPurchaseRecord> _newestFirst(List<ExamPurchaseRecord> records) {
 }
 
 /// Mirrors fetchMyExamPurchases: newest first.
-/// Per-user index: rules deny LIST queries on app_exam_purchases for
-/// non-admins (resource.data is unavailable on lists), so the user's
-/// purchase IDs are read from their own doc and each is fetched with
-/// getDocument (which the rules allow for the owner).
+/// Phase-5: GET /purchases/mine returns the caller's exam rows in one
+/// call (the server resolves the examPurchaseIds index itself).
 Future<List<ExamPurchaseRecord>> fetchMyExamPurchases(String uid) async {
-  final token = await AuthService.getValidIdToken();
-  final userDoc =
-      await FirestoreRest.getDocument('users/$uid', idToken: token);
-  final ids = <String>[
-    for (final e in (userDoc?['examPurchaseIds'] as List? ?? [])) e.toString(),
-  ];
-  if (ids.isEmpty) return [];
-  final records = <ExamPurchaseRecord>[];
-  for (final pid in ids) {
-    try {
-      final doc = await FirestoreRest.getDocument('app_exam_purchases/$pid',
-          idToken: token);
-      if (doc != null) records.add(ExamPurchaseRecord.fromMap(doc));
-    } catch (_) {
-      // Skip docs that fail to load; never crash the whole list.
-    }
-  }
-  return _newestFirst(records);
-}
-
-/// Mirrors fetchMyApprovedExamSetIds.
-Future<List<String>> fetchMyApprovedExamSetIds(String uid) async {
-  final records = await fetchMyExamPurchases(uid);
-  return records
-      .where((r) => r.status == 'active')
-      .map((r) => r.examSetId)
-      .toList();
+  final mine = await CfApi.getMyPurchases();
+  return _newestFirst(mine.exam.map(ExamPurchaseRecord.fromMap).toList());
 }
 
 /// Mirrors fetchPendingExamPurchase.
@@ -198,21 +170,14 @@ Future<ExamPurchaseRecord?> fetchPendingExamPurchase(
   return null;
 }
 
-/// Mirrors fetchExamPurchaseById.
+/// Mirrors fetchExamPurchaseById. Phase-5: the record is the caller's
+/// own, so it is resolved from GET /purchases/mine.
 Future<ExamPurchaseRecord?> fetchExamPurchaseById(String id) async {
-  // The read rule is owner-only — the request MUST carry the ID token,
-  // otherwise Firestore answers 403 ("Could not load this purchase").
-  final token = await AuthService.getValidIdToken();
-  final doc =
-      await FirestoreRest.getDocument('app_exam_purchases/$id', idToken: token);
-  return doc == null ? null : ExamPurchaseRecord.fromMap(doc);
-}
-
-/// Mirrors fetchAllExamPurchases (admin).
-Future<List<ExamPurchaseRecord>> fetchAllExamPurchases() async {
-  final docs = await FirestoreRest.listDocuments('app_exam_purchases',
-      pageSize: 200);
-  return _newestFirst(docs.map(ExamPurchaseRecord.fromMap).toList());
+  final records = await fetchMyExamPurchases(CfApi.currentUser?.uid ?? '');
+  for (final r in records) {
+    if (r.id == id) return r;
+  }
+  return null;
 }
 
 class SubmitExamPurchaseInput {
@@ -253,16 +218,15 @@ class SubmitExamPurchaseInput {
 
 /// Mirrors submitExamPurchase: keeps one active review request per user/exam —
 /// an existing pending request's id is returned instead of creating a new one.
+/// Phase-5: POST /purchases/exam — the server stamps ownership and
+/// appends the id to the user's examPurchaseIds index itself.
 Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
   final existing = await fetchPendingExamPurchase(input.uid, input.examSetId);
   if (existing != null) return existing.id;
 
-  // The create rule requires a signed-in owner (isSignedIn() && uid match),
-  // so the write MUST carry the user's ID token — without it Firestore
-  // answers 403 and the checkout shows "Could not submit your payment".
-  final token = await AuthService.getValidIdToken();
   final id = '${input.uid}_${input.examSetId}_${DateTime.now().millisecondsSinceEpoch}';
-  await FirestoreRest.setDocument('app_exam_purchases/$id', {
+  final row = await CfApi.createExamPurchase({
+    'id': id,
     'uid': input.uid,
     'userName': input.userName,
     'userEmail': input.userEmail,
@@ -286,30 +250,9 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
     'reviewedAt': null,
     'reviewedBy': null,
     'rejectionReason': null,
-    'createdAt': FirestoreRest.serverTimestamp(),
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  }, idToken: token);
-  // Index the purchase ID on the user's doc for per-user history.
-  // Rules deny LIST queries on app_exam_purchases for non-admins, so the
-  // app resolves the user's IDs from their own doc and getDocuments each.
-  // Best-effort: the purchase itself is saved; index failure only affects
-  // the history list (the admin backfill can repair it).
-  try {
-    final token = await AuthService.getValidIdToken();
-    final userDoc =
-        await FirestoreRest.getDocument('users/${input.uid}', idToken: token);
-    final ids = <String>[
-      for (final e in (userDoc?['examPurchaseIds'] as List? ?? [])) e.toString(),
-    ];
-    if (!ids.contains(id)) {
-      ids.add(id);
-      await FirestoreRest.updateDocument(
-          'users/${input.uid}', {'examPurchaseIds': ids},
-          idToken: token);
-    }
-  } catch (_) {
-    // Best-effort only; never blocks the submit flow.
-  }
+  });
+  final createdId = (row['id'] ?? '').toString();
+  final purchaseId = createdId.isNotEmpty ? createdId : id;
   // Fire-and-forget admin push — the request is recorded; never blocks.
   final buyerName = (input.userName ?? '').trim();
   unawaited(AdminNotifyService.notifyAdmin(
@@ -317,25 +260,23 @@ Future<String> submitExamPurchase(SubmitExamPurchaseInput input) async {
     title: 'New Purchase Request 💳',
     body:
         '${buyerName.isEmpty ? 'Someone' : buyerName} requested to purchase "${input.examTitle}" — Rs. ${input.amount}',
-    deepLink: '/admin/exam-purchases/$id',
+    deepLink: '/admin/exam-purchases/$purchaseId',
   ));
-  return id;
+  return purchaseId;
 }
 
-/// Mirrors updateMyExamPurchaseDetails.
+/// Mirrors updateMyExamPurchaseDetails. Phase-5: PATCH /purchases/exam/:id.
 Future<void> updateMyExamPurchaseDetails(
   String id, {
   required String transactionRef,
   required String screenshotUrl,
   String? customerMessage,
 }) async {
-  final token = await AuthService.getValidIdToken();
-  await FirestoreRest.updateDocument('app_exam_purchases/$id', {
+  await CfApi.patchPurchase('exam', id, {
     'transactionRef': transactionRef.trim(),
     'screenshotUrl': screenshotUrl,
     'customerMessage': customerMessage,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  }, idToken: token);
+  });
 }
 
 /// Mirrors isExamPurchaseEditable.
@@ -359,60 +300,10 @@ int examPurchaseEditRemainingMs(ExamPurchaseRecord record, [int? nowMs]) {
   return remaining < 0 ? 0 : remaining;
 }
 
-/// Mirrors approveExamPurchase (admin).
-Future<void> approveExamPurchase(String id, String reviewerUid,
-    {String? adminMessage}) async {
-  await FirestoreRest.updateDocument('app_exam_purchases/$id', {
-    'status': 'active',
-    'reviewedAt': DateTime.now().toIso8601String(),
-    'reviewedBy': reviewerUid,
-    'adminMessage': adminMessage,
-    'rejectionReason': null,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  });
-}
-
-/// Mirrors rejectExamPurchase (admin).
-Future<void> rejectExamPurchase(String id, String reviewerUid, String reason,
-    {String? adminMessage}) async {
-  await FirestoreRest.updateDocument('app_exam_purchases/$id', {
-    'status': 'rejected',
-    'reviewedAt': DateTime.now().toIso8601String(),
-    'reviewedBy': reviewerUid,
-    'rejectionReason': reason,
-    'adminMessage': adminMessage,
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  });
-}
-
-/// Mirrors seedMissingExamPrices: backfills a default price onto exam sets
-/// that have none. Returns (updated, total).
-Future<(int updated, int total)> seedMissingExamPrices(
-    {num defaultPrice = 50}) async {
-  final docs =
-      await FirestoreRest.listDocuments('app_exam_sets', pageSize: 500);
-  var updated = 0;
-  for (final doc in docs) {
-    final price = doc['price'];
-    if (price is num && price.isFinite) continue;
-    final id = doc['id']?.toString() ?? '';
-    if (id.isEmpty) continue;
-    await FirestoreRest.updateDocument('app_exam_sets/$id', {
-      'price': defaultPrice,
-      'currency': 'NPR',
-      'priceSeeded': true,
-      'updatedAt': FirestoreRest.serverTimestamp(),
-    });
-    updated++;
-  }
-  return (updated, docs.length);
-}
-
-/// Mirrors updateExamPrice (admin).
-Future<void> updateExamPrice(String examSetId, num price) async {
-  await FirestoreRest.updateDocument('app_exam_sets/$examSetId', {
-    'price': price < 0 ? 0 : price.round(),
-    'currency': 'NPR',
-    'updatedAt': FirestoreRest.serverTimestamp(),
-  });
-}
+// Phase-5 cleanup: the admin functions that used to live here
+// (fetchAllExamPurchases, approveExamPurchase, rejectExamPurchase,
+// seedMissingExamPrices, updateExamPrice, fetchMyApprovedExamSetIds)
+// had zero callers — the in-app admin screens run on the Phase-3 admin
+// API (CfApi.getAdminPurchases / approveAdminPurchase /
+// rejectAdminPurchase) — so they were deleted with their Firestore
+// writes instead of being migrated.

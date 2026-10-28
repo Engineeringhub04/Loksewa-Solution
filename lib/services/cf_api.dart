@@ -188,6 +188,11 @@ class CfApi {
   static CfUser? get currentUser => _session?.user;
   static bool get hasSession => _session != null;
 
+  /// The current CF access token ('' when signed out) — for the few call
+  /// sites that must hand a Bearer to a non-CfApi transport: the gateway
+  /// payment client, the eSewa form webview load, AdminNotifyService.
+  static String get accessToken => _session?.accessToken ?? '';
+
   static Future<void> _persist() async {
     final s = _session;
     if (s == null) return;
@@ -1435,5 +1440,157 @@ class CfApi {
   static Future<void> seedDiscussionGuidelines(
       Map<String, dynamic> defaults) async {
     await _request('POST', '/discussion-guidelines/seed', body: defaults);
+  }
+
+  // ============================================================ Phase 5
+  // Shop-tree endpoints (plans/settings, subscriptions, purchases,
+  // coupons, router probe), push-token registration + Login Devices,
+  // and the device-session eviction push. Rows are flat with Firestore
+  // field names; the server composes ownership from the Bearer, applies
+  // subscription expiry (+ premium-mirror fixes) when /subscriptions/
+  // mine is read, appends the user-doc index arrays on creates, and
+  // maintains coupon usage counters on redeem.
+
+  /// Subscription plan rows (app_subscription_plans copy).
+  static Future<List<Map<String, dynamic>>> getShopPlans() async {
+    final body = await _request('GET', '/shop/plans');
+    return _rows(body, ['items', 'rows', 'plans', 'data']);
+  }
+
+  /// Checkout settings (app_subscription_settings/config, client-safe
+  /// fields only — the worker never returns the secrets doc). Errors
+  /// throw; the checkout keeps its own "settings unavailable" fallback.
+  static Future<Map<String, dynamic>> getShopSettings() async {
+    final body = await _request('GET', '/shop/settings');
+    final m = _asMap(body);
+    if (m['settings'] is Map) return normalizeRow(_asMap(m['settings']));
+    return _rowOf(body);
+  }
+
+  /// The signed-in user's subscription records. Reading this endpoint
+  /// is what applies expiry server-side (records come back with their
+  /// post-sweep status; the users premium mirror is re-derived there).
+  static Future<List<Map<String, dynamic>>> getMySubscriptions() async {
+    final body = await _request('GET', '/subscriptions/mine');
+    return _rows(body, ['items', 'rows', 'subscriptions', 'data']);
+  }
+
+  /// Creates a manual (QR/screenshot) subscription request; the server
+  /// stamps ownership + appends the id to the user's subscriptionIds.
+  /// Returns the created row (carries the server id).
+  static Future<Map<String, dynamic>> createSubscription(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/subscriptions', body: payload);
+    return _rowOf(body);
+  }
+
+  /// Merges [fields] into one of the caller's subscription records
+  /// (owner edit of ref / screenshot / message).
+  static Future<void> patchSubscription(
+      String id, Map<String, dynamic> fields) async {
+    await _request('PATCH', '/subscriptions/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// The signed-in user's purchase rows: {exam, content}.
+  static Future<
+      ({
+        List<Map<String, dynamic>> exam,
+        List<Map<String, dynamic>> content
+      })> getMyPurchases() async {
+    final body = await _request('GET', '/purchases/mine');
+    final m = _asMap(body);
+    List<Map<String, dynamic>> pick(String key) =>
+        m[key] is List ? _rows(m[key], const []) : <Map<String, dynamic>>[];
+    return (exam: pick('exam'), content: pick('content'));
+  }
+
+  /// Creates a manual exam-purchase request (server stamps ownership +
+  /// appends the examPurchaseIds index). Returns the created row.
+  static Future<Map<String, dynamic>> createExamPurchase(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/purchases/exam', body: payload);
+    return _rowOf(body);
+  }
+
+  /// Creates a manual content-purchase request (server stamps ownership
+  /// + appends the contentPurchaseIds index). Returns the created row.
+  static Future<Map<String, dynamic>> createContentPurchase(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/purchases/content', body: payload);
+    return _rowOf(body);
+  }
+
+  /// Merges [fields] into one of the caller's purchase records;
+  /// [kind] is 'exam' | 'content'.
+  static Future<void> patchPurchase(
+      String kind, String id, Map<String, dynamic> fields) async {
+    await _request('PATCH',
+        '/purchases/$kind/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// Router-guard probe for /purchase/:id deep links: whether a purchase
+  /// record of [kind] ('exam' | 'content') with [id] exists (and is the
+  /// caller's). Errors throw — the router keeps its list fallback.
+  static Future<({bool exists, bool mine})> purchaseProbe(
+      String kind, String id) async {
+    final body = await _request(
+        'GET', '/purchase-probe/$kind/${Uri.encodeComponent(id)}');
+    final m = _asMap(body);
+    return (
+      exists: CfJson.asBool(m['exists']),
+      mine: CfJson.asBool(m['mine']),
+    );
+  }
+
+  /// Raw body of POST /coupons/validate. The service interprets it: a
+  /// coupon row (+ the server-computed per-user state) feeds the local
+  /// scope validation, a finished {valid, ...} verdict is used as-is.
+  static Future<Map<String, dynamic>> validateCoupon(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/coupons/validate', body: payload);
+    return _asMap(body);
+  }
+
+  /// Redeems a coupon at checkout submit time: the server creates the
+  /// per-user usage row and increments the code's usedCount atomically
+  /// (replaces the two raw Firestore :commit calls).
+  static Future<void> redeemCoupon(Map<String, dynamic> payload) async {
+    await _request('POST', '/coupons/redeem', body: payload);
+  }
+
+  // ------------------------------------------------------- push tokens
+  /// Upserts this device's FCM token registration for the signed-in
+  /// user (Bearer). The payload is the legacy token-doc shape (token,
+  /// deviceId, deviceModel, platform, language, courseId, subcourseId,
+  /// userName, updatedAt).
+  static Future<void> registerPushToken(Map<String, dynamic> payload) async {
+    await _request('POST', '/push-tokens', body: payload);
+  }
+
+  /// Anonymous (signed-out) device-token registration — no Bearer.
+  static Future<void> registerDevicePushToken(
+      Map<String, dynamic> payload) async {
+    await _request('POST', '/push-tokens/device', body: payload, auth: false);
+  }
+
+  /// Removes the registration for one FCM [token] value (Bearer).
+  static Future<void> deletePushToken(String token) async {
+    await _request('DELETE', '/push-tokens', body: {'token': token});
+  }
+
+  /// The signed-in user's registered-device rows (Login Devices list —
+  /// the same token-doc shape the Firestore list returned).
+  static Future<List<Map<String, dynamic>>> getLoginDevices() async {
+    final body = await _request('GET', '/login-devices');
+    return _rows(body, ['items', 'rows', 'devices', 'data']);
+  }
+
+  /// Asks the server to push the differentiated eviction messages for a
+  /// device-session takeover (security alert to the displaced devices,
+  /// confirmation to this one). The token fan-out lives server-side now.
+  static Future<void> postEvictionPush(Map<String, dynamic> payload) async {
+    await _request('POST', '/device-session/eviction-push', body: payload);
   }
 }

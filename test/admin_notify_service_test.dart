@@ -6,7 +6,7 @@ import 'package:http/testing.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 
 void main() {
-  const workerBase = 'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+  const workerBase = 'https://loksewa-api.loksewa-solution-api.workers.dev';
 
   tearDown(() {
     // Never leak a mock client into another test.

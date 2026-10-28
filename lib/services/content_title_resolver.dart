@@ -23,8 +23,28 @@
 // lookup is fail-soft: a missing doc or a network error just drops that
 // part, it never throws.
 import 'package:loksewa_solution/services/app_language.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+
+/// Production single-doc fetcher.
+///
+/// Phase-5: `app_subjects_details/{id}` goes through the Phase-1
+/// GET /subjects/:id endpoint. The other single-doc reads
+/// (`app_subjects_units_details/{id}`, `app_subjects_unit-chapters_details/
+/// {id}`) have NO by-id endpoint equivalent — the API exposes only
+/// subject-scoped lists (/subjects/units, /subjects/chapters), and
+/// gateway purchase records often lack a subjectId to scope with — so
+/// those stay on [ExamRest.getDoc].
+Future<Map<String, dynamic>?> defaultContentDocFetcher(String path) {
+  const subjectPrefix = 'app_subjects_details/';
+  if (path.startsWith(subjectPrefix)) {
+    final id = path.substring(subjectPrefix.length);
+    return CfApi.getSubjectDetail(id)
+        .then((row) => row == null ? null : Map<String, dynamic>.of(row));
+  }
+  return ExamRest.getDoc(path);
+}
 
 typedef ContentDocFetcher = Future<Map<String, dynamic>?> Function(
     String path);
@@ -134,7 +154,10 @@ Future<ContentDisplayNames> resolveContentDisplayNames(
   ContentDocFetcher? getDoc,
   ContentDocsLister? listDocs,
 }) {
-  final fetch = getDoc ?? ExamRest.getDoc;
+  final fetch = getDoc ?? defaultContentDocFetcher;
+  // The collection scan (subjects slug fallback) stays on ExamRest:
+  // GET /subjects returns top-level course rows, not the subjects-details
+  // corpus this scan matches slugs against.
   final list = listDocs ?? ExamRest.listDocs;
   final key = '${record.id}__${AppLanguage.current.value}';
   return _namesCache.putIfAbsent(key, () => _resolve(record, fetch, list));

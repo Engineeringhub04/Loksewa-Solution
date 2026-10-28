@@ -21,8 +21,7 @@
 //     submittedAt, reviewedAt, reviewedBy, rejectionReason, startDate,
 //     expiryDate, couponCode, createdAt, updatedAt
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 
 /// Billing cycles a plan (or request) can carry. Mirrors BillingCycle.
 enum BillingCycle { monthly, yearly, free, exam }
@@ -557,13 +556,9 @@ int _cmpDesc(DateTime? a, DateTime? b) {
 
 class SubscriptionService {
   /// Active plans, ordered by `order`. Mirrors fetchSubscriptionPlans().
+  /// Phase-5: served by GET /shop/plans.
   static Future<List<SubscriptionPlan>> fetchSubscriptionPlans() async {
-    final token = await AuthService.getValidIdToken();
-    final docs = await FirestoreRest.listDocuments(
-      'app_subscription_plans',
-      idToken: token,
-      pageSize: 100,
-    );
+    final docs = await CfApi.getShopPlans();
     final plans = docs
         .map(SubscriptionPlan.fromMap)
         .where((p) => p.isActive)
@@ -573,29 +568,14 @@ class SubscriptionService {
   }
 
   /// All of the current user's subscription requests, newest first.
-  /// Per-user index: rules deny LIST queries on app_subscriptions for
-  /// non-admins (resource.data is unavailable on lists), so the user's
-  /// subscription IDs are read from their own doc and each is fetched
-  /// with getDocument (which the rules allow for the owner).
+  /// Phase-5: GET /subscriptions/mine returns the caller's records in
+  /// one call (the server resolves the subscriptionIds index itself) —
+  /// and reading it is what applies expiry + the premium-mirror fix
+  /// server-side, so records arrive with their post-sweep status.
   static Future<List<SubscriptionRecord>> fetchMySubscriptionHistory(
       String uid) async {
-    final token = await AuthService.getValidIdToken();
-    final userDoc = await FirestoreRest.getDocument('users/$uid', idToken: token);
-    final ids = <String>[
-      for (final e in (userDoc?['subscriptionIds'] as List? ?? [])) e.toString(),
-    ];
-    if (ids.isEmpty) return [];
-    // v1.0.110: fetch the per-doc records IN PARALLEL (was a sequential
-    // for-loop — N round trips on the itel). Failures are skipped per-doc.
-    final docs = await Future.wait(
-      ids.map((sid) => FirestoreRest.getDocument('app_subscriptions/$sid',
-              idToken: token)
-          .then((doc) => doc == null
-              ? null
-              : SubscriptionRecord.fromMap(doc))
-          .catchError((_) => null)),
-    );
-    final records = docs.whereType<SubscriptionRecord>().toList();
+    final docs = await CfApi.getMySubscriptions();
+    final records = docs.map(SubscriptionRecord.fromMap).toList();
     records.sort((a, b) => _cmpDesc(a.submittedAt, b.submittedAt));
     return filterHistoryForDisplay(records);
   }
@@ -614,16 +594,6 @@ class SubscriptionService {
         .where((r) =>
             !(r.isGateway && r.status == SubscriptionStatus.cancelled))
         .toList();
-  }
-
-  /// The current user's most relevant subscription record (active, else
-  /// latest by submission). Mirrors fetchMySubscription().
-  static Future<SubscriptionRecord?> fetchMySubscription(String uid) async {
-    final history = await fetchMySubscriptionHistory(uid);
-    if (history.isEmpty) return null;
-    final current = currentActiveRecord(history);
-    if (current != null) return current;
-    return history.first;
   }
 
   /// The ACTIVE record the users/{uid} premium mirror describes.
@@ -655,22 +625,21 @@ class SubscriptionService {
     return best;
   }
 
-  /// Sweeps expired active subscriptions and re-derives the users/{uid}
-  /// premium mirror from whatever is still valid. Called opportunistically
-  /// from the Subscription page's load. Mirrors expireIfPastDue().
+  /// Reports the past-due active subscriptions in [history] (or in a
+  /// fresh history fetch). Called opportunistically from the Subscription
+  /// page's load. Mirrors expireIfPastDue().
   ///
-  /// Multiple `status == 'active'` records can coexist (approvals never
-  /// retire the previous one), so this expires EVERY past-due active — not
-  /// just the first one found — and then mirrors the last-approved remaining
-  /// active (the same record [currentActiveRecord] picks, and the one the
-  /// profile pill reads through the user doc). With no valid active left,
-  /// the premium flag is cleared. When nothing is past due, nothing is
-  /// written.
-  /// Returns the IDs it expired (so callers can patch an already-fetched
-  /// list instead of re-reading).
+  /// Phase-5: the sweep itself — flipping past-due records to `expired`
+  /// and re-deriving the users premium mirror from the last-approved
+  /// remaining active ([currentActiveRecord]) — happens SERVER-SIDE when
+  /// GET /subscriptions/mine is read, so this no longer writes anything.
+  /// It only derives which of the given records are past-due actives so
+  /// the caller can patch an already-fetched list to match the server's
+  /// post-sweep state instead of re-reading.
+  /// Returns the past-due active IDs.
   static Future<List<String>> expireIfPastDue(String uid,
       {List<SubscriptionRecord>? history}) async {
-    // v1.0.110: accept pre-fetched history to avoid a second N+1 fetch
+    // v1.0.110: accept pre-fetched history to avoid a second fetch
     // (the Subscription page already loads it in the same pass).
     final records = history ?? await fetchMySubscriptionHistory(uid);
     if (records.isEmpty) return const [];
@@ -681,81 +650,35 @@ class SubscriptionService {
       final expiry = r.expiryDate;
       if (expiry != null && !expiry.isAfter(now)) expiredIds.add(r.id);
     }
-    if (expiredIds.isEmpty) return const [];
-    final remaining = records
-        .where((r) =>
-            r.status == SubscriptionStatus.active &&
-            !expiredIds.contains(r.id))
-        .toList();
-    final current = currentActiveRecord(remaining);
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.commitWrites(
-      [
-        for (final id in expiredIds)
-          FirestoreWrite(
-            'app_subscriptions/$id',
-            {
-              'status': 'expired',
-              'updatedAt': FirestoreRest.serverTimestamp(),
-            },
-            merge: true,
-          ),
-        if (current != null)
-          FirestoreWrite(
-            'users/$uid',
-            {
-              'isPremium': true,
-              'premiumPlanName': current.planName,
-              'premiumBillingCycle': current.billingCycle.name,
-              'premiumExpiryDate': current.expiryDate?.toIso8601String(),
-              'updatedAt': FirestoreRest.serverTimestamp(),
-            },
-            merge: true,
-          )
-        else
-          FirestoreWrite(
-            'users/$uid',
-            {
-              'isPremium': false,
-              'updatedAt': FirestoreRest.serverTimestamp(),
-            },
-            merge: true,
-          ),
-      ],
-      idToken: token,
-    );
     return expiredIds;
   }
 
-  /// One request by id. Mirrors fetchSubscriptionById().
+  /// One request by id. Mirrors fetchSubscriptionById(). Phase-5: the
+  /// record is the caller's own, so it is resolved from
+  /// GET /subscriptions/mine (which also applies the server expiry).
   static Future<SubscriptionRecord?> fetchSubscriptionById(String id) async {
-    final token = await AuthService.getValidIdToken();
-    final doc =
-        await FirestoreRest.getDocument('app_subscriptions/$id', idToken: token);
-    if (doc == null) return null;
-    return SubscriptionRecord.fromMap(doc);
+    final records = await fetchMySubscriptionHistory(
+        CfApi.currentUser?.uid ?? '');
+    for (final r in records) {
+      if (r.id == id) return r;
+    }
+    return null;
   }
 
   /// Lets the signed-in owner correct their own payment reference, receipt
   /// URL, or customer note. Mirrors updateMySubscriptionDetails().
+  /// Phase-5: PATCH /subscriptions/:id.
   static Future<void> updateMySubscriptionDetails(
     String id, {
     required String transactionRef,
     required String screenshotUrl,
     String? customerMessage,
   }) async {
-    final token = await AuthService.getValidIdToken();
-    await FirestoreRest.setDocument(
-      'app_subscriptions/$id',
-      {
-        'transactionRef': transactionRef,
-        'screenshotUrl': screenshotUrl,
-        'customerMessage': customerMessage,
-        'updatedAt': FirestoreRest.serverTimestamp(),
-      },
-      merge: true,
-      idToken: token,
-    );
+    await CfApi.patchSubscription(id, {
+      'transactionRef': transactionRef,
+      'screenshotUrl': screenshotUrl,
+      'customerMessage': customerMessage,
+    });
   }
 
   /// Yearly's discount against paying monthly for twelve months, computed

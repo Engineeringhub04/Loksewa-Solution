@@ -6,7 +6,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
-import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
 import 'package:loksewa_solution/widgets/gateway_popups.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
@@ -327,7 +327,9 @@ class _EsewaWebViewScreenState extends State<EsewaWebViewScreen>
     if (formUrl != null && formUrl.isNotEmpty) {
       String token = '';
       try {
-        token = await AuthService.getValidIdToken();
+        // Phase-5: the form is served by loksewa-api now — the header
+        // carries the CF access token, not the Firebase ID token.
+        token = CfApi.accessToken;
       } catch (_) {
         // Best-effort: the worker will 401 without it and the watchdog
         // below offers the Continue recovery.

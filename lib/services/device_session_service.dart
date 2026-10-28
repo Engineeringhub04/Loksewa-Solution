@@ -31,13 +31,10 @@ import 'dart:io';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../screens/auth/app_info_screen.dart';
-import 'auth_service.dart';
 import 'cf_api.dart';
-import 'firestore_rest.dart';
 
 /// Outcome of [DeviceSessionService.checkDeviceSessionForLogin].
 enum LoginSessionOutcome { ok, conflict }
@@ -81,7 +78,6 @@ class EvictionNotice {
 
 class DeviceSessionService {
   // ------------------------------------------------------------------ consts
-  static const _workerBase = 'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
   static const _evictionPushTitle = '🔐 New Sign-In Detected';
   static const _evictionNoticeKey = 'loksewa:deviceEviction:notice';
   static const _evictionNoticeMaxAgeMs = 24 * 60 * 60 * 1000;
@@ -321,11 +317,11 @@ class DeviceSessionService {
     try {
       final deviceId = await getDeviceId();
       await _writeClaim(uid);
-      // Best-effort push to the displaced phone via the legacy worker +
-      // Firestore token rows (push tokens have not migrated this round).
-      // The old holder's token row is no longer deleted here: the CF
-      // endpoints don't reveal the previous device id, and the row is the
-      // only address the notification has.
+      // Best-effort push to the displaced phone via the API's
+      // eviction-push endpoint (the server fans out over the D1 token
+      // registrations). The old holder's token row is not deleted here:
+      // the CF endpoints don't reveal the previous device id, and the
+      // row is the only address the notification has.
       await _notifyDisplacedDevice(uid, deviceId);
       _claimDeadline = 0;
       return true;
@@ -334,70 +330,38 @@ class DeviceSessionService {
     }
   }
 
-  /// Tells the displaced phone right now, over FCM via the Cloudflare worker.
-  ///
-  /// MUST be awaited by the caller BEFORE deleting the old token row — the
-  /// row is the only address we have for the displaced phone. (Race fix:
-  /// fire-and-forget let the delete win, so no push ever reached the old
-  /// device.)
+  /// Tells the displaced phone right now, over FCM via the worker.
   ///
   /// Differentiated messages (user request):
   /// - OTHER devices get the security alert ("🔐 New Sign-In Detected").
   /// - THIS device gets a confirmation ("✅ Signed In on This Device") for
   ///   the premium feel, plus an in-app toast from the caller.
-  /// Falls back to the old /send-to-uid broadcast if the token read fails.
+  ///
+  /// Phase-5: the token fan-out moved server-side — the app used to read
+  /// the Firestore push_tokens rows itself, split them self/other, and
+  /// POST each chunk to the old worker's /send (with a /send-to-uid
+  /// broadcast fallback). Now ONE POST /device-session/eviction-push
+  /// carries the uid, this device's id and the exact composed copy; the
+  /// server reads the D1 token registrations, splits and sends (and
+  /// owns the no-tokens fallback). No deepLink on either message — a
+  /// tap must open the app normally so splash runs the session check.
   static Future<void> _notifyDisplacedDevice(
       String uid, String selfDeviceId) async {
     try {
-        final name = await _userName(uid);
-        final who = name.trim().isEmpty ? 'there' : name.trim();
-        final idToken =
-            await AuthService.getValidIdToken().catchError((_) => '');
-        List<Map<String, dynamic>> tokenDocs = [];
-        try {
-          tokenDocs = await FirestoreRest.listDocuments(
-            'users/$uid/push_tokens',
-            idToken: idToken,
-            pageSize: 100,
-          );
-        } catch (_) {
-          // Fall through to the legacy broadcast below.
-        }
-        if (tokenDocs.isEmpty) {
-          await _sendToUid(uid, _evictionPushTitle,
-              'Hi $who, you were signed in on another device. Open the app.');
-          return;
-        }
-        final otherTokens = <String>[];
-        final selfTokens = <String>[];
-        for (final d in tokenDocs) {
-          final token = d['token']?.toString() ?? '';
-          if (token.isEmpty) continue;
-          final did = (d['deviceId']?.toString() ?? d['id']?.toString() ?? '');
-          if (did == selfDeviceId) {
-            selfTokens.add(token);
-          } else {
-            otherTokens.add(token);
-          }
-        }
-        // 1. Displaced devices → security alert.
-        if (otherTokens.isNotEmpty) {
-          await _sendToTokens(
-            otherTokens,
-            _evictionPushTitle,
-            evictionPushBody(who),
-          );
-        }
-        // 2. This device → confirmation (premium feel). No deepLink — tap
-        // opens the app normally.
-        if (selfTokens.isNotEmpty) {
-          await _sendToTokens(
-            selfTokens,
-            '✅ Signed In on This Device',
-            takeOverConfirmBody(who),
-          );
-        }
-      } catch (_) {}
+      final name = await _userName(uid);
+      final who = name.trim().isEmpty ? 'there' : name.trim();
+      await CfApi.postEvictionPush({
+        'uid': uid,
+        'selfDeviceId': selfDeviceId,
+        'userName': who,
+        'alertTitle': _evictionPushTitle,
+        'alertBody': evictionPushBody(who),
+        'confirmTitle': '✅ Signed In on This Device',
+        'confirmBody': takeOverConfirmBody(who),
+        'fallbackBody':
+            'Hi $who, you were signed in on another device. Open the app.',
+      });
+    } catch (_) {}
   }
 
   /// Security-alert body for the DISPLACED device.
@@ -409,43 +373,6 @@ class DeviceSessionService {
   @visibleForTesting
   static String takeOverConfirmBody(String who) =>
       'Hi $who, this device is now your active login. Your other device has been signed out.';
-
-  /// POSTs to {worker}/send with an explicit token list (500/chunk).
-  static Future<void> _sendToTokens(
-      List<String> tokens, String title, String body) async {
-    for (var i = 0; i < tokens.length; i += 500) {
-      final chunk = tokens.sublist(
-          i, i + 500 > tokens.length ? tokens.length : i + 500);
-      try {
-        await http
-            .post(
-              Uri.parse('$_workerBase/send'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'tokens': chunk,
-                'title': title,
-                'body': body,
-                // No deepLink on purpose — tap must open the app normally so
-                // splash runs the session check on its way to login.
-              }),
-            )
-            .timeout(const Duration(seconds: 10));
-      } catch (_) {}
-    }
-  }
-
-  /// Legacy fallback: broadcast via /send-to-uid (worker fans out itself).
-  static Future<void> _sendToUid(String uid, String title, String body) async {
-    try {
-      await http
-          .post(
-            Uri.parse('$_workerBase/send-to-uid'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'uid': uid, 'title': title, 'body': body}),
-          )
-          .timeout(const Duration(seconds: 10));
-    } catch (_) {}
-  }
 
   // ------------------------------------------------------- displaced-device
   /// True while a login screen is showing the takeover dialog.

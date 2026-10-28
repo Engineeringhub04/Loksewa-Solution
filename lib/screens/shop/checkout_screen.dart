@@ -35,11 +35,10 @@ import 'package:khalti_checkout_flutter/src/widget/khalti_webview.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/content_purchases.dart';
 import 'package:loksewa_solution/services/coupon_service.dart';
 import 'package:loksewa_solution/services/exam_purchases.dart';
-import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
 
 import 'package:loksewa_solution/services/purchase_refresh.dart';
@@ -282,7 +281,6 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
 
   Future<_CheckoutData> _load() async {
     final qp = GoRouterState.of(context).uri.queryParameters;
-    final token = await AuthService.getValidIdToken();
     final uid = AuthService.currentUser?.uid ?? '';
 
     final planId = qp['planId'];
@@ -300,19 +298,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         contentSubjectId.isNotEmpty;
     final flow = isContent ? 'content' : (isExam ? 'exam' : 'plan');
 
+    // Phase-5: every read below rides the loksewa-api — plans list,
+    // non-secret checkout settings, the exam-set row (Phase-2), the
+    // content detail (Phase-1 subjects endpoints) and the caller's own
+    // profile (GET /me). The Firestore reads retired here.
     final results = await Future.wait<dynamic>([
-      FirestoreRest.listDocuments('app_subscription_plans', idToken: token),
-      _fetchSettings(token),
-      isExam
-          ? FirestoreRest.getDocument('app_exam_sets/$examId', idToken: token)
-          : Future.value(null),
+      CfApi.getShopPlans(),
+      _fetchSettings(),
+      isExam ? CfApi.getExamSetRow(examId) : Future.value(null),
       isContent
-          ? _fetchContent(
-              contentType, contentSubjectId, contentId, contentUnitId, token)
+          ? _fetchContent(contentType, contentSubjectId, contentId,
+              contentUnitId)
           : Future.value(null),
       uid.isNotEmpty
-          ? FirestoreRest.getDocument('users/$uid', idToken: token)
-              .catchError((_) => null)
+          ? CfApi.getMe().catchError((_) => null)
           : Future.value(null),
     ]);
 
@@ -338,33 +337,20 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     if (contentDoc != null) contentDoc['id'] = contentId;
 
     // Course names from the user profile (mirrors profileStore.courseInfo).
+    // Phase-5: GET /profile/course-info replaces the three Firestore
+    // doc reads (course doc, nested subcourse doc, legacy flat doc) —
+    // the endpoint resolves all three shapes server-side.
     String? courseName;
     String? subcourseName;
     final courseId = '${userDoc?['courseId'] ?? ''}';
-    final subcourseId = '${userDoc?['subcourseId'] ?? ''}';
     if (courseId.isNotEmpty) {
       try {
-        final courseDoc = await FirestoreRest.getDocument(
-            'app_courses/$courseId',
-            idToken: token);
-        courseName = courseDoc?['name']?.toString();
+        final info = await CfApi.getProfileCourseInfo();
+        final cn = info?['courseName'] ?? '';
+        final scn = info?['subcourseName'] ?? '';
+        courseName = cn.isEmpty ? null : cn;
+        subcourseName = scn.isEmpty ? null : scn;
       } catch (_) {}
-      if (subcourseId.isNotEmpty) {
-        try {
-          final subDoc = await FirestoreRest.getDocument(
-              'app_courses/$courseId/subcourses/$subcourseId',
-              idToken: token);
-          subcourseName = subDoc?['name']?.toString();
-        } catch (_) {}
-        if (subcourseName == null) {
-          try {
-            final legacyDoc = await FirestoreRest.getDocument(
-                'app_subcourses/$subcourseId',
-                idToken: token);
-            subcourseName = legacyDoc?['name']?.toString();
-          } catch (_) {}
-        }
-      }
     }
 
     return _CheckoutData(
@@ -385,12 +371,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     );
   }
 
-  Future<_SettingsResult> _fetchSettings(String token) async {
+  Future<_SettingsResult> _fetchSettings() async {
     try {
-      final doc = await FirestoreRest.getDocument(
-          'app_subscription_settings/config',
-          idToken: token);
-      // Read succeeded (even a missing doc) — mirrors sourceAvailable: true.
+      // Phase-5: GET /shop/settings — the non-secret projection of the
+      // checkout settings (receiver/bank details stay server-side).
+      final doc = await CfApi.getShopSettings();
+      // Read succeeded (even an empty body) — mirrors sourceAvailable: true.
       return _SettingsResult(_normalizeSettings(doc), true);
     } catch (_) {
       // Resilient for normal users, like the React catch → DEFAULT_SETTINGS.
@@ -403,19 +389,83 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     String subjectId,
     String contentId,
     String? unitId,
-    String token,
   ) {
     debugPrint('checkout _fetchContent type=$type contentId=$contentId '
         'subjectId=$subjectId unitId=$unitId');
+    // Phase-5: the injectable adapters now resolve through the Phase-1
+    // subjects endpoints instead of Firestore doc reads (the token
+    // parameter of fetchCheckoutContent is vestigial — the API calls
+    // carry the CF Bearer themselves).
     return fetchCheckoutContent(
       type,
       contentId,
       unitId: unitId,
-      token: token,
-      getDoc: (path, t) => FirestoreRest.getDocument(path, idToken: t),
-      queryDocs: (collection, where) =>
-          ExamRest.runQuery(collection, where: where, limit: 100),
+      token: '',
+      getDoc: (path, t) => _checkoutContentDoc(path, subjectId, contentId),
+      queryDocs: (collection, where) => _checkoutSubjectsFallback(contentId),
     );
+  }
+
+  /// Resolves one checkout content "doc path" (the Firestore-shaped path
+  /// fetchCheckoutContent constructs) through the subjects endpoints:
+  /// - `app_subjects_details/{id}` → GET /subjects/:id
+  /// - `app_subjects_units_details/{id}` → the row inside
+  ///   GET /subjects/units?subjectId=…
+  /// - `app_subjects_unit-chapters_details/{id}` → the chapter nested in
+  ///   a unit row of the same units list
+  /// - `app_subjects_chapter_details/{id}` → the row inside
+  ///   GET /subjects/chapters?subjectId=…
+  Future<Map<String, dynamic>?> _checkoutContentDoc(
+    String path,
+    String subjectId,
+    String contentId,
+  ) async {
+    if (path == 'app_subjects_details/$contentId') {
+      final row = await CfApi.getSubjectDetail(contentId);
+      return row == null ? null : Map<String, dynamic>.of(row);
+    }
+    if (path == 'app_subjects_units_details/$contentId') {
+      final rows = await CfApi.getSubjectUnits(subjectId);
+      for (final r in rows) {
+        if ('${r['id']}' == contentId) return Map<String, dynamic>.of(r);
+      }
+      return null;
+    }
+    if (path == 'app_subjects_unit-chapters_details/$contentId') {
+      final rows = await CfApi.getSubjectUnits(subjectId);
+      for (final r in rows) {
+        final chapters = r['chapters'];
+        if (chapters is List) {
+          for (final ch in chapters) {
+            if (ch is Map && '${ch['id']}' == contentId) {
+              return Map<String, dynamic>.from(ch);
+            }
+          }
+        }
+      }
+      return null;
+    }
+    if (path == 'app_subjects_chapter_details/$contentId') {
+      final rows = await CfApi.getSubjectChapters(subjectId);
+      for (final r in rows) {
+        if ('${r['id']}' == contentId) return Map<String, dynamic>.of(r);
+      }
+      return null;
+    }
+    return null;
+  }
+
+  /// The subjects slug-scan fallback source: the subject-detail rows for
+  /// the course/subcourse pair encoded in [contentId]
+  /// (`<courseId>__<subcourseId>__<slug>`). Empty when the id does not
+  /// carry the pair — the scan then simply finds nothing, as before.
+  Future<List<Map<String, dynamic>>> _checkoutSubjectsFallback(
+      String contentId) async {
+    final parts = contentId.split('__');
+    if (parts.length < 2) return const [];
+    final rows =
+        await CfApi.getSubjectsList(courseId: parts[0], subcourseId: parts[1]);
+    return rows.map((r) => Map<String, dynamic>.of(r)).toList();
   }
 
   int _asInt(dynamic v) {
@@ -856,8 +906,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     // return_url as a query parameter. Khalti's payment_url lacks it, so
     // append it explicitly — otherwise the user gets stuck on the
     // "Payment received" page with no automatic return.
-    const khaltiReturnUrl =
-        'https://loksewa-push-worker.loksewasolutionapi.workers.dev/payments/khalti/return';
+    final khaltiReturnUrl = '${CfApi.baseUrl}/payments/khalti/return';
     final paymentUrlWithReturn =
         '$paymentUrl${paymentUrl.contains('?') ? '&' : '?'}return_url=${Uri.encodeComponent(khaltiReturnUrl)}';
     late final Khalti khalti;
@@ -1572,10 +1621,15 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     required num finalAmount,
     required String method,
   }) async {
-    final token = await AuthService.getValidIdToken();
     final plan = d.plan!;
     final id = '${uid}_${DateTime.now().millisecondsSinceEpoch}';
-    await FirestoreRest.setDocument('app_subscriptions/$id', {
+    // Phase-5: POST /subscriptions replaces the Firestore doc write AND
+    // the users-doc subscriptionIds index append (the server owns the
+    // row; /subscriptions/mine resolves the history directly). The
+    // client-built id is sent along so the admin deep link below stays
+    // stable; the server row's id wins when it echoes one.
+    final created = await CfApi.createSubscription({
+      'id': id,
       'uid': uid,
       'userName': userName,
       'userEmail': userEmail,
@@ -1597,28 +1651,9 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       'rejectionReason': null,
       'startDate': null,
       'expiryDate': null,
-      'createdAt': FirestoreRest.serverTimestamp(),
-      'updatedAt': FirestoreRest.serverTimestamp(),
-    }, idToken: token);
-    // Index the subscription ID on the user's doc for per-user history.
-    // Rules deny LIST queries on app_subscriptions for non-admins, so the
-    // app resolves the user's IDs from their own doc and getDocuments each.
-    // Best-effort: the subscription itself is saved; index failure only
-    // affects the history list (the admin backfill can repair it).
-    try {
-      final userDoc = await FirestoreRest.getDocument('users/$uid', idToken: token);
-      final ids = <String>[
-        for (final e in (userDoc?['subscriptionIds'] as List? ?? [])) e.toString(),
-      ];
-      if (!ids.contains(id)) {
-        ids.add(id);
-        await FirestoreRest.updateDocument(
-            'users/$uid', {'subscriptionIds': ids},
-            idToken: token);
-      }
-    } catch (_) {
-      // Best-effort only; never blocks checkout.
-    }
+    });
+    final effectiveId =
+        '${created['id'] ?? ''}'.isNotEmpty ? '${created['id']}' : id;
     // Fire-and-forget admin push — the subscription request is recorded;
     // never blocks the checkout flow.
     final buyerName = (userName ?? '').trim();
@@ -1627,14 +1662,18 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
       title: 'New Subscription Request 🎫',
       body:
           '${buyerName.isEmpty ? 'Someone' : buyerName} requested the ${plan['name']} plan — Rs. $finalAmount',
-      deepLink: '/admin/subscriptions/$id',
+      deepLink: '/admin/subscriptions/$effectiveId',
     ));
     if (_couponApplied != null) {
-      await CouponService.incrementCouponUsage(_couponApplied!.code);
-      if (uid.isNotEmpty) {
-        await CouponService.incrementCouponUsageForUser(
-            _couponApplied!.code, uid);
-      }
+      // ONE redeem call — the endpoint creates the usage row and bumps
+      // the counter atomically. (The old code issued two separate
+      // raw-:commit writes here, one per usage half; the Phase-5
+      // contract merges them into this single call.)
+      await CouponService.incrementCouponUsage(
+        _couponApplied!.code,
+        userId: uid.isEmpty ? null : uid,
+        planId: '${plan['id'] ?? ''}',
+      );
     }
   }
 

@@ -3,7 +3,6 @@ import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'cf_api.dart';
 import 'device_session_service.dart';
-import 'firestore_rest.dart';
 import 'prefs_service.dart';
 import 'push_notification_service.dart';
 
@@ -515,11 +514,21 @@ class AuthService {
 
   static Future<void> logout() async {
     final uid = currentUser?.uid;
-    // Capture the ID token BEFORE clearing the session — onSignOut needs it
-    // for the Firestore token move (after _session = null the token is gone).
+    // Capture the ID token BEFORE clearing the session (kept for the
+    // legacy onSignOut signature; the token move itself is CF-based now).
     final idToken = await getValidIdToken().catchError((_) => '');
     _session = null;
     _cfUser = null;
+    if (uid != null) {
+      // Phase-5: move the FCM token registration from this user to the
+      // anonymous device registration FIRST, while the CF session is
+      // still alive — the DELETE /push-tokens needs its Bearer (after
+      // the session is cleared the registration could no longer be
+      // removed). The auth mirror above is already null, so the
+      // re-register lands as a guest, exactly like before.
+      await PushNotificationService.onSignOut(uid, idToken: idToken)
+          .catchError((_) {});
+    }
     // Phase-3: revoke the CF refresh token server-side BEFORE the local
     // CF session is cleared (best-effort — a failed revoke never blocks
     // the sign-out; the token simply expires on its own schedule).
@@ -538,8 +547,6 @@ class AuthService {
       // Release the one-device claim (best effort) — only when it still
       // names THIS device, so a displaced phone never wipes the new holder.
       await DeviceSessionService.releaseDeviceSession(uid).catchError((_) {});
-      // Move FCM token from user collection to anonymous (best effort).
-      await PushNotificationService.onSignOut(uid, idToken: idToken).catchError((_) {});
     }
     DeviceSessionService.resetCaches();
   }
@@ -555,13 +562,13 @@ class AuthService {
     // below, so it is best-effort like everything else in this method.
     await CfApi.deleteAccount().catchError((_) {});
     final idToken = await getValidIdToken().catchError((_) => '');
-    final uid = currentUser?.uid;
     if (idToken.isNotEmpty) {
-      if (uid != null) {
-        // Drop this device's session claim while we still have auth.
-        await FirestoreRest.deleteDocument('users/$uid/session/active')
-            .catchError((_) {});
-      }
+      // Phase-5: the legacy Firestore claim-doc delete
+      // (users/{uid}/session/active) is RETIRED — no current code path
+      // writes or reads that document (the device claim has been
+      // CF-only since Round-1, and the CF self-delete above already
+      // removes the account's server-side session rows). It was pure
+      // legacy hygiene for pre-Round-1 app versions.
       try {
         await _identityRequest('delete', {'idToken': idToken});
       } catch (_) {

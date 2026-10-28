@@ -1,21 +1,48 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'auth_service.dart';
+import 'cf_api.dart';
 
-/// Client for the Cloudflare worker's /payments endpoints.
+/// Client for the loksewa-api worker's /payments endpoints.
 ///
 /// Security model: the worker holds every gateway secret (merchant secret
 /// keys, HMAC signing). The app only ever receives *signed init payloads*
 /// and forwards the gateway's proof back for server-side verification.
 /// A faked "payment success" inside the app can never activate a
 /// subscription — only the worker's server-to-server verification can.
+///
+/// Phase-5: the payments module moved from the old push worker to
+/// loksewa-api, and every call now carries the CF access token (Bearer)
+/// instead of the Firebase ID token. Payload/response shapes unchanged.
 class GatewayPaymentService {
-  static const String _base =
-      'https://loksewa-push-worker.loksewasolutionapi.workers.dev';
+  static String get _base => CfApi.baseUrl;
+
+  /// Injectable HTTP client. Tests set it via [setTestClient]; production
+  /// code always falls back to `http.Client()`.
+  static http.Client? _testClient;
+
+  /// Overrides the HTTP client (tests only).
+  static void setTestClient(http.Client? client) => _testClient = client;
+
+  static Future<http.Response> _post(
+    String path,
+    Map<String, dynamic> body, {
+    required Duration timeout,
+  }) {
+    final client = _testClient ?? http.Client();
+    return client
+        .post(
+          Uri.parse('$_base$path'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${CfApi.accessToken}',
+          },
+          body: jsonEncode(body),
+        )
+        .timeout(timeout);
+  }
 
   /// Ask the worker to initiate a gateway payment.
   ///
@@ -44,30 +71,24 @@ class GatewayPaymentService {
     String? contentUnitId,
     String? couponCode,
   }) async {
-    final token = await AuthService.getValidIdToken();
-    final res = await http
-        .post(
-          Uri.parse('$_base/payments/init'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'gateway': gateway,
-            'purchaseType': purchaseType,
-            if (planId != null && planId.isNotEmpty) 'planId': planId,
-            if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
-            if (contentType != null && contentType.isNotEmpty)
-              'contentType': contentType,
-            if (contentUnitId != null && contentUnitId.isNotEmpty)
-              'contentUnitId': contentUnitId,
-            if (purchaseType == 'subscription' &&
-                couponCode != null &&
-                couponCode.trim().isNotEmpty)
-              'couponCode': couponCode.trim(),
-          }),
-        )
-        .timeout(const Duration(seconds: 30));
+    final res = await _post(
+      '/payments/init',
+      {
+        'gateway': gateway,
+        'purchaseType': purchaseType,
+        if (planId != null && planId.isNotEmpty) 'planId': planId,
+        if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
+        if (contentType != null && contentType.isNotEmpty)
+          'contentType': contentType,
+        if (contentUnitId != null && contentUnitId.isNotEmpty)
+          'contentUnitId': contentUnitId,
+        if (purchaseType == 'subscription' &&
+            couponCode != null &&
+            couponCode.trim().isNotEmpty)
+          'couponCode': couponCode.trim(),
+      },
+      timeout: const Duration(seconds: 30),
+    );
     Map<String, dynamic> body;
     try {
       body = jsonDecode(res.body) as Map<String, dynamic>;
@@ -95,31 +116,25 @@ class GatewayPaymentService {
     String? couponCode,
     required Map<String, dynamic> proof,
   }) async {
-    final token = await AuthService.getValidIdToken();
-    final res = await http
-        .post(
-          Uri.parse('$_base/payments/verify'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'gateway': gateway,
-            'purchaseType': purchaseType,
-            if (planId != null && planId.isNotEmpty) 'planId': planId,
-            if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
-            if (contentType != null && contentType.isNotEmpty)
-              'contentType': contentType,
-            if (contentUnitId != null && contentUnitId.isNotEmpty)
-              'contentUnitId': contentUnitId,
-            if (purchaseType == 'subscription' &&
-                couponCode != null &&
-                couponCode.trim().isNotEmpty)
-              'couponCode': couponCode.trim(),
-            'proof': proof,
-          }),
-        )
-        .timeout(const Duration(seconds: 45));
+    final res = await _post(
+      '/payments/verify',
+      {
+        'gateway': gateway,
+        'purchaseType': purchaseType,
+        if (planId != null && planId.isNotEmpty) 'planId': planId,
+        if (itemId != null && itemId.isNotEmpty) 'itemId': itemId,
+        if (contentType != null && contentType.isNotEmpty)
+          'contentType': contentType,
+        if (contentUnitId != null && contentUnitId.isNotEmpty)
+          'contentUnitId': contentUnitId,
+        if (purchaseType == 'subscription' &&
+            couponCode != null &&
+            couponCode.trim().isNotEmpty)
+          'couponCode': couponCode.trim(),
+        'proof': proof,
+      },
+      timeout: const Duration(seconds: 45),
+    );
     Map<String, dynamic> decoded;
     try {
       decoded = jsonDecode(res.body) as Map<String, dynamic>;
@@ -143,21 +158,15 @@ class GatewayPaymentService {
     required String transactionUuid,
     String purchaseType = 'subscription',
   }) async {
-    final token = await AuthService.getValidIdToken();
-    final res = await http
-        .post(
-          Uri.parse('$_base/payments/recheck'),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode({
-            'gateway': gateway,
-            'transactionUuid': transactionUuid,
-            'purchaseType': purchaseType,
-          }),
-        )
-        .timeout(const Duration(seconds: 45));
+    final res = await _post(
+      '/payments/recheck',
+      {
+        'gateway': gateway,
+        'transactionUuid': transactionUuid,
+        'purchaseType': purchaseType,
+      },
+      timeout: const Duration(seconds: 45),
+    );
     try {
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (_) {
@@ -176,21 +185,15 @@ class GatewayPaymentService {
     String purchaseType = 'subscription',
   }) async {
     try {
-      final token = await AuthService.getValidIdToken();
-      await http
-          .post(
-            Uri.parse('$_base/payments/cancel'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-            body: jsonEncode({
-              'gateway': gateway,
-              'transactionUuid': transactionUuid,
-              'purchaseType': purchaseType,
-            }),
-          )
-          .timeout(const Duration(seconds: 10));
+      await _post(
+        '/payments/cancel',
+        {
+          'gateway': gateway,
+          'transactionUuid': transactionUuid,
+          'purchaseType': purchaseType,
+        },
+        timeout: const Duration(seconds: 10),
+      );
     } catch (e) {
       // Best-effort only.
     }
@@ -257,19 +260,11 @@ class GatewayPaymentService {
   /// [GatewayException] on failure.
   static Future<void> deleteRequest(String subId,
       {String purchaseType = 'subscription'}) async {
-    const url = '$_base/payments/delete-request';
-    final token = await AuthService.getValidIdToken();
-    final res = await http
-        .post(
-          Uri.parse(url),
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body:
-              jsonEncode({'subId': subId, 'purchaseType': purchaseType}),
-        )
-        .timeout(const Duration(seconds: 30));
+    final res = await _post(
+      '/payments/delete-request',
+      {'subId': subId, 'purchaseType': purchaseType},
+      timeout: const Duration(seconds: 30),
+    );
     Map<String, dynamic> body;
     try {
       body = jsonDecode(res.body) as Map<String, dynamic>;

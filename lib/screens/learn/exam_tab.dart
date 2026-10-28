@@ -6,10 +6,10 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_purchases.dart';
 import '../../services/exam_service.dart' hide UserProfile;
 import '../../services/purchase_refresh.dart';
-import '../../services/profile_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/preloading.dart';
@@ -118,25 +118,57 @@ class _ExamTabState extends State<ExamTab> {
     super.dispose();
   }
 
-  String? get _subcourseId {
-    final store = ProfileStore.instance;
-    return store.courseInfo?.subcourseId ?? store.profile?.subcourseId;
-  }
+  // Phase-2: course scope, premium flag and the header label come from
+  // the CF API (GET /me + GET /courses), loaded once per shell load —
+  // the tab no longer warms the Firestore ProfileStore (Home pattern).
+  String? _courseId;
+  String? _cfSubcourseId;
+  String _subcourseLabelText = '';
+  bool _premium = false;
 
-  String get _subcourseLabel {
-    final store = ProfileStore.instance;
-    return store.courseInfo?.subcourseName ??
-        store.courseInfo?.courseName ??
-        '';
-  }
+  String? get _subcourseId => _cfSubcourseId;
 
-  bool _premiumActive(UserProfile? profile) {
-    if (profile == null || !profile.isPremium) return false;
-    final expiry = profile.premiumExpiryDate;
-    if (expiry == null || expiry.isEmpty) return true;
-    final parsed = DateTime.tryParse(expiry);
+  String get _subcourseLabel => _subcourseLabelText;
+
+  /// Premium state from the GET /me row — mirrors the old profile check
+  /// exactly: isPremium must be set; an absent/empty expiry means
+  /// active; a present-but-unparseable expiry means expired; otherwise
+  /// the expiry must be in the future.
+  bool _premiumActiveFromMe(Map<String, dynamic>? me) {
+    if (me == null || !CfJson.asBool(me['isPremium'])) return false;
+    final raw = me['premiumExpiryDate'];
+    if (raw == null || (raw is String && raw.isEmpty)) return true;
+    final parsed = CfJson.asDateTime(raw);
     if (parsed == null) return false;
     return parsed.isAfter(DateTime.now());
+  }
+
+  /// Header label: the subcourse's display name, else the course's
+  /// (GET /courses rows; `name` first, `nameNe` fallback — the old
+  /// fetchUserCourseInfo order).
+  Future<String> _resolveSubcourseLabel(
+      String courseId, String subcourseId) async {
+    try {
+      final data = await CfApi.getCourses();
+      String nameOf(List<Map<String, dynamic>> rows, String id) {
+        for (final r in rows) {
+          if ((r['id'] ?? '').toString() == id) {
+            final n = (r['name'] ?? r['nameNe'] ?? '').toString().trim();
+            if (n.isNotEmpty) return n;
+          }
+        }
+        return '';
+      }
+
+      if (subcourseId.isNotEmpty) {
+        final sub = nameOf(data.subcourses, subcourseId);
+        if (sub.isNotEmpty) return sub;
+      }
+      if (courseId.isNotEmpty) return nameOf(data.courses, courseId);
+      return '';
+    } catch (_) {
+      return '';
+    }
   }
 
   /// Full refresh — app start and pull-to-refresh only.
@@ -164,18 +196,28 @@ class _ExamTabState extends State<ExamTab> {
   }
 
   /// Provinces + sections + profile — section/province independent.
+  /// Phase-2: the profile facts (course scope + premium) come from
+  /// GET /me; NOTE-9 passes the selected scope into fetchExamProvinces
+  /// so out-of-scope provinces never render.
   Future<void> _loadShell() async {
-    final store = ProfileStore.instance;
-    final uid = AuthService.currentUser?.uid;
-    if (uid != null && uid.isNotEmpty) {
-      await store.load(uid);
+    Map<String, dynamic>? me;
+    try {
+      me = await CfApi.getMe();
+    } catch (_) {
+      me = null;
     }
-    final profile = store.profile;
-    final courseId = store.courseInfo?.courseId ?? profile?.courseId;
+    final rawCourseId = (me?['courseId'] ?? '').toString();
+    final rawSubcourseId = (me?['subcourseId'] ?? '').toString();
+    _courseId = rawCourseId.isEmpty ? null : rawCourseId;
+    _cfSubcourseId = rawSubcourseId.isEmpty ? null : rawSubcourseId;
+    _premium = _premiumActiveFromMe(me);
+    _subcourseLabelText =
+        await _resolveSubcourseLabel(rawCourseId, rawSubcourseId);
+    final courseId = _courseId;
     final subcourseId = _subcourseId;
 
     final results = await Future.wait([
-      fetchExamProvinces(),
+      fetchExamProvinces(courseId: courseId, subcourseId: subcourseId),
       fetchExamSections(courseId: courseId, subcourseId: subcourseId),
     ]);
     final provinces = results[0] as List<ExamProvince>;
@@ -240,9 +282,7 @@ class _ExamTabState extends State<ExamTab> {
       _error = null;
     });
     try {
-      final store = ProfileStore.instance;
       final uid = AuthService.currentUser?.uid;
-      final profile = store.profile;
       final subcourseId = _subcourseId;
       final sectionId = _sectionId;
 
@@ -295,7 +335,7 @@ class _ExamTabState extends State<ExamTab> {
         pendingIds: pendingIds,
         answers: answers,
         pendingBySet: pendingBySet,
-        premium: _premiumActive(profile),
+        premium: _premium,
       );
       _sectionCache[key] = cache;
       // Warm the rules session-cache for the visible sets' own contexts
@@ -1728,7 +1768,11 @@ class _RulesDialogContentState extends State<_RulesDialogContent> {
                                 borderRadius:
                                     BorderRadius.circular(10),
                               ),
-                              child: Icon(Icons.shield_outlined,
+                              // NOTE-7: each card shows its OWN icon
+                              // (the stored Ionicon name, mapped to a
+                              // Material icon; shield when unknown).
+                              child: Icon(
+                                  examRuleIconData(rules[i].icon),
                                   size: 15, color: accent),
                             ),
                             const SizedBox(width: 10),

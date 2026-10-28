@@ -14,9 +14,8 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/profile_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
@@ -242,13 +241,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
     _examSetId = qp['examSetId'];
     _reapplyFromId = qp['reapplyFrom'];
     try {
-      final token = await AuthService.getValidIdToken();
       final user = AuthService.currentUser;
       _nameCtrl.text = user?.displayName ?? '';
       if (_editId != null && _editId!.isNotEmpty) {
-        final a = await FirestoreRest.getDocument(
-            'app_exam_answers/$_editId',
-            idToken: token);
+        // Phase-2: GET /exam-answers/:id (was a Firestore doc read).
+        final a = await CfApi.getExamAnswer(_editId!);
         _existingAnswer = a;
         // One-edit gate (v1.0.120): owner + still pending + inside the
         // 1-hour window + the one edit unused. A blocked doc never
@@ -263,26 +260,14 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
         _previewUrl = a?['pdfUrl']?.toString();
         _nameCtrl.text = a?['studentName']?.toString() ?? _nameCtrl.text;
       } else if (_examSetId != null && _examSetId!.isNotEmpty) {
-        // Duplicate guard via the per-user index: rules deny LIST queries
-        // on app_exam_answers for non-admins, so resolve the user's answer
-        // IDs from their own doc and getDocument each.
-        // v1.0.120: the set doc and the user doc are independent — load
-        // them together; the form then renders immediately and the
-        // duplicate scan runs concurrently, gating only Submit.
-        final results = await Future.wait([
-          FirestoreRest.getDocument('app_exam_sets/$_examSetId',
-              idToken: token),
-          FirestoreRest.getDocument('users/${user?.uid}',
-              idToken: token),
-        ]);
-        _examSet = results[0];
-        final userDoc = results[1];
-        final ids = <String>[
-          for (final e in (userDoc?['examAnswerIds'] as List? ?? []))
-            e.toString(),
-        ];
+        // Duplicate guard. Phase-2: the set doc comes from
+        // GET /exam/sets/:id and the scan reads GET /exam-answers/mine
+        // (the worker resolves the per-user index server-side).
+        // The form renders immediately; the duplicate scan runs
+        // concurrently, gating only Submit (v1.0.120 render-first).
+        _examSet = await CfApi.getExamSetRow(_examSetId!);
         _duplicateCheckPending = true;
-        unawaited(_runDuplicateScan(ids, token));
+        unawaited(_runDuplicateScan());
       }
     } catch (_) {
       if (mounted) {
@@ -298,11 +283,11 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   }
 
   /// The duplicate guard, run concurrently with the form (v1.0.120):
-  /// the user's answer docs are fetched IN PARALLEL; when one matches
-  /// this exam set, the student is routed to that existing submission
-  /// (via the stack-preserving landing — a bare go() would leave the
-  /// answer page as the root and Back would close the app). Otherwise
-  /// the scan simply clears and Submit unlocks.
+  /// when one of the user's answers matches this exam set, the student
+  /// is routed to that existing submission (via the stack-preserving
+  /// landing — a bare go() would leave the answer page as the root and
+  /// Back would close the app). Otherwise the scan simply clears and
+  /// Submit unlocks.
   ///
   /// v1.0.125: with re-apply, a set can hold several submissions — the
   /// scan judges the LATEST match. When the screen was opened in
@@ -310,37 +295,26 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
   /// submission, the scan clears instead and the submit stamps the
   /// new doc as a re-application of it. A newer live submission (the
   /// student already re-applied) still routes to its page.
-  Future<void> _runDuplicateScan(List<String> ids, String token) async {
+  Future<void> _runDuplicateScan() async {
     try {
-      final docs = await Future.wait([
-        for (final aid in ids)
-          () async {
-            try {
-              return await FirestoreRest.getDocument(
-                  'app_exam_answers/$aid',
-                  idToken: token);
-            } catch (_) {
-              // Skip docs that fail to load.
-              return null;
-            }
-          }(),
-      ]);
+      final rows = await CfApi.getMyExamAnswers();
       if (!mounted) return;
       String? latestId;
       var latestMillis = -1;
-      for (var i = 0; i < ids.length; i++) {
-        final d = docs[i];
-        if (d == null || d['examSetId']?.toString() != _examSetId) {
+      for (var i = 0; i < rows.length; i++) {
+        final d = rows[i];
+        if (d['examSetId']?.toString() != _examSetId) {
           continue;
         }
         final millis =
             DateTime.tryParse(d['createdAt']?.toString() ?? '')
                     ?.millisecondsSinceEpoch ??
                 0;
-        // ids are append-ordered: on equal timestamps the later id wins.
+        // Rows arrive in the user's index order: on equal timestamps
+        // the later row wins.
         if (millis >= latestMillis) {
           latestMillis = millis;
-          latestId = ids[i];
+          latestId = d['id']?.toString();
         }
       }
       if (latestId != null) {
@@ -409,12 +383,45 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
     if (confirmed == true && mounted) _onSubmitSuccess();
   }
 
-  /// Runs the Firestore write. Returns true on success. Fire-and-forget
+  /// The user's enrolled course/subcourse names for the Discord alert.
+  /// Phase-2: scope from GET /me, names from GET /courses (`name`,
+  /// falling back to `nameNe`) — the facts the old fetchUserCourseInfo
+  /// read from Firestore. Best-effort: blanks on any failure.
+  Future<({String courseName, String subcourseName})>
+      _userCourseNames() async {
+    try {
+      final me = await CfApi.getMe();
+      final courseId = (me?['courseId'] ?? '').toString();
+      final subcourseId = (me?['subcourseId'] ?? '').toString();
+      if (courseId.isEmpty) {
+        return (courseName: '', subcourseName: '');
+      }
+      final data = await CfApi.getCourses();
+      String pick(List<Map<String, dynamic>> rows, String id) {
+        for (final r in rows) {
+          if ((r['id'] ?? '').toString() == id) {
+            final n = (r['name'] ?? r['nameNe'] ?? '').toString().trim();
+            if (n.isNotEmpty) return n;
+          }
+        }
+        return '';
+      }
+
+      return (
+        courseName: pick(data.courses, courseId),
+        subcourseName:
+            subcourseId.isEmpty ? '' : pick(data.subcourses, subcourseId),
+      );
+    } catch (_) {
+      return (courseName: '', subcourseName: '');
+    }
+  }
+
+  /// Runs the answer write. Returns true on success. Fire-and-forget
   /// Discord admin notify on success (never blocks the submission).
   Future<bool> _submit() async {
     setState(() => _submitting = true);
     try {
-      final token = await AuthService.getValidIdToken();
       final user = AuthService.currentUser;
       final uid = user?.uid ?? '';
       if (_editId != null && _editId!.isNotEmpty) {
@@ -447,12 +454,9 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           backfill('subcourseName', names.subcourseName);
           backfill('sectionName', names.sectionName);
         }
-        await FirestoreRest.setDocument(
-          'app_exam_answers/$_editId',
-          patch,
-          merge: true,
-          idToken: token,
-        );
+        // Phase-2: PATCH /exam-answers/:id (merge semantics, same
+        // fields; the server rejects grading fields, none are sent).
+        await CfApi.patchExamAnswer(_editId!, patch);
         _doneId = _editId;
       } else {
         final id = '${uid}_${_examSetId}_${DateTime.now().millisecondsSinceEpoch}';
@@ -471,9 +475,14 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           },
           examSet: _examSet,
         );
-        await FirestoreRest.setDocument(
-          'app_exam_answers/$id',
+        // Phase-2: POST /exam-answers — the server stores the doc and
+        // appends the id to the user's examAnswerIds index (that
+        // best-effort client append is gone). The client-generated id
+        // keeps the historical `{uid}_{setId}_{epochMs}` shape; the
+        // server's returned id wins when it answers one.
+        final created = await CfApi.postExamAnswer(
           {
+            'id': id,
             'uid': uid,
             'studentName': _nameCtrl.text.trim(),
             'profileName': user?.displayName,
@@ -505,31 +514,9 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
               'previousAnswerId': _previousAnswerId,
             },
           },
-          idToken: token,
         );
-        _doneId = id;
-        // Index the answer ID on the user's doc for per-user history.
-        // Rules deny LIST queries on app_exam_answers for non-admins, so
-        // the app resolves the user's IDs from their own doc and
-        // getDocuments each. Best-effort: the answer itself is saved;
-        // index failure only affects the history list (admin backfill
-        // can repair it).
-        try {
-          final uDoc = await FirestoreRest.getDocument('users/$uid',
-              idToken: token);
-          final aIds = <String>[
-            for (final e in (uDoc?['examAnswerIds'] as List? ?? []))
-              e.toString(),
-          ];
-          if (!aIds.contains(id)) {
-            aIds.add(id);
-            await FirestoreRest.updateDocument(
-                'users/$uid', {'examAnswerIds': aIds},
-                idToken: token);
-          }
-        } catch (_) {
-          // Best-effort only; never blocks the submit flow.
-        }
+        final serverId = (created['id'] ?? '').toString();
+        _doneId = serverId.isNotEmpty ? serverId : id;
         // Admin push ping — fire-and-forget, never blocks. (Edit mode is
         // excluded, same as the Discord alert below.)
         final answerTitle = (_examSet?['title'] ?? '').toString();
@@ -537,21 +524,21 @@ class _UploadAnswerScreenState extends State<UploadAnswerScreen> {
           kind: 'exam_answer',
           title: 'Answer Submitted ✍️',
           body: '${_nameCtrl.text.trim()} submitted an answer for "$answerTitle"',
-          deepLink: '/admin/exam-answer/$id',
+          deepLink: '/admin/exam-answer/$_doneId',
         ));
         // Admin Discord alert — best-effort, never blocks.
         // React parity (upload.tsx): course/subcourse come from the USER's
-        // profile courseInfo, not the exam set — theory sets carry no
+        // enrolled course, not the exam set — theory sets carry no
         // courseName, which is why Discord showed "-".
-        final courseInfo = await fetchUserCourseInfo(uid);
+        final courseInfo = await _userCourseNames();
         unawaited(notifyExamAnswerSubmitted(
           studentName: _nameCtrl.text.trim(),
-          courseName:
-              (courseInfo?.courseName ?? _examSet?['courseName'] ?? '')
-                  .toString(),
-          subcourseName:
-              (courseInfo?.subcourseName ?? _examSet?['subcourseName'] ?? '')
-                  .toString(),
+          courseName: courseInfo.courseName.isNotEmpty
+              ? courseInfo.courseName
+              : (_examSet?['courseName'] ?? '').toString(),
+          subcourseName: courseInfo.subcourseName.isNotEmpty
+              ? courseInfo.subcourseName
+              : (_examSet?['subcourseName'] ?? '').toString(),
           examSetTitle: (_examSet?['title'] ?? '').toString(),
           message: _msgCtrl.text.trim(),
           pdfUrl: _previewUrl ?? '',

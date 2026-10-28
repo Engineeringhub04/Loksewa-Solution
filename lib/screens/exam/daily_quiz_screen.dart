@@ -6,8 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
-import '../../services/firestore_rest.dart';
 import '../../services/theme_service.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
@@ -387,6 +387,32 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
         answers: answers,
         timeTakenSeconds: timeTaken,
       );
+    } on DailyTestAlreadyAttemptedException {
+      // Phase-2: the server refused the save (409) because a result for
+      // this model already exists — run the SAME already-attempted path
+      // as the boot guard: toast + land on the summary with the stored
+      // result (never a second save, never the error toast).
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      showToast(context, 'You have already completed this model.',
+          ToastVariant.info);
+      _allowPop = true;
+      DailyTestResult? existing;
+      try {
+        existing = await fetchDailyTestResultForModel(uid, model.id);
+      } catch (_) {
+        // Fall back to this attempt's own answers for the summary.
+      }
+      if (!mounted) return;
+      final uri = Uri(
+        path: '/daily-test/${model.id}/summary',
+        queryParameters: {
+          'answers': jsonEncode(existing?.answers ?? answers),
+          'timeTaken': '${existing?.timeTakenSeconds ?? timeTaken}',
+        },
+      );
+      context.replace(uri.toString());
+      return;
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -999,10 +1025,8 @@ class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      // Phase-2: the Phase-1 bookmarks API (was a Firestore doc read).
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -1011,10 +1035,8 @@ class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
     if (_busy || widget.uid.isEmpty) return;
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final path = 'users/${widget.uid}/bookmarks/$_docId';
       if (_saved) {
-        await FirestoreRest.deleteDocument(path, idToken: idToken);
+        await CfApi.deleteBookmark(_docId);
         if (!mounted) return;
         setState(() {
           _saved = false;
@@ -1023,9 +1045,7 @@ class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
         showToast(context, 'Bookmark removed.', ToastVariant.info);
         return;
       }
-      final rows = await FirestoreRest.listDocuments(
-          'users/${widget.uid}/bookmarks',
-          idToken: idToken);
+      final rows = await CfApi.getBookmarks();
       if (rows.length >= _freeLimit && !widget.isPro) {
         if (!mounted) return;
         setState(() => _busy = false);
@@ -1033,8 +1053,8 @@ class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
         return;
       }
       final q = widget.model.questions[widget.index];
-      await FirestoreRest.setDocument(
-        path,
+      await CfApi.saveBookmark(
+        _docId,
         {
           'context': 'daily-test',
           'kind': 'question',
@@ -1052,7 +1072,6 @@ class _QuestionBookmarkButtonState extends State<_QuestionBookmarkButton> {
           },
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
-        idToken: idToken,
       );
       if (!mounted) return;
       setState(() {

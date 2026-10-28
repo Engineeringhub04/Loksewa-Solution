@@ -15,9 +15,9 @@
 //   one-row-per-set, and the detail page's Previous Submissions
 //   history.
 //
-// Firestore is fully mocked through FirestoreRest.setTestClient
-// (MockClient) with a seeded signed-in session — the
-// exam_answer_v120_test pattern.
+// Network is fully mocked through CfApi.setTestClient (MockClient)
+// with a seeded signed-in session — the exam_answer_v120_test pattern.
+// Phase-2: fixtures are plain CF JSON ({ok, row}/{ok, rows}).
 import 'dart:async';
 import 'dart:convert';
 
@@ -32,43 +32,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:loksewa_solution/screens/shop/exam_answer_screen.dart';
 import 'package:loksewa_solution/screens/shop/my_submissions_screen.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/pdf_download_dialog.dart';
 
-/// Encodes a plain field map as a Firestore REST document body.
-Map<String, dynamic> _doc(String path, Map<String, Object?> fields) {
-  final enc = <String, dynamic>{};
-  fields.forEach((k, v) {
-    if (v == null) {
-      enc[k] = {'nullValue': null};
-    } else if (v is String) {
-      enc[k] = {'stringValue': v};
-    } else if (v is bool) {
-      enc[k] = {'booleanValue': v};
-    } else if (v is int) {
-      enc[k] = {'integerValue': '$v'};
-    } else if (v is List) {
-      enc[k] = {
-        'arrayValue': {
-          'values': [for (final e in v) {'stringValue': '$e'}]
-        }
-      };
-    }
-  });
-  return {
-    'name': 'projects/p/databases/(default)/documents/$path',
-    'fields': enc,
-  };
-}
-
-/// Path-substring routes → response bodies, matched in insertion order.
+/// Path-substring routes → CF response bodies, matched in insertion
+/// order. Unmatched paths answer 404 {ok:false}.
 Map<String, Object> _routes = {};
 
-void _mockFirestore() {
-  FirestoreRest.setTestClient(MockClient((request) async {
+void _mockCf() {
+  CfApi.setTestClient(MockClient((request) async {
     final path = request.url.path;
     for (final entry in _routes.entries) {
       if (path.contains(entry.key)) {
@@ -76,7 +51,8 @@ void _mockFirestore() {
             utf8.encode(json.encode(entry.value)), 200);
       }
     }
-    return http.Response('{}', 404);
+    return http.Response.bytes(
+        utf8.encode(json.encode({'ok': false, 'error': 'not_found'})), 404);
   }));
 }
 
@@ -137,7 +113,7 @@ void main() {
   });
 
   tearDown(() {
-    FirestoreRest.setTestClient(null);
+    CfApi.setTestClient(null);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -588,39 +564,44 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'users/u1': _doc('users/u1', {
-          'examAnswerIds': ['a1', 'a2', 'a3'],
-        }),
-        'app_exam_answers/a1': _doc(
-            'app_exam_answers/a1',
-            answerFields(
-              status: 'reviewed',
-              setId: 's1',
-              title: 'Set One',
-              createdAt: '2026-10-01T10:00:00.000Z',
-              rejectionReason: 'Answer sheet is unreadable',
-              reviewedAt: '2026-10-02T10:00:00.000Z',
-            )),
-        'app_exam_answers/a2': _doc(
-            'app_exam_answers/a2',
-            answerFields(
-              status: 'pending',
-              setId: 's1',
-              title: 'Set One',
-              createdAt: '2026-10-05T10:00:00.000Z',
-            )),
-        'app_exam_answers/a3': _doc(
-            'app_exam_answers/a3',
-            answerFields(
-              status: 'reviewed',
-              setId: 's2',
-              title: 'Set Two',
-              createdAt: '2026-10-04T10:00:00.000Z',
-              reviewedAt: '2026-10-06T10:00:00.000Z',
-              passed: true,
-            )),
+        '/exam-answers/mine': {
+          'ok': true,
+          'rows': [
+            {
+              'id': 'a1',
+              ...answerFields(
+                status: 'reviewed',
+                setId: 's1',
+                title: 'Set One',
+                createdAt: '2026-10-01T10:00:00.000Z',
+                rejectionReason: 'Answer sheet is unreadable',
+                reviewedAt: '2026-10-02T10:00:00.000Z',
+              ),
+            },
+            {
+              'id': 'a2',
+              ...answerFields(
+                status: 'pending',
+                setId: 's1',
+                title: 'Set One',
+                createdAt: '2026-10-05T10:00:00.000Z',
+              ),
+            },
+            {
+              'id': 'a3',
+              ...answerFields(
+                status: 'reviewed',
+                setId: 's2',
+                title: 'Set Two',
+                createdAt: '2026-10-04T10:00:00.000Z',
+                reviewedAt: '2026-10-06T10:00:00.000Z',
+                passed: true,
+              ),
+            },
+          ],
+        },
       };
-      _mockFirestore();
+      _mockCf();
       await tester
           .pumpWidget(MaterialApp.router(routerConfig: routerFor('/exam-answer/my-submissions')));
       await _pumpUntil(tester, find.text('Set One'));
@@ -637,32 +618,36 @@ void main() {
         'detail: latest in full + Previous Submissions history + Re-Apply',
         (tester) async {
       _setView(tester);
-      _routes = {
-        'users/u1': _doc('users/u1', {
-          'examAnswerIds': ['a1', 'a2'],
-        }),
-        'app_exam_answers/a1': _doc(
-            'app_exam_answers/a1',
-            answerFields(
-              status: 'reviewed',
-              setId: 's1',
-              title: 'Set One',
-              createdAt: '2026-10-01T10:00:00.000Z',
-              rejectionReason: 'Answer sheet is unreadable',
-              reviewedAt: '2026-10-02T10:00:00.000Z',
-            )),
-        'app_exam_answers/a2': _doc(
-            'app_exam_answers/a2',
-            answerFields(
-              status: 'reviewed',
-              setId: 's1',
-              title: 'Set One',
-              createdAt: '2026-10-05T10:00:00.000Z',
-              rejectionReason: 'Wrong file uploaded',
-              reviewedAt: '2026-10-06T10:00:00.000Z',
-            )),
+      final a1 = {
+        'id': 'a1',
+        ...answerFields(
+          status: 'reviewed',
+          setId: 's1',
+          title: 'Set One',
+          createdAt: '2026-10-01T10:00:00.000Z',
+          rejectionReason: 'Answer sheet is unreadable',
+          reviewedAt: '2026-10-02T10:00:00.000Z',
+        ),
       };
-      _mockFirestore();
+      final a2 = {
+        'id': 'a2',
+        ...answerFields(
+          status: 'reviewed',
+          setId: 's1',
+          title: 'Set One',
+          createdAt: '2026-10-05T10:00:00.000Z',
+          rejectionReason: 'Wrong file uploaded',
+          reviewedAt: '2026-10-06T10:00:00.000Z',
+        ),
+      };
+      _routes = {
+        '/exam-answers/a2': {'ok': true, 'row': a2},
+        '/exam-answers/mine': {
+          'ok': true,
+          'rows': [a1, a2],
+        },
+      };
+      _mockCf();
       await tester.pumpWidget(
           MaterialApp.router(routerConfig: routerFor('/exam-answer/a2')));
       // The latest (a2, rejected) is the full view: its reason card…

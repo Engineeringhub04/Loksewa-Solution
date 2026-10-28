@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../services/server_clock.dart';
 import '../../widgets/app_toast.dart';
@@ -275,20 +276,26 @@ class _DailyTestScreenState extends State<DailyTestScreen>
   }
 
   /// Decorative course/subcourse names; failures are swallowed so the feed
-  /// still works when the catalogue read fails.
+  /// still works when the catalogue read fails. Phase-2: the names resolve
+  /// from GET /courses (the D1 copies of the course/subcourse docs — the
+  /// flat legacy subcourse rows ride the same list).
   Future<_CourseNames> _fetchCourseNames(
       String courseId, String subcourseId) async {
     String courseName = '';
     String subcourseName = '';
     try {
-      final cdoc = await ExamRest.getDoc('app_courses/$courseId');
-      final sdoc = await ExamRest.getDoc(
-          'app_courses/$courseId/subcourses/$subcourseId');
-      courseName = '${cdoc?['name'] ?? ''}';
-      subcourseName = '${sdoc?['name'] ?? sdoc?['title'] ?? ''}';
-      if (subcourseName.isEmpty) {
-        final legacy = await ExamRest.getDoc('app_subcourses/$subcourseId');
-        subcourseName = '${legacy?['name'] ?? legacy?['title'] ?? ''}';
+      final data = await CfApi.getCourses();
+      for (final c in data.courses) {
+        if ((c['id'] ?? '').toString() == courseId) {
+          courseName = '${c['name'] ?? ''}';
+          break;
+        }
+      }
+      for (final s in data.subcourses) {
+        if ((s['id'] ?? '').toString() == subcourseId) {
+          subcourseName = '${s['name'] ?? s['title'] ?? ''}';
+          break;
+        }
       }
     } catch (_) {
       // names are decorative; the feed works without them

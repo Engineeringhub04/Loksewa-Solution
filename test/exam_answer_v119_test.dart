@@ -1,6 +1,6 @@
 // Tests for the v1.0.119 theory-answer round:
 // - resolveAnswerDisplayNames fills blank course/subcourse/section names
-//   from the parent exam set's IDs (old submissions saved only IDs).
+//   from the exam set's IDs (old submissions saved only IDs).
 // - My Answer Sheet: published outcome renders the result card and never
 //   the admin message; rejected outcome renders the Reason card instead.
 // - Upload/Edit form: message is required, the submit button stays
@@ -8,8 +8,10 @@
 //   labels the button "Update Data".
 // - My Submissions header reads "My Answer Submissions".
 //
-// Network is fully mocked through FirestoreRest.setTestClient (MockClient)
-// with a seeded signed-in session — the purchase_detail_reads_test pattern.
+// Network is fully mocked through CfApi.setTestClient (MockClient) with
+// a seeded signed-in session — Phase-2: the screens read the
+// loksewa-api exam-answers endpoints, so fixtures are plain CF JSON
+// ({ok, row}/{ok, rows}) instead of Firestore REST documents.
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -23,50 +25,27 @@ import 'package:loksewa_solution/screens/shop/exam_answer_screen.dart';
 import 'package:loksewa_solution/screens/shop/my_submissions_screen.dart';
 import 'package:loksewa_solution/screens/shop/upload_answer_screen.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 
-/// Encodes a plain field map as a Firestore REST document body.
-Map<String, dynamic> _doc(String path, Map<String, Object?> fields) {
-  final enc = <String, dynamic>{};
-  fields.forEach((k, v) {
-    if (v == null) {
-      enc[k] = {'nullValue': null};
-    } else if (v is String) {
-      enc[k] = {'stringValue': v};
-    } else if (v is bool) {
-      enc[k] = {'booleanValue': v};
-    } else if (v is int) {
-      enc[k] = {'integerValue': '$v'};
-    } else if (v is List) {
-      enc[k] = {
-        'arrayValue': {
-          'values': [for (final e in v) {'stringValue': '$e'}]
-        }
-      };
-    }
-  });
-  return {
-    'name': 'projects/p/databases/(default)/documents/$path',
-    'fields': enc,
-  };
-}
-
-/// Path-substring routes → response bodies, matched in insertion order.
+/// Path-substring routes → CF response bodies, matched in insertion
+/// order. Unmatched paths answer 404 {ok:false} so row getters return
+/// null exactly like a missing document did.
 Map<String, Object> _routes = {};
 
-void _mockFirestore() {
-  FirestoreRest.setTestClient(MockClient((request) async {
+void _mockCf() {
+  CfApi.setTestClient(MockClient((request) async {
     final path = request.url.path;
     for (final entry in _routes.entries) {
       if (path.contains(entry.key)) {
         // Bytes, not String: http.Response(String) is Latin-1 and throws
-        // on Devanagari fixture values (real Firestore serves UTF-8 JSON).
+        // on Devanagari fixture values (the API serves UTF-8 JSON).
         return http.Response.bytes(utf8.encode(json.encode(entry.value)), 200);
       }
     }
-    return http.Response('{}', 404);
+    return http.Response.bytes(
+        utf8.encode(json.encode({'ok': false, 'error': 'not_found'})), 404);
   }));
 }
 
@@ -116,31 +95,33 @@ void main() {
   });
 
   tearDown(() {
-    FirestoreRest.setTestClient(null);
+    CfApi.setTestClient(null);
   });
 
   group('resolveAnswerDisplayNames', () {
     test('fills blank names from the exam set IDs', () async {
+      // Phase-2: the set doc itself carries no stored names, so the
+      // names resolve from GET /exam/meta-names.
       _routes = {
-        'app_exam_sets/s1': _doc('app_exam_sets/s1', {
-          'courseId': 'c1',
-          'subcourseId': 'sc1',
-          'sectionId': 'theory-desk',
-        }),
-        'app_courses/c1/subcourses/sc1':
-            _doc('app_courses/c1/subcourses/sc1', {'name': 'Kharidar'}),
-        'app_courses/c1': _doc('app_courses/c1', {'name': 'Loksewa Course'}),
-        'documents/app_exam_sections': {
-          'documents': [
-            _doc('app_exam_sections/theory-desk', {
-              'nameEn': 'Theory Desk',
-              'nameNe': 'थ्योरी डेस्क',
-              'kind': 'theory',
-            }),
-          ],
+        '/exam/sets/s1': {
+          'ok': true,
+          'row': {
+            'id': 's1',
+            'courseId': 'c1',
+            'subcourseId': 'sc1',
+            'sectionId': 'theory-desk',
+          },
+        },
+        '/exam/meta-names': {
+          'ok': true,
+          'setTitle': 'Theory Paper 1',
+          'courseName': 'Loksewa Course',
+          'subcourseName': 'Kharidar',
+          'sectionName': 'Theory Desk',
+          'sectionNameNe': 'थ्योरी डेस्क',
         },
       };
-      _mockFirestore();
+      _mockCf();
       final names = await resolveAnswerDisplayNames(const {
         'examSetId': 's1',
         'courseName': '',
@@ -153,7 +134,7 @@ void main() {
     });
 
     test('stored names win and need no lookups', () async {
-      _mockFirestore(); // every route 404s
+      _mockCf(); // every route 404s
       final names = await resolveAnswerDisplayNames(const {
         'examSetId': 's1',
         'courseName': 'Stored Course',
@@ -193,27 +174,31 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       _routes = {
-        'app_exam_answers/a1': _doc('app_exam_answers/a1', {
-          'uid': 'u1',
-          'status': 'reviewed',
-          'studentName': 'Ram Bahadur',
-          'examSetTitle': 'Theory Paper 1',
-          'courseName': 'Loksewa Course',
-          'subcourseName': 'Kharidar',
-          'sectionName': 'Theory Desk',
-          'score': 80,
-          'fullMarks': 100,
-          'passed': true,
-          'reviewNote': 'Well done, Ram.',
-          'adminMessage': 'SECRET ADMIN MESSAGE',
-          'checkedPdfUrl': 'https://example.com/checked.pdf',
-          'pdfUrl': 'https://example.com/submitted.pdf',
-          'message': 'Please check',
-          'createdAt': '2026-10-10T10:00:00.000Z',
-          'reviewedAt': '2026-10-12T10:00:00.000Z',
-        }),
+        '/exam-answers/a1': {
+          'ok': true,
+          'row': {
+            'id': 'a1',
+            'uid': 'u1',
+            'status': 'reviewed',
+            'studentName': 'Ram Bahadur',
+            'examSetTitle': 'Theory Paper 1',
+            'courseName': 'Loksewa Course',
+            'subcourseName': 'Kharidar',
+            'sectionName': 'Theory Desk',
+            'score': 80,
+            'fullMarks': 100,
+            'passed': true,
+            'reviewNote': 'Well done, Ram.',
+            'adminMessage': 'SECRET ADMIN MESSAGE',
+            'checkedPdfUrl': 'https://example.com/checked.pdf',
+            'pdfUrl': 'https://example.com/submitted.pdf',
+            'message': 'Please check',
+            'createdAt': '2026-10-10T10:00:00.000Z',
+            'reviewedAt': '2026-10-12T10:00:00.000Z',
+          },
+        },
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(tester, find.text('Passed'));
 
@@ -236,24 +221,28 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       _routes = {
-        'app_exam_answers/a1': _doc('app_exam_answers/a1', {
-          'uid': 'u1',
-          'status': 'reviewed',
-          'studentName': 'Ram Bahadur',
-          'examSetTitle': 'Theory Paper 1',
-          'courseName': 'Loksewa Course',
-          'subcourseName': 'Kharidar',
-          'sectionName': 'Theory Desk',
-          'rejectionReason': 'Answer sheet is unreadable',
-          'adminMessage': 'Please re-upload a clearer scan.',
-          'reviewNote': '',
-          'checkedPdfUrl': '',
-          'pdfUrl': 'https://example.com/submitted.pdf',
-          'createdAt': '2026-10-10T10:00:00.000Z',
-          'reviewedAt': '2026-10-12T10:00:00.000Z',
-        }),
+        '/exam-answers/a1': {
+          'ok': true,
+          'row': {
+            'id': 'a1',
+            'uid': 'u1',
+            'status': 'reviewed',
+            'studentName': 'Ram Bahadur',
+            'examSetTitle': 'Theory Paper 1',
+            'courseName': 'Loksewa Course',
+            'subcourseName': 'Kharidar',
+            'sectionName': 'Theory Desk',
+            'rejectionReason': 'Answer sheet is unreadable',
+            'adminMessage': 'Please re-upload a clearer scan.',
+            'reviewNote': '',
+            'checkedPdfUrl': '',
+            'pdfUrl': 'https://example.com/submitted.pdf',
+            'createdAt': '2026-10-10T10:00:00.000Z',
+            'reviewedAt': '2026-10-12T10:00:00.000Z',
+          },
+        },
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(tester, find.text('Reason'));
 
@@ -299,20 +288,24 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       _routes = {
-        'app_exam_answers/a1': _doc('app_exam_answers/a1', {
-          // v1.0.120: edit mode is gated (owner + pending + inside the
-          // 1-hour window + edit unused) — the fixture must qualify.
-          'uid': 'u1',
-          'studentName': 'Ram Bahadur',
-          'pdfUrl': 'https://example.com/a.pdf',
-          'message': '',
-          'status': 'pending',
-          'createdAt': DateTime.now()
-              .subtract(const Duration(minutes: 5))
-              .toIso8601String(),
-        }),
+        '/exam-answers/a1': {
+          'ok': true,
+          'row': {
+            // v1.0.120: edit mode is gated (owner + pending + inside the
+            // 1-hour window + edit unused) — the fixture must qualify.
+            'id': 'a1',
+            'uid': 'u1',
+            'studentName': 'Ram Bahadur',
+            'pdfUrl': 'https://example.com/a.pdf',
+            'message': '',
+            'status': 'pending',
+            'createdAt': DateTime.now()
+                .subtract(const Duration(minutes: 5))
+                .toIso8601String(),
+          },
+        },
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
           routerConfig: routerFor('/exam-answer/upload?editId=a1')));
       await _pumpUntil(tester, find.text('Update Data'));
@@ -336,15 +329,19 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
       _routes = {
-        'app_exam_sets/s1': _doc('app_exam_sets/s1', {
-          'title': 'Theory Paper 1',
-          'courseId': 'c1',
-          'subcourseId': 'sc1',
-          'sectionId': 'theory-desk',
-        }),
-        'users/u1': _doc('users/u1', {'examAnswerIds': <String>[]}),
+        '/exam/sets/s1': {
+          'ok': true,
+          'row': {
+            'id': 's1',
+            'title': 'Theory Paper 1',
+            'courseId': 'c1',
+            'subcourseId': 'sc1',
+            'sectionId': 'theory-desk',
+          },
+        },
+        '/exam-answers/mine': {'ok': true, 'rows': <Object>[]},
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
           routerConfig: routerFor('/exam-answer/upload?examSetId=s1')));
       await _pumpUntil(tester, find.text('Submit'));
@@ -358,9 +355,9 @@ void main() {
   testWidgets('My Submissions header reads My Answer Submissions',
       (tester) async {
     _routes = {
-      'users/u1': _doc('users/u1', {'examAnswerIds': <String>[]}),
+      '/exam-answers/mine': {'ok': true, 'rows': <Object>[]},
     };
-    _mockFirestore();
+    _mockCf();
     await tester.pumpWidget(MaterialApp.router(
       routerConfig: _router('/exam-answer/my-submissions', [
         GoRoute(
@@ -381,24 +378,27 @@ void main() {
   });
 
   group('Back behavior (post-submit / deep-link landings)', () {
+    Map<String, Object> publishedAnswerRow() => {
+          'id': 'a1',
+          'uid': 'u1',
+          'status': 'reviewed',
+          'studentName': 'Ram Bahadur',
+          'examSetId': 's1',
+          'examSetTitle': 'Theory Paper 1',
+          'courseName': 'Loksewa Course',
+          'subcourseName': 'Kharidar',
+          'sectionName': 'Theory Desk',
+          'score': 80,
+          'fullMarks': 100,
+          'passed': true,
+          'pdfUrl': 'https://example.com/submitted.pdf',
+          'createdAt': '2026-10-10T10:00:00.000Z',
+          'reviewedAt': '2026-10-12T10:00:00.000Z',
+        };
+
     Map<String, Object> publishedAnswer() => {
-          'app_exam_answers/a1': _doc('app_exam_answers/a1', {
-            'uid': 'u1',
-            'status': 'reviewed',
-            'studentName': 'Ram Bahadur',
-            'examSetId': 's1',
-            'examSetTitle': 'Theory Paper 1',
-            'courseName': 'Loksewa Course',
-            'subcourseName': 'Kharidar',
-            'sectionName': 'Theory Desk',
-            'score': 80,
-            'fullMarks': 100,
-            'passed': true,
-            'pdfUrl': 'https://example.com/submitted.pdf',
-            'createdAt': '2026-10-10T10:00:00.000Z',
-            'reviewedAt': '2026-10-12T10:00:00.000Z',
-          }),
-          'users/u1': _doc('users/u1', {'examAnswerIds': <String>[]}),
+          '/exam-answers/a1': {'ok': true, 'row': publishedAnswerRow()},
+          '/exam-answers/mine': {'ok': true, 'rows': <Object>[]},
         };
 
     List<RouteBase> backRoutes() => [
@@ -443,7 +443,7 @@ void main() {
         (tester) async {
       setView(tester);
       _routes = publishedAnswer();
-      _mockFirestore();
+      _mockCf();
       final router = _router('/exam-answer/a1', backRoutes());
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await _pumpUntil(tester, find.text('Passed'));
@@ -466,7 +466,7 @@ void main() {
     testWidgets('answer page IN a stack: back pops normally', (tester) async {
       setView(tester);
       _routes = publishedAnswer();
-      _mockFirestore();
+      _mockCf();
       final router = _router('/', backRoutes());
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await _pumpUntil(tester, find.text('HOME HUB'));
@@ -486,7 +486,7 @@ void main() {
         (tester) async {
       setView(tester);
       _routes = publishedAnswer();
-      _mockFirestore();
+      _mockCf();
       final router = _router('/', backRoutes());
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await _pumpUntil(tester, find.text('HOME HUB'));
@@ -507,17 +507,22 @@ void main() {
       setView(tester);
       _routes = {
         ...publishedAnswer(),
-        'users/u1': _doc('users/u1', {
-          'examAnswerIds': ['a1'],
-        }),
-        'app_exam_sets/s1': _doc('app_exam_sets/s1', {
-          'title': 'Theory Paper 1',
-          'courseId': 'c1',
-          'subcourseId': 'sc1',
-          'sectionId': 'theory-desk',
-        }),
+        '/exam-answers/mine': {
+          'ok': true,
+          'rows': [publishedAnswerRow()],
+        },
+        '/exam/sets/s1': {
+          'ok': true,
+          'row': {
+            'id': 's1',
+            'title': 'Theory Paper 1',
+            'courseId': 'c1',
+            'subcourseId': 'sc1',
+            'sectionId': 'theory-desk',
+          },
+        },
       };
-      _mockFirestore();
+      _mockCf();
       final router = _router('/', backRoutes());
       await tester.pumpWidget(MaterialApp.router(routerConfig: router));
       await _pumpUntil(tester, find.text('HOME HUB'));

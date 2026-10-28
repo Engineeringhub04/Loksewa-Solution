@@ -12,8 +12,9 @@
 //   directory write and reports onSaved(false). PublicDownloads channel
 //   helper returns true only on a non-null channel result.
 //
-// Network is fully mocked through FirestoreRest.setTestClient (MockClient)
-// with a seeded signed-in session — the exam_answer_v119_test pattern.
+// Network is fully mocked through CfApi.setTestClient (MockClient) with
+// a seeded signed-in session — the exam_answer_v119_test pattern.
+// Phase-2: fixtures are plain CF JSON ({ok, row}/{ok, rows}).
 import 'dart:convert';
 import 'dart:io';
 
@@ -29,46 +30,22 @@ import 'package:loksewa_solution/screens/shop/exam_answer_screen.dart';
 import 'package:loksewa_solution/screens/shop/my_submissions_screen.dart';
 import 'package:loksewa_solution/screens/shop/upload_answer_screen.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/public_downloads.dart';
 import 'package:loksewa_solution/widgets/pdf_download_dialog.dart';
 
-/// Encodes a plain field map as a Firestore REST document body.
-Map<String, dynamic> _doc(String path, Map<String, Object?> fields) {
-  final enc = <String, dynamic>{};
-  fields.forEach((k, v) {
-    if (v == null) {
-      enc[k] = {'nullValue': null};
-    } else if (v is String) {
-      enc[k] = {'stringValue': v};
-    } else if (v is bool) {
-      enc[k] = {'booleanValue': v};
-    } else if (v is int) {
-      enc[k] = {'integerValue': '$v'};
-    } else if (v is List) {
-      enc[k] = {
-        'arrayValue': {
-          'values': [for (final e in v) {'stringValue': '$e'}]
-        }
-      };
-    }
-  });
-  return {
-    'name': 'projects/p/databases/(default)/documents/$path',
-    'fields': enc,
-  };
-}
-
-/// Path-substring routes → response bodies, matched in insertion order.
+/// Path-substring routes → CF response bodies, matched in insertion
+/// order. Unmatched paths answer 404 {ok:false} so row getters return
+/// null exactly like a missing document did.
 Map<String, Object> _routes = {};
 
 /// Captured non-GET requests (method, path, body) for write assertions.
 final List<(String, String, String)> _writes = [];
 
-void _mockFirestore() {
-  FirestoreRest.setTestClient(MockClient((request) async {
+void _mockCf() {
+  CfApi.setTestClient(MockClient((request) async {
     final path = request.url.path;
     if (request.method != 'GET') {
       _writes.add((request.method, path, request.body));
@@ -78,9 +55,14 @@ void _mockFirestore() {
         return http.Response.bytes(utf8.encode(json.encode(entry.value)), 200);
       }
     }
-    return http.Response('{}', 404);
+    return http.Response.bytes(
+        utf8.encode(json.encode({'ok': false, 'error': 'not_found'})), 404);
   }));
 }
+
+/// Wraps a plain field map as a CF single-row response body.
+Map<String, Object> _row(Map<String, Object?> fields) =>
+    {'ok': true, 'row': fields};
 
 Future<void> _pumpUntil(WidgetTester tester, Finder finder,
     {int tries = 60}) async {
@@ -164,7 +146,7 @@ void main() {
   });
 
   tearDown(() {
-    FirestoreRest.setTestClient(null);
+    CfApi.setTestClient(null);
     PublicDownloads.channelInvoker = null;
     debugDefaultTargetPlatformOverride = null;
   });
@@ -206,25 +188,28 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'users/u1': _doc('users/u1', {
-          'examAnswerIds': ['a1'],
-        }),
-        'app_exam_answers/a1': _doc('app_exam_answers/a1', {
-          'uid': 'u1',
-          'status': 'reviewed',
-          'studentName': 'Ram Bahadur',
-          'examSetTitle': 'Theory Paper 1',
-          'courseName': 'Loksewa Course',
-          'subcourseName': 'Kharidar',
-          'rejectionReason': 'Answer sheet is unreadable',
-          'passed': null,
-          'score': 0,
-          'fullMarks': 100,
-          'createdAt': '2026-10-10T10:00:00.000Z',
-          'reviewedAt': '2026-10-12T10:00:00.000Z',
-        }),
+        '/exam-answers/mine': {
+          'ok': true,
+          'rows': [
+            {
+              'id': 'a1',
+              'uid': 'u1',
+              'status': 'reviewed',
+              'studentName': 'Ram Bahadur',
+              'examSetTitle': 'Theory Paper 1',
+              'courseName': 'Loksewa Course',
+              'subcourseName': 'Kharidar',
+              'rejectionReason': 'Answer sheet is unreadable',
+              'passed': null,
+              'score': 0,
+              'fullMarks': 100,
+              'createdAt': '2026-10-10T10:00:00.000Z',
+              'reviewedAt': '2026-10-12T10:00:00.000Z',
+            },
+          ],
+        },
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
         routerConfig: GoRouter(
           initialLocation: '/exam-answer/my-submissions',
@@ -276,10 +261,9 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'app_exam_answers/a1':
-            _doc('app_exam_answers/a1', _pendingAnswer()),
+        '/exam-answers/a1': _row({'id': 'a1', ..._pendingAnswer()}),
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(tester, find.text('Pending Review'));
 
@@ -303,12 +287,13 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'app_exam_answers/a1': _doc(
-            'app_exam_answers/a1',
-            _pendingAnswer(
-                editUsedAt: _freshIso(const Duration(minutes: 2)))),
+        '/exam-answers/a1': _row({
+          'id': 'a1',
+          ..._pendingAnswer(
+              editUsedAt: _freshIso(const Duration(minutes: 2))),
+        }),
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(
           tester,
@@ -327,10 +312,12 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'app_exam_answers/a1': _doc('app_exam_answers/a1',
-            _pendingAnswer(age: const Duration(hours: 2))),
+        '/exam-answers/a1': _row({
+          'id': 'a1',
+          ..._pendingAnswer(age: const Duration(hours: 2)),
+        }),
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(routerConfig: routerFor()));
       await _pumpUntil(
           tester, find.text('The 1-hour edit window has expired.'));
@@ -367,12 +354,13 @@ void main() {
         (tester) async {
       _setView(tester);
       _routes = {
-        'app_exam_answers/a1': _doc(
-            'app_exam_answers/a1',
-            _pendingAnswer(
-                editUsedAt: _freshIso(const Duration(minutes: 2)))),
+        '/exam-answers/a1': _row({
+          'id': 'a1',
+          ..._pendingAnswer(
+              editUsedAt: _freshIso(const Duration(minutes: 2))),
+        }),
       };
-      _mockFirestore();
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
           routerConfig: routerFor('/exam-answer/upload?editId=a1')));
       await _pumpUntil(
@@ -388,8 +376,8 @@ void main() {
       _setView(tester);
       final doc = _pendingAnswer();
       doc['status'] = 'reviewed';
-      _routes = {'app_exam_answers/a1': _doc('app_exam_answers/a1', doc)};
-      _mockFirestore();
+      _routes = {'/exam-answers/a1': _row({'id': 'a1', ...doc})};
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
           routerConfig: routerFor('/exam-answer/upload?editId=a1')));
       await _pumpUntil(
@@ -430,8 +418,8 @@ void main() {
       _setView(tester);
       final doc = _pendingAnswer();
       doc['message'] = 'Please check';
-      _routes = {'app_exam_answers/a1': _doc('app_exam_answers/a1', doc)};
-      _mockFirestore();
+      _routes = {'/exam-answers/a1': _row({'id': 'a1', ...doc})};
+      _mockCf();
       await tester.pumpWidget(MaterialApp.router(
           routerConfig: routerFor('/exam-answer/upload?editId=a1')));
       await _pumpUntil(tester, find.text('Update Data'));
@@ -444,7 +432,7 @@ void main() {
       await _pumpUntil(tester, find.text('View My Answer Sheets'));
 
       final patch = _writes.firstWhere(
-          (w) => w.$1 == 'PATCH' && w.$2.contains('app_exam_answers/a1'));
+          (w) => w.$1 == 'PATCH' && w.$2.contains('/exam-answers/a1'));
       expect(patch.$3, contains('editUsedAt'));
       expect(patch.$3, contains('updatedAt'));
       await _flush(tester);

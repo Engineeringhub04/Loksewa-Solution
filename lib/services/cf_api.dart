@@ -878,4 +878,165 @@ class CfApi {
       rethrow;
     }
   }
+
+  // ============================================================ Phase 2
+  // Exam-tree endpoints. Same conventions as Phase 1: flat rows with
+  // Firestore field names, JSON-string fields stay strings (normalized
+  // on the way out), single-row reads return null on 404.
+
+  /// Exam province rows (app_exam_provinces copy).
+  static Future<List<Map<String, dynamic>>> getExamProvinces() async {
+    final body = await _request('GET', '/exam/provinces');
+    return _rows(body, ['rows', 'provinces', 'items', 'data']);
+  }
+
+  /// Exam section rows (app_exam_sections copy).
+  static Future<List<Map<String, dynamic>>> getExamSections() async {
+    final body = await _request('GET', '/exam/sections');
+    return _rows(body, ['rows', 'sections', 'items', 'data']);
+  }
+
+  /// Exam set rows for a scope — the server ports the legacy dual-query
+  /// merge + published/section/province narrowing + startTime ordering.
+  static Future<List<Map<String, dynamic>>> getExamSets({
+    String? subcourseId,
+    String? sectionId,
+    String? provinceId,
+  }) async {
+    final params = <String, String>{};
+    if (subcourseId != null && subcourseId.isNotEmpty) {
+      params['subcourseId'] = subcourseId;
+    }
+    if (sectionId != null && sectionId.isNotEmpty) {
+      params['sectionId'] = sectionId;
+    }
+    if (provinceId != null && provinceId.isNotEmpty) {
+      params['provinceId'] = provinceId;
+    }
+    final q = Uri(queryParameters: params).query;
+    final body = await _request('GET', '/exam/sets${q.isEmpty ? '' : '?$q'}');
+    return _rows(body, ['rows', 'sets', 'items', 'data']);
+  }
+
+  /// One exam set doc (raw row — questions embedded). Null on 404.
+  static Future<Map<String, dynamic>?> getExamSetRow(String id) =>
+      _getRow('/exam/sets/${Uri.encodeComponent(id)}');
+
+  /// Every exam-rules doc (app_exam_rules copy); callers keep the
+  /// NOTE-6 field matching + session cache client-side.
+  static Future<List<Map<String, dynamic>>> getExamRules() async {
+    final body = await _request('GET', '/exam/rules');
+    return _rows(body, ['rows', 'rules', 'items', 'data']);
+  }
+
+  /// The signed-in user's exam attempts — all sets, or one set's when
+  /// [setId] is given.
+  static Future<List<Map<String, dynamic>>> getExamAttempts({
+    String? setId,
+  }) async {
+    final params = <String, String>{};
+    if (setId != null && setId.isNotEmpty) params['setId'] = setId;
+    final q = Uri(queryParameters: params).query;
+    final body =
+        await _request('GET', '/exam/attempts${q.isEmpty ? '' : '?$q'}');
+    return _rows(body, ['rows', 'attempts', 'items', 'data']);
+  }
+
+  /// Saves an exam attempt; the server also writes the public ranking
+  /// row (with the NOTE-8 scope fields). Returns the raw body.
+  static Future<Map<String, dynamic>> postExamAttempt(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/exam/attempts', body: payload);
+    return _asMap(body);
+  }
+
+  /// Ranking rows for one set — best-per-uid is computed server-side;
+  /// callers keep the client comparator as a safety net.
+  static Future<List<Map<String, dynamic>>> getExamRankings(
+      String setId) async {
+    final body = await _request(
+        'GET', '/exam/rankings/${Uri.encodeComponent(setId)}');
+    return _rows(body, ['rows', 'rankings', 'items', 'data']);
+  }
+
+  /// Every theory-answer doc of the signed-in user (app_exam_answers).
+  static Future<List<Map<String, dynamic>>> getMyExamAnswers() async {
+    final body = await _request('GET', '/exam-answers/mine');
+    return _rows(body, ['rows', 'answers', 'items', 'data']);
+  }
+
+  /// One theory-answer doc by id. Null on 404.
+  static Future<Map<String, dynamic>?> getExamAnswer(String id) =>
+      _getRow('/exam-answers/${Uri.encodeComponent(id)}');
+
+  /// Submits a new theory answer (the server appends the id to the
+  /// user's examAnswerIds index). Returns the raw body ({id}).
+  static Future<Map<String, dynamic>> postExamAnswer(
+      Map<String, dynamic> payload) async {
+    final body = await _request('POST', '/exam-answers', body: payload);
+    return _asMap(body);
+  }
+
+  /// Merges [fields] into one theory-answer doc — the one-edit patch
+  /// and the checked-PDF download stamp ride this. The server rejects
+  /// grading fields (status/score/checkedPdfUrl…).
+  static Future<void> patchExamAnswer(
+      String id, Map<String, dynamic> fields) async {
+    await _request('PATCH', '/exam-answers/${Uri.encodeComponent(id)}',
+        body: fields);
+  }
+
+  /// Display names for an exam set's context (course / subcourse /
+  /// section names resolved server-side from the set's IDs).
+  static Future<Map<String, dynamic>> getExamMetaNames(String setId) async {
+    final q = Uri(queryParameters: {'setId': setId}).query;
+    final body = await _request('GET', '/exam/meta-names?$q');
+    return normalizeRow(_asMap(body));
+  }
+
+  /// Daily-test model rows for a subcourse (app_daily_test_models copy).
+  static Future<List<Map<String, dynamic>>> getDailyTestModels(
+      String subcourseId) async {
+    final q = Uri(queryParameters: {'subcourseId': subcourseId}).query;
+    final body = await _request('GET', '/daily-test/models?$q');
+    return _rows(body, ['rows', 'models', 'items', 'data']);
+  }
+
+  /// One daily-test model doc. Null on 404.
+  static Future<Map<String, dynamic>?> getDailyTestModel(String id) =>
+      _getRow('/daily-test/models/${Uri.encodeComponent(id)}');
+
+  /// The signed-in user's daily-test results, newest first.
+  static Future<List<Map<String, dynamic>>> getDailyTestResults() async {
+    final body = await _request('GET', '/daily-test/results');
+    return _rows(body, ['rows', 'results', 'items', 'data']);
+  }
+
+  /// The signed-in user's result for one model (re-attempt guard).
+  /// Returns null when the worker answers {row: null} or 404.
+  static Future<Map<String, dynamic>?> getDailyTestResultForModel(
+      String modelId) async {
+    try {
+      final q = Uri(queryParameters: {'modelId': modelId}).query;
+      final body = await _request('GET', '/daily-test/results?$q');
+      final m = _asMap(body);
+      if (m.containsKey('row')) {
+        return m['row'] is Map ? normalizeRow(_asMap(m['row'])) : null;
+      }
+      return _rowOf(body);
+    } on CfError catch (e) {
+      if (e.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// Saves a daily-test result. The server stamps createdAt and answers
+  /// 409 'already_attempted' when a result for the model already exists.
+  /// Returns the raw body (carries the new result id).
+  static Future<Map<String, dynamic>> postDailyTestResult(
+      Map<String, dynamic> payload) async {
+    final body =
+        await _request('POST', '/daily-test/results', body: payload);
+    return _asMap(body);
+  }
 }

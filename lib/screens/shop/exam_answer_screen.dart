@@ -13,8 +13,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import '../../widgets/subpage_header.dart';
@@ -128,10 +128,8 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       (a['id'] ?? widget.id).toString();
 
   Future<Map<String, dynamic>?> _load() async {
-    final token = await AuthService.getValidIdToken();
-    final doc = await FirestoreRest.getDocument(
-        'app_exam_answers/${widget.id}',
-        idToken: token);
+    // Phase-2: GET /exam-answers/:id (was a Firestore doc read).
+    final doc = await CfApi.getExamAnswer(widget.id);
     if (doc != null) {
       _resolveNamesInBackground(doc);
       unawaited(_loadGroup(doc));
@@ -148,37 +146,19 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   }
 
   /// Loads every submission this student made for the anchor's exam
-  /// set (per-user index + getDocument, like My Submissions) and
-  /// splits it into latest + previous. Best-effort: any failure
-  /// leaves the single-doc view untouched.
+  /// set (GET /exam-answers/mine, like My Submissions) and splits it
+  /// into latest + previous. Best-effort: any failure leaves the
+  /// single-doc view untouched.
   Future<void> _loadGroup(Map<String, dynamic> anchor) async {
     try {
       final setId = (anchor['examSetId'] ?? '').toString();
       final uid = AuthService.currentUser?.uid;
       if (setId.isEmpty || uid == null) return;
-      final token = await AuthService.getValidIdToken();
-      final userDoc = await FirestoreRest.getDocument('users/$uid',
-          idToken: token);
-      final ids = <String>[
-        for (final e in (userDoc?['examAnswerIds'] as List? ?? []))
-          e.toString(),
-      ];
-      if (ids.isEmpty) return;
-      final docs = await Future.wait([
-        for (final aid in ids)
-          () async {
-            try {
-              return await FirestoreRest.getDocument(
-                  'app_exam_answers/$aid',
-                  idToken: token);
-            } catch (_) {
-              return null;
-            }
-          }(),
-      ]);
+      final rows = await CfApi.getMyExamAnswers();
+      if (rows.isEmpty) return;
       final group = <Map<String, dynamic>>[
-        for (final d in docs)
-          if (d != null && d['examSetId']?.toString() == setId) d,
+        for (final d in rows)
+          if (d['examSetId']?.toString() == setId) d,
       ];
       if (group.isEmpty || !mounted) return;
       group.sort(
@@ -218,10 +198,9 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
   }
 
   /// Stamps a SUCCESSFUL checked-PDF download (v1.0.125): the local
-  /// mirror lands first (the limit holds on-device even before the
-  /// updated firebase.rules are published), then the server fields
-  /// `downloadedDay`/`downloadedAt` — best-effort, the rules' stamp
-  /// clause permits exactly these two fields for the owner. Failed
+  /// mirror lands first (the limit holds on-device immediately), then
+  /// the server fields `downloadedDay`/`downloadedAt` — best-effort,
+  /// the API permits exactly these stamp fields for the owner. Failed
   /// and cancelled downloads never reach this — they stay retryable.
   Future<void> _stampDownloadedToday(String answerId) async {
     final today = todayDateKey();
@@ -233,18 +212,18 @@ class _ExamAnswerScreenState extends State<ExamAnswerScreen> {
       setState(() => _downloadedToday = true);
     }
     try {
-      final token = await AuthService.getValidIdToken();
-      await FirestoreRest.updateDocument(
-        'app_exam_answers/$answerId',
+      // Phase-2: the stamp is a PATCH on the answer doc (the API
+      // allows exactly these non-grading fields for the owner).
+      await CfApi.patchExamAnswer(
+        answerId,
         {
           'downloadedDay': today,
           'downloadedAt': DateTime.now().toUtc().toIso8601String(),
         },
-        idToken: token,
       );
     } catch (_) {
-      // Pre-rules-publish the write is denied; the mirror above
-      // already enforces the limit on this device.
+      // Best-effort server stamp; the mirror above already enforces
+      // the limit on this device.
     }
   }
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../services/server_clock.dart';
 import '../../widgets/app_toast.dart';
@@ -162,13 +163,18 @@ class _DailyTestModelsScreenState extends State<DailyTestModelsScreen>
   }
 
   /// Decorative subcourse name; failures are swallowed so the list still
-  /// works when the catalogue read fails.
+  /// works when the catalogue read fails. Phase-2: resolved from
+  /// GET /courses (the D1 copy of the subcourse doc).
   Future<String> _fetchSubcourseName(
       String courseId, String subcourseId) async {
     try {
-      final sdoc = await ExamRest.getDoc(
-          'app_courses/$courseId/subcourses/$subcourseId');
-      return '${sdoc?['name'] ?? sdoc?['title'] ?? ''}';
+      final data = await CfApi.getCourses();
+      for (final s in data.subcourses) {
+        if ((s['id'] ?? '').toString() == subcourseId) {
+          return '${s['name'] ?? s['title'] ?? ''}';
+        }
+      }
+      return '';
     } catch (_) {
       return '';
     }

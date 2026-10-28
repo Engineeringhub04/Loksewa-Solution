@@ -7,8 +7,8 @@ import 'package:go_router/go_router.dart';
 
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
+import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
-import '../../services/firestore_rest.dart';
 import '../../services/profile_service.dart';
 import '../../services/theme_service.dart';
 import '../../theme/app_theme.dart';
@@ -280,6 +280,19 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     if (submit == true) _submit(auto: false);
   }
 
+  /// Premium state from a GET /me row — mirrors ExamTab's
+  /// _premiumActiveFromMe exactly: the isPremium flag must be set; an
+  /// absent/empty expiry means active; a present-but-unparseable expiry
+  /// means expired; otherwise the expiry must be in the future.
+  static bool _premiumActiveFromMe(Map<String, dynamic>? me) {
+    if (me == null || !CfJson.asBool(me['isPremium'])) return false;
+    final raw = me['premiumExpiryDate'];
+    if (raw == null || (raw is String && raw.isEmpty)) return true;
+    final parsed = CfJson.asDateTime(raw);
+    if (parsed == null) return false;
+    return parsed.isAfter(DateTime.now());
+  }
+
   Future<void> _submit({required bool auto}) async {
     if (_submitted || _submitting) return;
     final set = _set;
@@ -290,6 +303,34 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
     final score = scoreExamAttempt(set.questions, _answers, set.passPercent);
     final user = AuthService.currentUser;
     final profile = ProfileStore.instance.profile;
+    // Ranking-row identity: ProfileStore wins when it holds a profile
+    // (unchanged precedence). On a cold Exam-tab entry the store is
+    // empty (Phase-2: ExamTab no longer warms it — scope/premium come
+    // from GET /me), so resolve name/photo/isPro from the CF profile
+    // instead of degrading to a bare displayName / isPro=false.
+    // Best-effort: a /me failure keeps the auth-level fallbacks and
+    // never blocks the save.
+    var rankName = profile?.name ?? user?.displayName ?? 'Student';
+    var rankPhoto = profile?.photoURL;
+    var rankPro = profile?.isPremium ?? false;
+    if (user != null && profile == null) {
+      try {
+        final me = await CfApi.getMe();
+        // Same /me resolution as Home/ExamTab: the profile row's name
+        // (name, else displayName) wins over the auth displayName; the
+        // row's photo wins over the auth photoURL.
+        final docName =
+            (me?['name'] ?? me?['displayName'])?.toString().trim();
+        if (docName != null && docName.isNotEmpty) rankName = docName;
+        final docPhoto = me?['photoURL']?.toString();
+        rankPhoto = (docPhoto != null && docPhoto.isNotEmpty)
+            ? docPhoto
+            : user.photoURL;
+        rankPro = _premiumActiveFromMe(me);
+      } catch (_) {
+        // Keep the fallbacks above.
+      }
+    }
     bool saved = true;
     try {
       if (user != null) {
@@ -301,9 +342,9 @@ class _ExamQuizScreenState extends State<ExamQuizScreen> {
           answers: List<int>.from(_answers),
           attemptNumber: attempts.length + 1,
           timeTakenSeconds: timeTaken,
-          name: profile?.name ?? user.displayName ?? 'Student',
-          photoURL: profile?.photoURL,
-          isPro: profile?.isPremium ?? false,
+          name: rankName,
+          photoURL: rankPhoto,
+          isPro: rankPro,
         );
       }
     } catch (_) {
@@ -1009,11 +1050,8 @@ class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
   Future<void> _refresh() async {
     if (widget.uid.isEmpty) return;
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final doc = await FirestoreRest.getDocument(
-        'users/${widget.uid}/bookmarks/$_docId',
-        idToken: idToken,
-      );
+      // Phase-2: the Phase-1 bookmarks API (was a Firestore doc read).
+      final doc = await CfApi.getBookmark(_docId);
       if (mounted) setState(() => _saved = doc != null);
     } catch (_) {}
   }
@@ -1047,13 +1085,9 @@ class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
   }
 
   Future<void> _saveInBackground(int op) async {
-    final path = 'users/${widget.uid}/bookmarks/$_docId';
     try {
-      final idToken = await AuthService.getValidIdToken();
-      final rows = await FirestoreRest.listDocuments(
-        'users/${widget.uid}/bookmarks',
-        idToken: idToken,
-      );
+      // Phase-2: free-limit count + write via the bookmarks API.
+      final rows = await CfApi.getBookmarks();
       final scoped = widget.subcourseId.isEmpty
           ? rows.length
           : rows
@@ -1072,8 +1106,8 @@ class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
         return;
       }
       final q = widget.question;
-      await FirestoreRest.setDocument(
-        path,
+      await CfApi.saveBookmark(
+        _docId,
         {
           'context': 'exam',
           'kind': 'question',
@@ -1095,7 +1129,6 @@ class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
           },
           'createdAt': DateTime.now().toUtc().toIso8601String(),
         },
-        idToken: idToken,
       );
     } catch (_) {
       if (op != _opId || !mounted) return;
@@ -1117,10 +1150,7 @@ class _QuizBookmarkButtonState extends State<_QuizBookmarkButton> {
     _saveTimer?.cancel();
     setState(() => _busy = true);
     try {
-      final idToken = await AuthService.getValidIdToken();
-      await FirestoreRest.deleteDocument(
-          'users/${widget.uid}/bookmarks/$_docId',
-          idToken: idToken);
+      await CfApi.deleteBookmark(_docId);
       if (!mounted) return;
       setState(() {
         _saved = false;

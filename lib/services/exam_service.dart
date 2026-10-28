@@ -9,6 +9,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/material.dart' show IconData, Icons;
 import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
@@ -27,6 +28,17 @@ class MissingIndexException implements Exception {
   MissingIndexException(this.message);
   @override
   String toString() => 'MissingIndexException: $message';
+}
+
+/// Phase-2: the loksewa-api refused a daily-test result POST because a
+/// result for that model already exists for the user (HTTP 409
+/// 'already_attempted'). The daily quiz maps this to its existing
+/// already-attempted path (toast + summary), exactly like the boot-time
+/// guard read finding a stored result.
+class DailyTestAlreadyAttemptedException implements Exception {
+  const DailyTestAlreadyAttemptedException();
+  @override
+  String toString() => 'DailyTestAlreadyAttemptedException';
 }
 
 // Firestore REST plumbing (returns doc IDs alongside fields)
@@ -557,6 +569,151 @@ Future<UserProfile?> fetchUserProfile(String uid) async {
 }
 
 // ---------------------------------------------------------------------------
+// Phase-2 CF row shaping: rows from the loksewa-api carry Firestore field
+// names, but timestamps may arrive as ISO text / epoch numbers (the D1
+// copy stores them as text) and a few model parsers only accept the
+// Firestore-decoded shapes (DateTime, num, bool). These helpers bridge
+// exactly those fields — everything else passes through untouched.
+// ---------------------------------------------------------------------------
+
+/// Returns [row] with [field] converted to a DateTime when it holds an
+/// ISO string / epoch value (models read timestamps via [_dt], which
+/// only accepts a real DateTime — the Firestore decoder's output).
+Map<String, dynamic> _cfDateField(Map<String, dynamic> row, String field) {
+  final v = row[field];
+  if (v == null || v is DateTime) return row;
+  final parsed = _parseFlexibleDateTime(v);
+  if (parsed == null) return row;
+  return {...row, field: parsed};
+}
+
+/// Returns [row] with a text `order` converted to an int (the section /
+/// province parsers only accept a num there).
+Map<String, dynamic> _cfOrderField(Map<String, dynamic> row) {
+  final v = row['order'];
+  if (v is String) return {...row, 'order': _num(v)};
+  return row;
+}
+
+/// Returns [row] with the answer flags coerced to real bools
+/// (ExamAnswer.fromMap compares `isReapply` against `true` directly).
+Map<String, dynamic> _cfAnswerRow(Map<String, dynamic> row) {
+  if (row['isReapply'] is bool) return row;
+  return {...row, 'isReapply': _bool(row['isReapply'])};
+}
+
+/// NOTE-7: the icon shown on one exam-rule card. Stored rule docs carry
+/// an Ionicon NAME (the admin editor saves Ionicon names, e.g.
+/// 'shield-checkmark-outline', and auto-fills the field from a slug of
+/// the card's English title). Maps the common names to Material icons;
+/// anything unknown or absent keeps the historical shield.
+IconData examRuleIconData(String name) {
+  var n = name.trim().toLowerCase();
+  if (n.endsWith('-outline')) n = n.substring(0, n.length - 8);
+  if (n.endsWith('-sharp')) n = n.substring(0, n.length - 6);
+  switch (n) {
+    case 'information-circle':
+    case 'information':
+    case 'info':
+      return Icons.info_outline;
+    case 'time':
+    case 'alarm':
+      return Icons.access_time;
+    case 'timer':
+    case 'stopwatch':
+    case 'hourglass':
+      return Icons.timer_outlined;
+    case 'alert-circle':
+    case 'alert':
+      return Icons.error_outline;
+    case 'warning':
+      return Icons.warning_amber_outlined;
+    case 'document-text':
+    case 'document':
+    case 'documents':
+      return Icons.description_outlined;
+    case 'create':
+    case 'pencil':
+    case 'brush':
+      return Icons.edit_outlined;
+    case 'checkmark-circle':
+    case 'checkmark':
+    case 'checkmark-done':
+      return Icons.check_circle_outline;
+    case 'close-circle':
+    case 'close':
+      return Icons.cancel_outlined;
+    case 'ban':
+      return Icons.block;
+    case 'calculator':
+      return Icons.calculate_outlined;
+    case 'book':
+    case 'library':
+      return Icons.menu_book_outlined;
+    case 'eye':
+      return Icons.visibility_outlined;
+    case 'eye-off':
+      return Icons.visibility_off_outlined;
+    case 'phone-portrait':
+    case 'phone':
+    case 'call':
+      return Icons.phone_android_outlined;
+    case 'people':
+    case 'person':
+    case 'person-circle':
+      return Icons.people_outline;
+    case 'trophy':
+      return Icons.emoji_events_outlined;
+    case 'star':
+      return Icons.star_outline;
+    case 'flag':
+      return Icons.flag_outlined;
+    case 'help-circle':
+    case 'help':
+      return Icons.help_outline;
+    case 'list':
+    case 'list-circle':
+      return Icons.format_list_bulleted;
+    case 'clipboard':
+    case 'reader':
+      return Icons.assignment_outlined;
+    case 'school':
+    case 'ribbon':
+      return Icons.school_outlined;
+    case 'lock-closed':
+    case 'lock-open':
+    case 'lock':
+      return Icons.lock_outline;
+    case 'notifications':
+    case 'notifications-circle':
+      return Icons.notifications_outlined;
+    case 'camera':
+      return Icons.camera_alt_outlined;
+    case 'wifi':
+      return Icons.wifi;
+    case 'globe':
+    case 'earth':
+      return Icons.public_outlined;
+    case 'language':
+      return Icons.language_outlined;
+    case 'calendar':
+    case 'calendar-clear':
+      return Icons.calendar_month_outlined;
+    case 'videocam':
+    case 'videocam-off':
+      return Icons.videocam_outlined;
+    case 'mic':
+    case 'mic-off':
+      return Icons.mic_outlined;
+    case 'headset':
+    case 'headset-mic':
+      return Icons.headset_mic_outlined;
+    default:
+      return Icons.shield_outlined;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Exam Hub (app_exam_sets / app_exam_rules / exam_attempts / app_exam_rankings)
 // ---------------------------------------------------------------------------
 
@@ -982,12 +1139,16 @@ class ExamSection {
   }
 }
 
+/// Phase-2: sections come from GET /exam/sections (the D1 copy of
+/// app_exam_sections); the scope filter + order sort stay client-side,
+/// exactly as the Firestore version did them.
 Future<List<ExamSection>> fetchExamSections({
   String? courseId,
   String? subcourseId,
 }) async {
-  final docs = await ExamRest.listDocs('app_exam_sections');
-  final sections = docs
+  final rows = await CfApi.getExamSections();
+  final sections = rows
+      .map(_cfOrderField)
       .map(ExamSection.fromMap)
       .where((s) => s.inScope(courseId: courseId, subcourseId: subcourseId))
       .toList()
@@ -996,17 +1157,23 @@ Future<List<ExamSection>> fetchExamSections({
 }
 
 /// Exam provinces (chips) — mirrors examHub.fetchProvinces.
+/// NOTE-9: a province doc may carry courseIds/subcourseIds scope lists
+/// (empty/absent = applies to All), the same shape sections use.
 class ExamProvince {
   final String id;
   final String nameEn;
   final String nameNe;
   final int order;
+  final List<String> courseIds;
+  final List<String> subcourseIds;
 
   ExamProvince(
       {required this.id,
       required this.nameEn,
       required this.nameNe,
-      required this.order});
+      required this.order,
+      this.courseIds = const [],
+      this.subcourseIds = const []});
 
   /// Display name in the current app language.
   String displayName(bool nepali) =>
@@ -1014,6 +1181,9 @@ class ExamProvince {
 
   factory ExamProvince.fromMap(Map<String, dynamic> doc) {
     final fields = doc['_fields'] as Map<String, dynamic>? ?? doc;
+    List<String> ids(dynamic v) => v is List
+        ? v.map((e) => e.toString()).toList()
+        : <String>[];
     int ord = 0;
     final raw = fields['order'];
     if (raw is num) ord = raw.toInt();
@@ -1022,13 +1192,44 @@ class ExamProvince {
       nameEn: (fields['nameEn'] ?? fields['name'] ?? '').toString(),
       nameNe: (fields['nameNe'] ?? '').toString(),
       order: ord,
+      courseIds: ids(fields['courseIds']),
+      subcourseIds: ids(fields['subcourseIds']),
     );
+  }
+
+  /// NOTE-9 scope test (same rule as [ExamSection.inScope]): the doc
+  /// applies when its scope list contains our id, or when it carries
+  /// no scope list at all (All).
+  bool inScope({String? courseId, String? subcourseId}) {
+    if (courseId != null &&
+        courseId.isNotEmpty &&
+        courseIds.isNotEmpty &&
+        !courseIds.contains(courseId)) {
+      return false;
+    }
+    if (subcourseId != null &&
+        subcourseId.isNotEmpty &&
+        subcourseIds.isNotEmpty &&
+        !subcourseIds.contains(subcourseId)) {
+      return false;
+    }
+    return true;
   }
 }
 
-Future<List<ExamProvince>> fetchExamProvinces() async {
-  final docs = await ExamRest.listDocs('app_exam_provinces');
-  final provinces = docs.map(ExamProvince.fromMap).toList()
+/// Phase-2: provinces come from GET /exam/provinces. NOTE-9: when a
+/// course scope is given, provinces whose scope lists exclude it are
+/// dropped (empty scope = All, kept).
+Future<List<ExamProvince>> fetchExamProvinces({
+  String? courseId,
+  String? subcourseId,
+}) async {
+  final rows = await CfApi.getExamProvinces();
+  final provinces = rows
+      .map(_cfOrderField)
+      .map(ExamProvince.fromMap)
+      .where((p) => p.inScope(courseId: courseId, subcourseId: subcourseId))
+      .toList()
     ..sort((a, b) => a.order.compareTo(b.order));
   return provinces;
 }
@@ -1069,36 +1270,22 @@ bool examSetVisible(ExamSet s, {String? sectionId, String? provinceId}) {
   return true;
 }
 
+/// Phase-2: the dual-query merge + visibility narrowing + ordering are
+/// ported server-side (GET /exam/sets); the client keeps the same
+/// visibility filter and sort as a safety net so the visible result is
+/// identical even if a row slips through.
 Future<List<ExamSet>> fetchExamSets({
   String? subcourseId,
   String? sectionId,
   String? provinceId,
 }) async {
-  final merged = <String, Map<String, dynamic>>{};
-  if (subcourseId != null && subcourseId.isNotEmpty) {
-    final byList = await ExamRest.runQuery(
-      'app_exam_sets',
-      where: ExamRest.fieldFilter('subcourseIds', 'ARRAY_CONTAINS', subcourseId),
-      limit: 500,
-    );
-    for (final d in byList) {
-      merged[(d['id'] ?? '').toString()] = d;
-    }
-    final byLegacy = await ExamRest.runQuery(
-      'app_exam_sets',
-      where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-      limit: 500,
-    );
-    for (final d in byLegacy) {
-      merged[(d['id'] ?? '').toString()] = d;
-    }
-  } else {
-    final all = await ExamRest.listDocs('app_exam_sets');
-    for (final d in all) {
-      merged[(d['id'] ?? '').toString()] = d;
-    }
-  }
-  final sets = merged.values
+  final rows = await CfApi.getExamSets(
+    subcourseId: subcourseId,
+    sectionId: sectionId,
+    provinceId: provinceId,
+  );
+  final sets = rows
+      .map((r) => _cfDateField(r, 'startTime'))
       .map(ExamSet.fromMap)
       .where((s) => examSetVisible(s,
           sectionId: sectionId, provinceId: provinceId))
@@ -1113,9 +1300,12 @@ Future<List<ExamSet>> fetchExamSets({
   return sets;
 }
 
+/// Phase-2: GET /exam/sets/:id (null on 404, like the Firestore read).
 Future<ExamSet?> fetchExamSet(String setId) async {
-  final doc = await ExamRest.getDoc('app_exam_sets/$setId');
-  return doc == null ? null : ExamSet.fromMap(doc);
+  final row = await CfApi.getExamSetRow(setId);
+  return row == null
+      ? null
+      : ExamSet.fromMap(_cfDateField(row, 'startTime'));
 }
 
 /// Normalizes ONE scope dimension of an exam-rules doc (NOTE-6). The
@@ -1266,7 +1456,8 @@ List<ExamRuleDoc>? _examRuleDocsCache;
 Future<List<ExamRuleDoc>> _loadExamRuleDocs() async {
   final hit = _examRuleDocsCache;
   if (hit != null) return hit;
-  final raw = await ExamRest.listDocs('app_exam_rules');
+  // Phase-2: GET /exam/rules serves the same whole-collection read.
+  final raw = await CfApi.getExamRules();
   final docs = raw.map(ExamRuleDoc.fromMap).toList();
   _examRuleDocsCache = docs;
   return docs;
@@ -1367,20 +1558,26 @@ void clearExamRulesCache() {
 
 /// Lists every exam attempt of a user across all sets (the whole
 /// `users/{uid}/exam_attempts` subcollection, newest attempt first).
+/// Phase-2: GET /exam/attempts (identity rides the Bearer token; the
+/// [uid] parameter is kept for signature parity).
 Future<List<ExamAttempt>> fetchAllExamAttempts(String uid) async {
-  final docs = await ExamRest.listDocs('users/$uid/exam_attempts');
-  final attempts = docs.map(ExamAttempt.fromMap).toList()
+  final rows = await CfApi.getExamAttempts();
+  final attempts = rows
+      .map((r) => _cfDateField(r, 'createdAt'))
+      .map(ExamAttempt.fromMap)
+      .toList()
     ..sort((a, b) => b.attemptNumber.compareTo(a.attemptNumber));
   return attempts;
 }
 
-/// Mirrors fetchAttemptsForSet in services/examHub.ts: list the whole
-/// subcollection (no query — avoids composite-index requirements), filter by
-/// examSetId client-side, sort by attemptNumber like React.
+/// Mirrors fetchAttemptsForSet in services/examHub.ts. Phase-2: the
+/// server filters by setId (GET /exam/attempts?setId=); the client
+/// filter + attemptNumber sort stay as a safety net.
 Future<List<ExamAttempt>> fetchAttemptsForSet(
     String uid, String examSetId) async {
-  final docs = await ExamRest.listDocs('users/$uid/exam_attempts');
-  final attempts = docs
+  final rows = await CfApi.getExamAttempts(setId: examSetId);
+  final attempts = rows
+      .map((r) => _cfDateField(r, 'createdAt'))
       .map(ExamAttempt.fromMap)
       .where((a) => a.examSetId == examSetId)
       .toList()
@@ -1597,35 +1794,14 @@ List<Map<String, dynamic>> latestSubmissionsBySet(
 
 /// Mirrors fetchMyExamAnswersBySet (examAnswers.ts): the user's own answer
 /// docs keyed by examSetId, so PDF cards can look up "did I already submit?"
-/// in O(1). Per-user index: rules deny LIST queries on app_exam_answers for
-/// non-admins (resource.data is unavailable on lists), so the user's answer
-/// IDs are read from their own doc and each is fetched with getDocument.
+/// in O(1). Phase-2: GET /exam-answers/mine returns the user's answer rows
+/// in one call (the worker resolves the per-user index server-side).
 Future<Map<String, ExamAnswer>> fetchMyExamAnswersBySet(String uid) async {
-  final token = await AuthService.getValidIdToken();
-  final userDoc =
-      await FirestoreRest.getDocument('users/$uid', idToken: token);
-  final ids = <String>[
-    for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
-  ];
-  // Fetched in parallel (v1.0.120) — the old one-at-a-time loop made the
-  // Exam tab wait for one round trip per past submission.
-  final docs = await Future.wait([
-    for (final aid in ids)
-      () async {
-        try {
-          return await FirestoreRest.getDocument('app_exam_answers/$aid',
-              idToken: token);
-        } catch (_) {
-          // Skip docs that fail to load.
-          return null;
-        }
-      }(),
-  ]);
+  final rows = await CfApi.getMyExamAnswers();
   // v1.0.125: a set can hold SEVERAL submissions (re-apply) — the map
   // keeps the LATEST one per set (see latestExamAnswersBySet).
   return latestExamAnswersBySet([
-    for (final d in docs)
-      if (d != null) ExamAnswer.fromMap(d),
+    for (final r in rows) ExamAnswer.fromMap(_cfAnswerRow(r)),
   ]);
 }
 
@@ -1660,64 +1836,20 @@ class AnswerDisplayNames {
       sectionName.isNotEmpty;
 }
 
-/// Session caches for the course/subcourse docs used by
-/// [resolveAnswerDisplayNames] (v1.0.120): a list of answers from the
-/// same course used to re-fetch the identical course/subcourse doc once
-/// per answer. Keyed by doc path; null = not found / failed (cached too —
-/// a missing name must not re-tax every answer in the list).
-final Map<String, Map<String, dynamic>?> _answerNameDocCache = {};
-
-Future<Map<String, dynamic>?> _cachedNameDoc(String path, String token) {
-  final cached = _answerNameDocCache[path];
-  if (cached != null || _answerNameDocCache.containsKey(path)) {
-    return Future.value(cached);
-  }
-  return () async {
-    Map<String, dynamic>? doc;
-    try {
-      doc = await FirestoreRest.getDocument(path, idToken: token);
-    } catch (_) {
-      doc = null;
-    }
-    _answerNameDocCache[path] = doc;
-    return doc;
-  }();
-}
-
-/// Session cache for the sections list used by [resolveAnswerDisplayNames]
-/// (section names change rarely; re-listing per answer would be wasteful).
-Future<List<ExamSection>>? _answerNameSectionsFuture;
-
-Future<List<ExamSection>> _sectionsForNameResolution(String token) {
-  final cached = _answerNameSectionsFuture;
-  if (cached != null) return cached;
-  final future = () async {
-    final docs = await FirestoreRest.listDocuments('app_exam_sections',
-        idToken: token, pageSize: 200);
-    return docs.map(ExamSection.fromMap).toList();
-  }();
-  _answerNameSectionsFuture = future;
-  // A failed list must not poison the session — allow a later retry.
-  future.then((_) {}, onError: (_) {
-    if (identical(_answerNameSectionsFuture, future)) {
-      _answerNameSectionsFuture = null;
-    }
-  });
-  return future;
-}
-
 /// Resolves the display names for an answer doc, keeping any names already
-/// stored on the doc and filling the blanks from the exam set's IDs:
-/// course/subcourse names from `app_courses` (mirrors fetchUserCourseInfo —
-/// `name`, falling back to `nameNe`; subcourse from the course's
-/// `subcourses` subcollection with the legacy flat `app_subcourses`
-/// fallback) and the section's display name from the `app_exam_sections`
-/// list (legacy section ids normalised first).
+/// stored on the doc and filling the blanks from the exam set's context.
+///
+/// Phase-2: name resolution is ONE worker call — GET /exam/meta-names
+/// resolves the course/subcourse/section names from the set's IDs
+/// server-side (the D1 copies of app_courses / app_subcourses /
+/// app_exam_sections). [examSet] seeds an already-loaded set doc (its
+/// stored names, when a future set carries them, win first);
+/// [examSetCache] (keyed by exam set id) lets a screen load each set
+/// doc only once, as before.
 ///
 /// Best-effort by contract: every lookup failure is swallowed and the
 /// affected name stays blank — this must NEVER block a submission or a
-/// screen. [examSet] seeds an already-loaded set doc; [examSetCache]
-/// (keyed by exam set id) lets a screen load each set doc only once.
+/// screen.
 Future<AnswerDisplayNames> resolveAnswerDisplayNames(
   Map<String, dynamic> answer, {
   bool nepali = false,
@@ -1738,13 +1870,8 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
     );
   }
   try {
-    final token = await AuthService.getValidIdToken();
-    var courseId = stored('courseId');
-    var subcourseId = stored('subcourseId');
-    var sectionId = '';
-
-    // The parent exam-set doc carries the IDs (and may carry names itself
-    // on future sets — prefer those when present).
+    // The parent exam-set doc may carry names itself on future sets —
+    // prefer those when present.
     var setDoc = examSet;
     final setId = stored('examSetId');
     if (setDoc == null && setId.isNotEmpty) {
@@ -1752,8 +1879,7 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
         setDoc = examSetCache[setId];
       } else {
         try {
-          setDoc = await FirestoreRest.getDocument('app_exam_sets/$setId',
-              idToken: token);
+          setDoc = await CfApi.getExamSetRow(setId);
         } catch (_) {
           // Best-effort: names stay blank.
         }
@@ -1762,77 +1888,24 @@ Future<AnswerDisplayNames> resolveAnswerDisplayNames(
     }
     if (setDoc != null) {
       String fromSet(String key) => (setDoc![key] ?? '').toString().trim();
-      if (courseId.isEmpty) courseId = fromSet('courseId');
-      if (subcourseId.isEmpty) subcourseId = fromSet('subcourseId');
-      sectionId = fromSet('sectionId');
       if (courseName.isEmpty) courseName = fromSet('courseName');
       if (subcourseName.isEmpty) subcourseName = fromSet('subcourseName');
       if (sectionName.isEmpty) sectionName = fromSet('sectionName');
     }
 
-    // v1.0.120: the course doc, the subcourse doc and the sections list
-    // are independent once the IDs are known — fetch them CONCURRENTLY
-    // (the old code awaited them one after another) and through the
-    // session caches above, so a list of same-course answers pays for
-    // each lookup only once. The legacy flat-subcourse fallback still
-    // runs afterwards, only when the subcollection lookup found nothing.
-    Future<Map<String, dynamic>?> courseFuture() async {
-      if (courseName.isNotEmpty || courseId.isEmpty) return null;
-      return _cachedNameDoc('app_courses/$courseId', token);
-    }
-
-    Future<Map<String, dynamic>?> subcourseFuture() async {
-      if (subcourseName.isNotEmpty ||
-          subcourseId.isEmpty ||
-          courseId.isEmpty) {
-        return null;
-      }
-      return _cachedNameDoc(
-          'app_courses/$courseId/subcourses/$subcourseId', token);
-    }
-
-    Future<List<ExamSection>?> sectionsFuture() async {
-      if (sectionName.isNotEmpty || sectionId.isEmpty) return null;
-      try {
-        return await _sectionsForNameResolution(token);
-      } catch (_) {
-        return null;
-      }
-    }
-
-    final fetched = await Future.wait(
-        [courseFuture(), subcourseFuture(), sectionsFuture()]);
-    final courseDoc = fetched[0] as Map<String, dynamic>?;
-    final subcourseDoc = fetched[1] as Map<String, dynamic>?;
-    final sections = fetched[2] as List<ExamSection>?;
-
-    if (courseName.isEmpty && courseDoc != null) {
-      courseName =
-          ((courseDoc['name'] ?? courseDoc['nameNe']) as String? ?? '')
-              .trim();
-    }
-    if (subcourseName.isEmpty && subcourseDoc != null) {
-      subcourseName =
-          ((subcourseDoc['name'] ?? subcourseDoc['nameNe']) as String? ??
-                  '')
-              .trim();
-    }
-    if (subcourseName.isEmpty && subcourseId.isNotEmpty) {
-      // Legacy fallback: flat `app_subcourses` collection.
-      final legacy =
-          await _cachedNameDoc('app_subcourses/$subcourseId', token);
-      if (legacy != null) {
-        subcourseName =
-            ((legacy['name'] ?? legacy['nameNe']) as String? ?? '').trim();
-      }
-    }
-    if (sectionName.isEmpty && sections != null && sectionId.isNotEmpty) {
-      final wanted = normalizeExamSectionId(sectionId);
-      for (final s in sections) {
-        if (normalizeExamSectionId(s.id) == wanted) {
-          sectionName = s.displayName(nepali);
-          break;
-        }
+    if ((courseName.isEmpty || subcourseName.isEmpty || sectionName.isEmpty) &&
+        setId.isNotEmpty) {
+      final meta = await CfApi.getExamMetaNames(setId);
+      String fromMeta(String key) => (meta[key] ?? '').toString().trim();
+      if (courseName.isEmpty) courseName = fromMeta('courseName');
+      if (subcourseName.isEmpty) subcourseName = fromMeta('subcourseName');
+      if (sectionName.isEmpty) {
+        // The section name honours the app language, like the old
+        // ExamSection.displayName lookup: NE name in Nepali mode when
+        // the worker provides one.
+        final ne = fromMeta('sectionNameNe');
+        sectionName =
+            nepali && ne.isNotEmpty ? ne : fromMeta('sectionName');
       }
     }
   } catch (_) {
@@ -1892,7 +1965,13 @@ Future<void> notifyExamAnswerSubmitted({
   }
 }
 
-/// Saves an attempt twice: private doc + public ranking row (best-effort).
+/// Saves an attempt. Phase-2: ONE POST /exam/attempts — the server
+/// stores the private attempt doc AND the public ranking row (the
+/// ranking write stays best-effort, now server-side). NOTE-8: the
+/// payload carries the set's provinceId/sectionId/contentType so the
+/// ranking row is stamped with the scope fields the admin Rankings
+/// filters + Model Type column read. The [uid] parameter is kept for
+/// signature parity — identity rides the Bearer token.
 Future<void> saveExamAttempt({
   required String uid,
   required ExamSet set,
@@ -1905,10 +1984,14 @@ Future<void> saveExamAttempt({
   required bool isPro,
 }) async {
   final now = DateTime.now().toUtc();
-  await ExamRest.createDoc('users/$uid/exam_attempts', {
+  await CfApi.postExamAttempt({
     'examSetId': set.id,
     'courseId': set.courseId,
     'subcourseId': set.subcourseId,
+    // NOTE-8: ranking-row scope fields, from the set in hand.
+    'provinceId': set.provinceId,
+    'sectionId': set.sectionId,
+    'contentType': set.contentType,
     'attemptNumber': attemptNumber,
     'score': score.percent,
     'totalQuestions': set.questions.length,
@@ -1918,23 +2001,11 @@ Future<void> saveExamAttempt({
     'passed': score.passed ? 1 : 0,
     'timeTakenSeconds': timeTakenSeconds,
     'answers': answers,
-    'createdAt': now,
+    'createdAt': now.toIso8601String(),
+    'name': name,
+    'photoURL': photoURL,
+    'isPro': isPro,
   });
-  // Public ranking row — failures must not break the attempt save.
-  try {
-    await ExamRest.createDoc('app_exam_rankings', {
-      'examSetId': set.id,
-      'courseId': set.courseId,
-      'subcourseId': set.subcourseId,
-      'uid': uid,
-      'name': name,
-      'photoURL': photoURL,
-      'isPro': isPro,
-      'score': score.percent,
-      'timeTakenSeconds': timeTakenSeconds,
-      'createdAt': now,
-    });
-  } catch (_) {}
 }
 
 /// Best score per uid for a set — mirrors fetchExamRankings in
@@ -1942,11 +2013,11 @@ Future<void> saveExamAttempt({
 /// different field would require a composite index), keep each uid's best row
 /// (higher score wins; ties broken by lower time), sort client-side.
 Future<List<RankingRow>> fetchExamRanking(String examSetId) async {
-  final docs = await ExamRest.runQuery(
-    'app_exam_rankings',
-    where: ExamRest.fieldFilter('examSetId', 'EQUAL', examSetId),
-    limit: 300,
-  );
+  // Phase-2: GET /exam/rankings/:setId — best-per-uid is computed
+  // server-side; the dedupe + comparator below stay as a safety net so
+  // the visible order is unchanged even if raw rows come back.
+  final rows = await CfApi.getExamRankings(examSetId);
+  final docs = rows.map((r) => _cfDateField(r, 'createdAt')).toList();
   final bestByUid = <String, RankingRow>{};
   for (final d in docs) {
     final row = RankingRow.fromMap(d);
@@ -1958,13 +2029,13 @@ Future<List<RankingRow>> fetchExamRanking(String examSetId) async {
             row.timeTakenSeconds < existing.timeTakenSeconds);
     if (better) bestByUid[row.uid] = row;
   }
-  final rows = bestByUid.values.toList()
+  final out = bestByUid.values.toList()
     ..sort((a, b) {
       final s = b.score.compareTo(a.score);
       if (s != 0) return s;
       return a.timeTakenSeconds.compareTo(b.timeTakenSeconds);
     });
-  return rows;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -2470,15 +2541,12 @@ bool checkedDownloadLimitReached({
     (downloadedDay != null && downloadedDay == today) ||
     (mirrorDay != null && mirrorDay == today);
 
+/// Phase-2: GET /daily-test/models?subcourseId. Same client shaping as
+/// the Firestore version: active only, models without questions never
+/// shown, sorted by release date then order.
 Future<List<DailyTestModel>> fetchDailyTestModels(String subcourseId) async {
-  final docs = await ExamRest.runQuery(
-    'app_daily_test_models',
-    where: ExamRest.fieldFilter('subcourseId', 'EQUAL', subcourseId),
-    limit: 100,
-  );
-  // Same as React: active filtered client-side (single-field index is enough),
-  // models without questions never shown, sorted by release date then order.
-  return docs
+  final rows = await CfApi.getDailyTestModels(subcourseId);
+  return rows
       .map(DailyTestModel.fromMap)
       .where((m) => m.active && m.questions.isNotEmpty)
       .toList()
@@ -2487,36 +2555,48 @@ Future<List<DailyTestModel>> fetchDailyTestModels(String subcourseId) async {
         : a.testDate.compareTo(b.testDate));
 }
 
+/// Phase-2: GET /daily-test/models/:id (null on 404).
 Future<DailyTestModel?> fetchDailyTestModel(String modelId) async {
-  final doc = await ExamRest.getDoc('app_daily_test_models/$modelId');
-  return doc == null ? null : DailyTestModel.fromMap(doc);
+  final row = await CfApi.getDailyTestModel(modelId);
+  return row == null ? null : DailyTestModel.fromMap(row);
 }
 
 /// Existing result for a model (re-attempt guard). Null if never attempted.
+/// Phase-2: GET /daily-test/results?modelId= answers {row} or {row: null}.
 Future<DailyTestResult?> fetchDailyTestResultForModel(
     String uid, String modelId) async {
-  final docs = await ExamRest.runQuery(
-    'daily_test_results',
-    parent: 'users/$uid',
-    where: ExamRest.fieldFilter('modelId', 'EQUAL', modelId),
-    limit: 1,
-  );
-  return docs.isEmpty ? null : DailyTestResult.fromMap(docs.first);
+  final row = await CfApi.getDailyTestResultForModel(modelId);
+  return row == null
+      ? null
+      : DailyTestResult.fromMap(_cfDateField(row, 'createdAt'));
 }
 
+/// Phase-2: GET /daily-test/results — the user's results, newest first
+/// (the client re-sorts by createdAt desc so the newest-first invariant
+/// the screens rely on holds regardless of server order).
 Future<List<DailyTestResult>> fetchDailyTestResults(String uid) async {
-  final docs = await ExamRest.runQuery(
-    'daily_test_results',
-    parent: 'users/$uid',
-    orderBy: [ExamRest.orderField('createdAt', 'DESCENDING')],
-    limit: 50,
-  );
-  return docs.map(DailyTestResult.fromMap).toList();
+  final rows = await CfApi.getDailyTestResults();
+  final results = rows
+      .map((r) => _cfDateField(r, 'createdAt'))
+      .map(DailyTestResult.fromMap)
+      .toList()
+    ..sort((a, b) {
+      final at = a.createdAt, bt = b.createdAt;
+      if (at == null && bt == null) return 0;
+      if (at == null) return 1;
+      if (bt == null) return -1;
+      return bt.compareTo(at);
+    });
+  return results;
 }
 
 /// Saves a daily-test attempt. Returns the new result document's ID (React
-/// parity: saveDailyTestResult resolves the id). `createdAt` is a real
-/// Firestore server timestamp, never the device clock.
+/// parity: saveDailyTestResult resolves the id). Phase-2: POST
+/// /daily-test/results — `createdAt` stays a SERVER timestamp (the worker
+/// stamps it, never the device clock, exactly like the Firestore
+/// serverTimestampFields write). A duplicate submit answers 409 and is
+/// rethrown as [DailyTestAlreadyAttemptedException] so the quiz can run
+/// its already-attempted path.
 Future<String> saveDailyTestResult({
   required String uid,
   required DailyTestModel model,
@@ -2524,9 +2604,9 @@ Future<String> saveDailyTestResult({
   required List<int> answers,
   required int timeTakenSeconds,
 }) async {
-  final id = await ExamRest.createDoc(
-    'users/$uid/daily_test_results',
-    {
+  final Map<String, dynamic> body;
+  try {
+    body = await CfApi.postDailyTestResult({
       'modelId': model.id,
       'modelName': model.displayName,
       'courseId': model.courseId,
@@ -2538,10 +2618,18 @@ Future<String> saveDailyTestResult({
       'skipped': score.skipped,
       'timeTakenSeconds': timeTakenSeconds,
       'answers': answers,
-    },
-    serverTimestampFields: const ['createdAt'],
-  );
-  return id;
+    });
+  } on CfError catch (e) {
+    if (e.statusCode == 409 || e.error == 'already_attempted') {
+      throw const DailyTestAlreadyAttemptedException();
+    }
+    rethrow;
+  }
+  final nested = body['row'] ?? body['result'];
+  final id = body['id'] ??
+      body['resultId'] ??
+      (nested is Map ? nested['id'] : null);
+  return (id ?? '').toString();
 }
 
 // ---------------------------------------------------------------------------

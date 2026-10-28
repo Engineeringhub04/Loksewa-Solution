@@ -12,8 +12,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
+import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
-import 'package:loksewa_solution/services/firestore_rest.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
@@ -39,40 +39,13 @@ class _MySubmissionsScreenState extends State<MySubmissionsScreen> {
   }
 
   /// The student's own docs from the flat `app_exam_answers` collection,
-  /// newest first. Per-user index: rules deny LIST queries on
-  /// app_exam_answers for non-admins (resource.data is unavailable on
-  /// lists), so the user's answer IDs are read from their own doc and each
-  /// is fetched with getDocument (which the rules allow for the owner).
+  /// newest first. Phase-2: GET /exam-answers/mine returns every answer
+  /// row in one call (the worker resolves the per-user index
+  /// server-side) — the list paints as soon as the rows arrive.
   Future<void> _load({bool refresh = false}) async {
     if (!refresh) setState(() => _loading = true);
     try {
-      final uid = AuthService.currentUser?.uid;
-      final idToken = await AuthService.getValidIdToken();
-      final userDoc = await FirestoreRest.getDocument('users/$uid',
-          idToken: idToken);
-      final ids = <String>[
-        for (final e in (userDoc?['examAnswerIds'] as List? ?? [])) e.toString(),
-      ];
-      // v1.0.120: the answer docs are fetched IN PARALLEL — the old
-      // one-at-a-time loop made the list wait for a full round trip per
-      // submission before anything could render.
-      final fetched = await Future.wait([
-        for (final aid in ids)
-          () async {
-            try {
-              return await FirestoreRest.getDocument(
-                  'app_exam_answers/$aid',
-                  idToken: idToken);
-            } catch (_) {
-              // Skip docs that fail to load; never crash the whole list.
-              return null;
-            }
-          }(),
-      ]);
-      final all = <Map<String, dynamic>>[
-        for (final doc in fetched)
-          if (doc != null) doc,
-      ];
+      final all = await CfApi.getMyExamAnswers();
       all.sort((a, b) => _millis(b['createdAt'])
           .compareTo(_millis(a['createdAt'])));
       // v1.0.125: ONE row per exam set — the LATEST submission. A

@@ -34,3 +34,15 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 - Android pahile; iOS chhuttai test (purano iOS ma web fallback ko seto hune purano tathya ajhai lagu).
 
 **Timing:** mathi ko verify sakiyepachhi matra implement; ahile note matra — user, 2026-10-25
+
+### NOTE-12 — QOTD Showing Date: App-Side Auto Nepali Date (Preload Self-Heal)
+User ko design (2026-10-29 discuss). Sangai decide bhayeko admin-side design: website le QOTD save garda question ko final `dateKey` bata Nepali (BS) date **auto-fill** garne (naam converter jastai — manual lekheko nachalaune, khali/mis bhaye matra auto); admin side ajhai implement bhayeko **chhaina**. Yo note **app side** ko lagi:
+
+- App ma **Question of the Day page khulne bela**, page ko **preloading animation chalirako samaya bhitra** live question ko `showingDate` check garne:
+  - **Xaina bhane:** question ko `dateKey` (English date) bata sahi Nepali (BS) date hisab garera **save garne + tehi dekhaune**.
+  - **Wrong xa bhane:** correct Nepali date le **update garera dekhaune**.
+- Sabai kaam preload bhitra sakine — user le sidhai sahi Nepali date matra dekhchha (splash → home → QOTD, jaha bata aaye pani).
+- **Accuracy:** AD→BS conversion fixed official calendar table bata hunchha — `dateKey` sahi bhaye Nepali date pani **100% sahi** (anuman/hisab hoina, table lookup ho).
+- **Implement garda chhutyaaune:** app le save/update garna worker write path chahinchha ki display-matra hisab paryapta hunchha — build round ma decide garne.
+
+**Timing:** ahile note matra — user, 2026-10-29

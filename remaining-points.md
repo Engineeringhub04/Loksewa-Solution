@@ -46,3 +46,12 @@ User ko design (2026-10-29 discuss). Sangai decide bhayeko admin-side design: we
 - **Implement garda chhutyaaune:** app le save/update garna worker write path chahinchha ki display-matra hisab paryapta hunchha — build round ma decide garne.
 
 **Timing:** ahile note matra — user, 2026-10-29
+
+### NOTE-13 — QOTD Home Card: Farkida Real-Time COMPLETED Flip (App-Side Hook)
+**Server side sakisakyo (2026-10-30):** GET /qotd le aba prashna sangai login gareko user ko **result + summary** pani pathauchha — answer disake pachhi QOTD page feri kholda diyeko answer nai dekhauchha (feri dina mildaina), ra home card **pull-to-refresh / app restart** ma COMPLETED hunchha. **Baki yo note app side ko matra ho:**
+
+- **Samasya:** `home_tab` ma QOTD card ko `onPress` **bare `context.push('/question-of-the-day')`** matra ho — QOTD page bata back auda home data **kahile reload hudaina**. Home ko `_load()` initState ra pull-to-refresh ma matra chalne bhayekale, answer diera farkine bitikai pani card **LIVE nai** baschha; refresh/restart pachhi matra COMPLETED flip hunchha.
+- **Fix (build round ma):** `/question-of-the-day` route pop bhayepachhi home data **reload** garne — ya ta pura `_load()` feri chalaune, ya ta halka tarika: `fetchQotdDay` matra feri chalayera **qotdStatus matra** refresh garne. App bhitra pahile dekhi bhayeko **bell badge ko shared-notifier pattern** sanga milaera garda pani hunchha (page le status badalne bitikai home le thaha paune).
+- **Badli nahune:** server bundle (qotd/question/result/summary/greetings) ustai; yo note le NOTE-12 (showing date) lai chhundaina — tyo chhuttai ho.
+
+**Timing:** ahile note matra — user, 2026-10-30 (server-matra fix garne nirnaya anusar; app hook arko build round ma)

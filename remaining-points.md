@@ -55,3 +55,13 @@ User ko design (2026-10-29 discuss). Sangai decide bhayeko admin-side design: we
 - **Badli nahune:** server bundle (qotd/question/result/summary/greetings) ustai; yo note le NOTE-12 (showing date) lai chhundaina — tyo chhuttai ho.
 
 **Timing:** ahile note matra — user, 2026-10-30 (server-matra fix garne nirnaya anusar; app hook arko build round ma)
+
+### NOTE-14 — Notice Heading: H1/H2/H3 Size Levels (App Renderer)
+**Panel side sakisakyo (2026-10-30):** admin NoticeEditPage ma content blocks aba **visual card editor** bata banchha (heading / text / image cards, image upload + reorder) — blocks ko stored shape ustai chha (`{type:'heading', text}` adi). **Yo note app side ko matra ho:**
+
+- **Samasya:** app ko notice renderer (`notice_detail_screen.dart`) le `heading` block lai **eutai size** ma dekhauchha — `ExpoType.h3`, bold. Block ma level bhanne kura aile chhaina, tesaile H1/H2/H3 jasto farak size sambhav chhaina.
+- **Fix (build round ma):** heading block ma optional **`level` field (1 | 2 | 3)** support garne — `level` anusar H1/H2/H3 sizes (ExpoType scale bata) ma render garne; `level` nabhayeko purano block aile kai size (h3) mai dekhauchha (backward compatible).
+- **Tespachhi:** panel editor ko Heading card ma level chhanne option (H1/H2/H3) thapne — data shape ma `level` save hunchha; tapasamma panel le heading eutai rakchha.
+- **Badli nahune:** aru block types (text ko `**bold**` + auto-link, image block, `[img:KEY]` token) ustai.
+
+**Timing:** ahile note matra — user, 2026-10-30

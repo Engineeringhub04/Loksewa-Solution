@@ -383,8 +383,14 @@ class _QuestionOfDayScreenState extends State<QuestionOfDayScreen>
                             size: 13, color: palette.primary),
                         const SizedBox(width: 5),
                         Text(
-                          q.showingDate.isNotEmpty
-                              ? q.showingDate
+                          // NOTE-12: displayShowingDate self-heals a
+                          // missing/wrong stored showingDate from the
+                          // question's dateKey during this first render
+                          // (the preload in _boot/_load has already
+                          // fetched the live question), so the wrong
+                          // date is never shown.
+                          q.displayShowingDate.isNotEmpty
+                              ? q.displayShowingDate
                               : day.dateKey,
                           style: TextStyle(
                               color: palette.primary,

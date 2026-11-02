@@ -475,10 +475,17 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
     if (type == 'heading') {
       final text = (b['text'] ?? '').toString();
       if (text.isEmpty) return const SizedBox.shrink();
+      // NOTE-14: optional `level` (1|2|3) picks the ExpoType heading
+      // size; a block without a valid level keeps the old h3 size.
+      final fontSize = switch (CfJson.asInt(b['level'])) {
+        1 => ExpoType.h1,
+        2 => ExpoType.h2,
+        _ => ExpoType.h3,
+      };
       return Text(text,
           style: TextStyle(
               color: palette.textPrimary,
-              fontSize: ExpoType.h3,
+              fontSize: fontSize,
               fontWeight: FontWeight.bold));
     }
     // text — split [img:KEY] tokens into flowing pieces.

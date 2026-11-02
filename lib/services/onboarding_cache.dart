@@ -94,6 +94,54 @@ class OnboardingCache {
     }
   }
 
+  /// Background-prefetches REMOTE slide images (NOTE-19: the database
+  /// slides appended after the 4 built-ins) into the same disk cache
+  /// [resolve] reads, so slides 5+ render from file instead of waiting
+  /// on the network — and later opens are instant. Deadline-guarded
+  /// (same total/per-file budgets as [warmUp]) and never throws; callers
+  /// fire it without awaiting so it can never block the built-in slides.
+  static Future<void> prefetchRemote(Iterable<String> urls) async {
+    try {
+      await _prefetchRemoteInner(urls).timeout(_totalDeadline);
+    } catch (_) {
+      // Timeout or any error: those slides lazy-load from network.
+    }
+  }
+
+  static Future<void> _prefetchRemoteInner(Iterable<String> urls) async {
+    final unique = urls.where((u) => u.isNotEmpty).toSet().toList();
+    if (unique.isEmpty) return;
+    // Resolve the support dir the same way [resolve] expects it:
+    // _fileFor takes the SUPPORT path (it appends /onboarding itself).
+    var supportPath = _supportPath;
+    if (supportPath == null) {
+      try {
+        final support = await getApplicationSupportDirectory()
+            .timeout(const Duration(seconds: 3));
+        supportPath = support.path;
+        _supportPath = supportPath;
+      } catch (_) {
+        return;
+      }
+    }
+    try {
+      final dir = Directory('$supportPath/onboarding');
+      dir.createSync(recursive: true);
+    } catch (_) {
+      return;
+    }
+    for (final url in unique) {
+      try {
+        final file = _fileFor(supportPath, url);
+        if (!file.existsSync()) {
+          await _download(url, file).timeout(_perFileTimeout);
+        }
+      } catch (_) {
+        // Per-file failure: this slide lazy-loads from the network.
+      }
+    }
+  }
+
   static Future<void> _download(String url, File file) async {
     final client = HttpClient();
     try {

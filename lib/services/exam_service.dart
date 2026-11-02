@@ -14,6 +14,7 @@ import 'package:http/http.dart' as http;
 import 'app_config.dart';
 import 'auth_service.dart';
 import 'cf_api.dart';
+import 'nepali_date.dart';
 import 'prefs_service.dart';
 import 'server_clock.dart';
 
@@ -3731,6 +3732,23 @@ class QotdQuestion {
     required this.version,
     required this.isPublished,
   });
+
+  /// NOTE-12 self-heal (display-side): the BS (Nepali) date label to
+  /// actually show for this question. The stored [showingDate] is only
+  /// trusted when it already equals the correct BS conversion of
+  /// [dateKey] (the project's fixed-table converter, nepali_date.dart —
+  /// the same table the admin panel uses); a missing or wrong stored
+  /// value is replaced by the computed correct date, so the user only
+  /// ever sees the right Nepali date. When [dateKey] cannot be
+  /// converted (outside BS 2000–2090) the stored value is kept as-is.
+  /// Display-only: the worker exposes no write path for a question's
+  /// showingDate (GET /qotd + POST /qotd/answer only), so nothing is
+  /// persisted from the app.
+  String get displayShowingDate {
+    final correct = formatShowingDate(dateKey);
+    if (correct.isEmpty) return showingDate;
+    return correct;
+  }
 
   /// Mirrors normalizeQuestion(): defaults + caps, greetings overlaid from
   /// `meta/qotd_greetings`.

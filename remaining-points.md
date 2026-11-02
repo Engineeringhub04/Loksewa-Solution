@@ -21,6 +21,15 @@
 
 ---
 
+- [x] ~~**NOTE-12 — QOTD Showing Date: App-Side Auto Nepali Date (Preload Self-Heal):** App ma Question of the Day page khulne bela preload bhitra live question ko `showingDate` check garne — xaina bhane / wrong xa bhane `dateKey` bata sahi Nepali (BS) date hisab garera dekhaune (AD→BS fixed official calendar table, `nepali_date.dart`).~~ — **Done 2026-11-02 (v1.0.130):** display-side self-heal, no write path exists — `QotdQuestion.displayShowingDate` le stored value sanga compare garera correct BS date matra dekhauchha, save/update gardaina.
+- [x] ~~**NOTE-13 — QOTD Home Card: Farkida Real-Time COMPLETED Flip (App-Side Hook):** `home_tab` ko QOTD card bata QOTD page gaera farkida home data reload nahune — answer diera farkine bitikai pani card LIVE basthyo, refresh/restart pachhi matra COMPLETED flip hunthyo. Server bundle (result + summary) pahile nai thiyo.~~ — **Done 2026-11-02 (v1.0.130):** `/question-of-the-day` route pop pachhi home le QOTD status refresh garchha — card turuntai COMPLETED flip hunchha, pull-to-refresh/restart parkhina pardaina.
+- [x] ~~**NOTE-14 — Notice Heading: H1/H2/H3 Size Levels (App Renderer):** `notice_detail_screen.dart` le `heading` block lai eutai size (h3) ma dekhauchthyo; heading block ma optional `level` (1|2|3) support garera level anusar size render garne, level nabhayeko purano block h3 mai (backward compatible).~~ — **Done 2026-11-02 (v1.0.130):** renderer le `level` anusar H1/H2/H3 (ExpoType scale) render garchha; level absent/invalid bhaye h3 fallback.
+- [x] ~~**NOTE-15 — Home Banner Targeting: targetSubcourseIds Honor Garne (App Renderer):** `targetSubcourseIds` empty/absent = All (guest sahit sabai), non-empty = tyo subcourseId bhayeko login user lai matra; guest lai All-targeted matra. `home_tab` le aile field padhdaina thiyo.~~ — **Done 2026-11-02 (v1.0.130):** `home_tab` le banner (ra notice) filter ma `targetSubcourseIds` honor garchha — user ko `subcourseId` match nabhaye hide.
+- [x] ~~**NOTE-16 — Home Banner Expiry: expiresAt Bitisake Pachhi App Ma Hide Garne:** `expiresAt` blank = permanent, future = dekhauchha, past = hide. Dui option madhye worker-central filter sifaris thiyo.~~ — **Done 2026-11-02 (v1.0.130):** worker-central filter live via server commit 5f25ca90 — GET /banners le past-`expiresAt` row filter garera pathauchha, sabai app version ma lagu.
+- [x] ~~**NOTE-17 — Developers: Panel-Le Rakheko Developer App Ma Na-Dekhne (Slider Chhaina) + isActive Show/Hide (App Renderer):** `home_tab` le `devs.first` matra render garthyo — slider nai thiena, pachhi thapeko developer kahile dekhidaina thiyo; `isActive` absent = dekhauchha, `false` = hide.~~ — **Done 2026-11-02 (v1.0.130):** sabai shown developer haru ko auto-slide carousel (`DeveloperCarousel`) + `isActive != false` filter.
+- [x] ~~**NOTE-18 — GK & PM Topics: targetSubcourseIds Honor Garne (App Renderer):** topic entry ko `targetSubcourseIds` absent/empty = All (guest sahit), non-empty = login user ko `subcourseId` list bhitra bhaye matra; guest lai targeted topic dekhauudaina.~~ — **Done 2026-11-02 (v1.0.130):** `additional_feature_home.dart` ko topic list ma scope check thapiyo — `isPublished` filter sangai targeting honor hunchha.
+- [x] ~~**NOTE-19 — Onboarding: append database slides after the built-ins (app round):** `_loadRemoteSlides` le >=4 shown rows bhaye matra 4 hardcoded slides REPLACE garthyo; 0-3 rows bhaye DB slides invisible. Desired: 4 built-ins sadhai pahile (orders 1-4), DB slides (orders 5+) tes pachhi APPEND; splash/built-ins chalda DB slide images background-prefetch + disk-cache (deadline-guarded, built-ins block nagarne).~~ — **Done 2026-11-02 (v1.0.130):** built-ins sadhai first, DB slides append after in order with background prefetch/cache.
+
 ## 📌 Remaining
 
 ### NOTE-10 — Payment App-Open (Wallet App Cha Bhane SDK Method, Natra Aile Kai Web)
@@ -36,79 +45,6 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 
 **Timing:** mathi ko verify sakiyepachhi matra implement; ahile note matra — user, 2026-10-25
 
-### NOTE-12 — QOTD Showing Date: App-Side Auto Nepali Date (Preload Self-Heal)
-User ko design (2026-10-29 discuss). Sangai decide bhayeko admin-side design: website le QOTD save garda question ko final `dateKey` bata Nepali (BS) date **auto-fill** garne (naam converter jastai — manual lekheko nachalaune, khali/mis bhaye matra auto); admin side ajhai implement bhayeko **chhaina**. Yo note **app side** ko lagi:
-
-- App ma **Question of the Day page khulne bela**, page ko **preloading animation chalirako samaya bhitra** live question ko `showingDate` check garne:
-  - **Xaina bhane:** question ko `dateKey` (English date) bata sahi Nepali (BS) date hisab garera **save garne + tehi dekhaune**.
-  - **Wrong xa bhane:** correct Nepali date le **update garera dekhaune**.
-- Sabai kaam preload bhitra sakine — user le sidhai sahi Nepali date matra dekhchha (splash → home → QOTD, jaha bata aaye pani).
-- **Accuracy:** AD→BS conversion fixed official calendar table bata hunchha — `dateKey` sahi bhaye Nepali date pani **100% sahi** (anuman/hisab hoina, table lookup ho).
-- **Implement garda chhutyaaune:** app le save/update garna worker write path chahinchha ki display-matra hisab paryapta hunchha — build round ma decide garne.
-
-**Timing:** ahile note matra — user, 2026-10-29
-
-### NOTE-13 — QOTD Home Card: Farkida Real-Time COMPLETED Flip (App-Side Hook)
-**Server side sakisakyo (2026-10-30):** GET /qotd le aba prashna sangai login gareko user ko **result + summary** pani pathauchha — answer disake pachhi QOTD page feri kholda diyeko answer nai dekhauchha (feri dina mildaina), ra home card **pull-to-refresh / app restart** ma COMPLETED hunchha. **Baki yo note app side ko matra ho:**
-
-- **Samasya:** `home_tab` ma QOTD card ko `onPress` **bare `context.push('/question-of-the-day')`** matra ho — QOTD page bata back auda home data **kahile reload hudaina**. Home ko `_load()` initState ra pull-to-refresh ma matra chalne bhayekale, answer diera farkine bitikai pani card **LIVE nai** baschha; refresh/restart pachhi matra COMPLETED flip hunchha.
-- **Fix (build round ma):** `/question-of-the-day` route pop bhayepachhi home data **reload** garne — ya ta pura `_load()` feri chalaune, ya ta halka tarika: `fetchQotdDay` matra feri chalayera **qotdStatus matra** refresh garne. App bhitra pahile dekhi bhayeko **bell badge ko shared-notifier pattern** sanga milaera garda pani hunchha (page le status badalne bitikai home le thaha paune).
-- **Badli nahune:** server bundle (qotd/question/result/summary/greetings) ustai; yo note le NOTE-12 (showing date) lai chhundaina — tyo chhuttai ho.
-
-**Timing:** ahile note matra — user, 2026-10-30 (server-matra fix garne nirnaya anusar; app hook arko build round ma)
-
-### NOTE-14 — Notice Heading: H1/H2/H3 Size Levels (App Renderer)
-**Panel side sakisakyo (2026-10-30):** admin NoticeEditPage ma content blocks aba **visual card editor** bata banchha (heading / text / image cards, image upload + reorder) — blocks ko stored shape ustai chha (`{type:'heading', text}` adi). **Yo note app side ko matra ho:**
-
-- **Samasya:** app ko notice renderer (`notice_detail_screen.dart`) le `heading` block lai **eutai size** ma dekhauchha — `ExpoType.h3`, bold. Block ma level bhanne kura aile chhaina, tesaile H1/H2/H3 jasto farak size sambhav chhaina.
-- **Fix (build round ma):** heading block ma optional **`level` field (1 | 2 | 3)** support garne — `level` anusar H1/H2/H3 sizes (ExpoType scale bata) ma render garne; `level` nabhayeko purano block aile kai size (h3) mai dekhauchha (backward compatible).
-- **Tespachhi:** panel editor ko Heading card ma level chhanne option (H1/H2/H3) thapne — data shape ma `level` save hunchha; tapasamma panel le heading eutai rakchha.
-- **Badli nahune:** aru block types (text ko `**bold**` + auto-link, image block, `[img:KEY]` token) ustai.
-
-**Timing:** ahile note matra — user, 2026-10-30
-
-### NOTE-15 — Home Banner Targeting: targetSubcourseIds Honor Garne (App Renderer)
-**Panel + server side sakisakyo (2026-10-30, Section 9.3):** admin Home Banners ma aba **Course/Sub-course targeting** chha — banner doc ma `targetSubcourseIds` array save hunchha (Notices kai pattern), ra worker GET /banners le doc jasto chha testai pathauchha. **Yo note app side ko matra ho — app le aile yo field padhdaina, tesaile targeted banner pani sabai lai dekhauchha jabasamma yo fix hudaina:**
-
-- **Niyam:** `targetSubcourseIds` **empty (wa field nai nabhayeko) = All users** — login gareko ra **guest** sabai lai dekhauchha. **Non-empty = tyo list ma subcourseId bhayeko login user lai matra** dekhauchha; guest le All-targeted banner matra dekhauchha.
-- **Fix (build round ma):** `home_tab` le banners filter garda yo niyam lagaune — user ko `subcourseId` sanga match garne; list bahira ko user/guest lai non-empty-target banner **hide** garne. Order (worker le `order` asc pathauchha) ustai rakhne.
-- **Badli nahune:** banner ko aru field haru (heading/subheading/backgroundColor/imageLink/linkUrl) ustai; targeting nabhayeko purano banner sabai lai dekhine nai rahanchha (backward compatible).
-
-**Timing:** ahile note matra — user, 2026-10-30
-
-### NOTE-16 — Home Banner Expiry: expiresAt Bitisake Pachhi App Ma Hide Garne (App Renderer)
-**Panel + server side sakisakyo (2026-10-30, 9.3 expiry follow-up):** admin Home Banner editor ma aba **optional Expiry Date & Time** chha — banner doc ma `expiresAt` (ISO instant) save hunchha, **blank = permanent** (kahile expire hudaina). Editor ma BS (Nepali) date+time auto-display ra 'Expired Time' live-countdown card pani chha, ra list ma Expiry + Expired Time column haru chhan. Worker GET /banners le doc jasto chha testai pathauchha (naya column `expiresAt` set bhaye sangai aauchha). **Yo note app side ko matra ho — app le aile yo field padhdaina, tesaile expired banner pani app ma dekhai rahanchha jabasamma yo fix hudaina:**
-
-- **Niyam:** `expiresAt` **blank/nabhayeko = permanent** — sadhai dekhauchha. `expiresAt` **future ma = dekhauchha**; `expiresAt` **bitisakeko (past) = app ma bilkulai dekhauudaina** (banner list batai hide).
-- **Fix (build round ma) — dui madhye euta chhanne:**
-  1. **App-side filter:** `home_tab` / banner fetch le render garnu aghi `expiresAt` check garne — past bhaye skip garne. Sajilo, tara purano app version haru ma expired banner dekhai rahanchha.
-  2. **Worker-central filter (sifaris):** GET /banners le nai past-`expiresAt` row haru **filter garera** pathaune — sabai app version ma ekai choti lagu hunchha, app update napari pani purano app le expired banner paaudaina. Blank/future row ustai pathaune.
-- **Badli nahune:** banner ko aru field haru (heading/subheading/backgroundColor/imageLink/linkUrl/order/targetSubcourseIds) ustai; expiry nabhayeko purano banner sadhai dekhine nai rahanchha (backward compatible).
-
-**Timing:** ahile note matra — user, 2026-10-30
-
-### NOTE-17 — Developers: Panel-Le Rakheko Developer App Ma Na-Dekhne (Slider Chhaina) + isActive Show/Hide (App Renderer)
-**Panel + server side sakisakyo (2026-10-30, 9.4):** admin Developers page le aba asali field haru nai edit garchha — `name`, `title`, `description`, `bio`, `photoUrl`, `viewUrl`, `isActive` (Show in App tick box), `createdAt`, `updatedAt` — ra worker GET /developers le **sabai** row haru pathauchha (order as stored). **Tara app ma panel-bata thapeko naya developer dekhidaina — karan app side ma chha (praman sahit):**
-
-- **Karan:** `lib/screens/learn/home_tab.dart` le developers lai **euta matra** variable ma rakhchha — `developer = devs.first` — ra **euta matra** `DeveloperCard` render garchha. App ma developers ko **slider/carousel nai chhaina** (PageView carousel banner ko lagi matra chha — `widgets/home/banner_carousel.dart`). GET /developers le sabai row pathaye pani app le **pahilo row matra** dekhauchha; row haru stored order ma aauchhan, tesaile purano row (kishan-raut) sadhai pahilo hunchha ra pachhi thapeko developer kahile dekhidaina.
-- **Fix (build round ma):**
-  1. **Slider banaune:** banners jastai — GET /developers ka **sabai** (dekhaune) row haru lai auto-slide hune carousel ma render garne (DeveloperCard pratyek row ko lagi: `name`, `description`, `photoUrl`, `viewUrl` — field naam haru aile kai ustai).
-  2. **isActive honor garne:** panel ma naya **Show in App** tick box chha — doc ma `isActive` save hunchha. **Niyam: `isActive` nabhayeko (absent) = DEKHAUNE** (purana row haru ma yo field nai chhaina, tiniharu dekhai rahanuparchha); `isActive == false` bhaye matra tyo developer lai slider bata hide garne. (App kai idiom ho — plans/theory ma `!= false` bhanera check gare jastai.)
-- **Badli nahune:** worker GET /developers ustai (sabai row pathauchha — filter app le garne); panel ka field naam haru ustai; `links` field panel bata hataieko chha (app le kahile padhena, sabai row ma empty thiyo) — app le teslai khojne hoina.
-
-**Timing:** ahile note matra — user, 2026-10-30
-
-### NOTE-18 — GK & PM Topics: targetSubcourseIds Honor Garne (App Renderer)
-**Panel + server side sakisakyo (2026-10-30, 8.5 amendment):** admin 'GK & PM Topic Data' page le aba pratyek **topic entry bhitra** nai Course/Sub-course targeting rakhchha — GK/PM page doc (`app_additional_feature_pages/{gk|pm}__all__all`) ko `topics[]` bhitra ko pratyek entry ma `targetSubcourseIds` (sub-course id haru ko array) save hunchha. Worker GET /features/:featureId le doc jasto chha testai pathauchha — topics haru ma yo field set bhaye sangai aauchha. **Yo note app side ko matra ho — app le aile yo field padhdaina, tesaile targeted topic pani sabai lai dekhai rahanchha jabasamma yo fix hudaina:**
-
-- **Niyam:** `targetSubcourseIds` **nabhayeko (absent) wa khali (empty) = All** — sabai lai dekhauchha, login nagareko guest lai pani. `targetSubcourseIds` **non-empty bhaye:** topic tyo bela matra dekhauchha jab **login gareko** user ko `subcourseId` tyo list bhitra chha; guest lai tyasto topic **dekhauudaina** (guest sanga sub-course nai hudaina).
-- **Fix (build round ma):** `additional_feature_home.dart` ko topic list — aile `isPublished !== false` filter matra chha; tesma mathiko scope check thapne (signed-in user ko subcourseId sanga match garne; user context nabhaye All-targeted topic matra). Order/sort ustai.
-- **Badli nahune:** topic ko aru field haru (titleEn/titleNp/slug/order/questionCount/questionBankId) ustai; targeting nabhayeko purano topic sabai lai dekhine nai rahanchha (backward compatible).
-
-**Timing:** ahile note matra — user, 2026-10-30
-
-## NOTE-19 — Onboarding: append database slides after the built-ins (app round)
-Today `_loadRemoteSlides` REPLACES the 4 hardcoded slides only when /onboarding returns >=4 shown rows; with 0-3 rows the database slides are invisible. Desired (user's model, 2026-10-31): the 4 built-ins ALWAYS show first (orders 1-4, bundled, fast), and database slides (orders 5+) APPEND after them in order. The worker already filters hidden (enabled=false) rows server-side. While the splash + first built-in slides are on screen, the app must background-prefetch and disk-cache the database slides' images (deadline-guarded, never blocks the built-ins) so slides 5+ appear without delay and later opens are instant from cache. Implement when the app round is ordered.
 
 ## NOTE-20 — Onboarding: honor per-slide color + >4-slide chrome (app round)
 Database slides now carry a `color` field (admin ColorField) which the app does not read (palette is hardcoded cream/navy). Honor `color` per slide when present (fallback = current palette). Also with more than 4 slides: Skip currently jumps to index 3 and the morph-CTA timing assumes 4 pages — make both follow the real slide count.

@@ -19,7 +19,7 @@ import 'package:loksewa_solution/widgets/home/quick_link_button.dart';
 import 'package:loksewa_solution/widgets/home/grid_button.dart';
 import 'package:loksewa_solution/widgets/home/notice_card.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
-import 'package:loksewa_solution/widgets/home/developer_card.dart';
+import 'package:loksewa_solution/widgets/home/developer_carousel.dart';
 
 /// Home tab — faithful port of app/(tabs)/index.tsx:
 /// collapsing HomeHeader, BannerCarousel, QuestionOfDayCard, Subjects rail,
@@ -136,11 +136,23 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
     List<Map<String, dynamic>> banners = [];
     List<Map<String, dynamic>> notices = [];
     QotdCardStatus qotdStatus = QotdCardStatus.empty;
-    Map<String, dynamic>? developer;
+    List<Map<String, dynamic>> developers = [];
     int notificationCount = 0;
     try {
       // Round-1: banners from GET /banners (copied app_home_banners rows).
-      banners = await CfApi.getBanners();
+      // NOTE-15: honor targetSubcourseIds — empty/absent = everyone
+      // (guests included); non-empty = only a logged-in user whose
+      // subcourseId is in the list (guests never see targeted banners).
+      // Worker order is preserved (plain filter, no re-sort).
+      final rawBanners = await CfApi.getBanners();
+      banners = rawBanners.where((b) {
+        final targets = b['targetSubcourseIds'];
+        final List list = targets is List ? targets : const [];
+        if (list.isEmpty) return true;
+        if (user == null) return false;
+        if (subcourseId == null || subcourseId.isEmpty) return false;
+        return list.map((e) => e.toString()).contains(subcourseId);
+      }).toList();
     } catch (_) {}
     try {
       // Mirrors fetchNotices (services/notices.ts): pageSize 30 (the API
@@ -190,9 +202,17 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       }
     } catch (_) {}
     try {
-      // Phase-1: developers card from GET /developers.
+      // Phase-1: developers from GET /developers.
+      // NOTE-17: keep ALL rows for the slider (previously only
+      // devs.first was rendered), honoring isActive — absent = show,
+      // == false = hide (the app's `!= false` idiom, via CfJson so
+      // D1 text/number shapes count too).
       final devs = await CfApi.getDevelopers();
-      if (devs.isNotEmpty) developer = devs.first;
+      developers = devs
+          .where((d) =>
+              d['isActive'] == null ||
+              CfJson.asBool(d['isActive'], fallback: true))
+          .toList();
     } catch (_) {}
     try {
       notificationCount = await _unreadNotificationCount(user?.uid);
@@ -239,8 +259,35 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
       notices: notices,
       qotdStatus: qotdStatus,
       subjects: subjects,
-      developer: developer,
+      developers: developers,
     );
+  }
+
+  /// NOTE-13 (light path): re-run fetchQotdDay only and flip the home
+  /// card's status in place — called after the /question-of-the-day
+  /// route pops, so a just-answered card shows COMPLETED immediately
+  /// instead of staying LIVE until a pull-to-refresh / restart. The
+  /// rest of the home data is untouched.
+  Future<void> _refreshQotdStatus(_HomeData d) async {
+    final uid = AuthService.currentUser?.uid ?? '';
+    final courseId = d.courseId;
+    final subcourseId = d.subcourseId;
+    if (uid.isEmpty || courseId == null || subcourseId == null) return;
+    try {
+      final day = await fetchQotdDay(uid, courseId, subcourseId);
+      if (!mounted) return;
+      if (day.courseId != courseId || day.subcourseId != subcourseId) {
+        return;
+      }
+      final next = day.result != null
+          ? QotdCardStatus.completed
+          : day.question != null
+              ? QotdCardStatus.live
+              : QotdCardStatus.empty;
+      if (next != d.qotdStatus) {
+        setState(() => d.qotdStatus = next);
+      }
+    } catch (_) {}
   }
 
   static bool _isPremiumActive(Map<String, dynamic>? userDoc) {
@@ -425,7 +472,13 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                         const SizedBox(height: ExpoSpacing.sm),
                         QuestionOfDayCard(
                           status: d.qotdStatus,
-                          onPress: () => context.push('/question-of-the-day'),
+                          // NOTE-13: awaiting the push future means we
+                          // resume when the QOTD page pops — refresh
+                          // just the card status then.
+                          onPress: () async {
+                            await context.push('/question-of-the-day');
+                            await _refreshQotdStatus(d);
+                          },
                         ),
                         // Subjects.
                         _sectionHeaderRow(context, 'Subjects', '/subjects'),
@@ -502,17 +555,9 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                             children: [
                               _sectionTitle(context, 'About Developer'),
                               const SizedBox(height: ExpoSpacing.md),
-                              d.developer != null
-                                  ? DeveloperCard(
-                                      name:
-                                          '${d.developer!['name'] ?? 'Developer'}',
-                                      description: d.developer!['description']
-                                          as String?,
-                                      photoUrl: (d.developer!['photoUrl'] ??
-                                          d.developer!['photo']) as String?,
-                                      viewUrl:
-                                          d.developer!['viewUrl'] as String?,
-                                    )
+                              d.developers.isNotEmpty
+                                  ? DeveloperCarousel(
+                                      developers: d.developers)
                                   : _emptyState(
                                       context, 'Developer info coming soon'),
                             ],
@@ -757,11 +802,14 @@ class _HomeData {
   final int notificationCount;
   final List<Map<String, dynamic>> banners;
   final List<Map<String, dynamic>> notices;
-  final QotdCardStatus qotdStatus;
-  final List<Map<String, dynamic>> subjects;
-  final Map<String, dynamic>? developer;
 
-  const _HomeData({
+  /// Mutable so NOTE-13's light refresh can flip just this field in
+  /// place when the user returns from the QOTD page (no full reload).
+  QotdCardStatus qotdStatus;
+  final List<Map<String, dynamic>> subjects;
+  final List<Map<String, dynamic>> developers;
+
+  _HomeData({
     this.courseId,
     this.subcourseId,
     this.courseName,
@@ -774,7 +822,7 @@ class _HomeData {
     this.notices = const [],
     this.qotdStatus = QotdCardStatus.empty,
     this.subjects = const [],
-    this.developer,
+    this.developers = const [],
   });
 }
 

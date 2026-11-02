@@ -124,6 +124,7 @@ class ExpoRadius {
 
 /// Type scale from the Expo tokens.
 class ExpoType {
+  static const double h1 = 24;
   static const double h2 = 20;
   static const double h3 = 17;
   static const double bodyLarge = 16;

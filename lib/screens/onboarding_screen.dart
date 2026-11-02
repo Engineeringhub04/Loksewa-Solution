@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -11,9 +13,10 @@ import '../services/prefs_service.dart';
 /// indicators, and a circular arrow button that CONTINUOUSLY morphs into a
 /// full-width "Sign Up" pill while swiping from slide 3 to slide 4
 /// (finger-driven: the morph follows the PageView scroll position).
-/// Slides come from the Cloudflare API (GET /onboarding — the copied
-/// `app_onboarding-settings` rows, ordered by `order`); the 4 hardcoded
-/// slides are the fallback.
+/// The 4 hardcoded slides always show first; any slides from the
+/// Cloudflare API (GET /onboarding — the copied
+/// `app_onboarding-settings` rows, ordered by `order`) append after
+/// them (NOTE-19).
 class _Slide {
   final String id;
   final String title;
@@ -120,27 +123,39 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _loadRemoteSlides() async {
     try {
-      // Round-1: slides come from the Cloudflare API (GET /onboarding) as
-      // plain-JSON rows with the same field names as the Firestore docs.
-      // An empty/short list keeps the hardcoded slides — same rule as
-      // before.
+      // NOTE-19: slides come from the Cloudflare API (GET /onboarding)
+      // as plain-JSON rows with the same field names as the Firestore
+      // docs (the worker already filters enabled=false rows). The 4
+      // hardcoded built-ins ALWAYS stay first (orders 1-4, bundled,
+      // fast); database slides (orders 5+) APPEND after them in order —
+      // any count, including 0-3 which the old >=4 replace rule hid.
       final docs = await CfApi.getOnboarding();
-      if (docs.length >= 4) {
-        docs.sort((a, b) =>
-            CfJson.asInt(a['order']).compareTo(CfJson.asInt(b['order'])));
-        final slides = docs.map((d) {
-          final imageLink = d['imageLink']?.toString() ?? '';
-          final isLocal = CfJson.asBool(d['isLocal']);
-          return _Slide(
-            id: '${d['id']}',
-            title: d['title']?.toString() ?? '',
-            description: d['description']?.toString() ?? '',
-            assetPath: isLocal ? _localImageMap[imageLink] : null,
-            imageUrl: isLocal ? null : (imageLink.isEmpty ? null : imageLink),
-          );
-        }).toList();
-        if (mounted) setState(() => _slides = slides);
-      }
+      if (docs.isEmpty) return;
+      docs.sort((a, b) =>
+          CfJson.asInt(a['order']).compareTo(CfJson.asInt(b['order'])));
+      final remoteSlides = docs.map((d) {
+        final imageLink = d['imageLink']?.toString() ?? '';
+        final isLocal = CfJson.asBool(d['isLocal']);
+        return _Slide(
+          id: '${d['id']}',
+          title: d['title']?.toString() ?? '',
+          description: d['description']?.toString() ?? '',
+          assetPath: isLocal ? _localImageMap[imageLink] : null,
+          imageUrl: isLocal ? null : (imageLink.isEmpty ? null : imageLink),
+        );
+      }).toList();
+      if (remoteSlides.isEmpty || !mounted) return;
+      setState(() => _slides = [..._hardcodedSlides, ...remoteSlides]);
+      // Background-prefetch + disk-cache the appended slides' images
+      // while the built-ins are on screen — fire-and-forget, deadline-
+      // guarded inside OnboardingCache, never blocks the built-ins.
+      // The trailing rebuild lets already-built appended slides swap
+      // from NetworkImage to the cached FileImage once downloads land.
+      unawaited(OnboardingCache.prefetchRemote(
+        remoteSlides.map((s) => s.imageUrl).whereType<String>(),
+      ).then((_) {
+        if (mounted) setState(() {});
+      }));
     } catch (_) {
       // hardcoded fallback stays
     }

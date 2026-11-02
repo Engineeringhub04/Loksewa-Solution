@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 
@@ -121,6 +122,17 @@ class _AdditionalFeatureHomeScreenState
       _error = null;
     });
     try {
+      // Signed-in user's subcourse for NOTE-18 topic targeting — the
+      // same user-context source other screens use (AuthService +
+      // GET /me, as in home_tab). Guests stay null and only ever see
+      // All-targeted topics.
+      String? userSubcourseId;
+      if (AuthService.currentUser != null) {
+        try {
+          final me = await CfApi.getMe();
+          userSubcourseId = me?['subcourseId']?.toString();
+        } catch (_) {}
+      }
       // Phase-1: GET /features/{featureId} returns the page doc.
       final page = await CfApi.getFeaturePage(_fid);
       final rawTopics = page?['topics'];
@@ -130,6 +142,21 @@ class _AdditionalFeatureHomeScreenState
         if (raw is! Map) continue;
         final m = Map<String, dynamic>.from(raw);
         if (m['isPublished'] == false) continue;
+        // NOTE-18: targetSubcourseIds absent/empty = All (everyone,
+        // guests included); non-empty = only a signed-in user whose
+        // subcourseId is in the list sees the topic.
+        final targets = m['targetSubcourseIds'];
+        final List targetList = targets is List ? targets : const [];
+        if (targetList.isNotEmpty) {
+          if (userSubcourseId == null || userSubcourseId.isEmpty) {
+            continue;
+          }
+          if (!targetList
+              .map((e) => e.toString())
+              .contains(userSubcourseId)) {
+            continue;
+          }
+        }
         topics.add(_Topic(
           topicId: (m['topicId'] ?? '').toString(),
           titleEn: (m['titleEn'] ?? '').toString(),

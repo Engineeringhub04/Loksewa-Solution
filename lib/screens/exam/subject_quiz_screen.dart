@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -77,22 +79,80 @@ class _SubjectQuizScreenState extends State<SubjectQuizScreen> {
       context.pop();
       return;
     }
-    showDialog(
+    AppModalShell.show<void>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Exit Practice?'),
-        content: const Text('Your progress will be lost.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c), child: const Text('Stay')),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(c);
-              context.pop();
-            },
-            child: const Text('Exit'),
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Practice', 'अभ्यास'),
+        accent: const Color(0xFFDC2626),
+        accentMid: const Color(0xFFF87171),
+        accentLight: const Color(0xFFFECACA),
+        tagColor: const Color(0xFFDC2626),
+        onClose: () => Navigator.of(c).pop(),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFFDC2626),
           ),
-        ],
+          child: const Icon(Icons.exit_to_app,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Exit Practice?', 'अभ्यासबाट बाहिरिने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          AppLanguage.tr(
+              'Your progress will be lost.', 'तपाईंको प्रगति हराउनेछ।'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Stay', 'रहनुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.of(c).pop();
+                  context.pop();
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Exit', 'बाहिरिनुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

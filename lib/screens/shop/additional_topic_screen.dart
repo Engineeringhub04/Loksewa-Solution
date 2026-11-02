@@ -34,10 +34,12 @@ import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import 'package:loksewa_solution/widgets/limit_dialog.dart';
 import 'package:loksewa_solution/widgets/report_dialog.dart';
@@ -1316,18 +1318,53 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
   // ============================== DIALOGS ==============================
 
   Future<bool?> _leaveDialog() {
-    return showDialog<bool>(
+    return AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        icon: const Icon(Icons.exit_to_app,
-            color: Color(0xFFDC2626), size: 32),
-        title: const Text('Leave this practice?'),
-        content: Column(
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Practice', 'अभ्यास'),
+        accent: const Color(0xFFDC2626),
+        accentMid: const Color(0xFFF87171),
+        accentLight: const Color(0xFFFECACA),
+        tagColor: const Color(0xFFDC2626),
+        onClose: () => Navigator.of(c).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFFDC2626),
+          ),
+          child: const Icon(Icons.exit_to_app,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Leave this practice?', 'यो अभ्यास छोड्ने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'Your progress will be saved in this phone\u2019s cache. You can continue this topic later.',
-              style: TextStyle(fontSize: 14, height: 1.45),
+            Text(
+              AppLanguage.tr(
+                'Your progress will be saved in this phone\u2019s cache. You can continue this topic later.',
+                'तपाईंको प्रगति यो फोनको क्यासमा सेभ हुनेछ। तपाईं पछि यो विषय जारी राख्न सक्नुहुन्छ।',
+              ),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                height: 1.45,
+                color: Color(0xFF475569),
+                decoration: TextDecoration.none,
+              ),
             ),
             const SizedBox(height: 12),
             Container(
@@ -1340,55 +1377,73 @@ class _AdditionalTopicScreenState extends State<AdditionalTopicScreen> {
                     color: const Color(0xFF16A34A)
                         .withValues(alpha: 0.4)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.smartphone,
+                  const Icon(Icons.smartphone,
                       size: 19, color: Color(0xFF16A34A)),
-                  SizedBox(width: 8),
-                  Text('Saved to phone cache',
-                      style: TextStyle(
+                  const SizedBox(width: 8),
+                  Text(
+                      AppLanguage.tr(
+                          'Saved to phone cache', 'फोन क्यासमा सेभ भयो'),
+                      style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF16A34A))),
+                          color: Color(0xFF16A34A),
+                          decoration: TextDecoration.none)),
                 ],
               ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(c, false),
-            child: const Text('Keep practising'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(c, true),
-            child: const Text('Leave practice',
-                style: TextStyle(color: Color(0xFFDC2626))),
-          ),
-        ],
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr(
+                    'Keep practising', 'अभ्यास जारी राख्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(c).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(
+                    AppLanguage.tr('Leave practice', 'अभ्यास छोड्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Future<void> _limitDialog() async {
-    await showDialog<void>(
+    await AppModalShell.show<void>(
       context: context,
-      builder: (c) => Dialog(
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.all(24),
-        child: LimitDialogCard(
-          tagline: 'Daily Limit',
-          title: 'Today\u2019s practice limit is complete',
-          message:
-              'You have completed today\u2019s available practice. Please come back tomorrow and practice again.',
-          icon: Icons.diamond,
-          confirmLabel: 'Subscription',
-          confirmIcon: Icons.diamond_outlined,
-          cancelLabel: 'Close',
-          onConfirm: () => Navigator.pop(c),
-          onCancel: () => Navigator.pop(c),
-        ),
+      builder: (c) => LimitDialogCard(
+        tagline: 'Daily Limit',
+        title: 'Today\u2019s practice limit is complete',
+        message:
+            'You have completed today\u2019s available practice. Please come back tomorrow and practice again.',
+        icon: Icons.diamond,
+        confirmLabel: 'Subscription',
+        confirmIcon: Icons.diamond_outlined,
+        cancelLabel: 'Close',
+        onConfirm: () => Navigator.pop(c),
+        onCancel: () => Navigator.pop(c),
       ),
     );
   }

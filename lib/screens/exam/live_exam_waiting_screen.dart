@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -59,29 +61,87 @@ class _LiveExamWaitingScreenState extends State<LiveExamWaitingScreen> {
   }
 
   void _askToJoin() {
-    showDialog(
+    AppModalShell.show<void>(
       context: context,
       barrierDismissible: false,
-      builder: (c) => AlertDialog(
-        title: const Text('Join Live Exam?'),
-        content: Text(_exam!.title),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(c);
-              context.pop();
-            },
-            child: const Text('Cancel'),
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Live Exam', 'लाइभ परीक्षा'),
+        accent: const Color(0xFF2563EB),
+        accentMid: const Color(0xFF3B82F6),
+        accentLight: const Color(0xFFBFDBFE),
+        tagColor: const Color(0xFF1D4ED8),
+        onClose: () {
+          Navigator.of(c).pop();
+          context.pop();
+        },
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF2563EB),
           ),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(c);
-              setState(() => _joined = true);
-              _startCountdown();
-            },
-            child: const Text('Join'),
+          child: const Icon(Icons.live_tv_outlined,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Join Live Exam?', 'लाइभ परीक्षामा सामेल हुने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
           ),
-        ],
+        ),
+        body: Text(
+          _exam!.title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () {
+                  Navigator.of(c).pop();
+                  context.pop();
+                },
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () {
+                  Navigator.of(c).pop();
+                  setState(() => _joined = true);
+                  _startCountdown();
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Join', 'सामेल हुनुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

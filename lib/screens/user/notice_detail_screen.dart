@@ -5,6 +5,9 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/home/notice_date.dart';
 import 'package:loksewa_solution/widgets/home/notice_visual.dart';
 import 'package:loksewa_solution/widgets/status_pill.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../../services/app_language.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -14,8 +17,8 @@ import '../../widgets/preloading.dart';
 /// One direct `app_notices/{id}` read (the list screen passes the document
 /// along as `extra`, so usually zero reads). Renders the HeroBand (kind
 /// medallion + title + kind/date pills), the optional download row (opens
-/// the stored link — shown in a dialog since url_launcher is not a
-/// dependency), and the ordered content blocks inside a SectionCard:
+/// the stored link — confirmed in an AppModalShell popup, then opened
+/// externally in the browser), and the ordered content blocks inside a SectionCard:
 /// headings, paragraphs with `**bold**` spans + tappable URLs, images
 /// (tappable into a full-screen viewer), and `[img:KEY]` inline tokens
 /// placed in the flow of the text.
@@ -49,16 +52,106 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
   }
 
   void _showLinkDialog(String url) {
-    showDialog(
+    AppModalShell.show<void>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Link'),
-        content: SelectableText(url),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c),
-              child: const Text('Close')),
-        ],
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('External Link', 'बाह्य लिङ्क'),
+        accent: const Color(0xFF2563EB),
+        accentMid: const Color(0xFF3B82F6),
+        accentLight: const Color(0xFFBFDBFE),
+        tagColor: const Color(0xFF1D4ED8),
+        onClose: () => Navigator.of(c).pop(),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF2563EB),
+          ),
+          child: const Icon(Icons.open_in_new_rounded,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Open Link', 'लिङ्क खोल्नुहोस्'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              AppLanguage.tr(
+                'This link will open outside the app in your browser. The app will go to the background while you view it.',
+                'यो लिङ्क एप बाहिर तपाईंको ब्राउजरमा खुल्नेछ। तपाईंले हेर्दा एप पृष्ठभूमिमा जानेछ।',
+              ),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF475569),
+                height: 1.5,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            const SizedBox(height: 12),
+            SelectableText(
+              url,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 13,
+                color: Color(0xFF1D4ED8),
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ],
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () async {
+                  Navigator.of(c).pop();
+                  final uri = Uri.tryParse(url);
+                  if (uri == null || !uri.hasScheme) return;
+                  try {
+                    await launchUrl(uri,
+                        mode: LaunchMode.externalApplication);
+                  } catch (_) {
+                    // Invalid or unopenable link — the URL stayed
+                    // visible/selectable in the popup for manual copy.
+                  }
+                },
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Open', 'खोल्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

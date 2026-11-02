@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -75,19 +77,100 @@ class _AdminReportDetailScreenState extends State<AdminReportDetailScreen> {
 
   Future<void> _review(
       Map<String, dynamic> record, String status, String actionLabel) async {
-    final confirm = await showDialog<bool>(
+    final isDismiss = status == 'dismissed';
+    final accent = isDismiss ? const Color(0xFFDC2626) : const Color(0xFF2563EB);
+    final accentMid =
+        isDismiss ? const Color(0xFFF87171) : const Color(0xFF3B82F6);
+    final accentLight =
+        isDismiss ? const Color(0xFFFECACA) : const Color(0xFFBFDBFE);
+    final actionLabelNe = status == 'resolved'
+        ? 'समाधान गर्नुहोस्'
+        : status == 'dismissed'
+            ? 'खारेज गर्नुहोस्'
+            : 'समीक्षा गरिएको चिन्ह लगाउनुहोस्';
+    final titleNe = status == 'resolved'
+        ? 'रिपोर्ट समाधान गर्नुहोस्'
+        : status == 'dismissed'
+            ? 'रिपोर्ट खारेज गर्नुहोस्'
+            : 'रिपोर्ट समीक्षा गरिएको चिन्ह लगाउनुहोस्';
+    final statusNe = status == 'resolved'
+        ? 'समाधान गरिएको'
+        : status == 'dismissed'
+            ? 'खारेज गरिएको'
+            : 'समीक्षा गरिएको';
+    final confirm = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: Text('$actionLabel report'),
-        content: Text('Mark this report as $actionLabel?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: Text(actionLabel)),
-        ],
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Report', 'रिपोर्ट'),
+        accent: accent,
+        accentMid: accentMid,
+        accentLight: accentLight,
+        tagColor: accent,
+        onClose: () => Navigator.of(c).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: accent,
+          ),
+          child: Icon(
+              isDismiss ? Icons.block_outlined : Icons.flag_outlined,
+              size: 28,
+              color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('$actionLabel report', titleNe),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          AppLanguage.tr('Mark this report as $actionLabel?',
+              'यो रिपोर्टलाई $statusNe रूपमा चिन्ह लगाउने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(c).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: accent,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr(actionLabel, actionLabelNe)),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     if (confirm != true) return;

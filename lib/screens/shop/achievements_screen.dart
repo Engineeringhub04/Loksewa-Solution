@@ -3,8 +3,10 @@
 // full-colour, locked ones dimmed. Tapping a badge opens a bottom sheet with
 // its title and description (or the unlocked-on date).
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -67,40 +69,78 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
   }
 
   void _showSheet(_Badge b) {
-    showModalBottomSheet(
+    // Purely informational (icon + title + description, no selection) —
+    // shown in the global AppModalShell popup like every other info popup.
+    AppModalShell.show<void>(
       context: context,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Achievement', 'उपलब्धि'),
+        accent: AppColors.accent,
+        accentMid: const Color(0xFFF59E0B),
+        accentLight: const Color(0xFFFCD9A8),
+        tagColor: AppColors.accent,
+        onClose: () => Navigator.of(c).pop(),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: b.unlocked ? AppColors.accent : Colors.grey,
+          ),
+          child: Icon(_iconFor(b.icon), size: 28, color: Colors.white),
+        ),
+        title: Text(
+          b.title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_iconFor(b.icon),
-                size: 56,
-                color: b.unlocked ? AppColors.accent : Colors.grey),
-            const SizedBox(height: 12),
-            Text(b.title,
-                style: const TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
             Text(
               b.description.isNotEmpty
                   ? b.description
                   : (b.unlocked && b.unlockedAt != null
-                      ? 'Unlocked on ${_fmtDate(b.unlockedAt)}'
-                      : 'Keep learning to unlock this badge.'),
+                      ? AppLanguage.tr('Unlocked on ${_fmtDate(b.unlockedAt)}',
+                          '${_fmtDate(b.unlockedAt)} मा अनलक भयो')
+                      : AppLanguage.tr('Keep learning to unlock this badge.',
+                          'यो ब्याज अनलक गर्न सिक्दै जानुहोस्।')),
               textAlign: TextAlign.center,
-              style: const TextStyle(color: Colors.black54),
+              style: const TextStyle(
+                  color: Color(0xFF475569),
+                  decoration: TextDecoration.none),
             ),
             if (b.unlocked && b.unlockedAt != null) ...[
               const SizedBox(height: 8),
-              Text('Unlocked on ${_fmtDate(b.unlockedAt)}',
+              Text(
+                  AppLanguage.tr('Unlocked on ${_fmtDate(b.unlockedAt)}',
+                      '${_fmtDate(b.unlockedAt)} मा अनलक भयो'),
                   style: const TextStyle(
-                      color: Colors.green, fontWeight: FontWeight.w600)),
+                      color: Colors.green,
+                      fontWeight: FontWeight.w600,
+                      decoration: TextDecoration.none)),
             ],
-            const SizedBox(height: 16),
           ],
+        ),
+        footer: SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => Navigator.of(c).pop(),
+            style: OutlinedButton.styleFrom(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: Text(AppLanguage.tr('Close', 'बन्द गर्नुहोस्')),
+          ),
         ),
       ),
     );

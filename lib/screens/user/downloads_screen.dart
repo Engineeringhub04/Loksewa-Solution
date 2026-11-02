@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -66,19 +68,80 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
   }
 
   Future<void> _clearAll() async {
-    final ok = await showDialog<bool>(
+    final ok = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Remove all downloaded files?'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Clear All',
-                  style: TextStyle(color: Colors.red))),
-        ],
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Downloads', 'डाउनलोडहरू'),
+        accent: const Color(0xFFDC2626),
+        accentMid: const Color(0xFFF87171),
+        accentLight: const Color(0xFFFECACA),
+        tagColor: const Color(0xFFDC2626),
+        onClose: () => Navigator.of(c).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFFDC2626),
+          ),
+          child: const Icon(Icons.delete_sweep_outlined,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Remove all downloaded files?',
+              'सबै डाउनलोड गरिएका फाइलहरू हटाउने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          AppLanguage.tr(
+            'This will remove all downloaded files from this device.',
+            'यसले यो उपकरणबाट सबै डाउनलोड गरिएका फाइलहरू हटाउनेछ।',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(c).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Clear All', 'सबै हटाउनुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     if (ok != true) return;

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/exam_service.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -93,21 +95,81 @@ class _MockAttemptScreenState extends State<MockAttemptScreen> {
     if (_submitting || _exam == null) return;
     if (!auto) {
       final unanswered = _selected.where((s) => s == null).length;
-      final ok = await showDialog<bool>(
+      final ok = await AppModalShell.show<bool>(
         context: context,
-        builder: (c) => AlertDialog(
-          title: const Text('Submit Test?'),
-          content: Text(unanswered > 0
-              ? '$unanswered question(s) unanswered. Submit anyway?'
-              : 'Submit your answers?'),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(c, false),
-                child: const Text('Cancel')),
-            ElevatedButton(
-                onPressed: () => Navigator.pop(c, true),
-                child: const Text('Submit')),
-          ],
+        builder: (c) => AppModalShell(
+          maxWidth: 360,
+          tagLabel: AppLanguage.tr('Mock Test', 'मक टेस्ट'),
+          accent: const Color(0xFF2563EB),
+          accentMid: const Color(0xFF3B82F6),
+          accentLight: const Color(0xFFBFDBFE),
+          tagColor: const Color(0xFF1D4ED8),
+          onClose: () => Navigator.of(c).pop(false),
+          icon: Container(
+            width: 56,
+            height: 56,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              color: const Color(0xFF2563EB),
+            ),
+            child: const Icon(Icons.send_outlined,
+                size: 28, color: Colors.white),
+          ),
+          title: Text(
+            AppLanguage.tr('Submit Test?', 'टेस्ट पेश गर्ने?'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFF0F172A),
+              height: 1.3,
+              decoration: TextDecoration.none,
+            ),
+          ),
+          body: Text(
+            unanswered > 0
+                ? AppLanguage.tr(
+                    '$unanswered question(s) unanswered. Submit anyway?',
+                    '$unanswered प्रश्नको उत्तर दिइएको छैन। तैपनि पेश गर्ने?')
+                : AppLanguage.tr(
+                    'Submit your answers?', 'तपाईंका उत्तरहरू पेश गर्ने?'),
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 14,
+              color: Color(0xFF475569),
+              height: 1.5,
+              decoration: TextDecoration.none,
+            ),
+          ),
+          footer: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(c).pop(false),
+                  style: OutlinedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton(
+                  onPressed: () => Navigator.of(c).pop(true),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: Text(AppLanguage.tr('Submit', 'पेश गर्नुहोस्')),
+                ),
+              ),
+            ],
+          ),
         ),
       );
       if (ok != true) return;

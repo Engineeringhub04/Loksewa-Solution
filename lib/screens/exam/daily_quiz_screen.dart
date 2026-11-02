@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../services/cf_api.dart';
 import '../../services/exam_service.dart';
 import '../../services/theme_service.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/preloading.dart';
 
@@ -265,27 +267,83 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
       return;
     }
     _dialogOpen = true;
-    final leave = await showDialog<bool>(
+    final leave = await AppModalShell.show<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Leave the Daily Test?'),
-        content: Text(
-            'Your progress will not be saved. $_answeredCount answered question(s) will be lost and this attempt will not appear in your history.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Keep going'),
+      builder: (ctx) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Daily Test', 'दैनिक टेस्ट'),
+        accent: const Color(0xFFDC2626),
+        accentMid: const Color(0xFFF87171),
+        accentLight: const Color(0xFFFECACA),
+        tagColor: const Color(0xFFDC2626),
+        // Non-dismissible like the old dialog: no X, barrier locked.
+        onClose: null,
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFFDC2626),
           ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFDC2626)),
-            child: const Text('Leave anyway'),
+          child: const Icon(Icons.exit_to_app,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Leave the Daily Test?', 'दैनिक टेस्ट छोड्ने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
           ),
-        ],
+        ),
+        body: Text(
+          AppLanguage.tr(
+            'Your progress will not be saved. $_answeredCount answered question(s) will be lost and this attempt will not appear in your history.',
+            'तपाईंको प्रगति सेभ हुनेछैन। उत्तर दिइएका $_answeredCount प्रश्न हराउनेछन् र यो प्रयास तपाईंको इतिहासमा देखिनेछैन।',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child:
+                    Text(AppLanguage.tr('Keep going', 'जारी राख्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDC2626),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child:
+                    Text(AppLanguage.tr('Leave anyway', 'तैपनि छोड्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     _dialogOpen = false;
@@ -303,45 +361,106 @@ class _DailyQuizScreenState extends State<DailyQuizScreen> {
     final answered = _answeredCount;
     final unanswered = total - answered;
     _dialogOpen = true;
-    final ok = await showDialog<bool>(
+    final ok = await AppModalShell.show<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Submit your answers?'),
-        content: Column(
+      builder: (ctx) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Daily Test', 'दैनिक टेस्ट'),
+        accent: const Color(0xFF16A34A),
+        accentMid: const Color(0xFF4ADE80),
+        accentLight: const Color(0xFFBBF7D0),
+        tagColor: const Color(0xFF16A34A),
+        // Non-dismissible like the old dialog: no X, barrier locked.
+        onClose: null,
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF16A34A),
+          ),
+          child: const Icon(Icons.check_circle_outline,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr(
+              'Submit your answers?', 'तपाईंका उत्तरहरू पेश गर्ने?'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('$answered of $total answered.'),
+            Text(
+              AppLanguage.tr('$answered of $total answered.',
+                  '$total मध्ये $answered को उत्तर दिइयो।'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF0F172A),
+                decoration: TextDecoration.none,
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
                 unanswered > 0
                     ? (model.negativeMarking
-                        ? 'Unanswered questions score zero (but carry no penalty).'
-                        : 'Unanswered questions score zero.')
-                    : 'You have answered every question. Ready to see your result?',
+                        ? AppLanguage.tr(
+                            'Unanswered questions score zero (but carry no penalty).',
+                            'उत्तर नदिइएका प्रश्नले शून्य अंक पाउँछन् (तर जरिवाना लाग्दैन)।')
+                        : AppLanguage.tr(
+                            'Unanswered questions score zero.',
+                            'उत्तर नदिइएका प्रश्नले शून्य अंक पाउँछन्।'))
+                    : AppLanguage.tr(
+                        'You have answered every question. Ready to see your result?',
+                        'तपाईंले सबै प्रश्नको उत्तर दिनुभयो। नतिजा हेर्न तयार हुनुहुन्छ?'),
+                textAlign: TextAlign.center,
                 style: const TextStyle(
-                    fontSize: 13, color: Color(0xFF6B7280)),
+                    fontSize: 13,
+                    color: Color(0xFF6B7280),
+                    decoration: TextDecoration.none),
               ),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Not yet'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF16A34A)),
-            child:
-                const Text('Submit', style: TextStyle(color: Colors.white)),
-          ),
-        ],
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Not yet', 'अहिले होइन')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF16A34A),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Submit', 'पेश गर्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     _dialogOpen = false;

@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../services/app_language.dart';
 import '../services/exam_service.dart';
+import 'app_modal_shell.dart';
 import 'app_toast.dart';
 
 /// Which slot of the Daily Test feed a card is in.
@@ -913,11 +915,10 @@ class DailyTestMiniCard extends StatelessWidget {
 Future<bool> showDailyTestRulesDialog(
     BuildContext context, DailyTestModel model) {
   final rules = buildDailyTestRules(model);
-  final isDark = Theme.of(context).brightness == Brightness.dark;
-  final surface = isDark ? const Color(0xFF151D2E) : Colors.white;
-  final text = isDark ? Colors.white : const Color(0xFF0F172A);
-  final secondary = isDark ? const Color(0xFF94A3B8) : const Color(0xFF475569);
-  final chipBg = isDark ? const Color(0xFF1E293B) : const Color(0xFFEFF6FF);
+  // AppModalShell cards are always white — fixed ink colors below.
+  const text = Color(0xFF0F172A);
+  const secondary = Color(0xFF475569);
+  const chipBg = Color(0xFFEFF6FF);
 
   final chips = [
     _RuleChip(Icons.help_outline, '${model.questions.length} questions'),
@@ -934,168 +935,156 @@ Future<bool> showDailyTestRulesDialog(
             : 'No negative marking'),
   ];
 
-  return showDialog<bool>(
+  return AppModalShell.show<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (ctx) => Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      backgroundColor: surface,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 560),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+    builder: (ctx) => AppModalShell(
+      maxWidth: 420,
+      tagLabel: AppLanguage.tr('Daily Test', 'दैनिक टेस्ट'),
+      accent: const Color(0xFF2563EB),
+      accentMid: const Color(0xFF3B82F6),
+      accentLight: const Color(0xFFBFDBFE),
+      tagColor: const Color(0xFF1D4ED8),
+      onClose: () => Navigator.of(ctx).pop(false),
+      icon: Container(
+        width: 56,
+        height: 56,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: const Color(0xFF2563EB),
+        ),
+        child: const Icon(Icons.rule, size: 28, color: Colors.white),
+      ),
+      title: Text(
+        AppLanguage.tr('Test Rules', 'टेस्टका नियमहरू'),
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          fontSize: 20,
+          fontWeight: FontWeight.bold,
+          color: text,
+          height: 1.3,
+          decoration: TextDecoration.none,
+        ),
+      ),
+      // Long rule lists scroll inside the shell's capped body region;
+      // header + footer stay fixed.
+      contentMaxHeight: 380,
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            model.modelName.isNotEmpty ? model.modelName : model.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+                color: secondary,
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                decoration: TextDecoration.none),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: chips
+                .map((c) => Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: chipBg,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(c.icon,
+                              size: 13, color: const Color(0xFF2563EB)),
+                          const SizedBox(width: 6),
+                          Text(c.label,
+                              style: const TextStyle(
+                                  color: secondary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  decoration: TextDecoration.none)),
+                        ],
+                      ),
+                    ))
+                .toList(),
+          ),
+          const SizedBox(height: 12),
+          for (var i = 0; i < rules.length; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
-                    width: 40,
-                    height: 40,
+                    width: 24,
+                    height: 24,
+                    margin: const EdgeInsets.only(top: 1),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF2563EB).withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(12),
+                      color: const Color(0xFF2563EB)
+                          .withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.rule,
-                        size: 20, color: Color(0xFF2563EB)),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Test Rules',
-                          style: TextStyle(
-                              color: text,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          model.modelName.isNotEmpty
-                              ? model.modelName
-                              : model.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              color: secondary,
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: chips
-                    .map((c) => Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 7),
-                          decoration: BoxDecoration(
-                            color: chipBg,
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(c.icon,
-                                  size: 13, color: const Color(0xFF2563EB)),
-                              const SizedBox(width: 6),
-                              Text(c.label,
-                                  style: TextStyle(
-                                      color: secondary,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ))
-                    .toList(),
-              ),
-              const SizedBox(height: 12),
-              Flexible(
-                child: SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < rules.length; i++)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Container(
-                                width: 24,
-                                height: 24,
-                                margin: const EdgeInsets.only(top: 1),
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFF2563EB)
-                                      .withValues(alpha: 0.12),
-                                  shape: BoxShape.circle,
-                                ),
-                                alignment: Alignment.center,
-                                child: Text('${i + 1}',
-                                    style: const TextStyle(
-                                        color: Color(0xFF2563EB),
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w800)),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Text(rules[i],
-                                    style: TextStyle(
-                                        color: secondary,
-                                        fontSize: 13,
-                                        height: 1.45)),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(ctx).pop(false),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text('Cancel'),
-                    ),
+                    alignment: Alignment.center,
+                    child: Text('${i + 1}',
+                        style: const TextStyle(
+                            color: Color(0xFF2563EB),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            decoration: TextDecoration.none)),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => Navigator.of(ctx).pop(true),
-                      icon: const Icon(Icons.check,
-                          size: 16, color: Colors.white),
-                      label: const Text('I understood (Start)',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w700)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2563EB),
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                      ),
-                    ),
+                    child: Text(rules[i],
+                        style: const TextStyle(
+                            color: secondary,
+                            fontSize: 13,
+                            height: 1.45,
+                            decoration: TextDecoration.none)),
                   ),
                 ],
               ),
-            ],
+            ),
+        ],
+      ),
+      footer: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            ),
           ),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              icon: const Icon(Icons.check, size: 16, color: Colors.white),
+              label: Text(
+                  AppLanguage.tr(
+                      'I understood (Start)', 'बुझेँ (सुरु गर्नुहोस्)'),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                      decoration: TextDecoration.none)),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF2563EB),
+                padding: const EdgeInsets.symmetric(vertical: 13),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
       ),
     ),
   ).then((v) => v ?? false);

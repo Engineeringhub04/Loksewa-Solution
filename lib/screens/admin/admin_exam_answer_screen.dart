@@ -5,8 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/admin_gate.dart';
 import 'package:loksewa_solution/services/admin_notify_service.dart';
+import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
+import '../../widgets/app_modal_shell.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -107,20 +109,79 @@ class _AdminExamAnswerScreenState extends State<AdminExamAnswerScreen> {
       _snack('Please choose Pass or Fail.');
       return;
     }
-    final confirm = await showDialog<bool>(
+    final confirm = await AppModalShell.show<bool>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Confirm update'),
-        content: Text(
-            'This will mark the submission as reviewed. Score: ${_score.text}/${_fullMarks.text}, Result: ${_passed! ? 'Pass' : 'Fail'}.'),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(c, false),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(c, true),
-              child: const Text('Update')),
-        ],
+      builder: (c) => AppModalShell(
+        maxWidth: 360,
+        tagLabel: AppLanguage.tr('Review', 'समीक्षा'),
+        accent: const Color(0xFF2563EB),
+        accentMid: const Color(0xFF3B82F6),
+        accentLight: const Color(0xFFBFDBFE),
+        tagColor: const Color(0xFF1D4ED8),
+        onClose: () => Navigator.of(c).pop(false),
+        icon: Container(
+          width: 56,
+          height: 56,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: const Color(0xFF2563EB),
+          ),
+          child: const Icon(Icons.rate_review_outlined,
+              size: 28, color: Colors.white),
+        ),
+        title: Text(
+          AppLanguage.tr('Confirm Update', 'अपडेट पुष्टि गर्नुहोस्'),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+            color: Color(0xFF0F172A),
+            height: 1.3,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        body: Text(
+          AppLanguage.tr(
+            'This will mark the submission as reviewed. Score: ${_score.text}/${_fullMarks.text}, Result: ${_passed! ? 'Pass' : 'Fail'}.',
+            'यसले यो पेश्कीलाई समीक्षा गरिएको रूपमा चिन्ह लगाउनेछ। अंक: ${_score.text}/${_fullMarks.text}, नतिजा: ${_passed! ? 'उत्तीर्ण' : 'अनुत्तीर्ण'}।',
+          ),
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 14,
+            color: Color(0xFF475569),
+            height: 1.5,
+            decoration: TextDecoration.none,
+          ),
+        ),
+        footer: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => Navigator.of(c).pop(false),
+                style: OutlinedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: FilledButton(
+                onPressed: () => Navigator.of(c).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFF2563EB),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+                child: Text(AppLanguage.tr('Update', 'अपडेट गर्नुहोस्')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
     if (confirm != true) return;

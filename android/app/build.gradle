@@ -31,7 +31,7 @@ android {
         applicationId = "com.loksewasolutionnp.hub"
         minSdkVersion = flutter.minSdkVersion
         targetSdk = 36
-        versionCode = 132
+        versionCode = 133
         versionName = "1.0.132"
     }
 

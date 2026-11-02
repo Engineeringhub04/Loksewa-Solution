@@ -574,11 +574,11 @@ class _ProfileTabState extends State<ProfileTab> {
                           ),
                           // Bottom clearance so the last content sits above
                           // the overlaying bottom nav (extendBody): the nav
-                          // clearance plus a 16px margin above the bar (was
+                          // clearance plus an 8px margin above the bar (was
                           // 24 + a clearance of safe-area + 88 — a nav-height
                           // of dead space below the Logout button).
                           SliverToBoxAdapter(
-                              child: SizedBox(height: 16 + navClearance)),
+                              child: SizedBox(height: 8 + navClearance)),
                       ],
                     ),
                   ),

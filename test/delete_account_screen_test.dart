@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/screens/auth/delete_account_screen.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 
 /// Advances past the 1s preloading plus every SyllabusEntrance delay
 /// (≤240ms) and its 380ms animation — many SMALL pumps: a single big pump
@@ -112,7 +113,7 @@ void main() {
       // Tap the popup's confirm button (the last Submit Request in the tree
       // is the dialog's — the overlay renders above the page).
       await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Submit Request').last);
+          find.widgetWithText(PopupActionButton, 'Submit Request').last);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -148,7 +149,7 @@ void main() {
       expect(find.text('Your request has been submitted'), findsOneWidget);
       expect(find.text('Request received'), findsOneWidget);
       expect(find.byType(TextField), findsNothing);
-      expect(find.widgetWithText(ElevatedButton, 'Submit Request'),
+      expect(find.widgetWithText(PopupActionButton, 'Submit Request'),
           findsNothing);
       await tester.pump(const Duration(milliseconds: 100));
       expect(find.text('home-marker'), findsNothing);
@@ -166,7 +167,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Submit Request').last);
+          find.widgetWithText(PopupActionButton, 'Submit Request').last);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -187,7 +188,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Submit Request').last);
+          find.widgetWithText(PopupActionButton, 'Submit Request').last);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -216,7 +217,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       await tester.tap(
-          find.widgetWithText(ElevatedButton, 'Submit Request').last);
+          find.widgetWithText(PopupActionButton, 'Submit Request').last);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -242,7 +243,7 @@ void main() {
 
       // No form, no submit button — just the status card.
       expect(find.byType(TextField), findsNothing);
-      expect(find.widgetWithText(ElevatedButton, 'Submit Request'),
+      expect(find.widgetWithText(PopupActionButton, 'Submit Request'),
           findsNothing);
       expect(find.text('Request received'), findsOneWidget);
       expect(

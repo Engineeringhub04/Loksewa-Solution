@@ -42,6 +42,81 @@ void main() {
     expect((cardCx - titleCx).abs(), lessThan(1.0));
   });
 
+  testWidgets('no X close button is rendered, even with onClose set',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: AppModalShell(
+            icon: const SizedBox(width: 56, height: 56),
+            tagLabel: 'TEST',
+            title: const Text('Title'),
+            body: const Text('body'),
+            footer: const Text('footer'),
+            onClose: () {},
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byIcon(Icons.close), findsNothing);
+  });
+
+  testWidgets('popup outline buttons carry black text in both themes',
+      (tester) async {
+    for (final brightness in [Brightness.light, Brightness.dark]) {
+      await tester.pumpWidget(MaterialApp(
+        theme: ThemeData(brightness: brightness),
+        home: Scaffold(
+          body: Center(
+            child: AppModalShell(
+              icon: const SizedBox(width: 56, height: 56),
+              tagLabel: 'TEST',
+              title: const Text('Title'),
+              body: const Text('body'),
+              footer: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {},
+                      child: const Text('Cancel'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: () {},
+                      style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF2563EB)),
+                      child: const Text('Open'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final cancelBtn = tester.widget<OutlinedButton>(
+          find.widgetWithText(OutlinedButton, 'Cancel'));
+      final cancelFg = cancelBtn.style?.foregroundColor
+          ?.resolve(<WidgetState>{WidgetState.focused});
+      // The shell theme pins the label color: resolved through the
+      // ambient button style the widget merges at build time — assert
+      // via the rendered text's effective color instead.
+      final context = tester.element(find.text('Cancel'));
+      final theme = Theme.of(context);
+      expect(
+        theme.outlinedButtonTheme.style?.foregroundColor
+            ?.resolve(<WidgetState>{}),
+        const Color(0xFF0F172A),
+        reason: 'brightness=$brightness',
+      );
+      expect(cancelFg, isNull); // widget itself sets no color — shell does
+    }
+  });
+
   testWidgets('report dialog keeps footer fixed below the capped body',
       (tester) async {
     tester.view.physicalSize = const Size(720, 1612);

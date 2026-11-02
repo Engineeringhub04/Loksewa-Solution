@@ -6,6 +6,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../services/app_language.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/subpage_header.dart';
@@ -659,52 +660,19 @@ class _ContactUsScreenState extends State<ContactUsScreen> {
           footer: Row(
             children: [
               Expanded(
-                child: OutlinedButton(
-                  onPressed: opening
-                      ? null
-                      : () => Navigator.of(modalContext).pop(),
-                  style: OutlinedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                child: PopupCancelButton(
+                  label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                  loading: opening,
+                  onTap: () => Navigator.of(modalContext).pop(),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: FilledButton(
-                  onPressed: opening
-                      ? null
-                      : () => confirm(modalContext, setModalState),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: tone,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: opening
-                      ? Row(
-                          mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(AppLanguage.tr(
-                                'Opening…', 'खोल्दैछ…')),
-                          ],
-                        )
-                      : Text(
-                          AppLanguage.tr('Confirm', 'पुष्टि गर्नुहोस्')),
+                child: PopupActionButton(
+                  label: AppLanguage.tr('Confirm', 'पुष्टि गर्नुहोस्'),
+                  backgroundColor: tone,
+                  loading: opening,
+                  onTap: () => confirm(modalContext, setModalState),
                 ),
               ),
             ],

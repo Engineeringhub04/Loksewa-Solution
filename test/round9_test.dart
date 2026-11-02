@@ -383,7 +383,7 @@ void main() {
       await _flush(tester);
     });
 
-    testWidgets('failed settle: X returns and back is allowed again',
+    testWidgets('failed settle: back is allowed again (no X — v1.0.130)',
         (tester) async {
       _setView(tester);
       await tester.pumpWidget(MaterialApp(
@@ -403,7 +403,10 @@ void main() {
         ),
       ));
       await _pumpUntil(tester, find.text('Download failed'));
-      expect(find.byIcon(Icons.close), findsOneWidget);
+      // v1.0.130: AppModalShell has no X anywhere — the footer's
+      // Close button is the exit.
+      expect(find.byIcon(Icons.close), findsNothing);
+      expect(find.text('Close'), findsOneWidget);
       final scope = tester.widget<PopScope>(find.descendant(
           of: find.byType(PdfDownloadDialog),
           matching: find.byType(PopScope)));

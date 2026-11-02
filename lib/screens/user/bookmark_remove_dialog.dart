@@ -4,6 +4,7 @@ import '../../services/app_language.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/trash_icon.dart';
 
 /// Remove-bookmark confirm card — the shared AppModalShell global modal
@@ -14,13 +15,13 @@ import '../../widgets/trash_icon.dart';
 /// The actual removal is the caller's [onRemove] (the screen's own Firestore
 /// delete path — the dialog never touches storage itself), but the UX runs
 /// inside the dialog:
-/// - Tapping Remove swaps the header tile's trash icon for a
-///   CircularProgressIndicator in place (AnimatedSwitcher, same 28px box,
-///   so there is no layout jump) and blocks Cancel/X meanwhile.
+/// - Loading follows the Logout-popup pattern (v1.0.130): tapping Remove
+///   replaces the Remove button's own label with a white spinner on the
+///   still-red button; Cancel stays visually unchanged (taps blocked).
 /// - On success the dialog pops `true` — AppModalShell.show's reverse
 ///   transition fades + scales the card out over 200ms; the caller refreshes
 ///   the list AFTER the pop future resolves.
-/// - On error the spinner morphs back to the trash icon, the dialog stays
+/// - On error the spinner reverts to the Remove label, the dialog stays
 ///   open, and an error toast is shown.
 ///
 /// Copy mirrors React's `ConfirmDialog` remove (bookmarks.removeTitle /
@@ -58,7 +59,7 @@ class _BookmarkRemoveDialogState extends State<BookmarkRemoveDialog> {
       Navigator.of(context).pop(true);
     } catch (_) {
       if (!mounted) return;
-      // Spinner morphs back to the delete icon; the dialog STAYS OPEN.
+      // Button spinner reverts to the Remove label; dialog STAYS OPEN.
       setState(() => _deleting = false);
       showToast(
         context,
@@ -78,8 +79,8 @@ class _BookmarkRemoveDialogState extends State<BookmarkRemoveDialog> {
       accentMid: const Color(0xFFF87171),
       accentLight: const Color(0xFFFECACA),
       tagColor: const Color(0xFFDC2626),
-      // Cancel and the X are blocked while the delete runs (React's
-      // confirmLoading behaviour); the spinner below is the progress signal.
+      // Cancel taps are blocked while the delete runs (the Popup
+      // buttons' loading flag handles that without any visual change).
       onClose: _deleting ? null : () => Navigator.of(context).pop(false),
       icon: Container(
         width: 56,
@@ -89,28 +90,9 @@ class _BookmarkRemoveDialogState extends State<BookmarkRemoveDialog> {
           borderRadius: BorderRadius.circular(18),
           color: pal.danger,
         ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          transitionBuilder: (child, animation) => FadeTransition(
-            opacity: animation,
-            child: child,
-          ),
-          child: _deleting
-              ? const SizedBox(
-                  key: ValueKey('removing'),
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: Colors.white,
-                  ),
-                )
-              : const TrashIcon(
-                  key: ValueKey('delete'),
-                  size: 28,
-                  color: Colors.white,
-                ),
-        ),
+        // Static icon (Logout-popup pattern): the loading spinner lives
+        // on the Remove button itself, not in the header.
+        child: const TrashIcon(size: 28, color: Colors.white),
       ),
       title: Text(
         AppLanguage.tr('Remove this bookmark?', 'यो बुकमार्क हटाउने?'),
@@ -153,32 +135,19 @@ class _BookmarkRemoveDialogState extends State<BookmarkRemoveDialog> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed:
-                  _deleting ? null : () => Navigator.of(context).pop(false),
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _deleting,
+              onTap: () => Navigator.of(context).pop(false),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: FilledButton(
-              onPressed: _deleting ? null : _confirmRemove,
-              style: FilledButton.styleFrom(
-                backgroundColor: pal.danger,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(_deleting
-                  ? AppLanguage.tr('Removing…', 'हटाउँदैछ…')
-                  : AppLanguage.tr('Remove', 'हटाउनुहोस्')),
+            child: PopupActionButton(
+              label: AppLanguage.tr('Remove', 'हटाउनुहोस्'),
+              backgroundColor: pal.danger,
+              loading: _deleting,
+              onTap: _confirmRemove,
             ),
           ),
         ],

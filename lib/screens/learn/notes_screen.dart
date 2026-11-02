@@ -355,8 +355,10 @@ class _NotesScreenState extends State<NotesScreen> {
         footer: TextButton(
           onPressed: () => Navigator.of(ctx).pop(),
           child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
-              style: TextStyle(
-                  color: ExpoPalette.of(context).primary,
+              style: const TextStyle(
+                  // Popup rule: white/text buttons carry BLACK text
+                  // (never the theme's blue primary).
+                  color: Color(0xFF0F172A),
                   decoration: TextDecoration.none)),
         ),
       ),

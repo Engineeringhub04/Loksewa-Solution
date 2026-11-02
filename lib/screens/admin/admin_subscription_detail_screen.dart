@@ -11,6 +11,7 @@ import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/image_viewer.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -1386,32 +1387,19 @@ class _DecisionConfirmDialogState extends State<_DecisionConfirmDialog> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed:
-                  _saving ? null : () => Navigator.of(context).pop(false),
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _saving,
+              onTap: () => Navigator.of(context).pop(false),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: FilledButton(
-              onPressed: _saving ? null : _confirmSave,
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(_saving
-                  ? AppLanguage.tr('Saving…', 'सेभ हुँदैछ…')
-                  : AppLanguage.tr('Save', 'सेभ गर्नुहोस्')),
+            child: PopupActionButton(
+              label: AppLanguage.tr('Save', 'सेभ गर्नुहोस्'),
+              backgroundColor: accent,
+              loading: _saving,
+              onTap: _confirmSave,
             ),
           ),
         ],

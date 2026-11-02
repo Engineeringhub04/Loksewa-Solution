@@ -50,6 +50,7 @@ import '../../widgets/app_toast.dart';
 import '../../widgets/gateway_popups.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import '../../widgets/pdf_download_dialog.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
@@ -1378,56 +1379,35 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
               footer: Row(
                 children: [
                   Expanded(
-                    child: OutlinedButton(
-                      onPressed: busy
-                          ? null
-                          : () => Navigator.of(ctx).pop(null),
-                      style: OutlinedButton.styleFrom(
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                    child: PopupCancelButton(
+                      label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                      loading: busy,
+                      onTap: () => Navigator.of(ctx).pop(null),
                     ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: FilledButton(
-                      onPressed: busy
-                          ? null
-                          : () async {
-                              setPopupState(() {
-                                busy = true;
-                                error = null;
-                              });
-                              final outcome = await _performSubmit(d);
-                              if (!ctx.mounted) return;
-                              if (outcome.ok) {
-                                Navigator.of(ctx).pop(outcome);
-                              } else {
-                                setPopupState(() {
-                                  busy = false;
-                                  error = outcome.error;
-                                });
-                              }
-                            },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: pal.primary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      child: busy
-                          ? const SizedBox(
-                              height: 20,
-                              width: 20,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white),
-                            )
-                          : Text(AppLanguage.tr(
-                              'Submit Payment', 'भुक्तानी पेश गर्नुहोस्')),
+                    child: PopupActionButton(
+                      label: AppLanguage.tr(
+                          'Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
+                      backgroundColor: pal.primary,
+                      loading: busy,
+                      onTap: () async {
+                        setPopupState(() {
+                          busy = true;
+                          error = null;
+                        });
+                        final outcome = await _performSubmit(d);
+                        if (!ctx.mounted) return;
+                        if (outcome.ok) {
+                          Navigator.of(ctx).pop(outcome);
+                        } else {
+                          setPopupState(() {
+                            busy = false;
+                            error = outcome.error;
+                          });
+                        }
+                      },
                     ),
                   ),
                 ],

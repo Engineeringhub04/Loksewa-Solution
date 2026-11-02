@@ -201,7 +201,11 @@ class _DiscussionGuidelinesDialogBodyState
                     borderRadius: BorderRadius.circular(22),
                     child: InkWell(
                       borderRadius: BorderRadius.circular(22),
-                      onTap: () => Navigator.of(context).pop(false),
+                      // Blocked while seeding (Logout-popup pattern);
+                      // colors are fixed, so Cancel looks normal.
+                      onTap: _seeding
+                          ? null
+                          : () => Navigator.of(context).pop(false),
                       child: Container(
                         padding: const EdgeInsets.symmetric(vertical: 13),
                         decoration: BoxDecoration(

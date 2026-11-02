@@ -7,6 +7,7 @@ import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -80,7 +81,6 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         accentMid: const Color(0xFFF59E0B),
         accentLight: const Color(0xFFFCD9A8),
         tagColor: AppColors.accent,
-        onClose: () => Navigator.of(c).pop(),
         icon: Container(
           width: 56,
           height: 56,
@@ -132,14 +132,10 @@ class _AchievementsScreenState extends State<AchievementsScreen> {
         ),
         footer: SizedBox(
           width: double.infinity,
-          child: OutlinedButton(
-            onPressed: () => Navigator.of(c).pop(),
-            style: OutlinedButton.styleFrom(
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-            child: Text(AppLanguage.tr('Close', 'बन्द गर्नुहोस्')),
+          // Single white button = BLACK text (exit-popup family).
+          child: PopupCancelButton(
+            label: AppLanguage.tr('Close', 'बन्द गर्नुहोस्'),
+            onTap: () => Navigator.of(c).pop(),
           ),
         ),
       ),

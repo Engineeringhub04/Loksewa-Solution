@@ -1,7 +1,13 @@
 // AppModalShell — reusable premium modal card extracted from LimitDialogCard.
 // White card in BOTH light and dark mode (the design is inherently light):
 // accent gradient header fading down to white, centered icon tile, white
-// tagline pill, plain X close, rounded card, centered with a max width.
+// tagline pill, rounded card, centered with a max width. There is NO X
+// close button (user rule, v1.0.130): the footer's Cancel/Close button is
+// the close affordance. Button color rule (matches the "Close the app?"
+// exit popup): white/outline-style buttons carry BLACK text, colored
+// filled buttons carry WHITE text — [_buttonTheme] pins this for every
+// popup subtree so raw Material buttons never inherit the theme's blue
+// primary for their label, in either theme.
 // Presentation via [AppModalShell.show] — fade + scale transitions:
 // open = fade-in, close/pop = fade-out automatically.
 //
@@ -11,8 +17,6 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-
-import '../theme/app_theme.dart';
 
 class AppModalShell extends StatelessWidget {
   /// Pre-built icon tile (e.g. a rounded square container with an icon).
@@ -30,7 +34,9 @@ class AppModalShell extends StatelessWidget {
   /// Footer (buttons row / stacked buttons).
   final Widget footer;
 
-  /// Called when the plain X close is tapped. Null hides the X.
+  /// Legacy close callback — NO LONGER RENDERED (the X button was removed
+  /// app-wide in v1.0.130; Cancel/Close in the footer closes the popup).
+  /// Kept only so existing call sites compile unchanged; it is ignored.
   final VoidCallback? onClose;
 
   /// Header gradient top color (default logo orange).
@@ -95,6 +101,24 @@ class AppModalShell extends StatelessWidget {
     this.autoScroll = false,
   });
 
+  /// Popup button theme: pins the outline/text button foreground to the
+  /// fixed ink color (black text on the white card, like the exit popup's
+  /// PopupCancelButton) for the whole popup subtree. Filled buttons keep
+  /// their default white-on-color label. Applied by both [show] (covers
+  /// bare-body popups that return no shell card) and [build] (covers
+  /// shells embedded directly, e.g. premium gate / download dialogs).
+  static ThemeData _buttonTheme(BuildContext context) {
+    const ink = Color(0xFF0F172A);
+    return Theme.of(context).copyWith(
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(foregroundColor: ink),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(foregroundColor: ink),
+      ),
+    );
+  }
+
   /// Shows [builder]'s card as a modal: fade + scale in (200ms) and
   /// fade + scale out on pop (200ms) — same duration and same curve in
   /// both directions so open/close feel identical. Barrier tap dismisses
@@ -128,7 +152,10 @@ class AppModalShell extends StatelessWidget {
                 // cards presented via show() render at the same width.
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.all(20),
-                  child: builder(pageContext),
+                  child: Theme(
+                    data: _buttonTheme(pageContext),
+                    child: builder(pageContext),
+                  ),
                 ),
               ),
             ),
@@ -203,7 +230,9 @@ class AppModalShell extends StatelessWidget {
         ),
       ],
     );
-    return ConstrainedBox(
+    return Theme(
+      data: _buttonTheme(context),
+      child: ConstrainedBox(
       constraints: BoxConstraints(maxWidth: maxWidth),
       child: DecoratedBox(
         decoration: BoxDecoration(
@@ -278,21 +307,9 @@ class AppModalShell extends StatelessWidget {
                           ),
                         ),
                       ),
-                      // Plain X close, top-right (no heavy background).
-                      if (onClose != null)
-                        Positioned(
-                          top: 12,
-                          right: 12,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: onClose,
-                            child: const Padding(
-                              padding: EdgeInsets.all(8),
-                              child: Icon(Icons.close,
-                                  size: 20, color: Colors.white),
-                            ),
-                          ),
-                        ),
+                      // No X close button (v1.0.130, app-wide): the
+                      // footer's Cancel/Close button is the close
+                      // affordance.
                       // Centered column: icon tile, tagline pill, title.
                       Padding(
                         padding: const EdgeInsets.fromLTRB(28, 34, 28, 14),
@@ -352,6 +369,7 @@ class AppModalShell extends StatelessWidget {
           ),
           ),
         ),
+      ),
       ),
     );
   }

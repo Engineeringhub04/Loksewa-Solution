@@ -35,6 +35,7 @@ import 'package:loksewa_solution/services/exam_service.dart';
 import 'package:loksewa_solution/services/prefs_service.dart';
 import 'package:loksewa_solution/services/public_downloads.dart';
 import 'package:loksewa_solution/widgets/pdf_download_dialog.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 
 /// Path-substring routes → CF response bodies, matched in insertion
 /// order. Unmatched paths answer 404 {ok:false} so row getters return
@@ -426,7 +427,7 @@ void main() {
       await tester.tap(find.text('Update Data').first);
       await _pumpUntil(tester, find.text('Save these changes?'));
       await tester
-          .tap(find.widgetWithText(ElevatedButton, 'Update Data'));
+          .tap(find.widgetWithText(PopupActionButton, 'Update Data'));
       await _pumpUntil(tester, find.text('View My Answer Sheets'));
 
       final patch = _writes.firstWhere(

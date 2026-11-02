@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/screens/auth/contact_us_screen.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 import 'package:loksewa_solution/screens/auth/delete_account_screen.dart';
 import 'package:loksewa_solution/screens/auth/feedback_screen.dart';
 import 'package:loksewa_solution/screens/auth/privacy_policy_screen.dart';
@@ -85,7 +86,7 @@ void main() {
 
       // Cancelling dismisses the dialog without submitting.
       await tester
-          .tap(find.widgetWithText(OutlinedButton, 'Cancel').first);
+          .tap(find.widgetWithText(PopupCancelButton, 'Cancel'));
       await _settle(tester);
       expect(find.text('Submit deletion request?'), findsNothing);
     });

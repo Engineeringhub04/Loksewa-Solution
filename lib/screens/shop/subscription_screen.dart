@@ -22,6 +22,7 @@ import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
 import '../../widgets/app_toast.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/preloading.dart';
 import '../../widgets/status_pill.dart';
 import '../../widgets/syllabus_entrance.dart';
@@ -991,22 +992,9 @@ class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
           borderRadius: BorderRadius.circular(18),
           color: pal.danger,
         ),
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 200),
-          child: _deleting
-              ? const SizedBox(
-                  key: ValueKey('deleting'),
-                  width: 28,
-                  height: 28,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 3, color: Colors.white),
-                )
-              : const TrashIcon(
-                  key: ValueKey('delete'),
-                  size: 28,
-                  color: Colors.white,
-                ),
-        ),
+        // Static icon (Logout-popup pattern): the loading spinner
+        // lives on the Delete button itself, not in the header.
+        child: const TrashIcon(size: 28, color: Colors.white),
       ),
       title: Text(
         AppLanguage.tr('Delete this request?', 'यो अनुरोध हटाउने?'),
@@ -1050,30 +1038,19 @@ class _DeleteRequestDialogState extends State<_DeleteRequestDialog> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed:
-                  _deleting ? null : () => Navigator.of(context).pop(false),
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _deleting,
+              onTap: () => Navigator.of(context).pop(false),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: FilledButton(
-              onPressed: _deleting ? null : _confirmDelete,
-              style: FilledButton.styleFrom(
-                backgroundColor: pal.danger,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(_deleting
-                  ? AppLanguage.tr('Deleting…', 'हटाउँदैछ…')
-                  : AppLanguage.tr('Delete', 'हटाउनुहोस्')),
+            child: PopupActionButton(
+              label: AppLanguage.tr('Delete', 'हटाउनुहोस्'),
+              backgroundColor: pal.danger,
+              loading: _deleting,
+              onTap: _confirmDelete,
             ),
           ),
         ],

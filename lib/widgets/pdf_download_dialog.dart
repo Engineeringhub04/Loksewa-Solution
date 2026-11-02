@@ -509,10 +509,9 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
   Widget build(BuildContext context) {
     final failed = _error != null;
     // The shell's body region is white in both themes — use fixed ink colors.
-    // Lockdown (v1.0.125): while the download is in progress the X is
-    // hidden (onClose null) and PopScope vetoes the Android back
-    // button — the Cancel button is the only exit. Once settled, both
-    // return to normal.
+    // Lockdown (v1.0.125): while the download is in progress PopScope
+    // vetoes the Android back button — the Cancel button is the only
+    // exit. (The shell has no X button at all since v1.0.130.)
     return PopScope(
       canPop: _settled,
       child: AppModalShell(
@@ -549,7 +548,8 @@ class _PdfDownloadDialogState extends State<PdfDownloadDialog> {
                       : 'फाइल डाउनलोड हुँदैछ'))),
       body: failed ? _errorBody() : _progressBody(),
       footer: failed ? _errorFooter() : _progressFooter(),
-      // In progress: NO X — Cancel is the only exit (v1.0.125).
+      // Legacy shell callback (ignored since the X removal, v1.0.130);
+      // the footer Cancel/Close buttons are the exits.
       onClose: _settled ? widget.onClose : null,
       ),
     );

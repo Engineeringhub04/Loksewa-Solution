@@ -419,7 +419,10 @@ class _ReportDialogBodyState extends State<_ReportDialogBody> {
               borderRadius: BorderRadius.circular(22),
               child: InkWell(
                 borderRadius: BorderRadius.circular(22),
-                onTap: () => Navigator.of(context).pop(),
+                // Blocked while sending (Logout-popup pattern); the
+                // custom container colors never change, so Cancel looks
+                // completely normal throughout.
+                onTap: _sending ? null : () => Navigator.of(context).pop(),
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 13),
                   decoration: BoxDecoration(

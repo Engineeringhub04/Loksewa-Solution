@@ -156,7 +156,9 @@ class PremiumGateDialog extends StatelessWidget {
             style: const TextStyle(
                 fontSize: 13.5,
                 fontWeight: FontWeight.bold,
-                color: _accentDark,
+                // Popup rule: the white outline button carries BLACK
+                // text (the orange stays on its border).
+                color: _navy,
                 decoration: TextDecoration.none),
           ),
         ),
@@ -180,7 +182,9 @@ class PremiumGateDialog extends StatelessWidget {
         style: const TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: _grey,
+            // Popup rule: non-colored (ghost/cancel) buttons carry
+            // BLACK text.
+            color: _navy,
             decoration: TextDecoration.none),
       ),
     );

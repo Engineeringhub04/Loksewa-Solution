@@ -60,9 +60,9 @@ Future<void> _openPopup(WidgetTester tester, String rowText) async {
   expect(find.byType(AppModalShell), findsOneWidget);
 }
 
-/// Taps Confirm, observes the loading state on the button (and asserts the
-/// exact URL already reached openUrl), then releases the native side and
-/// asserts the popup closes.
+/// Taps Confirm, observes the loading state on the Confirm button itself
+/// (and asserts the exact URL already reached openUrl), then releases the
+/// native side and asserts the popup closes.
 Future<void> _confirmPopup(
     WidgetTester tester,
     List<String> openedUrls,
@@ -70,9 +70,11 @@ Future<void> _confirmPopup(
     String expectedUrl) async {
   await tester.tap(find.text('Confirm'));
   await tester.pump(const Duration(milliseconds: 50));
-  // Loading shows on the confirm button while the native side works, and
+  // Loading shows on the Confirm button itself (Logout-popup pattern):
+  // its label is replaced by a spinner while Cancel stays untouched, and
   // the URL has already been handed to openUrl.
-  expect(find.text('Opening…'), findsOneWidget);
+  expect(find.text('Confirm'), findsNothing);
+  expect(find.text('Cancel'), findsOneWidget);
   expect(find.byType(CircularProgressIndicator), findsWidgets);
   expect(openedUrls, [expectedUrl]);
 

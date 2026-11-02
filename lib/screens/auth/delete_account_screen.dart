@@ -14,6 +14,7 @@ import 'package:loksewa_solution/services/profile_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 import 'package:loksewa_solution/widgets/preloading.dart';
 import 'package:loksewa_solution/widgets/subpage_header.dart';
 import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
@@ -369,51 +370,25 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
             footer: Row(
               children: [
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: sending
-                        ? null
-                        : () => Navigator.of(modalContext).pop(),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                    ),
-                    child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+                  child: PopupCancelButton(
+                    label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                    loading: sending,
+                    onTap: () => Navigator.of(modalContext).pop(),
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: sending
-                        ? null
-                        : () async {
-                            setModalState(() => sending = true);
-                            final sent = await _submitRequest();
-                            if (!modalContext.mounted) return;
-                            Navigator.of(modalContext).pop(sent);
-                          },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: danger,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: danger,
-                      disabledForegroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(22),
-                      ),
-                    ),
-                    child: sending
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2.5,
-                              color: Colors.white,
-                            ),
-                          )
-                        : Text(AppLanguage.tr(
-                            'Submit Request', 'अनुरोध पठाउनुहोस्')),
+                  child: PopupActionButton(
+                    label:
+                        AppLanguage.tr('Submit Request', 'अनुरोध पठाउनुहोस्'),
+                    backgroundColor: danger,
+                    loading: sending,
+                    onTap: () async {
+                      setModalState(() => sending = true);
+                      final sent = await _submitRequest();
+                      if (!modalContext.mounted) return;
+                      Navigator.of(modalContext).pop(sent);
+                    },
                   ),
                 ),
               ],

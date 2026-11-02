@@ -20,6 +20,7 @@ import 'package:loksewa_solution/services/report_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
 import 'package:loksewa_solution/widgets/app_toast.dart';
+import 'package:loksewa_solution/widgets/popup_action_button.dart';
 import 'package:pdfx/pdfx.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
@@ -1465,32 +1466,21 @@ class _SubmitConfirmContentState extends State<_SubmitConfirmContent> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed:
-                  _busy ? null : () => Navigator.of(context).pop(false),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _busy,
+              onTap: () => Navigator.of(context).pop(false),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                disabledBackgroundColor: accent.withValues(alpha: 0.6),
-              ),
-              onPressed: _busy ? null : _onSubmit,
-              child: _busy
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text(widget.isEdit
-                      ? AppLanguage.tr(
-                          'Update Data', 'डाटा अपडेट गर्नुहोस्')
-                      : AppLanguage.tr('Submit', 'पेश गर्नुहोस्')),
+            child: PopupActionButton(
+              label: widget.isEdit
+                  ? AppLanguage.tr('Update Data', 'डाटा अपडेट गर्नुहोस्')
+                  : AppLanguage.tr('Submit', 'पेश गर्नुहोस्'),
+              backgroundColor: accent,
+              loading: _busy,
+              onTap: _onSubmit,
             ),
           ),
         ],

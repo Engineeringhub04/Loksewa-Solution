@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/cf_api.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
@@ -8,7 +9,9 @@ import 'package:loksewa_solution/widgets/status_pill.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/app_language.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/app_toast.dart';
 import '../../widgets/image_viewer.dart';
+import '../../widgets/popup_action_button.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/preloading.dart';
 
@@ -52,6 +55,7 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
   }
 
   void _showLinkDialog(String url) {
+    var copied = false;
     AppModalShell.show<void>(
       context: context,
       builder: (c) => AppModalShell(
@@ -61,7 +65,6 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
         accentMid: const Color(0xFF3B82F6),
         accentLight: const Color(0xFFBFDBFE),
         tagColor: const Color(0xFF1D4ED8),
-        onClose: () => Navigator.of(c).pop(),
         icon: Container(
           width: 56,
           height: 56,
@@ -102,13 +105,55 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            SelectableText(
-              url,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontSize: 13,
-                color: Color(0xFF1D4ED8),
-                decoration: TextDecoration.none,
+            // URL as normal left-aligned text (not centered, not
+            // blue-link styled) with a copy icon on the right.
+            StatefulBuilder(
+              builder: (modalContext, setModalState) => Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      url,
+                      textAlign: TextAlign.left,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        height: 1.45,
+                        color: Color(0xFF0F172A),
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: AppLanguage.tr(
+                        'Copy link', 'लिङ्क कपी गर्नुहोस्'),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () async {
+                      await Clipboard.setData(
+                          ClipboardData(text: url));
+                      if (modalContext.mounted) {
+                        setModalState(() => copied = true);
+                      }
+                      if (mounted) {
+                        showToast(
+                          context,
+                          AppLanguage.tr('Copied to clipboard',
+                              'क्लिपबोर्डमा प्रतिलिपि भयो'),
+                          ToastVariant.success,
+                        );
+                      }
+                    },
+                    icon: Icon(
+                      copied
+                          ? Icons.check_rounded
+                          : Icons.copy_outlined,
+                      size: 20,
+                      color: copied
+                          ? const Color(0xFF16A34A)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -116,20 +161,17 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
         footer: Row(
           children: [
             Expanded(
-              child: OutlinedButton(
-                onPressed: () => Navigator.of(c).pop(),
-                style: OutlinedButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+              child: PopupCancelButton(
+                label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+                onTap: () => Navigator.of(c).pop(),
               ),
             ),
             const SizedBox(width: 10),
             Expanded(
-              child: FilledButton(
-                onPressed: () async {
+              child: PopupActionButton(
+                label: AppLanguage.tr('Open', 'खोल्नुहोस्'),
+                backgroundColor: const Color(0xFF2563EB),
+                onTap: () async {
                   Navigator.of(c).pop();
                   final uri = Uri.tryParse(url);
                   if (uri == null || !uri.hasScheme) return;
@@ -141,13 +183,6 @@ class _NoticeDetailScreenState extends State<NoticeDetailScreen> {
                     // visible/selectable in the popup for manual copy.
                   }
                 },
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF2563EB),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
-                child: Text(AppLanguage.tr('Open', 'खोल्नुहोस्')),
               ),
             ),
           ],

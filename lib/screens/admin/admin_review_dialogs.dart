@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../services/app_language.dart';
 import '../../widgets/app_modal_shell.dart';
+import '../../widgets/popup_action_button.dart';
 
 /// Content title in the app's current language — mirrors
 /// `language === 'ne' ? record.contentTitleNe || record.contentTitle : record.contentTitle`.
@@ -345,37 +346,19 @@ class _DecisionConfirmBodyState extends State<_DecisionConfirmBody> {
       footer: Row(
         children: [
           Expanded(
-            child: OutlinedButton(
-              onPressed: _saving ? null : widget.onClose,
-              style: OutlinedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: Text(AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्')),
+            child: PopupCancelButton(
+              label: AppLanguage.tr('Cancel', 'रद्द गर्नुहोस्'),
+              loading: _saving,
+              onTap: widget.onClose,
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
-            child: FilledButton(
-              onPressed: _saving ? null : _save,
-              style: FilledButton.styleFrom(
-                backgroundColor: widget.accent,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-              child: _saving
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(Colors.white),
-                      ),
-                    )
-                  : Text(widget.confirmText),
+            child: PopupActionButton(
+              label: widget.confirmText,
+              backgroundColor: widget.accent,
+              loading: _saving,
+              onTap: _save,
             ),
           ),
         ],

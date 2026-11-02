@@ -1305,7 +1305,11 @@ class _DecisionConfirmDialogState extends State<_DecisionConfirmDialog> {
   Widget build(BuildContext context) {
     final palette = ExpoPalette.of(context);
     final isApprove = widget.decision == 'approve';
-    final accent = isApprove ? palette.success : palette.danger;
+    // Popup rule: pinned solid brand success in both themes (danger is
+    // already theme-identical); this accent drives the confirm popup's
+    // gradient, icon and Save button.
+    final accent =
+        isApprove ? const Color(0xFF16A34A) : palette.danger;
     final accentMid = Color.lerp(accent, Colors.white, 0.45) ?? accent;
     final accentLight = Color.lerp(accent, Colors.white, 0.8) ?? accent;
     final decisionLabel = isApprove

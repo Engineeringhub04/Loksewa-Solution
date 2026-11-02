@@ -119,8 +119,11 @@ class _AdminContentPurchaseDetailScreenState
 
     final palette = ExpoPalette.of(context);
     final isApprove = decision == 'approve';
+    // Popup rule: the decision confirm popup's accent is pinned to the
+    // solid brand shades in both themes (success 0xFF16A34A; warning and
+    // danger palette values are already theme-identical).
     final accent = isApprove
-        ? palette.success
+        ? const Color(0xFF16A34A)
         : decision == 'other'
             ? palette.warning
             : palette.danger;

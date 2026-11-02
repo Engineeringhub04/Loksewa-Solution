@@ -487,9 +487,10 @@ class _ProfileTabState extends State<ProfileTab> {
               final topPad = MediaQuery.of(context).padding.top;
               final headerH = topPad + ProfileHeader.expandedHeightBase;
               // Clearance for the overlaying bottom nav (the tabs scaffold
-              // uses extendBody): 65px bar + margin, plus device safe area.
+              // uses extendBody): exactly the 65px bar, plus device safe
+              // area. The trailing spacer below adds the visible margin.
               final navClearance =
-                  MediaQuery.paddingOf(context).bottom + 88;
+                  MediaQuery.paddingOf(context).bottom + 65;
               final isDark =
                   Theme.of(context).brightness == Brightness.dark;
 
@@ -572,9 +573,12 @@ class _ProfileTabState extends State<ProfileTab> {
                             ),
                           ),
                           // Bottom clearance so the last content sits above
-                          // the overlaying bottom nav (extendBody).
+                          // the overlaying bottom nav (extendBody): the nav
+                          // clearance plus a 16px margin above the bar (was
+                          // 24 + a clearance of safe-area + 88 — a nav-height
+                          // of dead space below the Logout button).
                           SliverToBoxAdapter(
-                              child: SizedBox(height: 24 + navClearance)),
+                              child: SizedBox(height: 16 + navClearance)),
                       ],
                     ),
                   ),

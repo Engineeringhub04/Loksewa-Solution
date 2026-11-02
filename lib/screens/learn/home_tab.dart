@@ -458,8 +458,11 @@ class _HomeTabState extends State<HomeTab> with SingleTickerProviderStateMixin {
                     },
                     child: ListView(
                       controller: _scrollController,
+                      // Bottom: safe area + 65px bottom-nav bar + a 16px
+                      // margin above the bar (was +96 — a nav-height of
+                      // dead space below the About Developer card).
                       padding: EdgeInsets.only(
-                          top: expandedH, bottom: bottomPad + 96),
+                          top: expandedH, bottom: bottomPad + 81),
                       children: [
                         // Banner carousel.
                         if (d.banners.isNotEmpty) ...[

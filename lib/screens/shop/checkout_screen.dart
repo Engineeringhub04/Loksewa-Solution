@@ -1311,16 +1311,19 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
     return AppModalShell.show<_SubmitOutcome>(
       context: context,
       builder: (ctx) {
-        final pal = ExpoPalette.of(ctx);
         return StatefulBuilder(
           builder: (ctx, setPopupState) {
             return AppModalShell(
               maxWidth: 340,
               tagLabel: AppLanguage.tr('Payment', 'भुक्तानी'),
-              accent: pal.primary,
-              accentMid: pal.info,
-              accentLight: pal.info.withValues(alpha: 0x33 / 0xFF),
-              tagColor: pal.primary,
+              // Popup rule: popup colors are pinned to the solid brand
+              // shades in BOTH themes (never the lifted dark palette) —
+              // primary 0xFF1D4ED8, info 0xFF2563EB.
+              accent: const Color(0xFF1D4ED8),
+              accentMid: const Color(0xFF2563EB),
+              accentLight:
+                  const Color(0xFF2563EB).withValues(alpha: 0x33 / 0xFF),
+              tagColor: const Color(0xFF1D4ED8),
               onClose: busy
                   ? () {}
                   : () => Navigator.of(ctx).pop(null),
@@ -1330,7 +1333,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(18),
-                  color: pal.primary,
+                  color: const Color(0xFF1D4ED8),
                 ),
                 child: const Icon(Icons.payments_outlined,
                     size: 28, color: Colors.white),
@@ -1390,7 +1393,7 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
                     child: PopupActionButton(
                       label: AppLanguage.tr(
                           'Submit Payment', 'भुक्तानी पेश गर्नुहोस्'),
-                      backgroundColor: pal.primary,
+                      backgroundColor: const Color(0xFF1D4ED8),
                       loading: busy,
                       onTap: () async {
                         setPopupState(() {

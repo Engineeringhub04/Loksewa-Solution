@@ -103,6 +103,10 @@ class _Sheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = ExpoPalette.of(context);
+    // Popup rule: this bottom sheet is a popup surface — its selection
+    // accent stays the solid brand primary in BOTH themes, never the
+    // lifted dark-theme palette primary.
+    const brandPrimary = Color(0xFF1D4ED8);
     return Container(
       decoration: BoxDecoration(
         color: colors.surface,
@@ -162,11 +166,11 @@ class _Sheet extends StatelessWidget {
                             BorderRadius.circular(ExpoRadius.md),
                         border: Border.all(
                           color: selected
-                              ? colors.primary
+                              ? brandPrimary
                               : colors.border,
                         ),
                         color: selected
-                            ? colors.primary.withValues(alpha: 0.08)
+                            ? brandPrimary.withValues(alpha: 0.08)
                             : colors.surfaceAlt,
                       ),
                       child: Row(
@@ -177,7 +181,7 @@ class _Sheet extends StatelessWidget {
                                 : Icons.radio_button_unchecked,
                             size: 20,
                             color: selected
-                                ? colors.primary
+                                ? brandPrimary
                                 : colors.textDisabled,
                           ),
                           const SizedBox(width: ExpoSpacing.sm),

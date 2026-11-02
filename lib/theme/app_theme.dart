@@ -96,7 +96,11 @@ class ExpoPalette {
     info: Color(0xFF60A5FA),
     success: Color(0xFF22C55E),
     warning: Color(0xFFF59E0B),
-    danger: Color(0xFFF87171),
+    // Danger stays the solid brand red in BOTH themes (not the lifted
+    // 0xFFF87171 tint): it is used as a filled popup action-button
+    // background (e.g. Bookmark Remove), where the pale tint rendered
+    // washed-out pink with white text in dark mode.
+    danger: Color(0xFFDC2626),
     accent: Color(0xFFF59E0B),
   );
 

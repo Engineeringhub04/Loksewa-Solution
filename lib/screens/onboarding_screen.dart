@@ -11,7 +11,7 @@ import '../services/prefs_service.dart';
 ///
 /// Cream background, illustration + title + description per slide, small dot
 /// indicators, and a circular arrow button that CONTINUOUSLY morphs into a
-/// full-width "Sign Up" pill while swiping from slide 3 to slide 4
+/// full-width "Sign Up" pill while swiping onto the last slide
 /// (finger-driven: the morph follows the PageView scroll position).
 /// The 4 hardcoded slides always show first; any slides from the
 /// Cloudflare API (GET /onboarding — the copied
@@ -117,9 +117,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       ? _controller.page!
       : _index.toDouble();
 
-  /// 0 on slides 1-3, easing to 1 as the user swipes onto slide 4.
-  double get _morphT =>
-      Curves.easeOutCubic.transform((_page - 2).clamp(0.0, 1.0));
+  /// 0 until the second-to-last slide, easing to 1 as the user swipes
+  /// onto the last slide (index `_slides.length - 1`) — the morph follows
+  /// the real slide count, so appended database slides become the last
+  /// slide the CTA morphs onto.
+  double get _morphT => Curves.easeOutCubic
+      .transform((_page - (_slides.length - 2)).clamp(0.0, 1.0));
 
   Future<void> _loadRemoteSlides() async {
     try {
@@ -212,7 +215,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         body: SafeArea(
           child: Column(
             children: [
-              // Top bar: back chevron (from slide 2) + Skip (slides 1-3).
+              // Top bar: back chevron (from slide 2) + Skip (all but the
+              // last slide).
               Padding(
                 padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
                 child: Row(
@@ -229,7 +233,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     Opacity(
                       opacity: 1 - morphT,
                       child: TextButton(
-                        onPressed: morphT < 0.5 ? () => _goTo(3) : null,
+                        onPressed: morphT < 0.5
+                            ? () => _goTo(_slides.length - 1)
+                            : null,
                         child: const Text(
                           'Skip',
                           style: TextStyle(

@@ -317,7 +317,7 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   }
 
   Future<void> _askConfirm() async {
-    // Theme-aware danger red (React colors.error: #DC2626 light / #F87171 dark).
+    // Danger red from the palette (solid #DC2626 in both themes).
     final danger = ExpoPalette.of(context).danger;
     final ok = await AppModalShell.show<bool>(
       context: context,

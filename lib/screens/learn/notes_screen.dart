@@ -211,7 +211,8 @@ class _NotesScreenState extends State<NotesScreen> {
           if (!mounted) return;
           _showInfoModal(
             icon: Icons.check_circle_outline,
-            iconColor: palette.primary,
+            // Popup rule: pinned solid brand primary in both themes.
+            iconColor: const Color(0xFF1D4ED8),
             title: AppLanguage.tr('Backup saved', 'ब्याकअप सेभ भयो'),
             body: AppLanguage.tr(
               'Your backup file was saved to the Downloads folder.',
@@ -274,7 +275,8 @@ class _NotesScreenState extends State<NotesScreen> {
       _reload();
       _showInfoModal(
         icon: Icons.check_circle_outline,
-        iconColor: palette.primary,
+        // Popup rule: pinned solid brand primary in both themes.
+        iconColor: const Color(0xFF1D4ED8),
         title: AppLanguage.tr('Import complete', 'इम्पोर्ट पूरा भयो'),
         body: AppLanguage.tr(
           '${counts.added} new, ${counts.skipped} skipped.',
@@ -301,7 +303,8 @@ class _NotesScreenState extends State<NotesScreen> {
           alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            color: ExpoPalette.of(context).primary,
+            // Popup rule: pinned solid brand primary in both themes.
+            color: const Color(0xFF1D4ED8),
           ),
           child: const Icon(Icons.push_pin, size: 28, color: Colors.white),
         ),
@@ -330,7 +333,8 @@ class _NotesScreenState extends State<NotesScreen> {
                       ? Icons.push_pin_outlined
                       : Icons.push_pin,
                   size: 22,
-                  color: ExpoPalette.of(context).primary),
+                  // Popup rule: pinned solid brand primary in both themes.
+                  color: const Color(0xFF1D4ED8)),
               label: note.pinned
                   ? AppLanguage.tr('Unpin', 'पिन हटाउनुहोस्')
                   : AppLanguage.tr('Pin to top', 'माथि पिन गर्नुहोस्'),

@@ -5,15 +5,16 @@ import 'package:go_router/go_router.dart';
 import '../../services/app_language.dart';
 import '../../services/auth_service.dart';
 import '../../theme/app_theme.dart';
-import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Profile → App Settings → Security Settings.
 ///
 /// The signed-in user's email at the top (read-only), then two entries:
 /// "Change Password" → `/settings/change-password` and "Login Devices" →
 /// `/settings/login-devices`. Premium treatment: the shared gradient
-/// subpage header, staggered card entrances, gradient icon tiles and soft
+/// subpage header, a premium info card directly under it, the smooth
+/// SyllabusEntrance motion (NOTE-24), gradient icon tiles and soft
 /// shadows — the same visual language as the analytics pages.
 class SecuritySettingsScreen extends StatelessWidget {
   const SecuritySettingsScreen({super.key});
@@ -39,13 +40,18 @@ class SecuritySettingsScreen extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
                 children: [
-                  StaggerEntrance(
+                  SyllabusEntrance(
                     delayMs: 0,
+                    child: _InfoCard(),
+                  ),
+                  const SizedBox(height: 12),
+                  SyllabusEntrance(
+                    delayMs: 60,
                     child: _AccountCard(email: email),
                   ),
                   const SizedBox(height: 12),
-                  StaggerEntrance(
-                    delayMs: 80,
+                  SyllabusEntrance(
+                    delayMs: 120,
                     child: _Entry(
                       icon: Icons.lock_outline,
                       gradient: const [Color(0xFF2563EB), Color(0xFF1D4ED8)],
@@ -57,8 +63,8 @@ class SecuritySettingsScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  StaggerEntrance(
-                    delayMs: 160,
+                  SyllabusEntrance(
+                    delayMs: 180,
                     child: _Entry(
                       icon: Icons.devices_outlined,
                       gradient: const [Color(0xFF22C55E), Color(0xFF16A34A)],
@@ -71,7 +77,7 @@ class SecuritySettingsScreen extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  StaggerEntrance(
+                  SyllabusEntrance(
                     delayMs: 240,
                     child: _TipCard(),
                   ),
@@ -80,6 +86,86 @@ class SecuritySettingsScreen extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Premium info card directly under the header — shield gradient tile,
+/// a heading and the protection message for this page.
+class _InfoCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: palette.primary.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF60A5FA), Color(0xFF1D4ED8)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF1D4ED8).withValues(alpha: 0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.shield_outlined,
+                size: 24, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLanguage.tr('Account protection', 'खाता सुरक्षा'),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  AppLanguage.tr(
+                    'From here you can change your password and review the devices signed in to your account, so only you can get in.',
+                    'यहाँबाट तपाईं आफ्नो पासवर्ड परिवर्तन गर्न र आफ्नो खातामा साइन इन भएका डिभाइसहरू हेर्न सक्नुहुन्छ, ताकि तपाईं मात्र भित्र पस्न सक्नुहोस्।',
+                  ),
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

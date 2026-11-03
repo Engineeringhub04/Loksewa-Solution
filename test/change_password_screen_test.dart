@@ -6,7 +6,9 @@ import 'package:loksewa_solution/screens/settings/change_password_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/change_password_service.dart';
 import 'package:loksewa_solution/widgets/app_modal_shell.dart';
-import 'package:loksewa_solution/widgets/stagger_entrance.dart';
+import 'package:loksewa_solution/theme/app_theme.dart';
+import 'package:loksewa_solution/widgets/auth/floating_label_field.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 /// Widget tests for Security Settings → Change Password.
 ///
@@ -29,7 +31,7 @@ Widget _screen({
 }
 
 
-/// Pumps the StaggerEntrance animations through (450ms + up to 140ms delay)
+/// Pumps the SyllabusEntrance animations through (380ms + up to 140ms delay)
 /// in small increments, so buttons are back on screen before taps.
 /// Never pumpAndSettle — the entrance delays need the fake clock advanced.
 Future<void> _pumpEntered(WidgetTester tester) async {
@@ -216,13 +218,13 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('premium treatment: staggered form + password tips card',
+  testWidgets('premium treatment: smooth form + password tips card',
       (tester) async {
     await tester.pumpWidget(_screen());
     await _pumpEntered(tester);
 
-    // Form card + tips card stagger in.
-    expect(find.byType(StaggerEntrance), findsNWidgets(2));
+    // Form card + tips card enter smoothly (NOTE-24).
+    expect(find.byType(SyllabusEntrance), findsNWidgets(2));
     expect(find.text('Choose a new password'), findsOneWidget);
     expect(find.text('Password tips'), findsOneWidget);
     expect(find.text('At least 6 characters'), findsOneWidget);
@@ -264,8 +266,8 @@ void main() {
         ),
         GoRoute(
           path: '/forgot-password',
-          builder: (_, __) =>
-              const Scaffold(body: Text('forgot-stub')),
+          builder: (_, state) =>
+              Scaffold(body: Text('forgot-stub ${state.extra ?? ''}')),
         ),
       ],
     );
@@ -276,6 +278,50 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('forgot-stub'), findsOneWidget);
+    expect(find.text('forgot-stub user@example.com'), findsOneWidget);
+  });
+
+  testWidgets('dark mode: cards follow the theme, fields go dark (NOTE-23)',
+      (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      theme: ThemeData.dark(),
+      home: const Scaffold(
+        body: ChangePasswordScreen(debugEmail: 'user@example.com'),
+      ),
+    ));
+    await _pumpEntered(tester);
+
+    // The form card is the dark palette surface — not the old white.
+    final card = tester.widget<Container>(find
+        .ancestor(
+          of: find.text('Choose a new password'),
+          matching: find.byType(Container),
+        )
+        .first);
+    expect((card.decoration as BoxDecoration).color,
+        ExpoPalette.dark.surface);
+    // Every field takes the dark variant.
+    final fields =
+        tester.widgetList<FloatingLabelField>(find.byType(FloatingLabelField));
+    expect(fields.length, 3);
+    expect(fields.every((f) => f.dark), isTrue);
+  });
+
+  testWidgets('light mode: fields stay in the light variant', (tester) async {
+    await tester.pumpWidget(_screen());
+    await _pumpEntered(tester);
+
+    final card = tester.widget<Container>(find
+        .ancestor(
+          of: find.text('Choose a new password'),
+          matching: find.byType(Container),
+        )
+        .first);
+    expect((card.decoration as BoxDecoration).color,
+        ExpoPalette.light.surface);
+    final fields =
+        tester.widgetList<FloatingLabelField>(find.byType(FloatingLabelField));
+    expect(fields.length, 3);
+    expect(fields.every((f) => !f.dark), isTrue);
   });
 }

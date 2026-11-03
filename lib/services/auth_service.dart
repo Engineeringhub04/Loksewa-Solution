@@ -172,8 +172,13 @@ class AuthService {
 
   /// Forgot-password (code flow), steps 1 + 2. No session is created —
   /// the user logs in with the new password afterwards.
-  static Future<void> requestResetCode(String email) =>
-      CfApi.resetRequest(email);
+  ///
+  /// [withSession] marks the logged-in entry (from Change Password): the
+  /// session accompanies the request and the worker locks the code to
+  /// the account's own email.
+  static Future<void> requestResetCode(String email,
+          {bool withSession = false}) =>
+      CfApi.resetRequest(email, auth: withSession);
 
   static Future<void> resetWithCode({
     required String email,

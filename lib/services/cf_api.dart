@@ -480,9 +480,14 @@ class CfApi {
   }
 
   /// Forgot-password (code flow), step 1.
-  static Future<void> resetRequest(String email) async {
+  ///
+  /// With [auth] true the stored session rides along (the in-app flow
+  /// from Change Password): the worker then enforces the logged-in reset
+  /// lock — the email must be the session account's own. The logged-out
+  /// Login-page flow keeps auth:false, exactly as before.
+  static Future<void> resetRequest(String email, {bool auth = false}) async {
     await _request('POST', '/auth/reset/request',
-        auth: false, body: {'email': email});
+        auth: auth, body: {'email': email});
   }
 
   /// Forgot-password (code flow), step 2. No auto-login.

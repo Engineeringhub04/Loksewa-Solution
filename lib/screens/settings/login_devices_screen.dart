@@ -7,8 +7,8 @@ import '../../services/cf_api.dart';
 import '../../services/device_session_service.dart';
 import '../../theme/app_theme.dart';
 import '../../widgets/preloading.dart';
-import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Security Settings → Login Devices.
 ///
@@ -20,8 +20,9 @@ import '../../widgets/subpage_header.dart';
 /// model (or "Unknown device"), the platform icon, the app version and
 /// the last-active time from `updatedAt`.
 ///
-/// Premium treatment: the shared gradient subpage header, a device-count
-/// summary card, staggered row entrances, gradient platform icon tiles and
+/// Premium treatment: the shared gradient subpage header, a premium info
+/// card directly under it, a device-count summary card, the smooth
+/// SyllabusEntrance motion (NOTE-24), gradient platform icon tiles and
 /// soft shadows.
 class LoginDevicesScreen extends StatefulWidget {
   const LoginDevicesScreen({
@@ -115,6 +116,84 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
     }
     final days = '${d.inDays}';
     return AppLanguage.tr('$days days ago', '${_nepaliDigits(days)} दिन अघि');
+  }
+
+  /// Premium info card directly under the header — devices gradient
+  /// tile, a heading and the review-your-devices message.
+  Widget _infoCard(BuildContext context) {
+    final palette = ExpoPalette.of(context);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: palette.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: palette.primary.withValues(alpha: 0.18),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF4ADE80), Color(0xFF16A34A)],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFF16A34A).withValues(alpha: 0.35),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.devices_outlined,
+                size: 24, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  AppLanguage.tr(
+                      'Review your devices', 'आफ्ना डिभाइसहरू हेर्नुहोस्'),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: palette.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  AppLanguage.tr(
+                    "These are the devices signed in to your account. If you see one you don't recognize, change your password right away — that signs the device out.",
+                    'यी तपाईंको खातामा साइन इन भएका डिभाइसहरू हुन्। नचिनेको डिभाइस देख्नुभयो भने तुरुन्तै आफ्नो पासवर्ड परिवर्तन गर्नुहोस् — त्यसले त्यो डिभाइसलाई साइन आउट गर्छ।',
+                  ),
+                  style: TextStyle(
+                    fontSize: 13,
+                    height: 1.45,
+                    color: palette.textSecondary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Device-count summary card shown above the list.
@@ -456,29 +535,51 @@ class _LoginDevicesScreenState extends State<LoginDevicesScreen> {
                   }
                   final rows = snap.data ?? [];
                   if (rows.isEmpty) {
-                    return StaggerEntrance(
-                      delayMs: 0,
-                      child: _empty(context),
+                    return Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+                          child: SyllabusEntrance(
+                            delayMs: 0,
+                            child: _infoCard(context),
+                          ),
+                        ),
+                        Expanded(
+                          child: SyllabusEntrance(
+                            delayMs: 60,
+                            child: _empty(context),
+                          ),
+                        ),
+                      ],
                     );
                   }
                   return ListView.builder(
                     padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-                    itemCount: rows.length + 1,
+                    itemCount: rows.length + 2,
                     itemBuilder: (context, i) {
                       if (i == 0) {
                         return Padding(
                           padding: const EdgeInsets.only(bottom: 12),
-                          child: StaggerEntrance(
+                          child: SyllabusEntrance(
                             delayMs: 0,
+                            child: _infoCard(context),
+                          ),
+                        );
+                      }
+                      if (i == 1) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: SyllabusEntrance(
+                            delayMs: 60,
                             child: _countCard(context, rows.length),
                           ),
                         );
                       }
-                      final row = rows[i - 1];
+                      final row = rows[i - 2];
                       return Padding(
                         padding: const EdgeInsets.only(bottom: 12),
                         // Capped stagger like the analytics lists.
-                        child: StaggerEntrance(
+                        child: SyllabusEntrance(
                           delayMs: (i > 8 ? 8 : i) * 60,
                           child: _row(context, row),
                         ),

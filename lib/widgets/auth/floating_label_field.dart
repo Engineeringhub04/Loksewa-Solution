@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 /// Animated floating-label text input — mirrors FloatingLabelField.tsx.
 /// The label rests as the placeholder, then floats up and shrinks to 0.82 on
 /// focus/value. Border washes from #E5E7EB to #1D4ED8 on focus (1.5px, radius
-/// 12, minHeight 62). Always light — auth screens never follow dark mode.
+/// 12, minHeight 62). Always light on auth screens (they never follow
+/// dark mode); the Change Password page opts into the [dark] variant so
+/// its fields follow the app theme (NOTE-23).
 class FloatingLabelField extends StatefulWidget {
   final String label;
   final TextEditingController? controller;
@@ -18,6 +20,11 @@ class FloatingLabelField extends StatefulWidget {
   final VoidCallback? onSubmitted;
   final FocusNode? focusNode;
   final FocusNode? nextFocus;
+
+  /// Dark-surface variant (NOTE-23): the Change Password page follows
+  /// the app theme, so its fields render on the dark palette in dark
+  /// mode. Auth screens never pass this — they stay always-light.
+  final bool dark;
 
   const FloatingLabelField({
     super.key,
@@ -34,6 +41,7 @@ class FloatingLabelField extends StatefulWidget {
     this.onSubmitted,
     this.focusNode,
     this.nextFocus,
+    this.dark = false,
   });
 
   @override
@@ -47,6 +55,16 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
   static const _textPrimary = Color(0xFF1F2937);
   static const _textSecondary = Color(0xFF6B7280);
   static const _error = Color(0xFFDC2626);
+
+  // Dark variant tokens — aligned with ExpoPalette.dark (surfaceAlt /
+  // textPrimary / textSecondary / a lifted border).
+  static const _borderDark = Color(0xFF334155);
+  static const _textPrimaryDark = Color(0xFFF1F5F9);
+  static const _textSecondaryDark = Color(0xFF94A3B8);
+
+  Color get _borderBase => widget.dark ? _borderDark : _border;
+  Color get _textMain => widget.dark ? _textPrimaryDark : _textPrimary;
+  Color get _textSub => widget.dark ? _textSecondaryDark : _textSecondary;
 
   late final AnimationController _anim;
   late final FocusNode _focusNode;
@@ -109,9 +127,9 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
       builder: (context, _) {
         final t = _anim.value;
         final borderColor =
-            _hasError ? _error : Color.lerp(_border, _primary, t)!;
+            _hasError ? _error : Color.lerp(_borderBase, _primary, t)!;
         final labelColor =
-            _hasError ? _error : Color.lerp(_textSecondary, _primary, t)!;
+            _hasError ? _error : Color.lerp(_textSub, _primary, t)!;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
@@ -119,7 +137,7 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
             Container(
               constraints: const BoxConstraints(minHeight: 62),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: widget.dark ? const Color(0xFF1E293B) : Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: borderColor, width: 1.5),
               ),
@@ -131,7 +149,7 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
                     Icon(
                       widget.leftIcon,
                       size: 20,
-                      color: _focused ? _primary : _textSecondary,
+                      color: _focused ? _primary : _textSub,
                     ),
                     const SizedBox(width: 8),
                   ],
@@ -178,9 +196,9 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
                                 widget.onSubmitted?.call();
                               }
                             },
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 16,
-                              color: _textPrimary,
+                              color: _textMain,
                             ),
                             decoration: const InputDecoration(
                               border: InputBorder.none,
@@ -203,7 +221,7 @@ class _FloatingLabelFieldState extends State<FloatingLabelField>
                               ? Icons.visibility_outlined
                               : Icons.visibility_off_outlined,
                           size: 20,
-                          color: _textSecondary,
+                          color: _textSub,
                         ),
                       ),
                     ),

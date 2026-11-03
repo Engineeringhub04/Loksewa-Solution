@@ -18,8 +18,23 @@ import '../../services/app_language.dart';
 /// failures render as an IN-PAGE info banner above the form (never a
 /// popup) — the same visual language this screen has always used; verify
 /// failures use the AppModalShell error popup.
+///
+/// Logged-in entry (NOTE-22 + reset lock): reached from Change Password's
+/// "Forgot Password?" link, the router passes the account email via
+/// [accountEmail]. With a live session the screen runs LOCKED: the email
+/// is pre-filled and not editable (a reset code can only go to the
+/// account's own address), there is no "Back to Login", and the request
+/// carries the session so the worker enforces the same rule server-side.
+/// Without a session (or without [accountEmail]) the screen falls back
+/// to the normal editable Login-page behavior, exactly as before.
 class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key});
+  const ForgotPasswordScreen({super.key, this.accountEmail, this.debugHasSession});
+
+  /// Account email passed by the router for the logged-in entry.
+  final String? accountEmail;
+
+  /// Test seam: overrides the live-session probe.
+  final bool? debugHasSession;
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -38,9 +53,27 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   bool _verifying = false;
   bool _codeSent = false;
 
+  /// Locked mode (logged-in entry): email fixed to the account address,
+  /// no "Back to Login", the request carries the session.
+  late final bool _locked;
+
   /// In-page info/warning banner text shown above the form; null = hidden.
   String? _banner;
   bool _bannerIsWarning = false;
+
+  bool get _hasSession =>
+      widget.debugHasSession ??
+      (AuthService.currentUser != null && CfApi.accessToken.isNotEmpty);
+
+  @override
+  void initState() {
+    super.initState();
+    final preset = widget.accountEmail?.trim() ?? '';
+    // Fallback rule: a preset email without a live session (absent or
+    // expired) degrades to the normal editable page — never a dead end.
+    _locked = preset.isNotEmpty && _hasSession;
+    if (preset.isNotEmpty) _email.text = preset;
+  }
 
   @override
   void dispose() {
@@ -82,7 +115,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _banner = null;
     });
     try {
-      await AuthService.requestResetCode(email);
+      await AuthService.requestResetCode(email, withSession: _locked);
       if (!mounted) return;
       setState(() {
         _loading = false;
@@ -93,6 +126,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (!mounted) return;
       setState(() => _loading = false);
       switch (e.error) {
+        case 'email_mismatch':
+          _showBanner(AppLanguage.tr(
+            'The code can only be sent to your own account email.',
+            'कोड तपाईंको आफ्नै खाता इमेलमा मात्र पठाउन सकिन्छ।',
+          ));
         case 'account_not_found':
           _showBanner(AppLanguage.tr(
             'No account found with this email address.',
@@ -156,6 +194,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     }
   }
 
+  /// Success end-point: the logged-out flow returns to Login; the
+  /// logged-in (locked) flow simply goes back to where he came from
+  /// (Change Password) — he never left his session (NOTE-22).
+  void _finishSuccess(BuildContext modalContext) {
+    Navigator.of(modalContext).pop();
+    if (!mounted) return;
+    if (_locked) {
+      if (context.canPop()) context.pop();
+    } else {
+      context.go('/login');
+    }
+  }
+
   Future<void> _showSuccessPopup() {
     return AppModalShell.show<void>(
       context: context,
@@ -165,10 +216,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         accentLight: const Color(0xFFBFDBFE),
         tagColor: const Color(0xFF1D4ED8),
         tagLabel: AppLanguage.tr('PASSWORD RESET', 'पासवर्ड रिसेट'),
-        onClose: () {
-          Navigator.of(modalContext).pop();
-          if (mounted) context.go('/login');
-        },
+        onClose: () => _finishSuccess(modalContext),
         icon: Container(
           width: 56,
           height: 56,
@@ -192,10 +240,15 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           ),
         ),
         body: Text(
-          AppLanguage.tr(
-            'Your password has been reset successfully. You can now log in with your new password.',
-            'तपाईंको पासवर्ड सफलतापूर्वक रिसेट भयो। अब नयाँ पासवर्डले लगइन गर्नुहोस्।',
-          ),
+          _locked
+              ? AppLanguage.tr(
+                  'Your password has been reset successfully. Use your new password the next time you sign in.',
+                  'तपाईंको पासवर्ड सफलतापूर्वक रिसेट भयो। अर्को पटक साइन इन गर्दा नयाँ पासवर्ड प्रयोग गर्नुहोस्।',
+                )
+              : AppLanguage.tr(
+                  'Your password has been reset successfully. You can now log in with your new password.',
+                  'तपाईंको पासवर्ड सफलतापूर्वक रिसेट भयो। अब नयाँ पासवर्डले लगइन गर्नुहोस्।',
+                ),
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontSize: 14,
@@ -205,12 +258,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
           ),
         ),
         footer: PopupActionButton(
-          label: AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+          label: _locked
+              ? AppLanguage.tr('Done', 'भयो')
+              : AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
           backgroundColor: const Color(0xFF1D4ED8),
-          onTap: () {
-            Navigator.of(modalContext).pop();
-            if (mounted) context.go('/login');
-          },
+          onTap: () => _finishSuccess(modalContext),
         ),
       ),
     );
@@ -316,39 +368,114 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     );
   }
 
+  /// Locked email presentation (logged-in entry): same box language as
+  /// FloatingLabelField, but the address is fixed — mail icon, the small
+  /// floated label, the address, and a lock badge; a helper line under
+  /// it explains the code can only go to this address.
+  Widget _lockedEmailField() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          constraints: const BoxConstraints(minHeight: 62),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFCBD5E1), width: 1.5),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              const Icon(Icons.mail_outline,
+                  size: 20, color: Color(0xFF6B7280)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      AppLanguage.tr('Email Address', 'इमेल ठेगाना'),
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF1D4ED8)),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _email.text.trim(),
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF1F2937)),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                width: 32,
+                height: 32,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFEFF6FF),
+                ),
+                child: const Icon(Icons.lock_outline,
+                    size: 16, color: Color(0xFF1D4ED8)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          AppLanguage.tr(
+            'Signed-in account email — the code can only be sent here.',
+            'साइन इन भएको खाताको इमेल — कोड यहीँ मात्र पठाउन सकिन्छ।',
+          ),
+          style: const TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+        ),
+      ],
+    );
+  }
+
   Widget _buildForm() {
     return Column(
       key: const ValueKey('form'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildBanner(),
-        FloatingLabelField(
-          label: AppLanguage.tr('Email Address', 'इमेल ठेगाना'),
-          controller: _email,
-          leftIcon: Icons.mail_outline,
-          keyboardType: TextInputType.emailAddress,
-          textInputAction: TextInputAction.done,
-          onSubmitted: _submit,
-        ),
+        if (_locked)
+          _lockedEmailField()
+        else
+          FloatingLabelField(
+            label: AppLanguage.tr('Email Address', 'इमेल ठेगाना'),
+            controller: _email,
+            leftIcon: Icons.mail_outline,
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.done,
+            onSubmitted: _submit,
+          ),
         const SizedBox(height: 16),
         AuthPrimaryButton(
           label: AppLanguage.tr('Send Code', 'कोड पठाउनुहोस्'),
           loading: _loading,
           onPressed: _submit,
         ),
-        const SizedBox(height: 16),
-        Center(
-          child: TextButton(
-            onPressed: () => context.pop(),
-            child: Text(
-              AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF1D4ED8)),
+        // NOTE-22: "Back to Login" only exists on the logged-out entry —
+        // the logged-in entry returns via the header back arrow instead.
+        if (!_locked) ...[
+          const SizedBox(height: 16),
+          Center(
+            child: TextButton(
+              onPressed: () => context.pop(),
+              child: Text(
+                AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+                style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1D4ED8)),
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }
@@ -430,18 +557,19 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
             ),
           ),
         ),
-        Center(
-          child: TextButton(
-            onPressed: () => context.go('/login'),
-            child: Text(
-              AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
-              style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: Color(0xFF1D4ED8)),
+        if (!_locked)
+          Center(
+            child: TextButton(
+              onPressed: () => context.go('/login'),
+              child: Text(
+                AppLanguage.tr('Back to Login', 'लगइनमा फर्कनुहोस्'),
+                style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF1D4ED8)),
+              ),
             ),
           ),
-        ),
       ],
     );
   }
@@ -461,9 +589,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         backgroundColor: const Color(0xFFF9FAFB),
         body: AuthScreenLayout(
           title: AppLanguage.tr('Reset Password', 'पासवर्ड रिसेट'),
-          subtitle: AppLanguage.tr(
-              "Enter your email and we'll send you a 6-digit code",
-              'आफ्नो इमेल प्रविष्ट गर्नुहोस्, हामी ६ अंकको कोड पठाउनेछौं'),
+          subtitle: _locked
+              ? AppLanguage.tr(
+                  "We'll send a 6-digit code to your account email",
+                  'तपाईंको खाता इमेलमा ६ अंकको कोड पठाउनेछौं')
+              : AppLanguage.tr(
+                  "Enter your email and we'll send you a 6-digit code",
+                  'आफ्नो इमेल प्रविष्ट गर्नुहोस्, हामी ६ अंकको कोड पठाउनेछौं'),
           onBack: () => context.pop(),
           // Flat reset illustration fills the space between header and card
           // (user mockup, 2026-10-10) — compact since the form is tall.

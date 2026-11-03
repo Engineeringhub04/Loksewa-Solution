@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:loksewa_solution/screens/settings/login_devices_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/widgets/stagger_entrance.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 /// Widget tests for Security Settings → Login Devices.
 ///
@@ -55,7 +55,7 @@ Future<void> _pumpLoaded(WidgetTester tester) async {
       i++) {
     await tester.pump(const Duration(milliseconds: 100));
   }
-  // Let every StaggerEntrance delay fire (max 8*60ms) + the 450ms entrance,
+  // Let every SyllabusEntrance delay fire (max 8*60ms) + the 380ms entrance,
   // so no delayed timer is still pending at teardown. Small pumps only —
   // the "this device" dot blinks forever.
   for (var i = 0; i < 12; i++) {
@@ -106,7 +106,7 @@ void main() {
         i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    // Fire the empty-state StaggerEntrance delay — no pending timers at
+    // Fire the empty-state SyllabusEntrance delay — no pending timers at
     // teardown.
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -117,15 +117,19 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('premium treatment: count card + staggered rows', (tester) async {
+  testWidgets('premium treatment: info card + count card + smooth rows',
+      (tester) async {
     await _pumpLoaded(tester);
 
-    // Summary card with the device count, then one staggered entrance per
+    // Premium info card directly under the header.
+    expect(find.text('Review your devices'), findsOneWidget);
+    expect(find.textContaining("don't recognize"), findsOneWidget);
+    // Summary card with the device count, then one smooth entrance per
     // row (capped stagger).
     expect(find.text('devices signed in'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
     expect(find.text('Active'), findsOneWidget);
-    expect(find.byType(StaggerEntrance), findsNWidgets(4));
+    expect(find.byType(SyllabusEntrance), findsNWidgets(5));
     // Core functionality unchanged.
     expect(find.text('Pixel 8'), findsOneWidget);
     expect(find.text('This device'), findsOneWidget);

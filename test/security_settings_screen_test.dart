@@ -6,7 +6,7 @@ import 'package:loksewa_solution/screens/settings/change_password_screen.dart';
 import 'package:loksewa_solution/screens/settings/login_devices_screen.dart';
 import 'package:loksewa_solution/screens/settings/security_settings_screen.dart';
 import 'package:loksewa_solution/services/app_language.dart';
-import 'package:loksewa_solution/widgets/stagger_entrance.dart';
+import 'package:loksewa_solution/widgets/syllabus_entrance.dart';
 
 /// Profile → App Settings → Security Settings: the entry renders the
 /// read-only account email and both destinations navigate correctly.
@@ -39,7 +39,7 @@ GoRouter _router() {
 }
 
 
-/// Pumps the StaggerEntrance delays (max 240ms) + entrances through in
+/// Pumps the SyllabusEntrance delays (max 240ms) + entrances through in
 /// small increments, so no delayed timer is pending at teardown.
 Future<void> _pumpEntered(WidgetTester tester) async {
   for (var i = 0; i < 8; i++) {
@@ -96,13 +96,21 @@ void main() {
     await _pumpEntered(tester);
   });
 
-  testWidgets('premium treatment: staggered cards + safety tip (EN)',
+  testWidgets('premium treatment: smooth entrances + info card + safety tip (EN)',
       (tester) async {
     await tester.pumpWidget(MaterialApp.router(routerConfig: _router()));
     await _pumpEntered(tester);
 
-    // Account card, both entries and the tip card all stagger in.
-    expect(find.byType(StaggerEntrance), findsNWidgets(4));
+    // Info card, account card, both entries and the tip card all enter
+    // with the smooth SyllabusEntrance motion (NOTE-24).
+    expect(find.byType(SyllabusEntrance), findsNWidgets(5));
+    // Premium info card directly under the header.
+    expect(find.text('Account protection'), findsOneWidget);
+    expect(
+      find.text(
+          'From here you can change your password and review the devices signed in to your account, so only you can get in.'),
+      findsOneWidget,
+    );
     expect(find.text('Stay protected'), findsOneWidget);
     expect(
       find.text(
@@ -128,6 +136,7 @@ void main() {
     expect(find.text('पासवर्ड परिवर्तन'), findsOneWidget);
     expect(find.text('लगइन डिभाइसहरू'), findsOneWidget);
     expect(find.text('सुरक्षित रहनुहोस्'), findsOneWidget);
+    expect(find.text('खाता सुरक्षा'), findsOneWidget);
     // No English leaking through.
     expect(find.text('Security Settings'), findsNothing);
     expect(find.text('Stay protected'), findsNothing);

@@ -199,9 +199,14 @@ final appRouter = GoRouter(
     // ---- Auth ----
     GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
     GoRoute(path: '/signup', builder: (_, __) => const SignupScreen()),
+    // The account email arrives via `extra` from Change Password's
+    // "Forgot Password?" link (logged-in entry): the screen then runs in
+    // locked mode (NOTE-22 + logged-in reset lock). From the Login page
+    // no extra is passed and the screen behaves exactly as before.
     GoRoute(
         path: '/forgot-password',
-        builder: (_, __) => const ForgotPasswordScreen()),
+        builder: (_, state) =>
+            ForgotPasswordScreen(accountEmail: state.extra as String?)),
     // NOTE-11 claim: email arrives via `extra` from the login screen
     // (needs_claim prompt / "Set Your Password" link) when available.
     GoRoute(

@@ -10,8 +10,8 @@ import '../../widgets/app_modal_shell.dart';
 import '../../widgets/auth/auth_buttons.dart';
 import '../../widgets/auth/floating_label_field.dart';
 import '../../widgets/popup_action_button.dart';
-import '../../widgets/stagger_entrance.dart';
 import '../../widgets/subpage_header.dart';
+import '../../widgets/syllabus_entrance.dart';
 
 /// Security Settings → Change Password.
 ///
@@ -32,8 +32,9 @@ import '../../widgets/subpage_header.dart';
 /// on the confirm button. Success → success state. A "Forgot Password?"
 /// link under the button goes to `/forgot-password`.
 ///
-/// Premium treatment: the shared gradient subpage header, a staggered
-/// entrance on the form card, and a password-tips card below the form.
+/// Premium treatment: the shared gradient subpage header, the smooth
+/// SyllabusEntrance on the form card (NOTE-24), a password-tips card
+/// below the form, and surfaces that follow the app theme (NOTE-23).
 class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({
     super.key,
@@ -241,15 +242,18 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   Widget _formCard() {
-    // Always-white card (like AppModalShell): FloatingLabelField is an
-    // always-light auth widget, so the form keeps the auth look in both
-    // app themes.
+    // NOTE-23: the card follows the app theme like every other settings
+    // page (palette surface/border/text), and the fields take
+    // FloatingLabelField's dark variant in dark mode. Popups on this
+    // page keep the pinned AppModalShell colors — pages only.
+    final palette = ExpoPalette.of(context);
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: palette.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: palette.border),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.06),
@@ -292,10 +296,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                     Text(
                       AppLanguage.tr(
                           'Choose a new password', 'नयाँ पासवर्ड छान्नुहोस्'),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF1F2937),
+                        color: palette.textPrimary,
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -304,8 +308,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                           ? AppLanguage.tr(
                               'Not signed in', 'साइन इन हुनुहुन्न')
                           : _email,
-                      style: const TextStyle(
-                          fontSize: 13, color: Color(0xFF6B7280)),
+                      style: TextStyle(
+                          fontSize: 13, color: palette.textSecondary),
                     ),
                   ],
                 ),
@@ -319,6 +323,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             leftIcon: Icons.lock_outline,
             secureToggle: true,
             obscureText: true,
+            dark: dark,
             errorText: _oldError,
             textInputAction: TextInputAction.next,
             nextFocus: _newFocus,
@@ -334,6 +339,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             leftIcon: Icons.lock_outline,
             secureToggle: true,
             obscureText: true,
+            dark: dark,
             errorText: _newError,
             textInputAction: TextInputAction.next,
             nextFocus: _confirmFocus,
@@ -349,6 +355,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             leftIcon: Icons.lock_outline,
             secureToggle: true,
             obscureText: true,
+            dark: dark,
             errorText: _confirmError,
             textInputAction: TextInputAction.done,
             onSubmitted: _submit,
@@ -366,7 +373,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           const SizedBox(height: 4),
           Center(
             child: TextButton(
-              onPressed: () => context.push('/forgot-password'),
+              // Logged-in entry: the account email rides along so the
+              // reset page opens locked to it (NOTE-22 + reset lock).
+              onPressed: () => _email.isEmpty
+                  ? context.push('/forgot-password')
+                  : context.push('/forgot-password', extra: _email),
               child: Text(
                 AppLanguage.tr('Forgot Password?', 'पासवर्ड बिर्सनुभयो?'),
                 style: const TextStyle(
@@ -380,14 +391,15 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   Widget _successCard() {
-    return StaggerEntrance(
+    final palette = ExpoPalette.of(context);
+    return SyllabusEntrance(
       delayMs: 0,
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: palette.surface,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: palette.border),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: 0.06),
@@ -423,10 +435,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             Text(
               AppLanguage.tr('Password changed successfully',
                   'पासवर्ड सफलतापूर्वक परिवर्तन भयो'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF1F2937),
+                color: palette.textPrimary,
               ),
               textAlign: TextAlign.center,
             ),
@@ -436,7 +448,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 'Use your new password the next time you sign in.',
                 'अर्को पटक साइन इन गर्दा आफ्नो नयाँ पासवर्ड प्रयोग गर्नुहोस्।',
               ),
-              style: const TextStyle(fontSize: 14, color: Color(0xFF6B7280)),
+              style: TextStyle(fontSize: 14, color: palette.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 20),
@@ -460,8 +472,12 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   }
 
   /// Password-tips card under the form — mirrors the inline validations so
-  /// users see the rules before they trip on them.
+  /// users see the rules before they trip on them. Premium treatment: a
+  /// softly amber-tinted card, a gradient lightbulb tile, and one tinted
+  /// icon chip per rule with a green check pill — the app's premium-card
+  /// language, following the theme (NOTE-23).
   Widget _tipsCard() {
+    final palette = ExpoPalette.of(context);
     const tips = [
       (Icons.straighten_outlined, 'At least 6 characters', 'कम्तीमा ६ अक्षर'),
       (Icons.difference_outlined, 'Different from your old password',
@@ -472,9 +488,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF59E0B).withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(
+          color: const Color(0xFFF59E0B).withValues(alpha: 0.22),
+        ),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -489,43 +507,73 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
           Row(
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
-                  color: const Color(0xFFEFF6FF),
+                  borderRadius: BorderRadius.circular(12),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFFFBBF24), Color(0xFFD97706)],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFD97706).withValues(alpha: 0.35),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
                 child: const Icon(Icons.lightbulb_outline,
-                    size: 20, color: _blue),
+                    size: 21, color: Colors.white),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Text(
                 AppLanguage.tr('Password tips', 'पासवर्ड सुझावहरू'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF1F2937),
+                  color: palette.textPrimary,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           for (final (icon, en, ne) in tips) ...[
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(
                 children: [
-                  const Icon(Icons.check_circle_outline,
-                      size: 18, color: Color(0xFF16A34A)),
-                  const SizedBox(width: 10),
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(10),
+                      color: palette.primary.withValues(alpha: 0.1),
+                    ),
+                    child: Icon(icon, size: 17, color: palette.primary),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       AppLanguage.tr(en, ne),
-                      style: const TextStyle(
-                          fontSize: 14, color: Color(0xFF4B5563)),
+                      style: TextStyle(
+                          fontSize: 14,
+                          height: 1.35,
+                          color: palette.textSecondary),
                     ),
                   ),
-                  Icon(icon, size: 18, color: const Color(0xFF9CA3AF)),
+                  Container(
+                    width: 22,
+                    height: 22,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color:
+                          const Color(0xFF16A34A).withValues(alpha: 0.12),
+                    ),
+                    child: const Icon(Icons.check_rounded,
+                        size: 14, color: Color(0xFF16A34A)),
+                  ),
                 ],
               ),
             ),
@@ -553,7 +601,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
-                child: StaggerEntrance(
+                child: SyllabusEntrance(
                   delayMs: 0,
                   child: Column(
                     children: [
@@ -563,7 +611,7 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                       ),
                       if (!_success) ...[
                         const SizedBox(height: 12),
-                        StaggerEntrance(
+                        SyllabusEntrance(
                           delayMs: 140,
                           child: _tipsCard(),
                         ),

@@ -48,3 +48,14 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 
 ## NOTE-20 — Onboarding: honor per-slide color + >4-slide chrome (app round)
 Database slides now carry a `color` field (admin ColorField) which the app does not read (palette is hardcoded cream/navy). Honor `color` per slide when present (fallback = current palette). Also with more than 4 slides: Skip currently jumps to index 3 and the morph-CTA timing assumes 4 pages — make both follow the real slide count.
+
+
+### NOTE-22 — Reset Password Page: 'Back to Login' Logged-In Context Ma Naaune (app round)
+Reset Password page (email → 6-anka ko code) dui bato bata pugna sakincha: (a) Login page ko forgot-password link bata, (b) app bhitra batai — Profile → Security Settings → Change Password → 'Forgot Password?'. (b) bata aauda user **already logged in** chha, tara page ko tala ajhai **'Back to Login'** dekhirakheko chha — tyo context ma tesko artha chhaina (screenshot 2026-11-03). **Fix:** page le aafno entry context chinna paryo — app bhitra (logged-in) bata aauda 'Back to Login' nadekhaune, back jahaa bata aayeko ho tehi farkine; Login page bata aauda aile kai jasto ustai rakhne.
+
+### NOTE-23 — Change Password Page: Dark Mode Ma Card Haru Light/White (app round)
+Change Password page ma **dark mode ma pani card haru light/seto** basirakheka chhan (screenshot 2026-11-03: gadha background mathi seto form card + seto 'Password tips' card), baki app theme anusar badlincha. **Fix:** yo page ko card/surface haru le dark theme pachhyaune — aru page jastai. (Popup haru theme-independent rahane settled rule ustai chha — yo note **page** ko lagi matra ho, popup ko lagi hoina.)
+
+### NOTE-24 — Security Settings Trio: Page-Open Animation Standard Sangai Milaaune (app round)
+Profile ko Security Settings page ra teska bhitri page haru **Change Password** ra **Login Devices** — yi 3 otai khulda dekhaune animation naramro/farak chha; aru page ma use bhayeko standard page-open animation jastai chhaina (user ko reference: **Course Setup, App Info, Help Centre**). **Fix:** yi 3 page le reference page haru kai eutai open animation use garne.
+> Verified 2026-11-03: user sahi hunuhuncha — farak sanchchai chha. Router level ma sabai route eutai plain GoRoute builder ho (kunai custom transition chhaina); farak page-bhitra ko entrance animation ma chha: Security trio le `StaggerEntrance` (lib/widgets/stagger_entrance.dart — 450ms, tallo bata 0.4 slide + `Curves.easeOutBack` **spring overshoot/bounce**) use garchha, jabki App Info ra Help Centre le `SyllabusEntrance` (380ms, opacity + 24px rise, duwai `Curves.easeOut`, **overshoot chhaina**) ra Course Setup le aafnai local `_Entrance` (400ms, easeOut AnimatedOpacity/AnimatedSlide, overshoot chhaina) use garchhan. Fix ko disha: Security trio lai pani easeOut (SyllabusEntrance) family ma sarne.

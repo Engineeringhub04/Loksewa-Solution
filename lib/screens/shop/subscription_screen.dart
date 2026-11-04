@@ -314,7 +314,7 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
               );
             }),
             const SizedBox(height: ExpoSpacing.sm),
-            const _WeAcceptSection(),
+            _WeAcceptSection(logos: _logos),
           ] else ...[
             if (data.history.isNotEmpty)
               _RequestsSection(
@@ -1633,7 +1633,11 @@ class _SubscribeButtonState extends State<_SubscribeButton> {
 // ===================== We Accept =====================
 
 class _WeAcceptSection extends StatelessWidget {
-  const _WeAcceptSection();
+  /// The panel-saved "We Accept" logo URLs (PaymentLogoService), in
+  /// display order; empty until the links land.
+  final List<String> logos;
+
+  const _WeAcceptSection({required this.logos});
 
   @override
   Widget build(BuildContext context) {
@@ -1668,7 +1672,7 @@ class _WeAcceptSection extends StatelessWidget {
         ),
         const SizedBox(height: ExpoSpacing.sm),
         Row(
-          children: _logos
+          children: logos
               .map((uri) => Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),

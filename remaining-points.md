@@ -53,3 +53,20 @@ User ko idea (2026-10-24 discuss, 2026-10-25 note add garne order): payment gard
 Database slides now carry a `color` field (admin ColorField) which the app does not read (palette is hardcoded cream/navy). Honor `color` per slide when present (fallback = current palette). Also with more than 4 slides: Skip currently jumps to index 3 and the morph-CTA timing assumes 4 pages — make both follow the real slide count.
 
 
+## NOTE-25 — Rs. 0 (Free) Item: Gateway Skip Garera Sidhai Activate
+User order (2026-11-04): deep check pachi note banaune; implement aile hoina — ahile ko lagi user aafai tyo set ko price edit garera test garcha.
+
+**Problem (2026-11-04 deep check le confirm):** price **Rs. 0** bhayeko item (exam set / content item / subscription plan) app bata eSewa wa Khalti ma kinna khojda duwai fail huncha:
+- **eSewa:** server le total_amount "0" pathaaunchha → eSewa le afnai error dincha `{"code":"ES705","message":"Invalid transaction amount."}` — payment page khuldai na.
+- **Khalti:** amount 0 paisa jancha → Khalti le init nai manena (minimum Rs. 10) → server le `khalti_init_failed` farkaaunchha.
+- Test case: exam set 'New Model Set Subscription Check' — naam eutai 3 set chhan; set-3 Rs. 200 (payment verified bhaisakeko), baki 2 set Rs. 0 — user le Rs. 0 wala checkout gareko thiyo. Gateway settings/keys/signature sabai thik chhan (Oct ma Rs. 50/55/60/200 verified record chha) — dosh amount 0 ma matra ho.
+
+**Root cause:** worker `src/payments.js` ko price check le **negative matra rokchha** (`price < 0` → invalid); 0 pass bhayera gateway samma pugchha. Coupon le final amount 0 banaayo bhane pani yehi nai fail huncha (100% off case).
+
+**Garne (user ko word aayepachhi matra):**
+- **Worker:** final amount 0 bhaye gateway init garnai nahune — item/plan lai **free activation** ko bato dine (payment record ma amount 0 + gateway 'free' jasto spashta chinhana, activation ko baki niyam ustai: visible user action matra, silent activation nahune). Galti le 0 amount gateway tira aai pugyo bhane pani raw gateway error hoina, clear server error farkaaune.
+- **App:** checkout ma item price Rs. 0 bhaye payment-method chhanna dine hoina — "Free" dekhaayera sidhai activate garne flow (button + confirm popup, settled popup pattern anusar). Coupon pachi amount 0 bhayo bhane pani yehi free flow.
+- **Scope:** subscription plan (plan-free Rs. 0 sadhai yahi trap ma chha), exam set, content item — tinai purchase type.
+- **Badli nahune:** paisa tirne item haru ko init/verify flow ustai; rate limit, ledger, notification haru ustai.
+
+

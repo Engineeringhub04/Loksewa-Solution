@@ -48,6 +48,7 @@ import '../../widgets/app_modal_shell.dart';
 import '../../widgets/image_viewer.dart';
 import '../../widgets/app_toast.dart';
 import '../../widgets/gateway_popups.dart';
+import 'package:loksewa_solution/services/payment_logo_service.dart';
 import 'package:loksewa_solution/services/profile_service.dart';
 import '../../widgets/pdf_download_dialog.dart';
 import '../../widgets/popup_action_button.dart';
@@ -56,8 +57,6 @@ import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 import 'esewa_webview_screen.dart';
 
-const _esewaLogo = 'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png';
-const _khaltiLogo = 'https://i.ibb.co/tMHZRHKQ/Khalti-Logo-New-3.png';
 const _qrDownloadName = 'Ls-qr.png';
 
 class _AppliedCoupon {
@@ -197,6 +196,12 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   late Future<_CheckoutData> _future;
 
   String? _method; // 'esewa' | 'khalti' | 'qr' — null until the user picks one
+
+  /// Payment logo links, panel-managed via [PaymentLogoService]
+  /// (session-cached): null until they land, and the method cards show
+  /// their icon tiles meanwhile.
+  String? _esewaLogoUrl;
+  String? _khaltiLogoUrl;
   final _refCtrl = TextEditingController();
   final _msgCtrl = TextEditingController();
   final _couponCtrl = TextEditingController();
@@ -219,7 +224,17 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
   void initState() {
     super.initState();
     _future = _load();
+    _loadLogos();
     _couponCtrl.addListener(_onCouponTextChanged);
+  }
+
+  Future<void> _loadLogos() async {
+    await PaymentLogoService.ensureLoaded();
+    if (!mounted) return;
+    setState(() {
+      _esewaLogoUrl = PaymentLogoService.esewaLogo;
+      _khaltiLogoUrl = PaymentLogoService.khaltiLogo;
+    });
   }
 
   void _onCouponTextChanged() {
@@ -2091,7 +2106,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ),
         const SizedBox(height: 8),
         _MethodCard(
-          logoUrl: _esewaLogo,
+          logoUrl: _esewaLogoUrl,
+          icon: Icons.payments_outlined,
           label: 'eSewa',
           color: const Color(0xFF60BB46),
           ready: esewaReady,
@@ -2118,7 +2134,8 @@ class _CheckoutScreenState extends State<CheckoutScreen> {
         ),
         const SizedBox(height: 8),
         _MethodCard(
-          logoUrl: _khaltiLogo,
+          logoUrl: _khaltiLogoUrl,
+          icon: Icons.payments_outlined,
           label: 'Khalti',
           color: const Color(0xFF5C2D91),
           ready: khaltiReady,

@@ -18,6 +18,7 @@ import 'package:go_router/go_router.dart';
 import 'package:loksewa_solution/services/app_language.dart';
 import 'package:loksewa_solution/services/auth_service.dart';
 import 'package:loksewa_solution/services/gateway_payment_service.dart';
+import 'package:loksewa_solution/services/payment_logo_service.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 import 'package:loksewa_solution/theme/app_theme.dart';
 import '../../widgets/app_modal_shell.dart';
@@ -29,14 +30,12 @@ import '../../widgets/syllabus_entrance.dart';
 import '../../widgets/subpage_header.dart';
 import '../../widgets/trash_icon.dart';
 
-/// Brand logos — brand marks drawn for a light background, shown as a
-/// subtle watermark (reduced opacity, no chips or boxes) directly on the
-/// page surface in both themes.
-const List<String> _paymentLogos = [
-  'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png',
-  'https://i.ibb.co/tMHZRHKQ/Khalti-Logo-New-3.png',
-  'https://i.ibb.co/YBT7bXZQ/fonepay-logo-png-seeklogo-385625.png',
-];
+/// Brand logos come from [PaymentLogoService] — links saved in the admin
+/// panel's Image Link Generator, matched by label — so a logo can be
+/// replaced from the panel without an app update. The marks are drawn
+/// for a light background and shown as a subtle watermark (reduced
+/// opacity, no chips or boxes) directly on the page surface in both
+/// themes.
 
 /// Ink for anything drawn ON a plan gradient — fixed, because the gradient is.
 const Color _onGradient = Colors.white;
@@ -52,7 +51,10 @@ class SubscriptionScreen extends StatefulWidget {
   /// Test seam: overrides the network load.
   final Future<SubscriptionScreenData> Function()? loader;
 
-  const SubscriptionScreen({super.key, this.loader});
+  /// Test seam: overrides where the "We Accept" logo URLs come from.
+  final Future<List<String>> Function()? logoLoader;
+
+  const SubscriptionScreen({super.key, this.loader, this.logoLoader});
 
   @override
   State<SubscriptionScreen> createState() => _SubscriptionScreenState();
@@ -69,19 +71,34 @@ class _SubscriptionScreenState extends State<SubscriptionScreen> {
   /// 0 = Plan tab, 1 = Your Request tab.
   int _tabIndex = 0;
 
-  /// Session guard for the logo warmup below: the payment logos live in
-  /// Flutter's in-memory ImageCache only — never on disk — so a cold
-  /// start needs exactly one warmup and a reopened page renders them
-  /// instantly for the rest of the session.
-  static bool _logosPrecached = false;
+  /// The "We Accept" logo URLs for this page, filled in by the warmup
+  /// below once the panel-saved links arrive.
+  List<String> _logos = const [];
 
-  /// Warms the in-memory logo cache while the preloading phase is on
-  /// screen. Runs once per app run; on an already-warm cache,
-  /// [precacheImage] is a cheap no-op anyway.
-  void _warmLogoCache(BuildContext context) {
-    if (_logosPrecached) return;
-    _logosPrecached = true;
-    for (final uri in _paymentLogos) {
+  /// Guard for the logo warmup below: the links are session-cached by
+  /// [PaymentLogoService] and the images live in Flutter's in-memory
+  /// ImageCache only — never on disk — so a cold start needs exactly one
+  /// warmup and a reopened page renders them instantly for the rest of
+  /// the session. Closing the app clears both caches.
+  bool _logosRequested = false;
+
+  /// Loads the logo links and warms the in-memory image cache while the
+  /// preloading phase is on screen. Runs its link fetch at most once per
+  /// app run; on an already-warm cache, [precacheImage] is a cheap
+  /// no-op anyway.
+  Future<void> _warmLogoCache(BuildContext context) async {
+    if (_logosRequested) return;
+    _logosRequested = true;
+    List<String> logos;
+    if (widget.logoLoader != null) {
+      logos = await widget.logoLoader!();
+    } else {
+      await PaymentLogoService.ensureLoaded();
+      logos = PaymentLogoService.weAcceptLogos;
+    }
+    if (!mounted) return;
+    setState(() => _logos = logos);
+    for (final uri in logos) {
       // Swallow load failures — the section's errorBuilder covers them.
       // Passing onError keeps a failed precache from being reported to
       // FlutterError (which would trip widget tests that hold the page's
@@ -1651,7 +1668,7 @@ class _WeAcceptSection extends StatelessWidget {
         ),
         const SizedBox(height: ExpoSpacing.sm),
         Row(
-          children: _paymentLogos
+          children: _logos
               .map((uri) => Expanded(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 10),

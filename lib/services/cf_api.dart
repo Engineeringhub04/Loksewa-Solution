@@ -556,6 +556,14 @@ class CfApi {
     return _rows(body, ['banners', 'items', 'data']);
   }
 
+  /// Panel-saved image links (Image Link Generator page): label + URL
+  /// rows the app matches by label — first the payment brand logos
+  /// (see PaymentLogoService).
+  static Future<List<Map<String, dynamic>>> getImageLinks() async {
+    final body = await _request('GET', '/image-links');
+    return _rows(body, ['images', 'items', 'data']);
+  }
+
   /// Today's QOTD bundle for the signed-in user: question doc + result +
   /// summary + greetings, in whatever envelope the worker chose — callers
   /// unwrap defensively.

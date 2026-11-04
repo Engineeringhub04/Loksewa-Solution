@@ -14,11 +14,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:loksewa_solution/screens/shop/subscription_screen.dart';
 import 'package:loksewa_solution/services/subscription_service.dart';
 
-/// Mirrors the private `_paymentLogos` list in the screen under test.
+/// The panel-saved logo links (Image Link Generator) the screen's
+/// logoLoader seam returns — eSewa, Khalti, FonePay in display order.
 const List<String> _kLogoUris = [
-  'https://i.ibb.co/HLpHmnQz/esewa-icon-large.png',
-  'https://i.ibb.co/tMHZRHKQ/Khalti-Logo-New-3.png',
-  'https://i.ibb.co/YBT7bXZQ/fonepay-logo-png-seeklogo-385625.png',
+  'https://res.cloudinary.com/dw7gg0fhc/image/upload/v1793778126/image-links/p9b5h4s5jqjloo2eerrn.png',
+  'https://res.cloudinary.com/dw7gg0fhc/image/upload/v1793778113/image-links/jewz4lbi1wm2macb2uyt.png',
+  'https://res.cloudinary.com/dw7gg0fhc/image/upload/v1793778151/image-links/auefrf9yvwhb2hbnuqy2.png',
 ];
 
 /// 1x1 transparent PNG served for every network image request.
@@ -120,7 +121,10 @@ Future<void> _pumpLoaded(WidgetTester tester, {bool dark = false}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(brightness: dark ? Brightness.dark : Brightness.light),
-      home: SubscriptionScreen(loader: () async => _data()),
+      home: SubscriptionScreen(
+        loader: () async => _data(),
+        logoLoader: () async => _kLogoUris,
+      ),
     ),
   );
   for (var i = 0; i < 30; i++) {
@@ -149,7 +153,10 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: SubscriptionScreen(loader: () => gate.future),
+        home: SubscriptionScreen(
+          loader: () => gate.future,
+          logoLoader: () async => _kLogoUris,
+        ),
       ),
     );
     // Waiting branch: PreloadingWidget is on screen and the in-memory
@@ -245,7 +252,10 @@ void main() {
     // image cache (the mock serves one request per logo).
     await tester.pumpWidget(
       MaterialApp(
-        home: SubscriptionScreen(loader: () async => _data()),
+        home: SubscriptionScreen(
+          loader: () async => _data(),
+          logoLoader: () async => _kLogoUris,
+        ),
       ),
     );
     for (var i = 0; i < 30; i++) {
@@ -258,7 +268,10 @@ void main() {
     // Back + reopen within the same session: a fresh page instance.
     await tester.pumpWidget(
       MaterialApp(
-        home: SubscriptionScreen(loader: () async => _data()),
+        home: SubscriptionScreen(
+          loader: () async => _data(),
+          logoLoader: () async => _kLogoUris,
+        ),
       ),
     );
     for (var i = 0; i < 30; i++) {

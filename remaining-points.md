@@ -70,3 +70,21 @@ User order (2026-11-04): deep check pachi note banaune; implement aile hoina —
 - **Badli nahune:** paisa tirne item haru ko init/verify flow ustai; rate limit, ledger, notification haru ustai.
 
 
+
+## NOTE-26 — Email Sending: Workers Paid Line Din Resend Bata Cloudflare Email Sending Ma Sarne
+User order (2026-11-06): discussion pachi note banaune; implement aile hoina — ahile Resend free mai chalne (chali sakeko, paisa Rs. 0).
+
+**Background (2026-11-06 check):** Cloudflare le afnai **Email Sending** service lyayeko chha (public beta, 2026-04-16 bata) — Worker batai sidhai transactional email (OTP, password reset) pathauna milchha. Hamile Resend jodeko bela yo thiena — tyo bela Cloudflare sanga Email Routing (aune email forward) matra thiyo, pathaune baato thiena.
+
+**Trigger (kaile garne):** dui madhye j kunai euta bhaye pachhi —
+- Traffic badhera **Workers Paid ($5/mahina)** line din aayo bhane **tyahi din** email pani sarne (tyo $5 bhitra mahina ko 3,000 email included hunchha; tespachi 1,000 email ko $0.35 matra), athawa
+- Resend ko free limit (key haru sahit) le OTP dhanna nasakne awastha aayo bhane (tyo bela Resend Pro $20 bhanda Cloudflare sasto parchha).
+
+**Sarta ra sima (switch bhanda agi check garnu parne):**
+- **Free plan ma mildaina:** free ma afai verify gareko afnai address ma matra pathauna milchha — student ko email ma OTP pathauna **Workers Paid aniwarya** chha.
+- Jas domain bata email pathaine ho, tesko **DNS Cloudflare ma hunu parchha** — hamro sending domain ko awastha pahile check garne.
+- Service ajhai **beta** ho — OTP jasto login-adkine kaam ma, switch pachi real phone test (code pugyo/pugena, spam ma gayo/gayena) pakka garera matra Resend hataune; taba samma **Resend fallback ko rup ma rakhne**.
+
+**Badli nahune:**
+- OTP banaune, D1 ma save garne, check garne — sabai hamro worker code ustai; badline bhaneko **email pathaune pipe matra** (Resend API → Cloudflare Email Sending).
+- App side kei change chhaina; Email Setup page ko key/counter bhag switch ko bela kasari milaaune bhanne tyahi bela nirnaya garne.
